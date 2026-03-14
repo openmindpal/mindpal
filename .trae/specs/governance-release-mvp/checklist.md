@@ -1,0 +1,6 @@
+- [x] tool_rollouts/tool_active_versions 迁移可重复执行且有必要索引
+- [x] 治理 API 支持 enable/disable/setActive/list 并写审计
+- [x] /tools/:toolRef/execute 未启用时拒绝并返回 TOOL_DISABLED
+- [x] enable 后可执行、disable 后立即失效（含 space/tenant 优先级）
+- [x] e2e 覆盖默认拒绝、启用/禁用与 active 版本切换
+- [x] README 说明治理开关与默认版本选择行为

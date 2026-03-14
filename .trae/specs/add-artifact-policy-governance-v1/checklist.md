@@ -1,0 +1,5 @@
+- [x] 已新增 artifact_policies 表与 repo（含 effective 查询）
+- [x] 已实现治理 API（GET/PUT）并接入权限与审计
+- [x] token 签发忽略客户端参数，使用治理策略与默认值
+- [x] watermarkHeadersEnabled 生效且不影响审计追溯
+- [x] e2e/回归测试通过（api/worker/web）

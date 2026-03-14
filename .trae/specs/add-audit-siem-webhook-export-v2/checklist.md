@@ -1,0 +1,5 @@
+- [x] secrets 方式存储 webhookUrl/签名配置，API 不泄露明文
+- [x] destination CRUD/test/backfill 可用且写审计
+- [x] worker 增量投递：cursor/outbox 重试/DLQ 生效
+- [x] 投递格式为 ndjson，包含 eventId/event_hash/prev_hash 以便外部校验
+- [x] 回归测试通过（api/worker/web）

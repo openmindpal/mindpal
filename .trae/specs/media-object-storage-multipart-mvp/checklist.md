@@ -1,0 +1,6 @@
+- [x] Blob Store：fs 后端可写入/读取/合并，且防目录穿越
+- [x] DB：media_objects 支持 storage_provider/storage_key，且兼容旧 content_bytes
+- [x] API：分片上传 create/part/complete/download 链路可用
+- [x] 隔离：upload session 与 mediaObject 强制 tenant/space 隔离
+- [x] 审计：upload/download 仅记录摘要，不包含原始字节或明文
+- [x] 回归：e2e 覆盖分片上传、超限、跨 space 拒绝

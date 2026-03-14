@@ -1,0 +1,9 @@
+- [ ] Chat UI 不再为 uiDirective 直接渲染“无校验跳转”链接（openView=page/workbench 必须校验）
+- [ ] openView=page：/ui/pages/:name 未发布或无权限时，UI 仅展示指令不提供跳转入口
+- [ ] openView=workbench：/workbenches/:key/effective 失败时，UI 仅展示指令不提供跳转入口
+- [ ] Web e2e 覆盖 ViewPrefs：写入偏好后 /p/:name 表头列变化可观测
+- [ ] Web e2e 覆盖 ViewPrefs：重置偏好后 /p/:name 恢复默认列集合
+- [ ] 新增 UI 组件注册表版本化存储（draft/released/version/componentIds）并可回滚
+- [ ] 组件注册表治理 API 完整：get/draft/publish/rollback，且全链路写审计（成功/拒绝/失败）
+- [ ] PageTemplate validateDraft 强制执行治理 allowlist（存在时）且保持无 allowlist 时向后兼容
+- [ ] API e2e 覆盖：未知 componentId 拒绝发布；PageTemplate 引用被治理拒绝

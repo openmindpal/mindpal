@@ -1,0 +1,6 @@
+- [x] AUTHN_MODE=dev/hmac 生效，hmac 模式下 token 必须签名且未过期
+- [x] tenantId/spaceId 仅来自 token payload，忽略 header 注入
+- [x] 认证成功会自动创建 subjects 记录，且 tenant 不一致会拒绝
+- [x] 单测覆盖签名校验、篡改与过期
+- [x] e2e 覆盖 hmac 模式下拒绝/放行
+- [x] README 补齐 AuthN 配置与 token 格式

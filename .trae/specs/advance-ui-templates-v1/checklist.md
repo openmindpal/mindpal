@@ -1,0 +1,6 @@
+- [x] PageTemplate 支持 ui 配置块且 draft/released 校验通过
+- [x] 生成器生成合理默认 ui（columns/filters/sortOptions/pageSize/fieldOrder）
+- [x] /p/[page] 按 ui 渲染 list/detail/new/edit（非法字段忽略且不崩溃）
+- [x] /admin/ui 可编辑并保存 ui（仅 draft）
+- [x] e2e 覆盖 ui 配置保存→发布→渲染生效
+- [x] README 补齐 ui 配置块说明与约束

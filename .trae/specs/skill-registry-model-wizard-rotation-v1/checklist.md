@@ -1,0 +1,6 @@
+- [x] 技能包上传 API 支持 zip/tgz，能产出 artifactId 与 depsDigest，且审计不泄露包内容
+- [x] publish 支持 artifactId，tool version 可回查到对应 artifact 引用与 depsDigest
+- [x] worker 可执行 registry 引用的技能包，并保持信任策略/出站治理/沙箱语义一致
+- [x] 前端新增模型接入向导页，可完成 connector→secret→binding 三步并看到结果
+- [x] 同一 modelRef 支持多 secret；429/timeout 时轮转重试；policy_violation 不轮转
+- [x] e2e 覆盖：skill registry 全链路 + 模型轮转 + 向导页 smoke

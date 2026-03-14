@@ -1,0 +1,7 @@
+- [x] DB：audit_retention_policies / audit_legal_holds / audit_exports 创建成功且索引齐备
+- [x] API：/audit/retention 可读写且写审计
+- [x] API：/audit/legal-holds 可创建/列表/释放且写审计
+- [x] API：/audit/exports 可创建并返回 artifactRef，导出为 jsonl 且不含敏感信息
+- [x] Worker：导出作业可重试，失败摘要不泄露 secrets
+- [x] Console（治理模式）：audit 页可创建导出并查看状态
+- [x] 测试通过：API e2e + Web e2e + web lint（含 check-no-zh）

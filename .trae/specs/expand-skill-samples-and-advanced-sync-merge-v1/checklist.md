@@ -1,0 +1,8 @@
+- [x] 仓库新增不少于 3 个示例 Skill 包，覆盖沙箱/容器/远程三种隔离形态
+- [x] 示例包可完成 publish→enable→execute 闭环，且审计摘要包含关键引用（toolRef/artifactRef/depsDigest/egressSummary）
+- [x] trust/scan/eval gate 拒绝示例包时返回稳定错误码且输出可解释摘要
+- [x] 新增 MergeStrategy/Proposal 类型与稳定 digest 口径，提案生成确定可复现
+- [x] sync 冲突 ticket/mergeRun 可返回 proposal 摘要，且 apply proposal 可生成新 mergeRun
+- [x] 冲突详情页面可展示 base/server/client 差异摘要，并支持一键套用 proposal
+- [x] e2e 覆盖：示例包三形态执行 + 自动/半自动合并提案 + apply proposal
+- [x] 新增/修改关键路径不记录敏感明文（仅 digest/摘要）

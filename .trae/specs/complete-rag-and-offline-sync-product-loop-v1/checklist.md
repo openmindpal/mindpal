@@ -1,0 +1,9 @@
+- [x] Knowledge：提供 Retrieval Logs 列表/详情（过滤、脱敏、可定位到 run/toolRef）
+- [x] Knowledge：evidenceRef 解析接口统一权限校验且不泄露越权片段
+- [x] Knowledge：控制台页面覆盖 jobs/logs/evidence viewer，并可从 run 详情跳转
+- [x] RAG Eval：评估集可创建，评估运行可执行并落库，控制台可对比趋势与失败分类
+- [x] Offline Sync：Web 端离线数据与 ops 队列落库为加密数据（可验证不存明文）
+- [x] Offline Sync：冲突修复 UI 可生成修复 ops 并支持一键重试 push
+- [x] Offline Sync：一致性检查工具输出差异摘要并可导出（不含敏感明文）
+- [x] 回归：新增 e2e 覆盖（权限、RAG Eval、离线冲突修复闭环）并通过
+- [x] 文档：README 补齐 Knowledge 运营与离线同步端侧使用/运维说明

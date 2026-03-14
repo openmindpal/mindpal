@@ -1,0 +1,6 @@
+- [x] 治理页面可上传 zip/tgz Skill 包并返回 artifactId（展示 depsDigest/signatureStatus/scanSummary/manifestSummary）
+- [x] 治理页面可列出最近 skill_package artifacts，且支持复制 artifactId
+- [x] publish 接口允许仅提交 artifactId/artifactRef/depsDigest 触发发布（不再报“发布内容为空”）
+- [x] 治理页面可用 artifactId 发布 toolName 新版本，并显示 toolRef/version
+- [x] e2e 覆盖：upload→publish(artifactId) 成功；原有 publish 流程回归通过
+- [x] 页面与接口错误展示包含 traceId 且不暴露包内容明文

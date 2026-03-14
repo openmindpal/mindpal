@@ -1,0 +1,5 @@
+- [x] InputDigestV1 规则明确且稳定（忽略非确定性字段）
+- [x] runs.input_digest 与 steps.input_digest 仅保存摘要结构，不含原始 payload
+- [x] /replay/resolve 按 inputDigest.sha256_8 匹配并保持 404/错误码稳定
+- [x] approval binding/replay resolve/orchestrator execute 回归通过
+- [x] API e2e 通过（含新增断言）

@@ -1,0 +1,8 @@
+- [x] DeviceExecution claim 在无 DevicePolicy/空 allow-list 时默认拒绝（含审计摘要）
+- [x] DeviceExecution create 强制校验 allow-list 命中且拒绝不匹配
+- [x] DeviceExecution create 由服务端固化 policySnapshotRef，管理侧查询可见
+- [x] 未传 requireUserPresence 时按风险等级给出安全默认值
+- [x] `架构设计.md` 已更新：Device Runtime 章节对齐“已实现最小闭环 + 默认拒绝 + 不继续扩展”
+- [x] `架构设计.md` 已更新：0.2 不做模式切换，与代码一致
+- [x] API 不再提供或不再生效 `/settings/ui-mode`，Web 不再展示/依赖 uiMode
+- [x] 回归通过：API tests、Web lint/e2e（或等价验证）

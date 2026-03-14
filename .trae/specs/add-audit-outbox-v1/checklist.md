@@ -1,0 +1,5 @@
+- [x] 写操作的业务写入与 outbox 入队在同一事务内原子提交
+- [x] outbox 投递器可把 queued 记录最终写入 audit_events 并标记 succeeded
+- [x] outbox 投递具备重试退避与失败记录（无无限热循环）
+- [x] 幂等：重复投递不产生重复 audit_events
+- [x] e2e 覆盖：outbox 写失败时业务副作用回滚；成功时审计最终可见

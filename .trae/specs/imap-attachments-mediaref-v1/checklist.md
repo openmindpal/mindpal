@@ -1,0 +1,6 @@
+- [x] Ingress payload：正文与附件包含摘要与 mediaRef（结构符合 spec）
+- [x] 幂等：重复拉取同一 eventId 不重复创建 MediaObject
+- [x] 护栏：超限附件不生成 mediaRef，但保留摘要字段
+- [x] 隔离：tenant/space 隔离正确（跨 space 访问/落库被拒绝）
+- [x] 审计：poll/ingress 审计不包含正文/附件原文，只含摘要与 mediaRef
+- [x] 回归：相关测试通过（worker/e2e）

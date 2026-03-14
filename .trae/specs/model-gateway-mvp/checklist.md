@@ -1,0 +1,7 @@
+- [x] /models/catalog 可返回模型清单（最小字段集合）
+- [x] /models/bindings 可创建/查询，并校验 connector enabled + secret active + scope 匹配
+- [x] /models/chat 可基于 binding 进行路由并返回 outputText（MVP）
+- [x] /models/chat 强制 allowedDomains 白名单校验（不在集合则 policy_violation）
+- [x] /models/chat tenant 维度限流生效，超限返回 429（稳定 errorCode）
+- [x] 模型调用全链路审计：routingDecision 摘要 + digest + latencyMs + errorCategory
+- [x] 回归测试覆盖 catalog/binding/invoke/拒绝路径与审计落库

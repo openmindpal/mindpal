@@ -1,0 +1,6 @@
+- [x] tool_definitions/tool_versions 支持发布 knowledge.search@1，且可被 enable/disable
+- [x] /tools/:toolRef/execute 可执行 knowledge.search@1 并返回 retrievalLogId + evidence[]
+- [x] /orchestrator/execute 可执行 knowledge.search@1（通过 toolRef 或 suggestion 绑定路径）
+- [x] worker 能在不出站网络的情况下执行 knowledge.search 并写入 step 输出与摘要
+- [x] 权限校验为 resourceType=knowledge action=search（拒绝越权主体）
+- [x] 审计与回放数据不包含敏感全文，仅包含摘要/引用列表

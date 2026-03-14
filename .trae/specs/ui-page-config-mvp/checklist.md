@@ -1,0 +1,8 @@
+- [x] UI 配置迁移可在空库与已有库上重复运行
+- [x] PageTemplate 支持 draft/released 版本化发布与回滚（最小实现）
+- [x] /ui/navigation 仅返回 released 页面且按语言偏好返回 i18n 标题
+- [x] 发布时校验 DataBinding 目标在允许清单内
+- [x] 发布时校验 ActionBinding 的 toolRef 存在且 released
+- [x] 非法 pageType 发布被拒绝（稳定 errorCode）且写审计
+- [x] Web/UI 由导航与页面配置驱动渲染，不再硬编码实体入口
+- [x] 回归测试覆盖：不可见/可见、绑定拒绝、审计落库

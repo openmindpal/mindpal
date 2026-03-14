@@ -1,0 +1,8 @@
+- [x] provider_bindings 支持 Base URL，`/models/chat` 可按 binding.baseUrl 路由并做白名单校验
+- [x] 新增“一键接入模型”接口：单次请求完成 instance+secret+binding，且响应不回显密钥
+- [x] 一键接入具备原子性：中途失败不留下半成品资源（或可证明的补偿一致性）
+- [x] 一键接入具备幂等：同幂等键重放不会重复创建资源
+- [x] 一键接入遵循审计与 DLP：审计不泄露密钥，错误码清晰可定位
+- [x] `/gov/models` 单表单可完成接入并展示返回的 modelRef
+- [x] `/gov/models` 点击测试可拿到 outputText 与 traceId（失败可见 errorCode/message/traceId）
+- [x] API/Web 测试覆盖关键路径并通过

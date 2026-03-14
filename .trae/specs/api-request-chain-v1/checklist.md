@@ -1,0 +1,5 @@
+- [x] API 不再接受 x-tenant-id/x-space-id 作为身份来源（防伪造）
+- [x] 每个请求都有 requestId，且与 traceId 一起写入审计
+- [x] 写操作审计写入失败会返回 AUDIT_WRITE_FAILED（不再静默吞掉）
+- [x] 审计事件字段包含最小集合（subject/resource/action/digest/requestId/traceId/idempotencyKey/latencyMs）
+- [x] e2e 覆盖：伪造租户不生效、requestId 落审计、审计失败返回稳定错误码

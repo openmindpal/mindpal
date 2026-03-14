@@ -1,0 +1,7 @@
+- [x] worker 支持真实 Graph delta 拉取（初次/分页/推进 deltaLink）
+- [x] OAuth grant token 过期自动 refresh 且不泄露明文
+- [x] watermark 兼容旧 seq 并完成迁移到 link watermark
+- [x] channel_ingress_events 幂等去重生效（重复拉取不重复入站）
+- [x] body_json 仅保存摘要（hash/长度），审计不含链接/token/正文/附件明文
+- [x] 失败分类与退避生效（429 尊重 retry-after；5xx/超时指数退避）
+- [x] 回归覆盖：单测 + e2e（成功链路 + auth_required/rate_limited/policy_violation）

@@ -1,0 +1,6 @@
+- [x] DLP 引擎可识别 token/key/email/phone 并输出 dlpSummary
+- [x] API 审计写入前对 inputDigest/outputDigest 脱敏，审计不含敏感原文
+- [x] DLP_MODE=deny 时命中密钥返回 DLP_DENIED 且可审计
+- [x] Worker 审计摘要写入前脱敏（workflow + knowledge index）
+- [x] Knowledge evidence.snippet 与 /models/chat outputText 返回前脱敏
+- [x] 回归测试覆盖脱敏、deny 拒绝与审计字段

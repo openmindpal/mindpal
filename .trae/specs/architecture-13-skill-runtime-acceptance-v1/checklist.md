@@ -1,0 +1,12 @@
+- [x] 出站治理：严格按 networkPolicy allowlist/rules 判定，默认拒绝生效（runtime.ts）
+- [x] 出站治理：egressSummary 与 networkPolicyDigest 可在 steps.outputDigest/审计中追溯，且不泄露敏感明文
+- [x] 出站治理：sandbox 子进程对 fetch 的拦截与主执行器一致（skillSandboxChild.ts）
+- [x] 资源限制：timeoutMs 超时终止生效且 errorCategory=timeout，可审计（processStep.ts）
+- [x] 资源限制：并发限制生效且具备可观测拒绝/重试语义（processStep.ts）
+- [x] 资源限制：outputBytes 上限生效，失败可解释且仅输出摘要（processStep.ts）
+- [x] 供应链 gate：trust/scan/sbom/isolation/remote-runner 要求在执行入口不可绕过，拒绝有稳定错误码（tools.ts）
+- [x] 供应链 gate：拒绝路径审计仅摘要（不含敏感 payload）
+- [x] Capability Envelope：data/secret/egress/resource domains 结构化定义完成（V1）
+- [x] Capability Envelope：API 入队侧校验 envelope 结构合法且为治理 policy 子集
+- [x] Capability Envelope：worker 执行前复核 envelope 关键约束，不一致/缺失拒绝并写审计摘要
+- [x] 回归：API e2e + worker tests 覆盖 allow/deny、资源限制、gate 拒绝、envelope 双重校验

@@ -1,0 +1,7 @@
+- [x] /models/catalog 返回至少 1 个 openai modelRef（endpointHost=api.openai.com）
+- [x] /models/bindings 可对 openai modelRef 创建 binding（connector/secret 校验通过）
+- [x] /models/chat 在 openai provider 下可成功返回 outputText（真实调用或可控 mock 上游）
+- [x] /models/chat 上游失败返回稳定 errorCode 且带 traceId，审计记录 errorCategory
+- [x] 审计不包含 apiKey 与 prompts 原文（仅摘要）
+- [x] 回归：allowedDomains 拒绝、限流 429 仍生效
+- [x] API 测试通过（覆盖 openai 分支）

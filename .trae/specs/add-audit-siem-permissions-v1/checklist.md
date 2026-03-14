@@ -1,0 +1,4 @@
+- [x] RBAC permissions 含 siem.destination.read/write/test/backfill 且 seed 后存在
+- [x] admin 角色默认拥有上述 permissions
+- [x] SIEM destinations API 审计 action 与鉴权 action 一致
+- [x] api 回归测试通过

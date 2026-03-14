@@ -1,0 +1,7 @@
+- [x] DB：keyring 表与 secret_records 字段迁移可重复执行
+- [x] Crypto：Envelope Encryption 格式稳定且可双读 legacy
+- [x] Access：keyring API 仅管理员可用且不返回密钥明文
+- [x] Rotation：轮换后新写入使用新 keyVersion，旧记录仍可用
+- [x] Disable：禁用 keyVersion 后受控使用失败并写审计
+- [x] Audit：keyring/secret 操作审计不泄露敏感内容
+- [x] 回归：相关 e2e/单测通过

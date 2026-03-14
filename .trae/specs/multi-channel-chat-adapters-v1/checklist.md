@@ -1,0 +1,13 @@
+- [x] webhook config 支持 providerConfig 并可查询列表（用于 Console 展示）
+- [x] Feishu 端到端接入可用：url_verification + event_callback→去重→映射→turn→回执/outbox
+- [x] Feishu 服务端直投递可用（调用发送消息 API），且不泄露凭据
+- [x] Console 新增渠道接入管理页（/gov/channels），可完成配置与映射并查看 deadletter
+- [x] e2e 覆盖：token 失败/去重/映射缺失 + 端到端 happy path
+- [x] 文档：Feishu 接入步骤与本地模拟方式
+- [x] 后续增强：适配器抽象与注册表 + Secret 引用 + 投递 backoff/重试策略
+- [x] DingTalk：入站验签/重放防护/去重 + 出站投递 + Console 配置与测试 + e2e
+- [x] 企业微信（WeCom）：入站验签/重放防护/去重 + 出站投递 + Console 配置与测试 + e2e
+- [x] Slack：入站签名校验/重放防护/去重 + 出站投递 + Console 配置与测试 + e2e
+- [x] Discord：入站签名校验/重放防护/去重 + 出站投递 + Console 配置与测试 + e2e
+- [x] QQ（OneBot 桥接）：入站验签/去重 + 出站投递 + Console 配置与测试 + e2e
+- [x] iMessage（桥接）：入站验签/去重 + 出站投递 + Console 配置与测试 + e2e

@@ -1,0 +1,7 @@
+- [x] DB：media_objects / media_derivatives / media_jobs 表与索引创建成功
+- [x] API：POST /media/objects 上传成功并返回 mediaRef
+- [x] API：GET /media/objects/:id/download 可下载且内容一致
+- [x] RBAC：tenant/space 隔离正确（跨 space 访问拒绝）
+- [x] Audit：upload/download/process 写入审计，且可按 traceId 检索
+- [x] Pipeline：POST /media/objects/:id/process 创建 job，worker 可流转到 succeeded/failed
+- [x] 测试通过：API e2e + worker 测试（或最小 e2e）

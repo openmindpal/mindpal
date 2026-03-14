@@ -1,0 +1,6 @@
+- [x] 迁移创建知识层表（documents/chunks/index_jobs/retrieval_logs）且可重复执行
+- [x] /knowledge/documents 可摄取并创建 index job，审计包含 documentRef
+- [x] worker 可将 index job 切片为 chunks 并更新状态，审计包含 chunkCount
+- [x] /knowledge/search 返回 evidence[] 与 retrievalLogId，且强制 tenant/space 过滤
+- [x] 审计记录 search 的查询摘要与引用列表（不记录不必要原文）
+- [x] e2e 覆盖摄取→索引→检索闭环与越权过滤

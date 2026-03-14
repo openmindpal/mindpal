@@ -1,0 +1,5 @@
+- [x] orchestrator_turns 新增 message_digest/tool_suggestions_digest 字段且兼容现有数据
+- [x] /orchestrator/turn 落库仅写 digest，不写原始 message/inputDraft
+- [x] /orchestrator/execute 绑定校验读取 digest，404/409 行为与 errorCode 稳定
+- [x] orchestrator:turn 与 orchestrator:execute 的审计 outputDigest 不含原文
+- [x] API tests 与 Web e2e 通过（含新增断言）

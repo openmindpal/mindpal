@@ -1,0 +1,7 @@
+- [x] PAT：可创建一次性 token（仅返回一次明文），落库仅保存哈希与元数据
+- [x] PAT：撤销立即生效，撤销后请求一律 401，且不泄露 token 是否存在
+- [x] PAT：token 绑定 space 时，请求上下文 space 不可被客户端 header 覆盖
+- [x] Token 管理：RBAC 生效，默认仅能列出/撤销自己的 token
+- [x] Sync.push：每个 op 强制执行 Schema 校验与字段类型检查，违规返回可解释 rejected/conflict
+- [x] Sync.push：每个 op 强制执行字段级写规则与 entity.create/entity.update 权限决策（含 rowFilters_write）
+- [x] 审计与 DLP：token/patch 明文不进入审计、日志或 outputDigest（仅摘要/计数/哈希）

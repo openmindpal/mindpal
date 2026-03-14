@@ -1,0 +1,8 @@
+- [x] PageTemplate 支持 entity.detail/entity.edit 且发布校验通过
+- [x] DataBinding 白名单支持 entities.get/entities.query（发布时拒绝非白名单 target）
+- [x] generate 默认 list 使用 entities.query，detail/edit 使用 entities.get
+- [x] /admin/ui 支持选择 schemaName/entityName 并触发生成
+- [x] /p/[page] 可渲染 list/detail/new/edit（字段类型组件 + writable 约束）
+- [x] list 支持基础筛选并可跳转 detail/edit
+- [x] e2e 覆盖：生成→发布→导航可见→list/detail/edit 可用
+- [x] README 补齐 UI 渲染运行时与 bindings 约束

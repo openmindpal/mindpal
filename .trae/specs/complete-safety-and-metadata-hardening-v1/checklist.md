@@ -1,0 +1,11 @@
+- [x] 安全规则以可版本化策略对象生效，且缺失时可回退默认配置
+- [x] model/tool/orchestrator/channel 四入口执行同一安全策略并返回统一 `ruleId` 摘要
+- [x] `audit_only` 模式仅脱敏不拒绝，`deny` 模式按 target 精确生效
+- [x] 审计 `safetySummary` 含 ruleId/target/decision，且不泄露 token/key 明文
+- [x] deprecated/移除窗口规则生效，不兼容字段变更被 gate 拦截
+- [x] 扩展命名空间校验生效，非法命名空间请求被拒绝
+- [x] Effective Schema 在同版本同快照请求可命中缓存
+- [x] active 切换或快照变化后，Effective Schema 缓存正确失效
+- [x] active/rollback 只能通过 changeset 管道执行，直改路径被拒绝
+- [x] e2e dlp 与 e2e prompt injection 用例通过
+- [x] e2e schema/effective 相关用例通过

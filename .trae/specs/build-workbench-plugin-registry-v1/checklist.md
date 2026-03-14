@@ -1,0 +1,8 @@
+- [x] 数据模型：存在 workbench 插件/版本/active/canary 的持久化与索引
+- [x] 安全边界：manifest capabilities 默认拒绝，越权声明被拒绝并返回稳定错误码
+- [x] 治理发布：changeset 支持 publish/rollback（含 rollbackData），preflight 输出只读摘要
+- [x] 灰度能力：canary 可按 subject allowlist 生效（或实现百分比灰度且决策稳定）
+- [x] 运行时隔离：Web 宿主以 iframe sandbox + CSP 禁止插件直接出站
+- [x] 受控桥接：插件只能通过消息桥访问数据/动作，且每次请求都做白名单校验与审计摘要
+- [x] 权限一致：workbench.view 控制入口；workbench 内数据权限不被扩大
+- [x] 回归测试：至少覆盖发布→加载→只读查询成功、以及越权能力被拒绝两条链路

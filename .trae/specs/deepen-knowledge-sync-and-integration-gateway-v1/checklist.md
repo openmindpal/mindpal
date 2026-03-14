@@ -1,0 +1,9 @@
+- [x] Evidence Chain：检索日志具备可追溯证据链字段集合且权限/脱敏符合最小泄露
+- [x] Evidence Chain：evidenceRef 解析可定位最小片段并可审计（越权拒绝）
+- [x] Knowledge Ops：证据链缺失率/越权剔除计数/阶段耗时指标可查询与展示
+- [x] Offline Sync：冲突分类扩展覆盖列表/集合/删除/复活等复杂场景
+- [x] Offline Sync：修复动作以 ops 追加表达，UI 支持半自动策略并可一键重试
+- [x] Sync Ops：冲突率、修复耗时、队列深度、失败分布指标可观测并可跳转排障
+- [x] Integration Gateway：Integration 模型与运行记录统一抽象落地（oauth/webhook/subscription 可追溯）
+- [x] Integrations Ops：治理面板提供健康度、运行记录、DLQ/回放入口（按 integrationId）
+- [x] 回归：新增 e2e 覆盖知识证据链、冲突修复与 Integration 运行记录闭环

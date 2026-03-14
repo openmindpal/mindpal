@@ -1,0 +1,9 @@
+- [x] API 提供 /tasks/:taskId/agent-runs 的创建能力并返回 runId/status
+- [x] API 提供 /tasks/:taskId/agent-runs/:runId 的读取能力并返回 taskState(plan/phase)
+- [x] 创建 Agent Run 时写入 memory_task_states（phase 至少为 created/planned 之一）
+- [x] 计划生成会把 plan 持久化到 memory_task_states.plan
+- [x] 执行循环按计划创建并推进 steps，并对 maxSteps/maxWallTimeMs 强制停机
+- [x] 遇到 approvalRequired 的步骤会进入 needs_approval 并停止推进
+- [x] cancel 能将 run 标记为 canceled 且后续步骤不再执行
+- [x] continue 能在 planned/running/审批已通过时从持久化状态恢复推进
+- [x] 关键动作（create/read/cancel/continue）写审计，且不包含敏感明文

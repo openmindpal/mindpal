@@ -1,0 +1,6 @@
+- [x] Replay Resolve API 存在且按三元组返回 matches（无/单/多匹配）
+- [x] Replay Resolve 调用写审计 `workflow:replay_resolve`，outputDigest 仅摘要
+- [x] 审批 approve 前校验 binding，一致才入队；不一致返回 409（APPROVAL_BINDING_MISMATCH）
+- [x] 审批不一致拒绝写审计 `approval:binding_mismatch`，且不改变执行终态
+- [x] 既有 `/runs/:runId/replay` 仍只读：不触发模型/外部系统调用
+- [x] API tests 通过（含新增用例）

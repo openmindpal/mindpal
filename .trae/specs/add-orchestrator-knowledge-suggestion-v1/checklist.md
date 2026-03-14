@@ -1,0 +1,4 @@
+- [x] /orchestrator/turn 在启用 knowledge.search 时会产出对应 toolSuggestion
+- [x] toolSuggestion 的 toolRef 指向 released 的 knowledge.search@* 且可被 execute
+- [x] toolSuggestion 的 inputDraft 通过 inputSchema 校验（至少 query/limit）
+- [x] knowledge.search 未启用或不存在版本时，不返回该建议

@@ -1,0 +1,8 @@
+- [x] substring 召回升级为 hybrid（embedding + 关键词）且支持 rerank
+- [x] retrieval log 记录 stageStats/rankPolicy/citedRefs，且不存 query 明文
+- [x] evidence 输出包含 rankReason 与 snippetDigest（不泄露不必要原文）
+- [x] embedding jobs 可批处理、可重试，并可在缺 embedding 时降级检索
+- [x] Connector→Knowledge 摄取作业幂等、批处理、具备 backpressure 观测
+- [x] Knowledge documents 支持 visibility/ownerSubjectId 并在 search 强制过滤
+- [x] e2e 覆盖：质量路径（embedding/rerank/证据链）与越权过滤
+- [x] 文档补齐：配置项、运行约束、性能/索引策略说明

@@ -1,0 +1,5 @@
+- [x] 已定义 explain 输出契约且包含 decision/matchedRules/fieldRules/rowFilters
+- [x] 已实现治理端 explain API 并完成权限与 scope 校验
+- [x] explain 输出脱敏，不包含明文敏感数据
+- [x] explain 行为写入审计（success/denied/not_found）
+- [x] e2e 覆盖成功与越权场景，且全量回归通过

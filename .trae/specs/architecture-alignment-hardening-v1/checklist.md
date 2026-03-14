@@ -1,0 +1,6 @@
+- [x] Web 不再硬编码默认 Authorization（无 token 时不发送默认 Bearer）
+- [x] Web 提供 token 配置与清除入口，401 有明确引导
+- [x] 生产环境不允许 API_MASTER_KEY 使用 dev fallback（行为明确且可验证）
+- [x] 生产环境默认拒绝动态 Skill（artifactRef）执行，拒绝可审计
+- [x] 动态 Skill 静态检查能阻断命中禁止项的包/入口
+- [x] Knowledge 检索返回 evidence/证据链字段稳定且包含排序摘要（无敏感内容）

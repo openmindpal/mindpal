@@ -1,0 +1,8 @@
+- [x] Run 列表页可加载并按 status/时间范围筛选
+- [x] Run 详情页展示 run 元数据与 steps 列表（含错误摘要字段）
+- [x] 进行中 run 在详情页自动刷新，finished 后停止刷新
+- [x] Cancel：queued/running 可取消，finished 取消被拒绝且返回 errorCode/traceId
+- [x] Retry：failed 可重试入队，非 failed 重试被拒绝且返回 errorCode/traceId
+- [x] Run/Step 的访问严格 tenant/space 隔离，跨 space 访问被拒绝并写审计
+- [x] Cancel/Retry/拒绝路径均写审计事件（仅摘要，不含敏感原文）
+- [x] Web 满足 i18n 与 check-no-zh（TS/TSX 无中文）

@@ -1,0 +1,7 @@
+- [x] Web 存在“对话/Chat”页面入口且页面可访问
+- [x] Chat 页面可调用 /orchestrator/turn 并追加 user/assistant 消息到对话流
+- [x] Chat 页面可展示 uiDirective 与 toolSuggestions（含风险/审批信息）
+- [x] Chat 页面可调用 /orchestrator/execute 并将 receipt/跳转链接写入对话流
+- [x] 错误展示包含 errorCode/message/traceId
+- [x] i18n keys 齐全，Web check-no-zh 通过
+- [x] Web 测试通过（含新增/更新 e2e）

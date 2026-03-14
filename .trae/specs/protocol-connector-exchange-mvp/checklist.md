@@ -1,0 +1,8 @@
+- [x] mail.exchange connector type 与 exchange_connector_configs 落地
+- [x] Exchange 配置接口可用且不泄露 OAuth 明文
+- [x] Subscription Runner 支持 provider=exchange 并正确推进 watermark
+- [x] 入站事件写入 channel_ingress_events 幂等去重生效
+- [x] 邮件内容/附件只存摘要且审计不泄露明文
+- [x] 失败场景写 subscription_runs 且退避生效（不回退水位）
+- [x] 回归覆盖：mock 拉取、幂等、跨租户/跨空间隔离
+- [x] README 补齐 Exchange connector 与 subscription 用法

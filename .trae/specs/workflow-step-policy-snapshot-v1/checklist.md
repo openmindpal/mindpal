@@ -1,0 +1,5 @@
+- [x] steps 表新增 policy_snapshot_ref 并完成迁移
+- [x] createJobRunStep 写入 steps.policy_snapshot_ref（tool.execute）
+- [x] listSteps/runs API 可返回 policySnapshotRef 且不破坏兼容
+- [x] API e2e 覆盖：DB 字段存在 + 返回结构包含该字段
+- [x] 全量回归：审批/回放/重执行/死信相关 tests 通过

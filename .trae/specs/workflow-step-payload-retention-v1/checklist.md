@@ -1,0 +1,5 @@
+- [x] 已提供 workflow.stepPayloadRetentionDays 配置读写且默认拒绝越权
+- [x] worker 定时清理过期 steps.*_encrypted_payload，保留摘要字段
+- [x] 清理行为写入审计 workflow.step.payload.purge（聚合）
+- [x] reveal 过期返回 STEP_PAYLOAD_EXPIRED，未过期可正常解密
+- [x] API/worker tests 通过且回放/审批/编排/死信回归通过

@@ -1,0 +1,7 @@
+- [x] notification_templates/notification_template_versions 表与 repo 落地
+- [x] 预览渲染按 locale 优先级与回退策略生效
+- [x] notification_outbox 表与 enqueue/list/cancel 落地
+- [x] 模板/版本/outbox 全链路写审计摘要且不泄露原文
+- [x] tenant/space 隔离生效（越权拒绝）
+- [x] e2e 覆盖：版本发布、预览回退、outbox enqueue/cancel
+- [x] README 补齐通知模板与 outbox 用法

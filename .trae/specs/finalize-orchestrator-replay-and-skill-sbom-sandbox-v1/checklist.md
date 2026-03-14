@@ -1,0 +1,11 @@
+- [x] runs/steps 具备 sealed 视图字段与 sealStatus（sealed/legacy）
+- [x] sealed digest 对非确定性字段变化保持稳定（规则可单测覆盖）
+- [x] replay 默认返回 sealed 摘要字段，并明确标注 sealStatus
+- [x] EvalCase 生成绑定 sealed digests 与 evidence digests，且不落库明文
+- [x] 检索发生时 evidenceRefs 强制必填；缺失时稳定拒绝并写审计
+- [x] Skill/Tool 发布可生成 SBOM 摘要与 sbomDigest，并在治理侧可读取
+- [x] SBOM gate 开启时缺失 SBOM 的 enable/execute 被拒绝（稳定错误码）
+- [x] 每次执行产出 isolation.level/enforced 并进入审计与回放可追溯
+- [x] isolation gate 可强制要求 container/remote；不满足拒绝且可解释
+- [x] preflight/pipeline 可解释展示 seal/evidence/sbom/isolation gate 状态与缺失项
+- [x] e2e 覆盖封存→回放→评测→准入闭环，以及 SBOM/隔离 gates

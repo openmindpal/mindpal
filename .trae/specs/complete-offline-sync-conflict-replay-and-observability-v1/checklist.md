@@ -1,0 +1,9 @@
+- [x] sync.push 输出包含 ConflictClass 且冲突字段结构稳定可解释
+- [x] sync.push 输出 mergeId/mergeDigest/mergeSummary 且 canonical transcript digest 可复现
+- [x] 可修复冲突会生成 repairTicketId，且 ticket 可 list/get/resolve
+- [x] resolve 会生成新的 mergeRun 并正确更新 ticket 状态
+- [x] merge run 支持 get/verify，verify 可返回 ok=true/false 与摘要差异
+- [x] 审计包含 mergeId/ticketId/traceId/requestId 等关联字段且不泄露敏感原文
+- [x] governance observability summary 返回 SLO 汇总与 topErrors，维度低基数
+- [x] Web 治理看板可展示 SLO、topErrors，并可跳转 audit drill-down
+- [x] e2e 覆盖：冲突分类、ticket 修复、回放验证、观测摘要

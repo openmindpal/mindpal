@@ -1,0 +1,4 @@
+- [x] token 下载响应包含水印/来源响应头，且审计 outputDigest 含 watermarkId/source
+- [x] （可选）bearer 下载响应包含水印/来源响应头，且审计 outputDigest 含 watermarkId/source
+- [x] 不改变 artifact body（不做内容内嵌水印）
+- [x] e2e/回归测试通过（api/worker/web）

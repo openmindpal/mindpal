@@ -1,0 +1,6 @@
+- [x] 生产环境动态 Skill 默认使用 container 或 remote（按策略）执行
+- [x] 配置为“禁止回退”时，container/remote 失败不会降级到 process
+- [x] Remote Runner 注册/启用/禁用/查询接口可用且有审计摘要
+- [x] 执行前签名信任校验读取治理化 trusted keys，并在失败时返回 TRUST_NOT_VERIFIED
+- [x] 扫描状态 gate 在 enable/release 与 execute 上不可绕过，失败返回 SCAN_NOT_PASSED
+- [x] networkPolicy 细粒度 rules（host/pathPrefix/methods）在三后端一致生效并生成 egressSummary

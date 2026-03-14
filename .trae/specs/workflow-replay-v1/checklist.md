@@ -1,0 +1,6 @@
+- [x] `GET /runs/:runId/replay` 输出 run/steps/timeline 且仅包含摘要字段
+- [x] 回放严格 tenant 隔离，未授权访问返回 403（稳定 errorCode）
+- [x] 回放操作写审计（workflow:run.replay），且不触发任何执行副作用
+- [x] e2e 覆盖 needs_approval→approve→queued 的回放 timeline
+- [x] e2e 覆盖 cancel 后回放包含 canceled
+- [x] README 补齐回放 API 示例

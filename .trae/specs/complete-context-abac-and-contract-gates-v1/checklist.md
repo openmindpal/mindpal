@@ -1,0 +1,7 @@
+- [x] Policy Contract V1：存在 policyRef/policyVersion 状态与迁移方案，并在 snapshot 中引用
+- [x] Contextual ABAC：授权评估支持 context 白名单字段，未知字段/操作符稳定拒绝
+- [x] Policy 编译缓存：cache key 绑定 policyRef + epoch，epoch bump 后不再命中旧缓存
+- [x] Explain Contract V1：decision/reasons/matchedRules/policyRef/epoch 字段结构稳定且脱敏
+- [x] Governance Gate：preflight 返回 contractCheck 摘要；release 在 fail 时拒绝并写审计
+- [x] 兼容检查覆盖：至少 policy 与 workflow 的 publish/release 具备兼容检查器
+- [x] 测试覆盖：单测覆盖表达式校验；e2e 覆盖发布 gate 与 epoch 生效链路

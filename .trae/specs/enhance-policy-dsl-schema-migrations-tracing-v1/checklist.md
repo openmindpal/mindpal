@@ -1,0 +1,7 @@
+- [x] Policy Expression DSL V1 有明确 JSON Schema、可校验且无代码执行面
+- [x] 解释器将表达式转为参数化 SQL，且对不支持/非法表达式返回 deny + snapshot reason
+- [x] RBAC 管理面支持模板化编辑 + 高级 JSON 编辑，并提供策略预检（可解释摘要）
+- [x] SchemaMigration/MigrationRun 资源与作业可创建/查询/取消，执行可恢复且写审计摘要
+- [x] schema changeset preflight/release 与迁移门槛联动：未迁移阻断发布，迁移成功放行
+- [x] OpenTelemetry 在 API/Worker 均可开关，开启后 HTTP→Queue→Worker span 连通
+- [x] 单测与 e2e 覆盖 DSL/迁移门槛/关键回归路径通过

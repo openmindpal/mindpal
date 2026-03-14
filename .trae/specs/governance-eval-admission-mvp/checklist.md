@@ -1,0 +1,7 @@
+- [x] EvalSuite/EvalRun/Changeset 绑定的数据表与索引齐备且迁移可重复执行
+- [x] EvalSuite API 可创建/更新/读取，并写审计
+- [x] EvalRun 可触发并产出 summary（仅摘要，不泄露敏感原文）
+- [x] changeset preflight 输出评测准入信息与 warnings
+- [x] 高风险 changeset release 未通过评测时拒绝并返回稳定错误码
+- [x] e2e 覆盖：未通过评测拒绝发布、通过后允许发布（含 canary）
+- [x] README 补齐评测准入的使用方式

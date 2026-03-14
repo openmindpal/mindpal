@@ -1,0 +1,6 @@
+- [x] changeset preflight 输出 gates 列表（含 eval admission 等），且 preflight 只读并写审计摘要（governance.ts）
+- [x] release 强制执行门禁：eval 未通过时稳定拒绝并写审计摘要（governance.ts）
+- [x] canary→promote→rollback 全流程可复现，且每步均有审计记录（017_governance_canary_preflight.sql + governance.ts）
+- [x] changeset 绑定 eval_suites 后可实际跑 eval_runs 并产出报告摘要（不泄露敏感原文）
+- [x] eval_runs 按阈值判定 pass/fail，并回写/影响 release gate 决策
+- [x] 回归：API e2e 覆盖 preflight gates、eval gate 拒绝/放行、canary/promote/rollback 与审计摘要

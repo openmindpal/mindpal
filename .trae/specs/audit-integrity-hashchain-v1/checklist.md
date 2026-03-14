@@ -1,0 +1,7 @@
+- [x] audit_events 禁止 UPDATE/DELETE（DB 触发器生效）
+- [x] audit_events 写入 prev_hash/event_hash 且可验证
+- [x] 并发写入同 tenant 时链顺序仍可验证
+- [x] `GET /audit/verify` 可按时间窗校验并返回可定位 failures
+- [x] verify 操作本身写审计（resourceType=audit, action=verify）
+- [x] e2e 覆盖：verify 通过 + 更新/删除被拒绝
+- [x] README 补齐审计完整性与 verify 用法

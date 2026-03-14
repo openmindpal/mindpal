@@ -1,0 +1,5 @@
+- [x] `apps/worker/src/workflow/processor.ts` 仍只导出 `processStep`，签名不变
+- [x] 拆分后的模块边界覆盖：job handlers / 内置工具分发 / dynamic skill runner / policy+limits / 审计+加密
+- [x] `skillSandboxChild.ts` 的 egress/policy 逻辑与主进程一致（如进行了复用/抽离）
+- [x] Worker 构建通过：`npm run build -w @openslin/worker`
+- [x] Worker 测试通过：`npm run test -w @openslin/worker`

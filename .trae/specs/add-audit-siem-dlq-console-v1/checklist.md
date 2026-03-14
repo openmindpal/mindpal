@@ -1,0 +1,4 @@
+- [x] DLQ list/clear/requeue API 可用且写入审计
+- [x] RBAC permissions（siem.dlq.read/write）可分配且 seed 默认绑定 admin
+- [x] /gov/audit 提供 DLQ 可视化入口，不泄露任何 secret 明文
+- [x] WEB_E2E 与回归测试通过（api/worker/web）

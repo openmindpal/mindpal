@@ -1,0 +1,6 @@
+- [x] Runtime Contract（ExecutionRequest/ExecutionResult）在 worker 执行链路生效
+- [x] timeoutMs 超时终止生效且 errorCategory=timeout，可审计
+- [x] tenantId+toolRef 并发限制生效且可观测/可审计
+- [x] 默认拒绝出站生效，allowedDomains 白名单可放行
+- [x] outputDigest/审计包含 latencyMs 与 egressSummary（最小摘要）
+- [x] 回归测试覆盖 timeout/并发/出站治理与审计字段

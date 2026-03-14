@@ -1,0 +1,4 @@
+- [x] orchestrator.execute 使用 opDecision.snapshotRef 作为 policySnapshotRef
+- [x] step.input.toolContract 包含 fieldRules/rowFilters（与 tools.execute 一致）
+- [x] needs_approval 审计 workflow:approval.requested 使用 opDecision
+- [x] e2e/回归测试通过

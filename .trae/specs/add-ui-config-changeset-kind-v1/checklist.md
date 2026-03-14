@@ -1,0 +1,5 @@
+- [x] changeset items 支持 ui.page.publish/ui.page.rollback
+- [x] preflight 输出 UI 配置影响面摘要且不泄露 page.ui/layout 原文
+- [x] release 能发布 draft/回滚上一版本并记录 rollbackData
+- [x] changeset rollback 能恢复到发布前页面配置状态
+- [x] e2e 覆盖 publish/rollback changeset 全链路

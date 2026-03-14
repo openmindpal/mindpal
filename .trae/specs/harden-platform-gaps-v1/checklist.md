@@ -1,0 +1,10 @@
+- [x] /models/chat 支持多候选降级，outputDigest.attempts 摘要稳定且无敏感内容
+- [x] 模型熔断生效：open 状态会跳过候选并记录 reason=circuit_open
+- [x] 模型用量归集落库且 /governance/models/usage 可按范围聚合查询
+- [x] 动态 Skill 包信任策略在生产环境默认拒绝未受信包，并写可解释审计摘要
+- [x] 动态 Skill 在子进程沙箱执行：超时/并发/出站治理语义与现有一致
+- [x] /metrics 新增 worker/队列/tool/model 指标且不引入高基数标签
+- [x] /healthz 返回 DB/Redis 连通性与版本信息且不泄露敏感配置
+- [x] /diagnostics 需要权限且仅返回排障摘要（队列/错误/熔断统计）
+- [x] 运维 CLI 可执行只读/幂等命令且不输出敏感信息
+- [x] ABAC Row Filters V2 支持两种新表达并在 get/list/query/export 与工具链路强制生效

@@ -1,0 +1,4 @@
+- [x] /gov/artifact-policy 页面可配置并保存 ArtifactPolicy（space/tenant）
+- [x] 左侧治理导航出现 Artifact Policy 入口，i18n 文案齐全
+- [x] 404（未配置策略）提示清晰且可直接保存创建
+- [x] WEB_E2E smoke 覆盖并回归通过

@@ -1,0 +1,6 @@
+- [x] Connector/Secret 迁移可在空库与已有库上重复运行
+- [x] ConnectorType/ConnectorInstance API 可创建/禁用/查询并写审计
+- [x] SecretRecord 可创建（加密存储）/撤销/查询，且响应不包含明文
+- [x] 任意路径禁止读取 Secret 明文（稳定 errorCode + 审计）
+- [x] allowedDomains 与运行时 networkPolicy 语义对齐（MVP：host 白名单）
+- [x] 回归测试覆盖连接器/密钥的创建、撤销、拒绝读取明文与审计落库

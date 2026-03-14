@@ -1,0 +1,4 @@
+- [x] API test 在出站前强制校验 allowedDomains，拒绝时返回结构化错误并写审计
+- [x] Worker 投递在出站前强制校验 allowedDomains，拒绝时不发送请求并写 policy_violation 审计
+- [x] siem.delivery outputDigest 包含 egressSummary 与 egressPolicySnapshot
+- [x] 回归测试通过（api/worker/web）

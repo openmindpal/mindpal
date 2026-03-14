@@ -1,0 +1,5 @@
+- [x] OPTIONS 预检返回 2xx 且包含 Access-Control-Allow-* 头
+- [x] PUT /settings/ui-mode 跨域请求成功且返回 Access-Control-Allow-Origin
+- [x] 允许 Origin 列表可配置，默认仅允许本地 Web Origin
+- [x] 未允许 Origin 不返回 Access-Control-Allow-Origin（不放开到任意来源）
+- [x] 回归：Web 模式切换无 “Failed to fetch / CORS” 报错

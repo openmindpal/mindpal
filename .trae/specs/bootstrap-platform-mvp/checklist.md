@@ -1,0 +1,13 @@
+- [x] 统一请求链路在 API 层被强制执行（鉴权→校验→授权→执行→审计）
+- [x] 平台支持多语言且默认中文（user>space>tenant>platform，platform=zh-CN）
+- [x] 授权拒绝可解释（稳定 errorCode + 拒绝原因/命中摘要）且写入审计
+- [x] Schema Registry 支持版本化获取与发布（含基础兼容性检查）
+- [x] Effective Schema 基于字段规则生成，前端仅消费该视图
+- [x] 数据平面通用 CRUD 按 Schema 强校验并执行字段级裁剪
+- [x] 写操作支持幂等键去重，重复提交不产生重复副作用
+- [x] 审计域为 append-only，且成功/拒绝/失败均产生审计事件
+- [x] 审计事件包含最小字段集合（subject、tenant/space、resource/action、traceId、idempotencyKey 等）
+- [x] 高风险写意图可进入 Workflow/Queue 执行，Run/Step/attempt 过程可审计
+- [x] 工具执行禁止旁路直连数据库，必须通过受控接口并再次执行授权与裁剪
+- [x] Web/UI MVP 可基于 Schema + Effective Schema 生成列表/详情/表单并完成一次写入闭环
+- [x] 提供端到端最小回归用例覆盖：拒绝、裁剪、幂等、审计落库、队列执行

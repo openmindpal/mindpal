@@ -1,0 +1,5 @@
+- [x] changeset 支持 schema.publish/schema.set_active/schema.rollback 三类动作
+- [x] preflight 输出 schema 影响面摘要且不泄露 schema 原文
+- [x] release 应用 schema 变更并写审计摘要，失败可回滚 active 指针
+- [x] rollback 可恢复到 release 前的 active 状态
+- [x] e2e 覆盖 publish/set-active/rollback changeset 全链路

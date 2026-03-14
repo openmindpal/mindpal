@@ -1,0 +1,7 @@
+- [x] device_executions 表与 repo 落地（含 claim/cancel/result 状态机）
+- [x] `POST /device-executions` 校验 toolRef 已发布且写审计摘要
+- [x] `GET /device-executions*` 管理侧可查询状态与结果摘要
+- [x] 设备侧 pending/claim/result 可用且只允许本 device
+- [x] DevicePolicy.allowedTools 与 space/tenant 隔离生效（越权拒绝）
+- [x] e2e 覆盖 success 链路与拒绝链路
+- [x] README 补齐 Device Execution V1 用法与约束

@@ -1,0 +1,9 @@
+- [x] approvals/approval_decisions 表与 repo 落地
+- [x] 待办列表 `GET /approvals?status=pending` 可用且隔离正确
+- [x] 详情 `GET /approvals/:approvalId` 返回 run/steps 摘要
+- [x] 决策 `POST /approvals/:approvalId/decisions` 支持 approve/reject 且不可重复
+- [x] approve 会推进执行并复用 inputDigest/policySnapshotRef/idempotencyKey
+- [x] reject 会终止执行且后续 step 不会跑
+- [x] 审计覆盖 approval.requested/approval.decided/run.enqueued（仅摘要）
+- [x] e2e 覆盖 approve/reject 两条路径
+- [x] README 补齐审批 API 示例与权限要求

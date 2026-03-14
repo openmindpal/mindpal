@@ -1,0 +1,7 @@
+- [x] list 支持 nextCursor 分页并符合 cursor/orderBy 约束
+- [x] list 支持增强筛选（string/number range/boolean/datetime）
+- [x] list 列展示稳定（优先 select，其次 schema 顺序/白名单）
+- [x] detail 使用 i18n displayName 标签并格式化 json/datetime
+- [x] new/edit 支持 required 校验与 json 解析错误提示（不崩溃）
+- [x] e2e 覆盖 list 分页/筛选 与表单稳定性
+- [x] README 补齐 cursor/orderBy 限制与 UI 行为

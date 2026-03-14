@@ -1,0 +1,7 @@
+- [x] 定义 Query DSL（filters/orderBy/select/cursor）并完成字段/类型校验
+- [x] 查询仅允许可读字段用于过滤/排序/投影（fieldRules.read）
+- [x] queryRecords 使用参数化 SQL 且支持 updatedAt+id 游标分页
+- [x] `POST /entities/:entity/query` 返回 payload 裁剪后的 items 与 nextCursor
+- [x] 审计写入查询摘要（entity、filtersDigest、order、limit、cursor）
+- [x] e2e 覆盖：成功路径与拒绝路径（不可读/非法字段/类型不匹配）
+- [x] README 补齐 query API 示例

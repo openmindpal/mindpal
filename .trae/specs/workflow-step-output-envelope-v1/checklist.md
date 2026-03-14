@@ -1,0 +1,4 @@
+- [x] steps 表新增出参加密字段并完成迁移
+- [x] tool.execute step 的完整 output 以 envelope.v1 加密存储
+- [x] steps.output 仅保留安全展示字段且不含敏感明文
+- [x] worker tests 通过且回放/审批/编排回归通过

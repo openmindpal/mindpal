@@ -1,0 +1,5 @@
+- [x] 已实现 prompt injection 检测函数（hits/score）且覆盖高危规则
+- [x] /orchestrator/turn 写入 safetySummary.promptInjection 审计摘要
+- [x] /orchestrator/execute 在 deny 模式可拒绝高危输入并返回稳定 errorCode
+- [x] /tools/:toolRef/execute 在 deny 模式可拒绝高危输入并返回稳定 errorCode
+- [x] e2e 覆盖 audit_only/deny 两种模式且回归通过

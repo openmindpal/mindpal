@@ -1,0 +1,5 @@
+- [x] 已新增 artifact_download_tokens 表与 repo（hash 存储、次数消费原子性）
+- [x] 已实现签发接口 /artifacts/:artifactId/download-token（审计不含明文 token）
+- [x] 已实现 token 下载 /artifacts/download?token=...（过期/用尽/撤销拒绝）
+- [x] 治理审计页面下载入口使用 token 签发再下载
+- [x] e2e/回归测试通过（api/worker/web）

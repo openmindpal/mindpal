@@ -1,0 +1,5 @@
+- [x] Schema active 指针表已落库，且 tenant+name 唯一
+- [x] /schemas/:name/latest 使用 active（支持可选 space override）
+- [x] 提供治理接口 set-active 与 rollback，均做权限校验并写审计
+- [x] 数据写入校验使用 active schema（切换 active 会影响校验结果）
+- [x] e2e 覆盖 set-active、rollback 与写入校验随 active 变化

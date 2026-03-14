@@ -1,0 +1,9 @@
+- [x] Orchestrator closed-loop 具备明确 phase 与 stepStatus，返回的 execution 摘要稳定可解析
+- [x] /orchestrator/closed-loop/continue 可从中断状态恢复推进并进入 reviewing 或终态
+- [x] 错误恢复策略生效：policy_violation 不自动重试，upstream/transient 可被标记为 retryable
+- [x] 提供最小恢复动作（retry/skip/stop）且均写审计摘要
+- [x] constraints.allowedTools 等约束在计划与执行阶段都被强制执行
+- [x] /replay/resolve 可基于闭环生成的步骤信息定位历史执行（policySnapshotRef/toolRef/inputDigest）
+- [x] /models/catalog 保持原 catalog 字段不变，并新增 openai_compatible 模板字段
+- [x] /models/chat 遇到未实现 provider 的候选会记录 attempts=skipped 并继续尝试其他候选
+- [x] 新增/修改关键路径不记录敏感明文（仅 digest/摘要）

@@ -1,0 +1,9 @@
+- [x] tool_definitions 新字段落库且 publish/列表/详情对齐
+- [x] 执行入口与 orchestrator 使用 effective toolRef（override→active→latest）
+- [x] rollout 未启用时拒绝执行并写审计
+- [x] scope=write 且要求幂等时强制 idempotency-key
+- [x] approvalRequired/riskLevel=high 进入 needs_approval 且 worker 不执行
+- [x] approve/reject API 可驱动 run 状态迁移并写审计
+- [x] outputSchema 校验与输出裁剪生效（失败分类一致）
+- [x] e2e 覆盖：幂等缺失拒绝、需审批闭环、治理拒绝
+- [x] README 补齐 Tool Contract V1 与 receipt 示例

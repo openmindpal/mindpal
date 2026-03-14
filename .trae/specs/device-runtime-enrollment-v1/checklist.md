@@ -1,0 +1,7 @@
+- [x] device_records/device_pairings/device_policies 迁移与 repo 落地
+- [x] 管理侧 /devices API 可创建/查询/生成配对码/撤销/更新 policy
+- [x] 设备侧 /device-agent/pair 可 claim 且返回 deviceToken（只返回一次）
+- [x] 设备侧 /device-agent/heartbeat 更新 lastSeenAt 且审计摘要正确
+- [x] 配对码与 deviceToken 均只存 hash，不落明文；审计不泄露明文
+- [x] e2e 覆盖成功链路与过期/重复使用/越权拒绝
+- [x] README 补齐 Device Runtime Enrollment V1 用法与安全约束
