@@ -1,8 +1,0 @@
-- [x] DB 存在 routing_policies / quota_limits / tool_limits，且具备必要唯一索引
-- [x] 治理 API：可 list/upsert/disable routing policies，写审计且鉴权正确
-- [x] 治理 API：可读写 modelChatRpm 与 toolRef defaultMaxConcurrency，写审计且鉴权正确
-- [x] /models/chat：按 purpose 命中 routing policy，失败触发 fallback 并记录审计摘要
-- [x] /models/chat：RPM 优先读 DB 配置，回退 env，超限返回 RATE_LIMITED
-- [x] Web：/gov/routing 与 /gov/quotas 在治理模式可见且可操作
-- [x] 文案全部走 locales keys，TS/TSX 满足 check-no-zh
-- [x] API/Web 测试通过（含新增 e2e）

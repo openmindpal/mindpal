@@ -1,7 +1,0 @@
-- [x] apps/device-agent 可构建与运行，配置文件可读写且不泄露 token
-- [x] pairing：可用 pairingCode 成功换取 deviceToken 并落盘
-- [x] heartbeat：run 模式可定时上报，撤销后可检测并停止
-- [x] execution：pending/claim/result 全链路可跑通（含 requireUserPresence 本机确认）
-- [x] 执行器：noop/echo 可用且回传仅摘要
-- [x] 集成测试覆盖 pair/heartbeat/execution 成功与拒绝链路
-- [x] README 补齐端侧使用说明与安全约束

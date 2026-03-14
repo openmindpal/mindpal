@@ -1,5 +1,0 @@
-- [x] locale 解析按 user>space>tenant>platform>zh-CN 闭环生效
-- [x] `GET /me/preferences` 返回当前 subject 的 locale 偏好
-- [x] `PUT /me/preferences` 更新 locale 且写审计（仅摘要）
-- [x] e2e 覆盖 user pref 生效与 header 覆盖
-- [x] README 补齐语言优先级与 /me/preferences 示例

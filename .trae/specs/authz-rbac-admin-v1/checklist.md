@@ -1,6 +1,0 @@
-- [x] policy_snapshots 表与 repo 落地，snapshotRef 可查询
-- [x] authorize() 返回 snapshotRef，且 deny/allow 都会写入 snapshot
-- [x] Role/Permission/RolePermission/RoleBinding 管理 API 可用且鉴权
-- [x] RBAC 变更写审计（rbac:*），不泄露敏感原文
-- [x] e2e 覆盖：授权放行/拒绝与 snapshot 可追溯
-- [x] README 补齐 RBAC 管理 API 示例

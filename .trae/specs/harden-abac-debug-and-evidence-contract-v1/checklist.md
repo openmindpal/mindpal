@@ -1,8 +1,0 @@
-- [x] 治理端存在 `POST /governance/policy/debug/evaluate` 且输出满足 spec
-- [x] 调试评估会生成可解释的 policySnapshotId，并可被 explain API 读取
-- [x] 引入 policyCacheEpoch 并在 RBAC/ABAC 变更时自动失效缓存
-- [x] 存在治理端手动失效 API，写审计且要求提供 reason
-- [x] changeset 支持 `policy.cache.invalidate`，preflight/rollbackPreview/release 行为符合 spec
-- [x] 运行时对“使用检索的回答”强制 evidencePolicy=required，缺失证据会失败
-- [x] 满足/拒绝证据链契约都会写审计，并可关联 runId/stepId/traceId
-- [x] e2e 覆盖策略调试、epoch 失效、证据链强约束三条关键链路

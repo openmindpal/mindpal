@@ -1,7 +1,0 @@
-- [x] TriggerDefinition/TriggerRun 模型完整，支持 Cron 与 Event 且具备去重策略
-- [x] Cron Trigger 能稳定计算 nextFireAt，misfire 与并发护栏可验证
-- [x] Event Trigger 支持至少两类事件源，并能解释命中/未命中原因摘要
-- [x] Trigger 治理 API 具备权限/隔离/预检/配额/审计，且不泄露敏感 payload
-- [x] 执行中心可视化 step 是否可补偿、补偿状态与历史，并可受控触发补偿
-- [x] 人机协作时间线标准件可展示 role/intent/correlation 与 evidenceRefs，并支持 handoff
-- [x] 单测与 e2e 覆盖触发/去重/可解释性/补偿可视化/协作可追溯关键路径

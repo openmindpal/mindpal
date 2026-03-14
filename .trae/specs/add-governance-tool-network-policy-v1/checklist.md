@@ -1,5 +1,0 @@
-- [x] 已新增 tool_network_policies 表与 repo（get/upsert/list）
-- [x] 已实现治理 API（GET/PUT 单条 + GET 列表）并接入权限与审计摘要
-- [x] tools.execute 与 orchestrator.execute 已忽略客户端 networkPolicy，并使用治理配置注入 step.input
-- [x] 执行链路 outputDigest 含 runtimePolicy.networkPolicyDigest（仅摘要）
-- [x] e2e 覆盖默认拒绝/治理放行/客户端绕过无效，且回归通过

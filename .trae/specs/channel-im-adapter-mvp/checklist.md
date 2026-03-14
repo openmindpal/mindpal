@@ -1,7 +1,0 @@
-- [x] channel_outbox_messages 迁移可重复执行且索引齐备
-- [x] Mock IM ingress 支持 message/command/callback，并写审计
-- [x] 入站幂等去重：重复投递不重复触发且 correlation 一致
-- [x] outbox poll/ack 可拉取并确认回执
-- [x] cancel 可产生 canceled 回执并写审计
-- [x] e2e 覆盖：入站→回执→去重→撤销
-- [x] README 补齐 Mock IM 使用说明

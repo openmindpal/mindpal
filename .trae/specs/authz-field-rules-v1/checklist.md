@@ -1,5 +1,0 @@
-- [x] permissions 支持 field_rules_read/field_rules_write 且可被管理
-- [x] authorize 合并规则并在 policy snapshot/decision 中输出 fieldRules
-- [x] effective schema 按 fieldRules 裁剪字段并标记 writable
-- [x] entities read 裁剪不可读字段；entities write 拒绝不可写字段（明确错误码）
-- [x] RBAC/effective schema/e2e 回归测试通过且不破坏现有链路

@@ -1,6 +1,0 @@
-- [x] mail.smtp connector type 与 smtp_connector_configs 落地
-- [x] outbox 支持投递状态机（attempt/backoff/deadletter）且邮件内容不进审计
-- [x] worker delivery 可互斥领取、重试退避、成功 sent、超阈值 deadletter
-- [x] 治理接口支持查询/手动 retry/cancel 且写审计摘要
-- [x] e2e 覆盖成功链路与失败→deadletter→手动 retry
-- [x] README 补齐 SMTP connector 与 outbox delivery 用法

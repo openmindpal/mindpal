@@ -1,6 +1,0 @@
-- [x] ChangeSet item.kind 支持 model_routing/model_limits/tool_limits 且 payload 校验完整
-- [x] Preflight 输出 plan/currentStateDigest/rollbackPreview，且不包含敏感信息
-- [x] Release 支持新 kind，rollback 可恢复到发布前（幂等）
-- [x] Canary 模式限制：含新 kind 时 preflight 有 warnings，release 拒绝
-- [x] Web changeset detail 可添加新 kind 且 i18n 完整（TS/TSX 通过 check-no-zh）
-- [x] API/Web 测试通过（含新增 e2e）

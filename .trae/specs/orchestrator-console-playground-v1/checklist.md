@@ -1,6 +1,0 @@
-- [x] 控制台存在 Orchestrator 导航入口与页面可访问
-- [x] 页面可调用 /orchestrator/turn 并渲染 replyText/uiDirective/toolSuggestions
-- [x] 页面可调用 /orchestrator/execute 并展示 queued/needs_approval 回执与跳转
-- [x] 错误展示包含 errorCode/message/traceId
-- [x] i18n keys 齐全，Web check-no-zh 通过
-- [x] Web 测试通过（含新增 e2e）

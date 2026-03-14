@@ -1,6 +1,0 @@
-- [x] 写入类工具执行前必须获取 write lease
-- [x] busy 时不执行写入，返回 retryable:write_lease_busy 与 backoffMs
-- [x] success/error 路径均释放租约；异常退出依赖 TTL 回收
-- [x] resourceRef 计算符合 MVP 约定（entity.* 与 memory.write）
-- [x] busy/异常事件写审计摘要且不包含敏感原文
-- [x] worker 回归测试覆盖并发互斥与 TTL 回收

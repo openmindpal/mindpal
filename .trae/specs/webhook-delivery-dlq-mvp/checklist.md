@@ -1,6 +1,0 @@
-- [x] channel_ingress_events 支持 attempt/nextAttemptAt/deadletter 状态机
-- [x] WebhookConfig 支持 deliveryMode=async 且入口回执正确
-- [x] delivery worker 可重试、退避并在阈值后进入 deadletter
-- [x] DLQ 查询与手动 retry 可用且有审计摘要
-- [x] e2e 覆盖 async 成功链路与失败→deadletter→手动 retry
-- [x] README 补齐 async/DLQ 使用与运维说明

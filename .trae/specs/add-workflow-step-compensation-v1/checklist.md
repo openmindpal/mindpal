@@ -1,5 +1,0 @@
-- [x] 已为 steps 增加补偿信息存储且保持向后兼容
-- [x] worker 可捕获 undoToken 并持久化，steps.output 不泄露敏感字段
-- [x] 已提供治理端补偿接口并接入 workflow.step.compensate 权限与 scope 校验
-- [x] 补偿行为写审计 workflow.step.compensate 且不包含明文 payload
-- [x] API/worker tests 通过且审批/回放/重执行/死信回归通过

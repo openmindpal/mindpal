@@ -1,5 +1,0 @@
-- [x] `zh-CN.json` 已移除 “交互模式/简易模式/治理模式”相关 key
-- [x] `en-US.json` 已移除对应模式相关 key
-- [x] 代码中不存在对被移除 key 的引用
-- [x] Web lint 通过
-- [x] Web e2e-console-mode 通过

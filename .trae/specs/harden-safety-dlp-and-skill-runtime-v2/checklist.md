@@ -1,6 +1,0 @@
-- [x] Safety Gate 的 target/处置模式/safetySummary 契约清晰且稳定
-- [x] tool/orchestrator/model/connector/channel 等关键路径均接入 Safety Gate
-- [x] 外发最小化规则对 connector:egress 与 channel:send 生效（脱敏或拒绝）
-- [x] 扫描摘要生成与门槛校验生效（阻断级规则可拒绝执行）
-- [x] Runtime 资源配额（maxOutputBytes/maxEgressRequests）强制执行并可审计
-- [x] 禁用/回滚阻断新执行且审计/错误码符合 spec

@@ -1,3 +1,0 @@
-- [x] seed 后 admin 默认拥有 audit/verify 权限
-- [x] /gov/audit 可执行审计完整性校验并展示结果摘要
-- [x] WEB_E2E 与回归测试通过（api/web）

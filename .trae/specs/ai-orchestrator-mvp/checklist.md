@@ -1,5 +1,0 @@
-- [x] /orchestrator/turn 返回结构化回执（replyText/toolSuggestions/uiDirective）
-- [x] toolSuggestions 仅包含已发布 toolRef，且 inputDraft 通过最小契约校验
-- [x] uiDirective 为建议性指令，openView/viewParams 可映射到已发布页面（白名单约束）
-- [x] Orchestrator 调用全过程写审计（resourceType=orchestrator, action=turn）
-- [x] 回归测试覆盖：建议生成、非法建议过滤、审计落库

@@ -1,9 +1,0 @@
-- [x] artifacts 表与 repo 落地，可按 tenant/space 查询与读取
-- [x] `GET /artifacts/:artifactId/download` 完成鉴权、作用域校验与 DLP
-- [x] `POST /entities/:entity/export` 创建 run/step，worker 可生成 export artifact
-- [x] 导出内容按 fieldRules.read 做字段级裁剪（不泄露不可读字段）
-- [x] `POST /entities/:entity/import` 支持 dry_run 与 commit（commit 需要幂等键）
-- [x] 导入写入按 schema 校验与 fieldRules.write 强制执行
-- [x] import/export 全链路写审计（仅摘要，不含原文数据）
-- [x] e2e 覆盖：导出下载、导入预检、导入提交产出报告
-- [x] README 补齐 Bulk IO 的 API 示例与限制

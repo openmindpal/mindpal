@@ -1,8 +1,0 @@
-- [x] tool_versions 支持 artifactRef/depsDigest 且可查询
-- [x] publish 支持绑定包并校验 manifest/契约一致性
-- [x] worker 仅从 allowlist roots 加载本地包（拒绝非白名单与网络 URL）
-- [x] worker 对 depsDigest 不匹配与路径不存在做 policy_violation 拒绝
-- [x] 动态包执行输出通过 outputSchema 校验与裁剪
-- [x] 内置工具执行路径不受影响
-- [x] e2e 覆盖：绑定包→治理启用→执行成功
-- [x] README 补齐 Skill 包格式与本地开发/发布流程

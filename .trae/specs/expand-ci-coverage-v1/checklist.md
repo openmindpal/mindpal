@@ -1,9 +1,0 @@
-- [x] CI 在 push/PR 时仍执行 secret-scan
-- [x] CI 在 push/PR 时执行全仓 build（npm -ws run build --if-present）
-- [x] CI 在 push/PR 时执行 apps/api tests
-- [x] CI 在 push/PR 时执行 apps/worker tests
-- [x] CI 在 push/PR 时执行 apps/device-agent tests
-- [x] CI 在 push/PR 时执行 apps/web build（必要时包含 lint）
-- [x] CI 在 push/PR 时执行 packages/shared build
-- [x] Web E2E job 默认不跑，但支持 workflow_dispatch/schedule 显式触发
-- [x] 显式触发 Web E2E 时：能拉起 API/Web 并运行 WEB_E2E=1 的 web test

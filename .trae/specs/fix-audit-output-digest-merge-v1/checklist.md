@@ -1,3 +1,0 @@
-- [x] audit 插件不再覆盖业务 outputDigest，并正确补充 length
-- [x] e2e 覆盖 output_digest 不丢失关键摘要（artifactId/tokenId）
-- [x] 回归测试通过（api/worker/web）

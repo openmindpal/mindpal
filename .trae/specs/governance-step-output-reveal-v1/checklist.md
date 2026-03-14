@@ -1,4 +1,0 @@
-- [x] 已新增 workflow.step.output.reveal 权限并默认拒绝
-- [x] 已实现治理 API reveal：仅对 envelope.v1 出参可解密返回
-- [x] reveal 行为写审计且不泄露敏感 output 到日志/普通摘要
-- [x] API e2e 覆盖成功/拒绝/未加密三类场景并通过回归

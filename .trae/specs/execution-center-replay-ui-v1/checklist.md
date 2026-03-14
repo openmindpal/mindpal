@@ -1,6 +1,0 @@
-- [x] Run 详情页存在回放（Replay）区块，且不影响既有 run/steps 展示
-- [x] 点击“加载回放”后可看到 timeline 事件列表（至少显示 timestamp/eventType）
-- [x] 回放加载失败时可看到可诊断错误信息（errorCode/message/traceId 或等价字段）
-- [x] 回放区块提供“查看审计”入口或 traceId 可复制用于审计查询
-- [x] locales 补齐（zh-CN/en-US），并通过 Web `check-no-zh` 与 `eslint`
-- [x] Web e2e-console-mode 覆盖执行中心与回放区块并通过

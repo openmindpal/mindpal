@@ -1,8 +1,0 @@
-- [x] /admin/rbac 页面可访问且仅治理权限可用
-- [x] Role：可创建、可列表、可查看详情
-- [x] Permission：可列表并支持过滤
-- [x] RolePermission：可 grant/revoke
-- [x] RoleBinding：可 create/delete，并显示 bindingId
-- [x] 错误展示包含 errorCode/message/traceId
-- [x] e2e 覆盖 RBAC UI 主流程
-- [x] README 补齐 /admin/rbac 使用说明

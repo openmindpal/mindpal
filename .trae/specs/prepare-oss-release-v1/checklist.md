@@ -1,4 +1,0 @@
-- [x] 根目录包含 LICENSE/CONTRIBUTING/CODE_OF_CONDUCT/SECURITY
-- [x] README 补全架构索引与默认安全边界提示
-- [x] CI 工作流可在无 secret 环境下跑通
-- [x] CI 包含最小敏感信息检查并默认阻断

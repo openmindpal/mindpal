@@ -1,7 +1,0 @@
-- [x] subscriptions/subscription_runs 表与 repo 落地（含 watermark）
-- [x] /subscriptions API 可创建/查询/启用/停用且写审计摘要
-- [x] worker poller 可按 interval 拉取并写入 ingress_events（或等价）
-- [x] 单订阅并发限制与失败退避生效
-- [x] tenant/space 隔离生效（越权拒绝）
-- [x] e2e 覆盖：poll 产生事件 + watermark 推进 + 幂等
-- [x] README 补齐订阅运行器用法与运维说明

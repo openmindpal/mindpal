@@ -1,6 +1,0 @@
-- [x] 写入单主：并发写冲突被仲裁并返回 409（稳定错误码），且 violation 事件/审计摘要可追溯
-- [x] Envelope 可观测：collab_envelopes 落表且具备 correlation（taskId/runId/stepId）与摘要字段
-- [x] Envelope 串联：可按 correlationId 串联 envelopes/events/diagnostics 用于回放
-- [x] 最小共享：跨代理传递仅 ref/digest，不泄露敏感 payload（e2e 抽样断言）
-- [x] 审计脱敏：audit_events.output_digest 抽样不泄露敏感 payload（e2e 抽样断言）
-- [x] 回归：api/worker/web 测试通过

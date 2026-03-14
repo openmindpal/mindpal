@@ -1,7 +1,0 @@
-- [x] Pipeline Summary 的字段与 gates 映射口径稳定且可扩展
-- [x] 发布流水线汇总 API 可按 changesetId 读取，且权限/审计符合规范
-- [x] 控制台提供发布流水线列表/详情，并可完成 release/canary/promote/rollback 操作闭环
-- [x] 长任务中心汇总 API 可列出 task/run，并提供 run 详情（phase/plan/steps/事件/审批）
-- [x] 控制台提供长任务列表/详情，支持 cancel/continue 与 needs_approval 引导
-- [x] 从 run 创建 replay 并可关联评测结果（最小闭环）
-- [x] 操作手册与最小指标集合齐备（发布动作、门槛失败、长任务状态）

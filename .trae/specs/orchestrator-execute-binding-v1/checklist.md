@@ -1,6 +1,0 @@
-- [x] /orchestrator/execute 存在且返回 receipt（queued/needs_approval）
-- [x] toolRef released/enabled 校验生效，非法 toolRef 返回稳定错误码
-- [x] inputSchema 最小校验生效，非法 input 返回 400（BAD_REQUEST）
-- [x] 审计事件 `orchestrator:execute` 写入且 outputDigest 仅摘要
-- [x] needs_approval 路径下 approval binding 与 step/run 绑定一致
-- [x] API tests 通过（含新增用例）

@@ -1,5 +1,0 @@
-- [x] 治理侧边栏出现“策略快照”入口且 i18n 正常
-- [x] 列表页可按 scope/filters 查询并支持 nextCursor 加载更多
-- [x] 详情页可展示 explain 输出（decision/reason/matchedRules/fieldRules/rowFilters）
-- [x] 403/404 错误可见且包含 traceId
-- [x] e2e 或 smoke 覆盖基本打开/拒绝场景且回归通过

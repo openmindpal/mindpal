@@ -1,8 +1,0 @@
-- [x] changeset 支持 canaryTargets 与 canary 发布状态字段
-- [x] tool_active_overrides 支持 space 级 activeToolRef 覆盖
-- [x] /governance/changesets/:id/preflight 返回 plan/currentState/rollbackPreview/warnings 且只读
-- [x] canary release 仅影响目标 space，promote 后全量生效
-- [x] rollback 可恢复到发布前状态（含 canary 覆盖清理）
-- [x] /tools 与 /tools/:name 返回 effectiveActiveToolRef
-- [x] e2e 覆盖 preflight 与 canary→promote→rollback
-- [x] README 补齐治理 preflight/canary/promote 用法

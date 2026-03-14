@@ -1,6 +1,0 @@
-- [x] 管理台页面使用统一 AppShell（Header/SideNav/Content）
-- [x] SideNav 按 uiMode 分组展示，simple 默认隐藏治理入口
-- [x] /settings 以 4 分区卡片化呈现并具备 loading/empty/error 三态
-- [x] 所有用户可见文案均使用 locales key，TS/TSX 无中文且 lint 通过
-- [x] /admin/* 页面接入同一外壳，视觉层级清晰一致
-- [x] Web e2e 覆盖导航折叠与设置页分区存在

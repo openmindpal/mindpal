@@ -1,7 +1,0 @@
-- [x] API 不再提供 `/settings/ui-mode`（GET/PUT）且不影响其他 settings 接口
-- [x] 数据库迁移已移除 `spaces.ui_mode` 与相关约束
-- [x] Web 设置页不再展示“交互模式”切换
-- [x] Web 导航不再按模式折叠；治理/管理页面仍由后端 RBAC 保护
-- [x] Web 不再调用 `/settings/ui-mode`（页面渲染与交互链路）
-- [x] README 已移除/更新 uiMode 相关说明
-- [x] API tests、Web lint、Web e2e 均通过

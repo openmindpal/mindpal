@@ -1,3 +1,0 @@
-- [x] 变更集支持 artifact_policy.upsert（preflight/release/rollback 全链路）
-- [x] 变更集详情页可添加 artifact_policy.upsert 条目
-- [x] e2e 覆盖发布/回滚，回归测试通过（api/worker/web）

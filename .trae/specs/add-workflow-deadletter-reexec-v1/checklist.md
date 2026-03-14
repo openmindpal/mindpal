@@ -1,7 +1,0 @@
-- [x] Step 重试耗尽后进入 deadletter，且审计记录 `workflow:deadletter`
-- [x] 治理接口可分页列出 deadletters，字段包含 runId/stepId/toolRef/错误摘要
-- [x] 治理侧可对 deadletter step 执行重试并重新入队执行
-- [x] 治理侧可取消 deadletter run/step，状态与审计正确
-- [x] Run 支持 re-exec：创建新 runId、幂等键不复用、审计记录 `workflow:reexec`
-- [x] Replay 仍为只读：不触发模型/外部系统调用
-- [x] API tests、Worker tests、Web e2e 通过

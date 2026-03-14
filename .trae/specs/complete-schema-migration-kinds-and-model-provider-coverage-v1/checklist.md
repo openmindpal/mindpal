@@ -1,5 +1,0 @@
-- [x] Worker 遇到不支持 schema migration kind 时稳定失败（failed + last_error 错误码）且不产生重试风暴
-- [x] 治理侧创建 schema migration 的 kind 校验与 Worker 支持列表一致
-- [x] /models/chat 选择 mock provider 时可正常返回 outputText，且不触发 PROVIDER_NOT_IMPLEMENTED
-- [x] 路由候选包含未实现 provider 时会跳过并继续尝试其他候选（有可用候选时请求成功）
-- [x] 测试覆盖：migration kind 不支持路径 + mock provider 路径

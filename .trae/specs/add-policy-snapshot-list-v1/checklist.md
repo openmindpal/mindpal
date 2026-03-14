@@ -1,5 +1,0 @@
-- [x] 已定义 PolicySnapshotSummary/cursor 契约并固定默认 scope=space
-- [x] 已实现 policySnapshotRepo 的 list/search（含 cursor 分页）
-- [x] 已实现 `GET /governance/policy/snapshots`（权限、scope、审计、脱敏）
-- [x] e2e 覆盖 space/tenant scope、越权拒绝与 cursor 分页
-- [x] 全量回归通过且不影响现有 explain/authorize/snapshot 写入

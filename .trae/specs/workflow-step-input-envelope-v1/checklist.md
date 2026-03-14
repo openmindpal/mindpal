@@ -1,5 +1,0 @@
-- [x] steps 表新增入参加密字段并完成迁移
-- [x] 新建 step 的完整 input 以 envelope.v1 加密存储
-- [x] steps.input 仅保留最小元信息且不含业务 payload 明文
-- [x] worker 可解密执行；历史明文 step 仍可回退执行
-- [x] API/worker tests 通过且回放/审批/编排回归通过

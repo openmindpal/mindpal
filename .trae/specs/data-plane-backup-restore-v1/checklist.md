@@ -1,8 +1,0 @@
-- [x] backups 表与 repo 落地，可按 tenant/space 查询
-- [x] `POST /spaces/:spaceId/backups` 创建异步备份并生成 backup artifact
-- [x] 备份内容按 fieldRules.read 裁剪且写审计摘要
-- [x] `POST /spaces/:spaceId/restores` 支持 dry_run 预检与 commit 执行
-- [x] 恢复限制 tenant/space 不可越界，且写审计摘要
-- [x] restore commit 生成 restore_report artifact（统计与冲突摘要）
-- [x] e2e 覆盖：备份→下载→恢复预检/提交
-- [x] README 补齐备份/恢复 API 示例与限制

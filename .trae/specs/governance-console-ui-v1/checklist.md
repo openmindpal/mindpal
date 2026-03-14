@@ -1,9 +1,0 @@
-- [x] uiMode=governance 时 SideNav 展示 /gov 治理入口；simple 下默认折叠
-- [x] /gov/changesets 支持创建、列表、进入详情页
-- [x] /gov/changesets/:id 支持 submit/approve/preflight/release/promote/rollback 并展示错误模型
-- [x] /gov/tools 可展示 rollouts/actives，并可执行 enable/disable 与 set active
-- [x] /gov/approvals 支持列表、详情、approve/reject 决策
-- [x] /gov/audit 支持查询与 /verify 校验展示
-- [x] /gov/model-gateway 能发起 /models/chat 并展示 routingDecision 与错误摘要
-- [x] Web 文案全部走 locales keys，TS/TSX 满足 check-no-zh
-- [x] Web lint 与 Web e2e 通过

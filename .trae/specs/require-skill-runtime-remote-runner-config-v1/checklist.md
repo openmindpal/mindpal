@@ -1,4 +1,0 @@
-- [x] 当 SKILL_RUNTIME_BACKEND=remote 且无 runner/endpoint 时返回 policy_violation:remote_runtime_not_configured
-- [x] 该失败被归类为 policy_violation，并写入 step/job/run 的稳定摘要
-- [x] 当设置 SKILL_RUNTIME_REMOTE_ENDPOINT 时不依赖 DB runner registry 且可尝试 remote 执行
-- [x] 测试覆盖：force remote 无 runner 拒绝 + endpoint override 行为

@@ -1,7 +1,0 @@
-- [x] Collab Run：可创建/读取，状态机字段可用且写审计
-- [x] 事件流：collab_run_events 可追加与按 run 分页查询（含过滤维度）
-- [x] Plan V2：plan 包含 roles/steps.actorRole/dependsOn，并可从 taskState 回读
-- [x] 执行调度：跨角色步骤可推进；无依赖步骤支持并行入队（最小实现）
-- [x] 约束生效：toolPolicy 与预算超限会阻止推进并写 blocked/budget.exceeded 事件
-- [x] 可观测：metrics 暴露 collab 成功率/耗时/审批/预算等核心指标
-- [x] 回归：e2e 覆盖创建→执行→事件检索，且事件/审计不泄露敏感明文

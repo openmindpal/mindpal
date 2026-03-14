@@ -1,8 +1,0 @@
-- [x] /models/onboard 创建的 binding.provider 为请求指定 provider（openai_compatible/deepseek/hunyuan/qianwen/zhipu/doubao/kimi/kimimax），且审计摘要包含 provider/endpointHost
-- [x] /models/chat 支持上述独立 provider，并允许复用 OpenAI-Compatible adapter（含 allowedDomains 校验、限流、配额与审计），且 usage/audit 按 provider 归集
-- [x] provider 未实现与 provider 不允许的错误语义稳定：PROVIDER_NOT_IMPLEMENTED(501) 与 MODEL_PROVIDER_UNSUPPORTED(400) 且 attempts 标注一致
-- [x] 历史绑定迁移完成：openai_compat:{providerKey}:{modelName} -> {providerKey}:{modelName}，并且新写入不再生成旧格式
-- [x] /orchestrator/closed-loop 支持自然语言 goal 生成 plan，并在 task_state 持久化计划与光标
-- [x] /orchestrator/closed-loop 能创建 step 并返回 queued/blocked(approval_required)/failed 的稳定 execution 摘要
-- [x] /orchestrator/closed-loop/continue 可在审批通过后继续推进，且遵守 maxSteps/maxWallTimeMs
-- [x] 新增/修改的关键路径均写审计且不记录敏感明文

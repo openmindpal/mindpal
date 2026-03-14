@@ -1,6 +1,0 @@
-- [x] /orchestrator/turn 返回 turnId，且 toolSuggestions 含 suggestionId
-- [x] /orchestrator/execute 支持 turnId+suggestionId 绑定执行并校验一致性
-- [x] 不存在的 turnId/suggestionId 返回 404；不一致返回 409（ORCH_SUGGESTION_MISMATCH）
-- [x] turn/execute 审计 outputDigest 记录 turnId/suggestionId 且仅摘要
-- [x] 控制台 Orchestrator 演示页默认走绑定执行
-- [x] API tests 与 Web tests 通过（含新增用例）

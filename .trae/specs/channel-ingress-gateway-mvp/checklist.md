@@ -1,7 +1,0 @@
-- [x] channel_accounts/channel_chat_bindings/channel_ingress_events 迁移可重复执行且索引齐备
-- [x] Webhook 入口实现验签与重放防护（timestamp+nonce）
-- [x] 入站事件幂等去重：重复投递不重复触发执行
-- [x] 缺少映射时拒绝（稳定错误码）且写审计
-- [x] 同步模式可触发 orchestrator 并返回标准化回执（correlation/status）
-- [x] e2e 覆盖：验签拒绝、去重命中、成功回执
-- [x] README 补齐 Webhook 接入说明

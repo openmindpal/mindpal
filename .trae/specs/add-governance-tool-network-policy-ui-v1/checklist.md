@@ -1,4 +1,0 @@
-- [x] /gov/tools 支持配置 tool network policy（GET/PUT 生效）
-- [x] /gov/tools 展示 network policies 列表（scopeType 可切换）
-- [x] i18n 文案齐全且不影响既有 tools 页面能力
-- [x] WEB_E2E 或 smoke 覆盖并回归通过

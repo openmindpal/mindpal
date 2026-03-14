@@ -1,8 +1,0 @@
-- [x] Tool Registry 数据模型与迁移可在空库与已有库上重复运行
-- [x] 工具版本可发布并返回稳定 toolRef（name@version）
-- [x] /tools 查询与详情接口返回 i18n 展示信息与 schema 契约
-- [x] 工具执行入口创建 Run/Step 并入队，且写入审计（含 toolRef、traceId、idempotencyKey）
-- [x] worker 可执行最小内置工具集，并对每次 attempt 写 step 级审计
-- [x] 可按 runId/stepId 查询执行回执（状态、attempt、input/output 摘要）
-- [x] 旁路直连数据库的违规路径被拒绝且可审计（最小可测断言）
-- [x] 回归测试覆盖：发布/执行/回执/审计链路

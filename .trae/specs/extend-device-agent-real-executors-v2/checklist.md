@@ -1,9 +1,0 @@
-- [x] 端侧工具（device.file/browser/desktop）均有 tool contract（schema + risk + idempotency）且已发布
-- [x] 创建 device execution 时执行 inputSchema 校验，不合法返回稳定错误码
-- [x] DevicePolicy 扩展字段（uiPolicy/evidencePolicy）落库可读写，并默认拒绝
-- [x] claim 响应包含 effective policy digest，端侧执行前强制校验策略包络
-- [x] device.file.list/read/write 在 allowedRoots 与 requireUserPresence 下行为正确（含拒绝路径）
-- [x] device.browser.open/click/screenshot 遵守 allowedDomains，禁止任意脚本，且高风险需确认
-- [x] device.desktop.launch/screenshot 仅允许 allowlist（Windows 最小可用）
-- [x] 证据上传受 evidencePolicy 控制，成功后 evidenceRefs 可追溯且不含敏感明文
-- [x] e2e/集成测试覆盖：成功 + policy 拒绝 + 审计摘要不泄露敏感

@@ -1,8 +1,0 @@
-- [x] POST /ui/page-templates/generate 可生成 draft 页面（list/detail/new/edit）
-- [x] DataBinding 仅绑定白名单 API 且基于 Effective Schema
-- [x] ActionBinding 自动选择最新 released toolRef；缺失时稳定拒绝
-- [x] overwriteStrategy 行为正确且不覆盖 released 版本
-- [x] 生成行为写审计（仅摘要）且可按 traceId 检索
-- [x] Web 管理页可触发生成并引导用户 publish
-- [x] e2e 覆盖：生成→发布→导航可见；错误场景拒绝
-- [x] README 补齐生成器使用说明与约束

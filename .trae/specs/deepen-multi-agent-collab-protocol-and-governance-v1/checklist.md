@@ -1,7 +1,0 @@
-- [x] 新增 collab_envelopes 数据表与索引，支持按 run/role/correlation 分页查询
-- [x] 提供 envelopes API（写入/查询）且审计仅记录摘要，不泄露敏感明文
-- [x] Arbiter commit 端点可用，且非 Arbiter 写入共享状态会返回 COLLAB_SINGLE_WRITER_VIOLATION
-- [x] collab_run_events 新增 envelope/arbiter/violation 事件并可查询
-- [x] metrics 支持 actorRole 维度拆分（steps/duration/blocked/approval）
-- [x] 治理诊断接口可按 collabRunId 输出 role 维度摘要（不含敏感明文）
-- [x] e2e 覆盖：发送 proposal→arbiter 决议提交→事件/指标/诊断均可读

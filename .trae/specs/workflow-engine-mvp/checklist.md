@@ -1,8 +1,0 @@
-- [x] workflow_runs/workflow_steps 迁移可重复执行且索引齐备
-- [x] Run 创建支持幂等键并能入队
-- [x] Step 执行有状态机与 attempt 可追溯
-- [x] retryable 失败触发重试与退避
-- [x] cancel 能停止后续 step 且拒绝已 finished 的 run
-- [x] Run/Step 生命周期审计齐备（仅摘要，不泄露敏感原文）
-- [x] e2e 覆盖：幂等、重试、取消
-- [x] README 补齐 Run/Step 与 cancel 使用方式

@@ -1,7 +1,0 @@
-- [x] Task/Message 表与 repo 落地，支持按 tenant/space 隔离
-- [x] `POST /tasks`、`GET /tasks`、`GET /tasks/:taskId` 可用
-- [x] `POST /tasks/:taskId/messages` 写入摘要且不允许敏感原文
-- [x] `GET /tasks/:taskId/messages` 返回可用 timeline（limit/分页）
-- [x] tasks/messages 全链路写审计并包含 taskId/role 摘要
-- [x] e2e 覆盖创建 task、写 message、查询 timeline 与隔离规则
-- [x] README 补齐 tasks/messages 用法

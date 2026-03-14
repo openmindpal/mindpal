@@ -1,6 +1,0 @@
-- [x] /orchestrator/closed-loop 不再返回 no_executor_configured（guard.allow=true 时）
-- [x] closed-loop executor 复用现有执行链路的治理校验（工具启用/输入校验/网络策略/幂等键/审计）
-- [x] task_state 在 executed 阶段记录 queued/succeeded/failed/skipped 的稳定摘要
-- [x] media.process 对 extractText/thumbnail 产出真实衍生物（不使用 mvp:true 占位成功）
-- [x] media.process 对 transcript/transcode 在未配置处理器时返回稳定失败摘要（不误报成功）
-- [x] 测试覆盖：closed-loop + media.process（至少一条成功与一条失败路径）

@@ -1,3 +1,0 @@
-- [x] /gov/audit 页面可管理 SIEM destinations（list/create/update/test/backfill）
-- [x] 页面不展示 webhookUrl 明文，仅使用 secretId 引用
-- [x] i18n 文案齐全，WEB_E2E 回归通过

@@ -1,7 +1,0 @@
-- [x] 迁移创建 memory_* 表与索引且可重复执行
-- [x] /memory/entries 支持显式写入（writePolicy=confirmed）并写审计
-- [x] /memory/search 支持只读检索（tenant/space 过滤）并写审计
-- [x] /memory/entries 列表/删除 与 /memory/clear 一键清除可用且可审计
-- [x] DLP 脱敏覆盖记忆存储与返回片段（不泄露 token/key）
-- [x] e2e 覆盖：写入→检索→删除/清除；跨 space 不可召回
-- [x] tool 执行链路支持 memory.read@1 与 memory.write@1

@@ -1,8 +1,0 @@
-- [x] PageTemplate 支持 layout/blocks 扩展且向后兼容旧 ui
-- [x] Component Registry 仅允许 allowlist，并能拒绝非法 componentId
-- [x] 至少两种 layout variants 在 list/detail/form 中可切换并可降级
-- [x] 用户视图偏好可保存/读取/重置，且合并策略稳定（非法字段忽略）
-- [x] 移动端/小屏适配策略生效：侧边栏策略、密度、列数/布局降级
-- [x] Root layout title/description 不再是默认脚手架文案，lang 随 locale 变化
-- [x] 控制台导航信息架构完成分组与命名统一，多端可用
-- [x] e2e 覆盖 registry 校验、prefs 生效、variant 与降级路径

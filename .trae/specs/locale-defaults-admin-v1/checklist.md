@@ -1,5 +1,0 @@
-- [x] `GET /settings/locale-defaults` 返回 tenant/space default_locale 与 effectiveLocale
-- [x] `PUT /settings/tenant-locale` 更新 tenants.default_locale 且写审计
-- [x] `PUT /settings/space-locale` 更新 spaces.default_locale（tenant 校验）且写审计
-- [x] e2e 覆盖 tenant/space 默认语言更新后解析生效
-- [x] README 补齐 settings/locale-defaults 用法

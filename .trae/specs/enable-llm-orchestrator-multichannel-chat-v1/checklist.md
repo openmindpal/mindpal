@@ -1,7 +1,0 @@
-- [x] Orchestrator turn 支持 conversationId，会话上下文可读写并窗口裁剪
-- [x] Orchestrator turn 通过模型网关生成 replyText（复用限流/安全治理/审计）
-- [x] Web /chat 透传 conversationId，并支持显式重置会话
-- [x] 渠道绑定与映射就绪后，至少一个 Provider 可完成对话闭环（入站→turn→出站）
-- [x] 错误展示与回执契约稳定：errorCode/message/traceId 可用且不泄露凭据
-- [x] i18n keys 齐全，Web check-no-zh 通过
-- [x] Web 与 API 测试通过（含新增/更新 e2e）

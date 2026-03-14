@@ -1,5 +1,0 @@
-- [x] Web 端默认不发送 x-tenant-id/x-space-id（仅显式选择时发送）
-- [x] API 仍以认证得到的 Subject.tenantId/spaceId 为最终隔离边界
-- [x] 成功写操作的审计通过 outbox 与业务写同事务提交
-- [x] 关键写接口不会出现审计重复或遗漏（最终仅一条对应 audit_events）
-- [x] 回归测试通过（含 e2e/集成中对 outbox 失败回滚的覆盖）

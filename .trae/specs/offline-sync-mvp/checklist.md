@@ -1,8 +1,0 @@
-- [x] sync_ops/sync_watermarks 迁移可重复执行且索引齐备
-- [x] sync.pull 可按 cursor 增量拉取并返回 nextCursor
-- [x] sync.push 支持批量 ops 且 opId 幂等去重
-- [x] sync.push 返回 deterministic digest（同输入序列同 digest）
-- [x] baseVersion 冲突可返回 conflicts[]（结构化原因）
-- [x] push/pull 均写审计且不泄露敏感原文
-- [x] e2e 覆盖：幂等、增量拉取、冲突输出
-- [x] README 补齐 Sync 使用方式

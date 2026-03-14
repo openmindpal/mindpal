@@ -1,6 +1,0 @@
-- [x] Pipeline quota gate 不再返回 not_implemented，且 status/detailsDigest 稳定
-- [x] Canary preflight 对 model_routing/tool_limits/model_limits(space) 不再返回 mode:canary_not_supported_for_items
-- [x] Canary release 仅影响 canaryTargets 指定空间，非目标空间不受影响
-- [x] Promote 后全量生效且 canary override 被清理
-- [x] Rollback 可幂等恢复发布前状态（canary 与 full 均可）
-- [x] API e2e 覆盖新增 canary 能力与 quota gate

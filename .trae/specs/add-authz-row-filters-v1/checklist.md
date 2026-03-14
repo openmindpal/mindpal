@@ -1,6 +1,0 @@
-- [x] permissions 支持 row_filters_read/row_filters_write（JSONB）并可被 RBAC API 管理
-- [x] entity_records 增加 owner_subject_id，创建固定写入且不可变更
-- [x] authorize 合并 rowFilters 并写入 policy snapshot/decision
-- [x] entities 读写路径强制 owner_only 行级约束（含 bulk io/backup/restore）
-- [x] tools.execute/worker 执行链路应用 rowFilters，避免旁路绕过
-- [x] e2e 覆盖 rowFilters 生效与越权拒绝，且全量回归通过
