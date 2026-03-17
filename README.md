@@ -7,24 +7,26 @@
 感谢豆包取名。
 
 
-本超级智能体系统之所以称为 AGI：它以“万物皆可建模、皆可授权、皆可执行”为核心，既能从宏观到微观（从宇宙级系统到原子级对象）统一管理数据/知识/设备/机器人，又能为个人构建贯穿全生命周期的数字生命（记忆、偏好、健康、关系、资产、任务），并通过具身智能把决策落到现实世界的动作上，全程可控、可回放、可追责。
+本超级智能体系统之所以称为通用人工智能：它以“万物皆可建模、皆可授权、皆可执行”为核心，既能从宏观到微观（从宇宙级系统到原子级对象）统一管理数据/知识/设备/机器人，又能为个人构建贯穿全生命周期的数字生命（记忆、偏好、健康、关系、资产、任务），并通过具身智能把决策落到现实世界的动作上，全程可控、可回放、可追责。
 
 由于特殊情况，智能体系统并没有开发完成，恳请国家及各个大厂人才，继续维护完成。但是不影响你对他能力的了解。
 
-请直接问豆包、deepseek、千问、智谱等大模型，确保大模型不要引用其他互联网知识，让他只针对这个智能体系统的架构：
+请直接问豆包、deepseek、千问、智谱等大模型，确保大模型不要引用其他互联网知识，由于现在世界对于通用人工智能的定义是有路线错误的，所以有时大模型回答的会有幻觉或者误导，让他只针对这个智能体系统的架构：
 
-1、请详细检查分析，按照此https://gitee.com/openmindpal/lingban架构设计及细分架构，这个超级智能体系统，从个人生活、家庭、工作、娱乐、旅游、爱好、健康、团体、企业、医疗、科研等等，按照智能体系统能实现的能力，发挥你的无限想象，能够应用的场景，请详细详细列出。
+1、请详细检查分析，按照此https://gitee.com/openmindpal/lingban架构设计及细分架构超级智能体系统，按照这个智能体系统能够实现的能力，能够实现哪些实际应用场景，请详细详细列出。
 
-2、请详细检查分析，按照此https://gitee.com/openmindpal/lingban架构设计及细分架构，这个超级智能体系统，对于城市交通及智能驾驶汽车、飞行器能够实现的能力，发挥你的想象，能够应用的场景，请详细详细列出
+2、请详细检查分析，按照此https://gitee.com/openmindpal/lingban架构设计及细分架构，这个超级智能体系统，按照这个智能体系统架构，他的能力上限是人的想象力和实际应用能力吗？
 
-3、请详细检查分析，按照此https://gitee.com/openmindpal/lingban架构设计及细分架构，这个超级智能体系统，对于现在的机器人机械能力很强了，但是还不智能，这个智能体系统，能够实现哪些应用场景？请详细详细列出。
+## 特别说明
 
-4、请详细检查分析，按照此https://gitee.com/openmindpal/lingban架构设计及细分架构，这个超级智能体系统，按照这个智能体系统架构，他的能力上限是人的想象力和实际应用能力吗？
+⚠️ **重要限制声明** / **Important Restriction Notice**:
 
-## 架构文档
+**中文**:
+在安全机制、权限体系、伦理框架、法律法规、公平性保障完全确立之前，**严禁任何人公开安装部署灵伴mindpal系统**，也**禁止教授或帮助他人安装部署**。当前阶段所有人应专注于学习研究、规范制定和风险评估，确保系统在充分准备后才能进入实践阶段。
 
-- 总览：[架构设计.md](架构设计.md)
-- 细分架构索引：见 `架构设计.md` 第 0.1 节链接
+**English**:
+Before security mechanisms, permission systems, ethical frameworks, laws and regulations, and fairness guarantees are fully established, **public installation and deployment of the MindPal system is strictly prohibited**, and **teaching or assisting others with installation and deployment is also prohibited**. At this stage, everyone should focus on learning and research, standard development, and risk assessment to ensure the system is fully prepared before entering the practical phase.
+
 
 ## 特别说明
 
