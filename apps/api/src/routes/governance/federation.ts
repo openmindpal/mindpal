@@ -13,6 +13,26 @@ import {
   listNodeCapabilities,
   upsertNodeCapability,
   updateHeartbeat,
+  // Permission Grants
+  createPermissionGrant,
+  listPermissionGrants,
+  revokePermissionGrant,
+  checkPermission,
+  // User Grants
+  createUserGrant,
+  listUserGrants,
+  revokeUserGrant,
+  // Content Policies
+  createContentPolicy,
+  updateContentPolicy,
+  getContentPolicy,
+  listContentPolicies,
+  deleteContentPolicy,
+  // Audit Logs
+  createAuditLog,
+  listAuditLogs,
+  type PermissionType,
+  type ContentPolicyType,
 } from "../../modules/federation/federationRepo";
 import {
   getFederationGatewayStatus,
@@ -306,5 +326,361 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
         mode: status.mode,
       },
     };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Permission Grants - 节点级权限授权
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // 列出权限授权
+  app.get("/governance/federation/permission-grants", async (req) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "governance", action: "federation.permission.list" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+
+    const q = req.query as Record<string, unknown>;
+    const nodeId = z.string().uuid().optional().parse(q?.nodeId);
+    const capabilityId = z.string().uuid().optional().parse(q?.capabilityId);
+    const activeOnly = z.coerce.boolean().optional().parse(q?.activeOnly) ?? true;
+    const limit = z.coerce.number().int().min(1).max(200).optional().parse(q?.limit) ?? 100;
+
+    const grants = await listPermissionGrants({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      nodeId,
+      capabilityId,
+      activeOnly,
+      limit,
+    });
+    req.ctx.audit!.outputDigest = { count: grants.length };
+    return { grants };
+  });
+
+  // 创建权限授权
+  app.post("/governance/federation/permission-grants", async (req) => {
+    const subject = req.ctx.subject!;
+    const body = z
+      .object({
+        nodeId: z.string().uuid(),
+        capabilityId: z.string().uuid(),
+        permissionType: z.enum(["read", "write", "forward", "audit", "invoke", "subscribe"]),
+        expiresAt: z.string().datetime().optional(),
+        metadata: z.record(z.string(), z.any()).optional(),
+      })
+      .parse(req.body);
+
+    setAuditContext(req, { resourceType: "governance", action: "federation.permission.create" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
+
+    const grant = await createPermissionGrant({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      nodeId: body.nodeId,
+      capabilityId: body.capabilityId,
+      permissionType: body.permissionType as PermissionType,
+      grantedBy: subject.subjectId,
+      expiresAt: body.expiresAt,
+      metadata: body.metadata,
+    });
+
+    await createAuditLog({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      nodeId: body.nodeId,
+      direction: "internal",
+      operationType: "grant_change",
+      subjectId: subject.subjectId,
+      targetCapability: body.capabilityId,
+      permissionType: body.permissionType,
+      decision: "allowed",
+      decisionReason: "permission_granted",
+    });
+
+    req.ctx.audit!.outputDigest = { grantId: grant.grantId };
+    return { grant };
+  });
+
+  // 撤销权限授权
+  app.post("/governance/federation/permission-grants/:grantId/revoke", async (req) => {
+    const subject = req.ctx.subject!;
+    const params = z.object({ grantId: z.string().uuid() }).parse(req.params);
+    const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {});
+
+    setAuditContext(req, { resourceType: "governance", action: "federation.permission.revoke" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
+
+    const ok = await revokePermissionGrant({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      grantId: params.grantId,
+      reason: body.reason,
+    });
+
+    if (!ok) throw Errors.notFound("permission_grant");
+    req.ctx.audit!.outputDigest = { grantId: params.grantId, revoked: true };
+    return { ok: true };
+  });
+
+  // 检查权限
+  app.post("/governance/federation/check-permission", async (req) => {
+    const subject = req.ctx.subject!;
+    const body = z
+      .object({
+        nodeId: z.string().uuid(),
+        capabilityId: z.string().uuid(),
+        permissionType: z.enum(["read", "write", "forward", "audit", "invoke", "subscribe"]),
+      })
+      .parse(req.body);
+
+    setAuditContext(req, { resourceType: "governance", action: "federation.permission.check" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+
+    const result = await checkPermission({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      nodeId: body.nodeId,
+      capabilityId: body.capabilityId,
+      permissionType: body.permissionType as PermissionType,
+    });
+
+    req.ctx.audit!.outputDigest = { allowed: result.allowed };
+    return result;
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // User Grants - 用户级跨域授权
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // 列出用户授权
+  app.get("/governance/federation/user-grants", async (req) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "governance", action: "federation.user-grant.list" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+
+    const q = req.query as Record<string, unknown>;
+    const grantorSubject = z.string().optional().parse(q?.grantorSubject);
+    const granteeNodeId = z.string().uuid().optional().parse(q?.granteeNodeId);
+    const granteeSubject = z.string().optional().parse(q?.granteeSubject);
+    const activeOnly = z.coerce.boolean().optional().parse(q?.activeOnly) ?? true;
+    const limit = z.coerce.number().int().min(1).max(200).optional().parse(q?.limit) ?? 100;
+
+    const grants = await listUserGrants({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      grantorSubject,
+      granteeNodeId,
+      granteeSubject,
+      activeOnly,
+      limit,
+    });
+    req.ctx.audit!.outputDigest = { count: grants.length };
+    return { grants };
+  });
+
+  // 创建用户授权
+  app.post("/governance/federation/user-grants", async (req) => {
+    const subject = req.ctx.subject!;
+    const body = z
+      .object({
+        granteeNodeId: z.string().uuid(),
+        granteeSubject: z.string().min(1).max(256),
+        capabilityId: z.string().uuid().optional(),
+        permissionType: z.enum(["read", "write", "forward", "audit"]),
+        scope: z.enum(["specific", "all_capabilities"]).optional(),
+        expiresAt: z.string().datetime().optional(),
+        metadata: z.record(z.string(), z.any()).optional(),
+      })
+      .parse(req.body);
+
+    setAuditContext(req, { resourceType: "governance", action: "federation.user-grant.create" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
+
+    const grant = await createUserGrant({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      grantorSubject: subject.subjectId,
+      granteeNodeId: body.granteeNodeId,
+      granteeSubject: body.granteeSubject,
+      capabilityId: body.capabilityId,
+      permissionType: body.permissionType as PermissionType,
+      scope: body.scope,
+      expiresAt: body.expiresAt,
+      metadata: body.metadata,
+    });
+
+    req.ctx.audit!.outputDigest = { userGrantId: grant.userGrantId };
+    return { grant };
+  });
+
+  // 撤销用户授权
+  app.post("/governance/federation/user-grants/:userGrantId/revoke", async (req) => {
+    const subject = req.ctx.subject!;
+    const params = z.object({ userGrantId: z.string().uuid() }).parse(req.params);
+    const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {});
+
+    setAuditContext(req, { resourceType: "governance", action: "federation.user-grant.revoke" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
+
+    const ok = await revokeUserGrant({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      userGrantId: params.userGrantId,
+      reason: body.reason,
+    });
+
+    if (!ok) throw Errors.notFound("user_grant");
+    req.ctx.audit!.outputDigest = { userGrantId: params.userGrantId, revoked: true };
+    return { ok: true };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Content Policies - 内容策略
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // 列出内容策略
+  app.get("/governance/federation/content-policies", async (req) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "governance", action: "federation.content-policy.list" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+
+    const q = req.query as Record<string, unknown>;
+    const policyType = z.enum(["usage_restriction", "lifecycle", "redaction", "encryption"]).optional().parse(q?.policyType);
+    const enabledOnly = z.coerce.boolean().optional().parse(q?.enabledOnly) ?? false;
+    const limit = z.coerce.number().int().min(1).max(200).optional().parse(q?.limit) ?? 100;
+
+    const policies = await listContentPolicies({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      policyType: policyType as ContentPolicyType | undefined,
+      enabledOnly,
+      limit,
+    });
+    req.ctx.audit!.outputDigest = { count: policies.length };
+    return { policies };
+  });
+
+  // 获取单个内容策略
+  app.get("/governance/federation/content-policies/:policyId", async (req) => {
+    const subject = req.ctx.subject!;
+    const params = z.object({ policyId: z.string().uuid() }).parse(req.params);
+
+    setAuditContext(req, { resourceType: "governance", action: "federation.content-policy.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+
+    const policy = await getContentPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.policyId });
+    if (!policy) throw Errors.notFound("content_policy");
+
+    req.ctx.audit!.outputDigest = { policyId: policy.policyId };
+    return { policy };
+  });
+
+  // 创建内容策略
+  app.post("/governance/federation/content-policies", async (req) => {
+    const subject = req.ctx.subject!;
+    const body = z
+      .object({
+        name: z.string().min(1).max(128),
+        policyType: z.enum(["usage_restriction", "lifecycle", "redaction", "encryption"]),
+        targetType: z.enum(["all", "capability", "node", "user"]).optional(),
+        targetId: z.string().optional(),
+        rules: z.record(z.string(), z.any()),
+        priority: z.number().int().min(1).max(1000).optional(),
+        enabled: z.boolean().optional(),
+      })
+      .parse(req.body);
+
+    setAuditContext(req, { resourceType: "governance", action: "federation.content-policy.create" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
+
+    const policy = await createContentPolicy({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      name: body.name,
+      policyType: body.policyType as ContentPolicyType,
+      targetType: body.targetType as any,
+      targetId: body.targetId,
+      rules: body.rules,
+      priority: body.priority,
+      enabled: body.enabled,
+    });
+
+    req.ctx.audit!.outputDigest = { policyId: policy.policyId };
+    return { policy };
+  });
+
+  // 更新内容策略
+  app.patch("/governance/federation/content-policies/:policyId", async (req) => {
+    const subject = req.ctx.subject!;
+    const params = z.object({ policyId: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        name: z.string().min(1).max(128).optional(),
+        rules: z.record(z.string(), z.any()).optional(),
+        priority: z.number().int().min(1).max(1000).optional(),
+        enabled: z.boolean().optional(),
+      })
+      .parse(req.body);
+
+    setAuditContext(req, { resourceType: "governance", action: "federation.content-policy.update" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
+
+    const policy = await updateContentPolicy({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      policyId: params.policyId,
+      name: body.name,
+      rules: body.rules,
+      priority: body.priority,
+      enabled: body.enabled,
+    });
+
+    if (!policy) throw Errors.notFound("content_policy");
+    req.ctx.audit!.outputDigest = { policyId: policy.policyId };
+    return { policy };
+  });
+
+  // 删除内容策略
+  app.delete("/governance/federation/content-policies/:policyId", async (req) => {
+    const subject = req.ctx.subject!;
+    const params = z.object({ policyId: z.string().uuid() }).parse(req.params);
+
+    setAuditContext(req, { resourceType: "governance", action: "federation.content-policy.delete" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
+
+    const ok = await deleteContentPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.policyId });
+    if (!ok) throw Errors.notFound("content_policy");
+
+    req.ctx.audit!.outputDigest = { policyId: params.policyId, deleted: true };
+    return { ok: true };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Audit Logs - 审计日志
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // 列出审计日志
+  app.get("/governance/federation/audit-logs", async (req) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "governance", action: "federation.audit.list" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+
+    const q = req.query as Record<string, unknown>;
+    const nodeId = z.string().uuid().optional().parse(q?.nodeId);
+    const correlationId = z.string().optional().parse(q?.correlationId);
+    const subjectId = z.string().optional().parse(q?.subjectId);
+    const decision = z.enum(["allowed", "denied", "rate_limited", "policy_blocked"]).optional().parse(q?.decision);
+    const limit = z.coerce.number().int().min(1).max(500).optional().parse(q?.limit) ?? 100;
+
+    const logs = await listAuditLogs({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      nodeId,
+      correlationId,
+      subjectId,
+      decision: decision as any,
+      limit,
+    });
+    req.ctx.audit!.outputDigest = { count: logs.length };
+    return { logs };
   });
 };
