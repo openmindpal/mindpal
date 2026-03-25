@@ -31,11 +31,13 @@ function toApiError(e: unknown): ApiError {
   return { errorCode: "ERROR", message: String(e) };
 }
 
-export default function RetrievalLogsClient(props: { locale: string }) {
+type InitialData = { status: number; json: unknown };
+
+export default function RetrievalLogsClient(props: { locale: string; initial?: InitialData }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState<number>(0);
-  const [data, setData] = useState<RetrievalLogsResp | null>(null);
+  const [status, setStatus] = useState<number>(props.initial?.status ?? 0);
+  const [data, setData] = useState<RetrievalLogsResp | null>((props.initial?.json as RetrievalLogsResp) ?? null);
 
   const [rankPolicy, setRankPolicy] = useState("");
   const [degraded, setDegraded] = useState<"" | "true" | "false">("");

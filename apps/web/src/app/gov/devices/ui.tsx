@@ -27,12 +27,14 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
 }
 
-export default function GovDevicesClient(props: { locale: string }) {
+type InitialData = { status: number; json: unknown };
+
+export default function GovDevicesClient(props: { locale: string; initial?: InitialData }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const [ownerScope, setOwnerScope] = useState<"space" | "user">("space");
-  const [devicesResp, setDevicesResp] = useState<{ status: number; json: any }>({ status: 0, json: null });
+  const [devicesResp, setDevicesResp] = useState<{ status: number; json: any }>(props.initial ? { status: props.initial.status, json: props.initial.json } : { status: 0, json: null });
   const devices = useMemo(() => (Array.isArray(devicesResp?.json?.devices) ? (devicesResp.json.devices as Device[]) : []), [devicesResp]);
 
   const [selectedId, setSelectedId] = useState("");

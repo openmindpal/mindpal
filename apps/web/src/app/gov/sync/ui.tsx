@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiFetch, text } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { Badge, Card, PageHeader, Table } from "@/components/ui";
@@ -66,6 +66,11 @@ export default function SyncDebugClient(props: { locale: string }) {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    refreshOps();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function addOp() {
     setError("");

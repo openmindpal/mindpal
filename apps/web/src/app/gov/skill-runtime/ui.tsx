@@ -23,10 +23,12 @@ function errText(locale: string, e: ApiError | null) {
   return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
 }
 
-export default function SkillRuntimeClient(props: { locale: string }) {
+type InitialData = { status: number; json: unknown };
+
+export default function SkillRuntimeClient(props: { locale: string; initial?: InitialData }) {
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState(0);
-  const [data, setData] = useState<ListResp | null>(null);
+  const [status, setStatus] = useState(props.initial?.status ?? 0);
+  const [data, setData] = useState<ListResp | null>((props.initial?.json as ListResp) ?? null);
   const [error, setError] = useState("");
 
   const [endpoint, setEndpoint] = useState("");

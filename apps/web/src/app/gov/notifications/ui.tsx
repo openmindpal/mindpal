@@ -22,12 +22,14 @@ function errText(locale: string, e: ApiError | null) {
   return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
 }
 
-export default function GovNotificationsClient(props: { locale: string }) {
+type InitialData = { status: number; json: any };
+
+export default function GovNotificationsClient(props: { locale: string; initial?: InitialData }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const [outboxStatus, setOutboxStatus] = useState<"deadletter" | "failed" | "queued" | "sent" | "canceled">("deadletter");
-  const [outbox, setOutbox] = useState<{ status: number; json: any }>({ status: 0, json: null });
+  const [outbox, setOutbox] = useState<{ status: number; json: any }>(props.initial ?? { status: 0, json: null });
   const outboxItems = useMemo(() => (Array.isArray(outbox?.json?.outbox) ? (outbox.json.outbox as OutboxItem[]) : []), [outbox]);
 
   const [templateId, setTemplateId] = useState("email.default");

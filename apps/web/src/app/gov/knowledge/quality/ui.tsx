@@ -31,12 +31,14 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
 }
 
-export default function KnowledgeQualityClient(props: { locale: string }) {
+type InitialData = { status: number; json: unknown };
+
+export default function KnowledgeQualityClient(props: { locale: string; initial?: InitialData }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState<number>(0);
+  const [status, setStatus] = useState<number>(props.initial?.status ?? 0);
 
-  const [sets, setSets] = useState<EvalSetsResp | null>(null);
+  const [sets, setSets] = useState<EvalSetsResp | null>((props.initial?.json as EvalSetsResp) ?? null);
   const [runs, setRuns] = useState<EvalRunsResp | null>(null);
 
   const [createName, setCreateName] = useState("baseline");

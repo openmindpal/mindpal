@@ -57,7 +57,10 @@ function toApiError(e: unknown): ApiError {
   return { errorCode: "ERROR", message: String(e) };
 }
 
-export default function AuditClient(props: { locale: string }) {
+type InitialData = { status: number; json: unknown };
+type AuditInitialResponse = { events?: AuditEventRow[] };
+
+export default function AuditClient(props: { locale: string; initial?: InitialData }) {
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
 
@@ -65,8 +68,9 @@ export default function AuditClient(props: { locale: string }) {
   const [subjectId, setSubjectId] = useState<string>("");
   const [action, setAction] = useState<string>("");
   const [limit, setLimit] = useState<string>("50");
-  const [events, setEvents] = useState<AuditEventRow[]>([]);
-  const [eventsStatus, setEventsStatus] = useState<number>(0);
+  const initialEvents = props.initial?.json ? ((props.initial.json as AuditInitialResponse).events ?? []) : [];
+  const [events, setEvents] = useState<AuditEventRow[]>(initialEvents);
+  const [eventsStatus, setEventsStatus] = useState<number>(props.initial?.status ?? 0);
 
   const [verifyTenantId, setVerifyTenantId] = useState<string>("");
   const [verifyFrom, setVerifyFrom] = useState<string>("");

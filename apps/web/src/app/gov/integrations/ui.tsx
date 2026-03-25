@@ -29,12 +29,14 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
 }
 
-export default function IntegrationsClient(props: { locale: string }) {
+type InitialData = { status: number; json: unknown };
+
+export default function IntegrationsClient(props: { locale: string; initial?: InitialData }) {
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState(0);
+  const [status, setStatus] = useState(props.initial?.status ?? 0);
   const [error, setError] = useState("");
   const [scopeType, setScopeType] = useState<"tenant" | "space">("space");
-  const [data, setData] = useState<ListResp | null>(null);
+  const [data, setData] = useState<ListResp | null>((props.initial?.json as ListResp) ?? null);
 
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<DetailResp | null>(null);

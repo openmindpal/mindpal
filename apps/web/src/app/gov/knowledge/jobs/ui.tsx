@@ -22,15 +22,17 @@ function toApiError(e: unknown): ApiError {
   return { errorCode: "ERROR", message: String(e) };
 }
 
-export default function KnowledgeJobsClient(props: { locale: string }) {
+type InitialData = { status: number; json: unknown };
+
+export default function KnowledgeJobsClient(props: { locale: string; initial?: InitialData }) {
   const [kind, setKind] = useState<"index" | "embedding" | "ingest">("index");
   const [statusFilter, setStatusFilter] = useState("");
   const [limit, setLimit] = useState("50");
   const [offset, setOffset] = useState("0");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [httpStatus, setHttpStatus] = useState<number>(0);
-  const [data, setData] = useState<JobsResp | null>(null);
+  const [httpStatus, setHttpStatus] = useState<number>(props.initial?.status ?? 0);
+  const [data, setData] = useState<JobsResp | null>((props.initial?.json as JobsResp) ?? null);
 
   const rows = useMemo(() => (Array.isArray(data?.jobs) ? data!.jobs! : []), [data]);
 

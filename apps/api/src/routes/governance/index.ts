@@ -12,6 +12,7 @@ import { governanceKnowledgeRoutes } from "./knowledge";
 import { governanceIntegrationsRoutes } from "./integrations";
 import { governanceCollabRoutes } from "./collab";
 import { governanceConfigRoutes } from "./config";
+import { governanceFederationRoutes } from "./federation";
 
 export const governanceIndexRoutes: FastifyPluginAsync = async (app) => {
   await app.register(governanceUiRoutes);
@@ -27,5 +28,6 @@ export const governanceIndexRoutes: FastifyPluginAsync = async (app) => {
   await app.register(governanceIntegrationsRoutes);
   await app.register(governanceCollabRoutes);
   await app.register(governanceConfigRoutes);
+  await app.register(governanceFederationRoutes);
 };
 
