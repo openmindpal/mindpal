@@ -1,5 +1,6 @@
 node_modules/
 dist/
+!skills/*/dist/
 *.tsbuildinfo
 **/*.tsbuildinfo
 .env
@@ -15,5 +16,6 @@ specs/
 .data/
 .tmp/
 docs/
+日志-不要推送.md
 preview-nl2ui.html
 
