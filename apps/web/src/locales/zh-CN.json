@@ -426,7 +426,6 @@
   "chat.error.STREAM_STALE_TIMEOUT": "连接中断（长时间无返回），请重试",
   "chat.error.STREAM_ERROR": "连接发生错误，请重试",
   "chat.error.STREAM_PARSE_ERROR": "响应数据解析异常，请重试",
-  "chat.error.CIRCUIT_OPEN": "模型服务暂时不可用（熔断保护中），请稍后重试",
   "chat.error.BINDING_MISSING": "未配置模型绑定，请在「设置 > 模型接入」中配置",
   "chat.error.POLICY_VIOLATION": "请求被安全策略拦截，请联系管理员",
   "chat.error.INTERNAL_ERROR": "服务内部错误，请稍后重试",

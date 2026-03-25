@@ -11,9 +11,7 @@ import { decryptSecretPayload, encryptSecretEnvelope } from "../modules/secrets/
 import { createSecretRecord, getSecretRecord, getSecretRecordEncryptedPayload } from "../modules/secrets/secretRepo";
 import { findCatalogByRef, modelCatalog, openaiCompatibleProviders } from "../modules/modelGateway/catalog";
 import { createBinding, getBindingById, getBindingByModelRef, listBindings } from "../modules/modelGateway/bindingRepo";
-import { isCircuitOpen, recordCircuitFailure } from "../modules/modelGateway/circuitBreaker";
-import { tokenBudgetKey, getTokenBudgetUsed, incrTokenBudgetUsed } from "../modules/modelGateway/budget";
-import { getEffectiveModelBudget } from "../modules/modelGateway/budgetRepo";
+
 import { checkTenantRateLimit } from "../modules/modelGateway/rateLimit";
 import { getEffectiveRoutingPolicy } from "../modules/modelGateway/routingPolicyRepo";
 import { openAiChatWithSecretRotation } from "../modules/modelGateway/openaiChat";
@@ -633,19 +631,6 @@ export const modelRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const budget = await getEffectiveModelBudget({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, purpose: body.purpose });
-    const budgetKey = budget
-      ? tokenBudgetKey({ tenantId: subject.tenantId, scopeType: budget.scopeType, scopeId: budget.scopeId, purpose: budget.purpose })
-      : null;
-    const budgetUsedTokens = budgetKey ? await getTokenBudgetUsed({ redis: app.redis, key: budgetKey }) : 0;
-    const softDailyTokens = budget?.softDailyTokens ?? null;
-    const hardDailyTokens = budget?.hardDailyTokens ?? null;
-    if (budget && typeof hardDailyTokens === "number" && Number.isFinite(hardDailyTokens) && hardDailyTokens > 0 && budgetUsedTokens >= hardDailyTokens) {
-      req.ctx.audit!.errorCategory = "policy_violation";
-      req.ctx.audit!.outputDigest = { budget: { scopeType: budget.scopeType, scopeId: budget.scopeId, purpose: budget.purpose, usedTokens: budgetUsedTokens, softDailyTokens, hardDailyTokens } };
-      throw Errors.modelBudgetExceeded();
-    }
-
     req.ctx.audit!.inputDigest = {
       purpose: body.purpose,
       scene,
@@ -688,24 +673,8 @@ export const modelRoutes: FastifyPluginAsync = async (app) => {
     let lastUpstreamErr: any = null;
     let lastSelected: { provider: string; modelRef: string } | null = null;
     let lastProviderUnsupported: string | null = null;
-    const softExceeded = typeof softDailyTokens === "number" && Number.isFinite(softDailyTokens) && softDailyTokens > 0 && budgetUsedTokens >= softDailyTokens;
-
-    const cbWindowSec = Math.max(1, Number(process.env.MODEL_CB_WINDOW_SEC ?? "60"));
-    const cbFailThreshold = Math.max(1, Number(process.env.MODEL_CB_FAIL_THRESHOLD ?? "5"));
-    const cbOpenSec = Math.max(1, Number(process.env.MODEL_CB_OPEN_SEC ?? "30"));
 
     for (const modelRef of uniqCandidates) {
-      if (softExceeded && attempts.length === 0 && uniqCandidates.length > 1) {
-        attempts.push({ modelRef, status: "skipped", errorCode: "BUDGET_SOFT_EXCEEDED", reason: "soft_daily_tokens" });
-        continue;
-      }
-      const circuitOpen = await isCircuitOpen({ redis: app.redis, tenantId: subject.tenantId, scope, modelRef });
-      if (circuitOpen) {
-        app.metrics.incModelCandidateSkipped({ reason: "circuit_open" });
-        attempts.push({ modelRef, status: "skipped", errorCode: "CIRCUIT_OPEN", reason: "circuit_open" });
-        continue;
-      }
-
       const binding = await getBindingByModelRef(app.db, subject.tenantId, scope.scopeType, scope.scopeId, modelRef);
       if (!binding) {
         app.metrics.incModelCandidateSkipped({ reason: "binding_missing" });
@@ -845,7 +814,7 @@ export const modelRoutes: FastifyPluginAsync = async (app) => {
             req.ctx.audit!.outputDigest = {
               routingDecision,
               rateLimit: rateLimitSummary,
-              budget: budgetKey ? { scopeType: budget?.scopeType, scopeId: budget?.scopeId, purpose: budget?.purpose, usedTokens: budgetUsedTokens, softDailyTokens, hardDailyTokens } : null,
+
               outputTextLen: outputText.length,
               attempts,
               structuredOutput: structuredOutputSummary,
@@ -902,14 +871,10 @@ export const modelRoutes: FastifyPluginAsync = async (app) => {
           latencyMs: typeof latencyMs === "number" ? latencyMs : null,
           result: "success",
         });
-        if (budgetKey) {
-          const delta = typeof totalTokens === "number" && Number.isFinite(totalTokens) && totalTokens > 0 ? totalTokens : 0;
-          await incrTokenBudgetUsed({ redis: app.redis, key: budgetKey, delta, ttlMs: 48 * 60 * 60 * 1000 });
-        }
+
         req.ctx.audit!.outputDigest = {
           routingDecision,
           rateLimit: rateLimitSummary,
-          budget: budgetKey ? { scopeType: budget?.scopeType, scopeId: budget?.scopeId, purpose: budget?.purpose, usedTokens: budgetUsedTokens, softDailyTokens, hardDailyTokens } : null,
           usage:
             usage && typeof usage === "object"
               ? { promptTokens: (usage as any).prompt_tokens ?? null, completionTokens: (usage as any).completion_tokens ?? null, totalTokens: (usage as any).total_tokens ?? null }
@@ -934,15 +899,6 @@ export const modelRoutes: FastifyPluginAsync = async (app) => {
           req.ctx.audit!.errorCategory = "upstream_error";
           lastUpstreamErr = e;
           attempts.push({ modelRef, status: "error", errorCode: "MODEL_UPSTREAM_FAILED", reason: "upstream_failed", provider: cat.provider });
-          await recordCircuitFailure({
-            redis: app.redis,
-            tenantId: subject.tenantId,
-            scope,
-            modelRef,
-            windowSec: cbWindowSec,
-            failThreshold: cbFailThreshold,
-            openSec: cbOpenSec,
-          });
           continue;
         }
         throw e;

@@ -1,5 +1,34 @@
 import type { Pool } from "pg";
 
+export type QuotaLimit = {
+  tenantId: string;
+  scopeType: "tenant" | "space";
+  scopeId: string;
+  modelChatRpm: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function toQuotaLimit(r: any): QuotaLimit {
+  return {
+    tenantId: String(r.tenant_id),
+    scopeType: String(r.scope_type) as "tenant" | "space",
+    scopeId: String(r.scope_id),
+    modelChatRpm: Number(r.model_chat_rpm),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+export async function getQuotaLimit(params: { pool: Pool; tenantId: string; scopeType: "tenant" | "space"; scopeId: string }) {
+  const res = await params.pool.query(
+    `SELECT * FROM quota_limits WHERE tenant_id = $1 AND scope_type = $2 AND scope_id = $3 LIMIT 1`,
+    [params.tenantId, params.scopeType, params.scopeId],
+  );
+  if (!res.rowCount) return null;
+  return toQuotaLimit(res.rows[0]);
+}
+
 export type ToolLimit = {
   tenantId: string;
   toolRef: string;

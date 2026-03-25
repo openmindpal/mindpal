@@ -426,7 +426,6 @@
   "chat.error.STREAM_STALE_TIMEOUT": "Connection stalled. Please retry.",
   "chat.error.STREAM_ERROR": "Connection error. Please retry.",
   "chat.error.STREAM_PARSE_ERROR": "Response parse error. Please retry.",
-  "chat.error.CIRCUIT_OPEN": "Model service temporarily unavailable. Please retry later.",
   "chat.error.BINDING_MISSING": "No model binding configured. Please configure in Settings > Model Onboarding.",
   "chat.error.POLICY_VIOLATION": "Request blocked by security policy. Please contact admin.",
   "chat.error.INTERNAL_ERROR": "Internal error. Please retry later.",

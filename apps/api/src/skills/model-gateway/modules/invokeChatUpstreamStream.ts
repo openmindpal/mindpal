@@ -14,7 +14,6 @@ import {
 } from "../../safety-policy/modules/promptInjectionGuard";
 import { findCatalogByRef, isOpenAiCompatibleProvider as isOpenAiCompatProviderFromCatalog } from "./catalog";
 import { getBindingByModelRef, listBindings } from "./bindingRepo";
-import { isCircuitOpen, recordCircuitFailure } from "./circuitBreaker";
 import { openAiChatStreamWithSecretRotation } from "./openaiChat";
 import {
   dlpRuleIdsFromSummary,
@@ -239,20 +238,9 @@ export async function invokeModelChatUpstreamStream(params: {
   let lastSelected: { provider: string; modelRef: string } | null = null;
   let lastProviderUnsupported: string | null = null;
 
-  const cbWindowSec = Math.max(1, Number(process.env.MODEL_CB_WINDOW_SEC ?? "60"));
-  const cbFailThreshold = Math.max(1, Number(process.env.MODEL_CB_FAIL_THRESHOLD ?? "5"));
-  const cbOpenSec = Math.max(1, Number(process.env.MODEL_CB_OPEN_SEC ?? "30"));
-
   const startedAtMs = Date.now();
 
   for (const modelRef of uniqCandidates) {
-    const circuitOpen = await isCircuitOpen({ redis: params.app.redis, tenantId: subject.tenantId, scope, modelRef });
-    if (circuitOpen) {
-      params.app.metrics.incModelCandidateSkipped({ reason: "circuit_open" });
-      attempts.push({ modelRef, status: "skipped", errorCode: "CIRCUIT_OPEN", reason: "circuit_open" });
-      continue;
-    }
-
     const binding = await getBindingByModelRef(params.app.db, subject.tenantId, scope.scopeType, scope.scopeId, modelRef);
     if (!binding) {
       params.app.metrics.incModelCandidateSkipped({ reason: "binding_missing" });
@@ -473,7 +461,6 @@ export async function invokeModelChatUpstreamStream(params: {
       if (isModelUpstreamError(e)) {
         lastUpstreamErr = e;
         attempts.push({ modelRef, status: "error", errorCode: "MODEL_UPSTREAM_FAILED", reason: "upstream_failed", provider: cat.provider });
-        await recordCircuitFailure({ redis: params.app.redis, tenantId: subject.tenantId, scope, modelRef, windowSec: cbWindowSec, failThreshold: cbFailThreshold, openSec: cbOpenSec });
         continue;
       }
       throw e;
