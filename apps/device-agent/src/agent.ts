@@ -67,7 +67,7 @@ export async function runOnce(params: {
 
     const policyDigest = (claim.json as any)?.policyDigest ?? null;
     outputDigest = mergeOutputDigest(outputDigest, policyDigest ? { policyDigest } : null);
-    outputDigest = mergeOutputDigest(outputDigest, { tool: name, inputDigest: digestObject(exec.input ?? null) });
+    outputDigest = mergeOutputDigest(outputDigest, { tool: name, inputDigest: digestObject(e.input ?? null) });
 
     const result = await apiPostJson({
       apiBase: params.cfg.apiBase,
