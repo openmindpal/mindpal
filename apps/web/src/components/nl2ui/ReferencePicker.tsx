@@ -47,45 +47,6 @@ export function ReferencePicker({
   const cascadeField = cascadeFilter?.field ?? "";
   const cascadeValue = cascadeFilter?.value ?? "";
 
-  // Debounced search
-  useEffect(() => {
-    if (!showDropdown || !query.trim()) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      loadOptions(query);
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [query, showDropdown, cascadeValue, loadOptions]);
-
-  // When cascade parent value changes, reset selection if incompatible
-  const prevCascadeRef = useRef(cascadeFilter?.value);
-  useEffect(() => {
-    if (prevCascadeRef.current !== cascadeValue) {
-      prevCascadeRef.current = cascadeValue;
-      // Clear current selection when parent changes
-      if (value) {
-        onChange("");
-        setQuery("");
-        setOptions([]);
-      }
-    }
-  }, [cascadeValue, onChange, value]);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setShowDropdown(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
   const loadOptions = useCallback(async (searchText: string) => {
     if (!entityName) return;
     setLoading(true);
@@ -128,6 +89,45 @@ export function ReferencePicker({
     }
   }, [cascadeField, cascadeValue, displayField, entityName, searchFields]);
 
+  // Debounced search
+  useEffect(() => {
+    if (!showDropdown || !query.trim()) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      loadOptions(query);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query, showDropdown, cascadeValue, loadOptions]);
+
+  // When cascade parent value changes, reset selection if incompatible
+  const prevCascadeRef = useRef(cascadeFilter?.value);
+  useEffect(() => {
+    if (prevCascadeRef.current !== cascadeValue) {
+      prevCascadeRef.current = cascadeValue;
+      // Clear current selection when parent changes
+      if (value) {
+        onChange("");
+        setQuery("");
+        setOptions([]);
+      }
+    }
+  }, [cascadeValue, onChange, value]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const handleSelect = useCallback(
     (option: { id: string; label: string }) => {
       onChange(option.id);
@@ -155,13 +155,6 @@ export function ReferencePicker({
     }
   };
 
-  // If value exists on init, load its display label
-  useEffect(() => {
-    if (value && !query) {
-      loadSingleOption(value);
-    }
-  }, [loadSingleOption, query, value]);
-
   const loadSingleOption = useCallback(async (id: string) => {
     if (!entityName || !id) return;
     try {
@@ -174,6 +167,13 @@ export function ReferencePicker({
       // Ignore errors
     }
   }, [displayField, entityName]);
+
+  // If value exists on init, load its display label
+  useEffect(() => {
+    if (value && !query) {
+      loadSingleOption(value);
+    }
+  }, [loadSingleOption, query, value]);
 
   return (
     <div ref={containerRef} style={{ position: "relative" }}>

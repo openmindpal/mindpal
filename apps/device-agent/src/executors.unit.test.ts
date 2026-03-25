@@ -15,7 +15,7 @@ describe("executeDeviceTool confirmation", () => {
     });
     expect(out.status).toBe("succeeded");
     expect(confirmFn).toHaveBeenCalledTimes(2);
-    expect(String(confirmFn.mock.calls[1]?.[0] ?? "")).toContain("确认码");
+    expect(String((confirmFn.mock.calls as unknown[][])[1]?.[0] ?? "")).toContain("确认码");
   });
 
   it("fails when second confirmation is denied", async () => {

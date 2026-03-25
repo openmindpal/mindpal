@@ -823,7 +823,7 @@ function RealAreaRenderer({
               {/* Cover image or accent line */}
               {hasImage ? (
                 <div style={{ width: "100%", height: 140, overflow: "hidden", background: "#f1f5f9", flexShrink: 0, position: "relative" }}>
-                  <Image className="__cl_img" src={item.image} alt="" fill unoptimized style={{ objectFit: "cover", display: "block" }} />
+                  <Image className="__cl_img" src={item.image!} alt="" fill unoptimized style={{ objectFit: "cover", display: "block" }} />
                 </div>
               ) : (
                 <div className="__cl_accent" style={{ height: 3, background: `linear-gradient(90deg, ${accentColors[idx % 6]}, ${accentColorsLight[idx % 6]})`, opacity: 0.5, transition: "opacity .2s" }} />
