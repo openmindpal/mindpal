@@ -264,3 +264,138 @@ export async function inspectSkillArtifactDir(params: { artifactDir: string; tru
   const sbom = await computeSkillSbomV1({ artifactDir: params.artifactDir, depsDigest, manifestSummary });
   return { depsDigest, manifestSummary, signatureStatus: trust.status, scanSummary, sbomSummary: sbom.sbomSummary, sbomDigest: sbom.sbomDigest };
 }
+
+// 从 URL 下载 skill 包
+export async function importSkillFromUrl(params: {
+  url: string;
+  archiveFormat?: "zip" | "tgz";
+}): Promise<{ bytes: Buffer; format: "zip" | "tgz" }> {
+  const url = params.url.trim();
+  if (!url.startsWith("https://") && !url.startsWith("http://")) {
+    throw new Error("URL 必须以 http:// 或 https:// 开头");
+  }
+
+  // 推断格式
+  let format: "zip" | "tgz" = params.archiveFormat ?? "tgz";
+  if (!params.archiveFormat) {
+    const lowerUrl = url.toLowerCase();
+    if (lowerUrl.endsWith(".zip")) format = "zip";
+    else if (lowerUrl.endsWith(".tgz") || lowerUrl.endsWith(".tar.gz") || lowerUrl.endsWith(".gz")) format = "tgz";
+  }
+
+  // 下载
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60_000); // 60秒超时
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "OpenSlin-Skill-Importer/1.0",
+        "Accept": "application/octet-stream, application/zip, application/gzip, */*",
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`下载失败: HTTP ${res.status} ${res.statusText}`);
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    const bytes = Buffer.from(arrayBuffer);
+    return { bytes, format };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// 从 Git 仓库导入 skill 包
+export async function importSkillFromGit(params: {
+  repoUrl: string;
+  ref?: string;
+  subdir?: string;
+}): Promise<{ bytes: Buffer; format: "tgz" }> {
+  const repoUrl = params.repoUrl.trim();
+  const ref = params.ref?.trim() || "HEAD";
+  const subdir = params.subdir?.trim() || "";
+
+  // 创建临时目录
+  const tmpRoot = path.join(registryRootDir(), ".tmp");
+  await ensureDir(tmpRoot);
+  const tmpId = crypto.randomUUID();
+  const cloneDir = path.join(tmpRoot, `git-${tmpId}`);
+  const tarPath = path.join(tmpRoot, `git-${tmpId}.tgz`);
+
+  try {
+    // git clone --depth=1 --branch=<ref> <repoUrl> <cloneDir>
+    // 如果 ref 是 commit hash，需要先 clone 再 checkout
+    const cloneArgs = ["clone", "--depth=1"];
+    if (ref && ref !== "HEAD" && !ref.match(/^[0-9a-f]{40}$/i)) {
+      // branch 或 tag
+      cloneArgs.push("--branch", ref);
+    }
+    cloneArgs.push(repoUrl, cloneDir);
+
+    const cloneProc = child_process.spawnSync("git", cloneArgs, {
+      encoding: "utf8",
+      timeout: 120_000, // 2分钟超时
+      windowsHide: true,
+    });
+    if (cloneProc.error || cloneProc.status !== 0) {
+      const errMsg = cloneProc.error?.message || cloneProc.stderr || "git clone 失败";
+      throw new Error(`Git 克隆失败: ${errMsg}`);
+    }
+
+    // 如果 ref 是 commit hash，需要 checkout
+    if (ref && ref.match(/^[0-9a-f]{40}$/i)) {
+      const fetchProc = child_process.spawnSync("git", ["fetch", "--depth=1", "origin", ref], {
+        cwd: cloneDir,
+        encoding: "utf8",
+        timeout: 60_000,
+        windowsHide: true,
+      });
+      if (fetchProc.error || fetchProc.status !== 0) {
+        throw new Error(`Git fetch 失败: ${fetchProc.stderr || "unknown error"}`);
+      }
+      const checkoutProc = child_process.spawnSync("git", ["checkout", ref], {
+        cwd: cloneDir,
+        encoding: "utf8",
+        timeout: 30_000,
+        windowsHide: true,
+      });
+      if (checkoutProc.error || checkoutProc.status !== 0) {
+        throw new Error(`Git checkout 失败: ${checkoutProc.stderr || "unknown error"}`);
+      }
+    }
+
+    // 确定打包目录
+    let packDir = cloneDir;
+    if (subdir) {
+      packDir = path.join(cloneDir, subdir);
+      const stat = await fs.stat(packDir).catch(() => null);
+      if (!stat?.isDirectory()) {
+        throw new Error(`子目录不存在: ${subdir}`);
+      }
+    }
+
+    // 检查 manifest.json 存在
+    const manifestPath = path.join(packDir, "manifest.json");
+    const manifestExists = await exists(manifestPath);
+    if (!manifestExists) {
+      throw new Error("未找到 manifest.json，请确认仓库根目录或子目录包含 skill 清单");
+    }
+
+    // 移除 .git 目录
+    await fs.rm(path.join(cloneDir, ".git"), { recursive: true, force: true });
+
+    // 打包为 tgz
+    await tar.c(
+      { gzip: true, file: tarPath, cwd: path.dirname(packDir) },
+      [path.basename(packDir)]
+    );
+
+    const bytes = await fs.readFile(tarPath);
+    return { bytes, format: "tgz" };
+  } finally {
+    // 清理临时文件
+    await fs.rm(cloneDir, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(tarPath, { force: true }).catch(() => {});
+  }
+}

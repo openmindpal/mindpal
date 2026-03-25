@@ -52,6 +52,19 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
   const [uploadStatus, setUploadStatus] = useState<number>(0);
   const [uploadResult, setUploadResult] = useState<SkillPackageUploadResponse | null>(null);
 
+  // URL 导入
+  const [importUrl, setImportUrl] = useState<string>("");
+  const [importUrlFormat, setImportUrlFormat] = useState<"zip" | "tgz">("tgz");
+  const [importUrlStatus, setImportUrlStatus] = useState<number>(0);
+  const [importUrlResult, setImportUrlResult] = useState<SkillPackageUploadResponse | null>(null);
+
+  // Git 导入
+  const [gitRepoUrl, setGitRepoUrl] = useState<string>("");
+  const [gitRef, setGitRef] = useState<string>("");
+  const [gitSubdir, setGitSubdir] = useState<string>("");
+  const [importGitStatus, setImportGitStatus] = useState<number>(0);
+  const [importGitResult, setImportGitResult] = useState<SkillPackageUploadResponse | null>(null);
+
   const [pubToolName, setPubToolName] = useState<string>("echo.tool");
   const [pubArtifactId, setPubArtifactId] = useState<string>("");
   const [pubDepsDigest, setPubDepsDigest] = useState<string>("");
@@ -102,6 +115,75 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setUploadResult((json as SkillPackageUploadResponse) ?? null);
+      const aid = String((json as any)?.artifactId ?? "");
+      if (aid) setPubArtifactId(aid);
+      const dd = String((json as any)?.depsDigest ?? "");
+      if (dd) setPubDepsDigest(dd);
+      await refresh();
+    } catch (e: unknown) {
+      setError(errText(props.locale, toApiError(e)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importFromUrl() {
+    setError("");
+    setImportUrlResult(null);
+    setImportUrlStatus(0);
+    const url = importUrl.trim();
+    if (!url) {
+      setError(t(props.locale, "gov.skillPackages.urlRequired"));
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/artifacts/skill-packages/import-url`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        locale: props.locale,
+        body: JSON.stringify({ url, archiveFormat: importUrlFormat }),
+      });
+      setImportUrlStatus(res.status);
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) throw toApiError(json);
+      setImportUrlResult((json as SkillPackageUploadResponse) ?? null);
+      const aid = String((json as any)?.artifactId ?? "");
+      if (aid) setPubArtifactId(aid);
+      const dd = String((json as any)?.depsDigest ?? "");
+      if (dd) setPubDepsDigest(dd);
+      await refresh();
+    } catch (e: unknown) {
+      setError(errText(props.locale, toApiError(e)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importFromGit() {
+    setError("");
+    setImportGitResult(null);
+    setImportGitStatus(0);
+    const repoUrl = gitRepoUrl.trim();
+    if (!repoUrl) {
+      setError(t(props.locale, "gov.skillPackages.repoUrlRequired"));
+      return;
+    }
+    setBusy(true);
+    try {
+      const payload: any = { repoUrl };
+      if (gitRef.trim()) payload.ref = gitRef.trim();
+      if (gitSubdir.trim()) payload.subdir = gitSubdir.trim();
+      const res = await apiFetch(`/artifacts/skill-packages/import-git`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        locale: props.locale,
+        body: JSON.stringify(payload),
+      });
+      setImportGitStatus(res.status);
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) throw toApiError(json);
+      setImportGitResult((json as SkillPackageUploadResponse) ?? null);
       const aid = String((json as any)?.artifactId ?? "");
       if (aid) setPubArtifactId(aid);
       const dd = String((json as any)?.depsDigest ?? "");
@@ -199,6 +281,80 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
                 </button>
               </div>
               <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(uploadResult, null, 2)}</pre>
+            </div>
+          ) : null}
+        </Card>
+
+        <Card>
+          <h3>{t(props.locale, "gov.skillPackages.importUrlTitle")}</h3>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              value={importUrl}
+              onChange={(e) => setImportUrl(e.currentTarget.value)}
+              placeholder={t(props.locale, "gov.skillPackages.placeholder.url")}
+              style={{ minWidth: 400 }}
+              disabled={busy}
+            />
+            <select value={importUrlFormat} onChange={(e) => setImportUrlFormat(e.currentTarget.value === "zip" ? "zip" : "tgz")} disabled={busy}>
+              <option value="tgz">tgz</option>
+              <option value="zip">zip</option>
+            </select>
+            <button onClick={importFromUrl} disabled={busy || !importUrl.trim()}>
+              {t(props.locale, "gov.skillPackages.importUrl")}
+            </button>
+            {importUrlStatus ? <Badge>{importUrlStatus}</Badge> : null}
+          </div>
+          {importUrlResult ? (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <span>{`artifactId=${String(importUrlResult.artifactId ?? "")}`}</span>
+                <button onClick={() => copyText(String(importUrlResult.artifactId ?? ""))} disabled={busy}>
+                  {t(props.locale, "action.copy")}
+                </button>
+              </div>
+              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(importUrlResult, null, 2)}</pre>
+            </div>
+          ) : null}
+        </Card>
+
+        <Card>
+          <h3>{t(props.locale, "gov.skillPackages.importGitTitle")}</h3>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              value={gitRepoUrl}
+              onChange={(e) => setGitRepoUrl(e.currentTarget.value)}
+              placeholder={t(props.locale, "gov.skillPackages.placeholder.repoUrl")}
+              style={{ minWidth: 360 }}
+              disabled={busy}
+            />
+            <input
+              value={gitRef}
+              onChange={(e) => setGitRef(e.currentTarget.value)}
+              placeholder={t(props.locale, "gov.skillPackages.placeholder.ref")}
+              style={{ width: 120 }}
+              disabled={busy}
+            />
+            <input
+              value={gitSubdir}
+              onChange={(e) => setGitSubdir(e.currentTarget.value)}
+              placeholder={t(props.locale, "gov.skillPackages.placeholder.subdir")}
+              style={{ width: 140 }}
+              disabled={busy}
+            />
+            <button onClick={importFromGit} disabled={busy || !gitRepoUrl.trim()}>
+              {t(props.locale, "gov.skillPackages.importGit")}
+            </button>
+            {importGitStatus ? <Badge>{importGitStatus}</Badge> : null}
+          </div>
+          {importGitResult ? (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <span>{`artifactId=${String(importGitResult.artifactId ?? "")}`}</span>
+                <button onClick={() => copyText(String(importGitResult.artifactId ?? ""))} disabled={busy}>
+                  {t(props.locale, "action.copy")}
+                </button>
+              </div>
+              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(importGitResult, null, 2)}</pre>
             </div>
           ) : null}
         </Card>

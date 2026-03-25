@@ -8,7 +8,7 @@ import { createArtifact, getArtifact, getArtifactContent, listArtifactsByType } 
 import { consumeArtifactDownloadTokenByHash, createArtifactDownloadToken, generateDownloadToken, hashDownloadToken } from "../modules/artifacts/artifactDownloadTokenRepo";
 import { defaultArtifactPolicy, getEffectiveArtifactPolicy } from "../modules/governance/artifactPolicyRepo";
 import { listActiveSkillTrustedKeys } from "../modules/governance/skillRuntimeRepo";
-import { inspectSkillArtifactDir, materializeSkillArtifact } from "../modules/tools/skillArtifactRegistry";
+import { inspectSkillArtifactDir, materializeSkillArtifact, importSkillFromUrl, importSkillFromGit } from "../modules/tools/skillArtifactRegistry";
 import { parseTrustedSkillPublicKeys } from "../modules/tools/skillPackage";
 
 export const artifactRoutes: FastifyPluginAsync = async (app) => {
@@ -73,6 +73,127 @@ export const artifactRoutes: FastifyPluginAsync = async (app) => {
       req.ctx.audit!.inputDigest = { archiveFormat: body.archiveFormat, byteSize: bytes.byteLength };
       req.ctx.audit!.outputDigest = { artifactId: created.artifactId, depsDigest: inspected.depsDigest, signatureStatus: inspected.signatureStatus, scanSummary: inspected.scanSummary };
       return { artifactId: created.artifactId, depsDigest: inspected.depsDigest, signatureStatus: inspected.signatureStatus, scanSummary: inspected.scanSummary, manifestSummary: inspected.manifestSummary };
+    } catch (e: any) {
+      req.ctx.audit!.errorCategory = "policy_violation";
+      throw Errors.badRequest(String(e?.message ?? e));
+    }
+  });
+
+  // 从 URL 导入 skill 包
+  app.post("/artifacts/skill-packages/import-url", async (req) => {
+    setAuditContext(req, { resourceType: "artifact", action: "create" });
+    const decision = await requirePermission({ req, resourceType: "tool", action: "publish" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const body = z
+      .object({
+        url: z.string().url().min(10),
+        archiveFormat: z.enum(["zip", "tgz"]).optional(),
+      })
+      .parse(req.body);
+
+    const subject = req.ctx.subject!;
+    if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
+
+    const artifactId = crypto.randomUUID();
+    try {
+      const { bytes, format } = await importSkillFromUrl({ url: body.url, archiveFormat: body.archiveFormat });
+      const maxBytes = Math.max(1, Number(process.env.SKILL_REGISTRY_MAX_UPLOAD_BYTES ?? "10485760") || 10485760);
+      if (bytes.byteLength <= 0) throw Errors.badRequest("空包");
+      if (bytes.byteLength > maxBytes) throw Errors.badRequest("包过大");
+
+      const artifactDir = await materializeSkillArtifact({ artifactId, archiveFormat: format, archiveBytes: bytes });
+      const activeKeys = await listActiveSkillTrustedKeys({ pool: app.db as any, tenantId: subject.tenantId });
+      const keyIdToPem: Record<string, string> = {};
+      for (const k of activeKeys) keyIdToPem[k.keyId] = k.publicKeyPem;
+      const trustedKeys = parseTrustedSkillPublicKeys({ keyIdToPem });
+      const inspected = await inspectSkillArtifactDir({ artifactDir, trustedKeys });
+      const contentType = format === "zip" ? "application/zip" : "application/gzip";
+      const base64 = bytes.toString("base64");
+      const created = await createArtifact({
+        pool: app.db,
+        artifactId,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId,
+        type: "skill_package",
+        format,
+        contentType,
+        contentText: base64,
+        source: {
+          kind: "skill_package",
+          importedFrom: body.url,
+          depsDigest: inspected.depsDigest,
+          signatureStatus: inspected.signatureStatus,
+          manifestSummary: inspected.manifestSummary,
+          scanSummary: inspected.scanSummary,
+        },
+        createdBySubjectId: subject.subjectId,
+      });
+      req.ctx.audit!.inputDigest = { url: body.url, archiveFormat: format, byteSize: bytes.byteLength };
+      req.ctx.audit!.outputDigest = { artifactId: created.artifactId, depsDigest: inspected.depsDigest, signatureStatus: inspected.signatureStatus, scanSummary: inspected.scanSummary };
+      return { artifactId: created.artifactId, depsDigest: inspected.depsDigest, signatureStatus: inspected.signatureStatus, scanSummary: inspected.scanSummary, manifestSummary: inspected.manifestSummary, importedFrom: body.url };
+    } catch (e: any) {
+      req.ctx.audit!.errorCategory = "policy_violation";
+      throw Errors.badRequest(String(e?.message ?? e));
+    }
+  });
+
+  // 从 Git 仓库导入 skill 包
+  app.post("/artifacts/skill-packages/import-git", async (req) => {
+    setAuditContext(req, { resourceType: "artifact", action: "create" });
+    const decision = await requirePermission({ req, resourceType: "tool", action: "publish" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const body = z
+      .object({
+        repoUrl: z.string().min(10),
+        ref: z.string().optional(), // branch/tag/commit
+        subdir: z.string().optional(), // 子目录
+      })
+      .parse(req.body);
+
+    const subject = req.ctx.subject!;
+    if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
+
+    const artifactId = crypto.randomUUID();
+    try {
+      const { bytes, format } = await importSkillFromGit({ repoUrl: body.repoUrl, ref: body.ref, subdir: body.subdir });
+      const maxBytes = Math.max(1, Number(process.env.SKILL_REGISTRY_MAX_UPLOAD_BYTES ?? "10485760") || 10485760);
+      if (bytes.byteLength <= 0) throw Errors.badRequest("空包");
+      if (bytes.byteLength > maxBytes) throw Errors.badRequest("包过大");
+
+      const artifactDir = await materializeSkillArtifact({ artifactId, archiveFormat: format, archiveBytes: bytes });
+      const activeKeys = await listActiveSkillTrustedKeys({ pool: app.db as any, tenantId: subject.tenantId });
+      const keyIdToPem: Record<string, string> = {};
+      for (const k of activeKeys) keyIdToPem[k.keyId] = k.publicKeyPem;
+      const trustedKeys = parseTrustedSkillPublicKeys({ keyIdToPem });
+      const inspected = await inspectSkillArtifactDir({ artifactDir, trustedKeys });
+      const contentType = "application/gzip";
+      const base64 = bytes.toString("base64");
+      const created = await createArtifact({
+        pool: app.db,
+        artifactId,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId,
+        type: "skill_package",
+        format,
+        contentType,
+        contentText: base64,
+        source: {
+          kind: "skill_package",
+          importedFrom: body.repoUrl,
+          gitRef: body.ref ?? "HEAD",
+          gitSubdir: body.subdir ?? null,
+          depsDigest: inspected.depsDigest,
+          signatureStatus: inspected.signatureStatus,
+          manifestSummary: inspected.manifestSummary,
+          scanSummary: inspected.scanSummary,
+        },
+        createdBySubjectId: subject.subjectId,
+      });
+      req.ctx.audit!.inputDigest = { repoUrl: body.repoUrl, ref: body.ref, subdir: body.subdir, byteSize: bytes.byteLength };
+      req.ctx.audit!.outputDigest = { artifactId: created.artifactId, depsDigest: inspected.depsDigest, signatureStatus: inspected.signatureStatus, scanSummary: inspected.scanSummary };
+      return { artifactId: created.artifactId, depsDigest: inspected.depsDigest, signatureStatus: inspected.signatureStatus, scanSummary: inspected.scanSummary, manifestSummary: inspected.manifestSummary, importedFrom: body.repoUrl };
     } catch (e: any) {
       req.ctx.audit!.errorCategory = "policy_violation";
       throw Errors.badRequest(String(e?.message ?? e));
