@@ -36,14 +36,18 @@ CREATE TABLE IF NOT EXISTS federation_permission_grants (
   revoke_reason     TEXT,                                       -- 撤销原因
   metadata          JSONB DEFAULT '{}'::jsonb,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (node_id, capability_id, permission_type) WHERE revoked_at IS NULL
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 部分唯一索引：同一节点+能力+权限类型只能有一个活跃授权
+CREATE UNIQUE INDEX IF NOT EXISTS federation_perm_grants_unique_active 
+  ON federation_permission_grants (node_id, capability_id, permission_type) 
+  WHERE revoked_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS federation_perm_grants_tenant ON federation_permission_grants (tenant_id);
 CREATE INDEX IF NOT EXISTS federation_perm_grants_node ON federation_permission_grants (node_id);
-CREATE INDEX IF NOT EXISTS federation_perm_grants_active ON federation_permission_grants (tenant_id, node_id) 
-  WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now());
+CREATE INDEX IF NOT EXISTS federation_perm_grants_active ON federation_permission_grants (tenant_id, node_id, expires_at) 
+  WHERE revoked_at IS NULL;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 3. 用户级跨域授权 - 用户 A 授权用户 B 访问特定能力
@@ -67,8 +71,8 @@ CREATE TABLE IF NOT EXISTS federation_user_grants (
 
 CREATE INDEX IF NOT EXISTS federation_user_grants_grantor ON federation_user_grants (tenant_id, grantor_subject);
 CREATE INDEX IF NOT EXISTS federation_user_grants_grantee ON federation_user_grants (tenant_id, grantee_node_id, grantee_subject);
-CREATE INDEX IF NOT EXISTS federation_user_grants_active ON federation_user_grants (tenant_id, grantee_node_id, grantee_subject)
-  WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now());
+CREATE INDEX IF NOT EXISTS federation_user_grants_active ON federation_user_grants (tenant_id, grantee_node_id, grantee_subject, expires_at)
+  WHERE revoked_at IS NULL;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 4. 内容策略 - 数据用途限制、生命周期约束、脱敏规则
