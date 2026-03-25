@@ -54,13 +54,10 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: node scripts/secret-scan.mjs
-      - run: npm -w packages/shared run build
-      - run: npm -ws run build --if-present
+      - run: npm run build
       - run: npm -w apps/api test
       - run: npm -w apps/worker test
       - run: npm -w apps/device-agent test
-      - run: npm -w apps/web build
-      - run: npm -w packages/shared build
 
   web-e2e:
     if: >-
@@ -112,8 +109,7 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: node scripts/secret-scan.mjs
-      - run: npm -w packages/shared run build
-      - run: npm -ws run build --if-present
+      - run: npm run build
       - run: npm -w apps/api db:seed
       - name: start api
         run: |
