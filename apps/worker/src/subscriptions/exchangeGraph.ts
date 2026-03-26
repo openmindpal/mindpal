@@ -302,9 +302,10 @@ export async function pollExchangeDelta(params: {
   /* ─── 平台层：将 skill 返回的消息写入 DB ─── */
   let insertedCount = 0;
   let dedupCount = 0;
-  const scannedCount = skillResult.scannedCount;
+  const scannedCount = skillResult.scannedCount ?? 0;
+  const messages = skillResult.messages ?? [];
 
-  for (const m of skillResult.messages) {
+  for (const m of messages) {
     const eventId = `exchange:${params.cfg.connectorInstanceId}:${params.cfg.mailbox}:${m.messageId}`;
     const workspaceId = `exchange:${params.cfg.connectorInstanceId}:${params.cfg.mailbox}`;
 

@@ -1,6 +1,6 @@
 {
   "identity": {
-    "name": "http.fetch",
+    "name": "http.get",
     "version": "1.0.0"
   },
   "contract": {
