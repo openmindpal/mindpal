@@ -1,0 +1,224 @@
+/* ─── PendingActionsQueue Container ──────────────────────────────────────────── */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  background: var(--sl-surface);
+  border-radius: 8px;
+  border: 1px solid var(--sl-border);
+  overflow: hidden;
+}
+
+/* ─── Header ─────────────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--sl-header-bg);
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sl-text);
+  transition: background var(--sl-transition-fast);
+}
+
+.header:hover {
+  background: var(--sl-hover);
+}
+
+.headerIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sl-muted);
+}
+
+.headerTitle {
+  flex: 1;
+  text-align: left;
+}
+
+.headerBadges {
+  display: flex;
+  gap: 4px;
+}
+
+.headerBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.headerBadgeApproval {
+  background: var(--sl-warning-bg, rgba(245, 158, 11, 0.15));
+  color: var(--sl-warning, #f59e0b);
+}
+
+.headerBadgeFailed {
+  background: var(--sl-error-bg, rgba(239, 68, 68, 0.15));
+  color: var(--sl-error, #ef4444);
+}
+
+.headerBadgeDeadletter {
+  background: var(--sl-muted-bg, rgba(156, 163, 175, 0.15));
+  color: var(--sl-muted);
+}
+
+/* ─── Content ────────────────────────────────────────────────────────────────── */
+
+.content {
+  padding: 8px;
+  border-top: 1px solid var(--sl-border);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* ─── States ─────────────────────────────────────────────────────────────────── */
+
+.loadingState,
+.errorState,
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--sl-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--sl-border);
+  border-top-color: var(--sl-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.retryBtn {
+  padding: 4px 12px;
+  border: 1px solid var(--sl-border);
+  border-radius: 4px;
+  background: var(--sl-surface);
+  color: var(--sl-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--sl-transition-fast);
+}
+
+.retryBtn:hover {
+  background: var(--sl-hover);
+  border-color: var(--sl-accent);
+}
+
+/* ─── Action List ────────────────────────────────────────────────────────────── */
+
+.actionList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ─── Action Item ────────────────────────────────────────────────────────────── */
+
+.actionItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--sl-bg);
+  border: 1px solid var(--sl-border);
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--sl-text);
+  transition: all var(--sl-transition-fast);
+}
+
+.actionItem:hover {
+  background: var(--sl-hover);
+  border-color: var(--sl-accent-border);
+}
+
+.actionIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.actionIconApproval {
+  background: var(--sl-warning-bg, rgba(245, 158, 11, 0.15));
+  color: var(--sl-warning, #f59e0b);
+}
+
+.actionIconFailed {
+  background: var(--sl-error-bg, rgba(239, 68, 68, 0.15));
+  color: var(--sl-error, #ef4444);
+}
+
+.actionIconDeadletter {
+  background: var(--sl-muted-bg, rgba(156, 163, 175, 0.15));
+  color: var(--sl-muted);
+}
+
+.actionContent {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.actionType {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sl-text);
+}
+
+.actionDetail {
+  font-size: 11px;
+  color: var(--sl-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.actionTime {
+  font-size: 10px;
+  color: var(--sl-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.actionArrow {
+  display: flex;
+  align-items: center;
+  color: var(--sl-muted);
+  opacity: 0;
+  transition: opacity var(--sl-transition-fast);
+}
+
+.actionItem:hover .actionArrow {
+  opacity: 1;
+}

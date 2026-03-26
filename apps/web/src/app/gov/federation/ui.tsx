@@ -102,13 +102,13 @@ export default function FederationClient(props: { locale: string; initial?: Init
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
-  // 联邦状态
+  // Federation status
   const [federationStatus, setFederationStatus] = useState<FederationStatus | null>(null);
   const [nodes, setNodes] = useState<FederationNode[]>([]);
   const [logs, setLogs] = useState<EnvelopeLog[]>([]);
   const [activeNodes, setActiveNodes] = useState(0);
 
-  // 新增状态：权限授权
+  // Permission grants state
   const [permGrants, setPermGrants] = useState<PermissionGrant[]>([]);
   const [permNodeId, setPermNodeId] = useState("");
   const [permType, setPermType] = useState<PermissionType>("read");
@@ -116,27 +116,28 @@ export default function FederationClient(props: { locale: string; initial?: Init
   const [permConditions, setPermConditions] = useState("");
   const [permExpires, setPermExpires] = useState("");
 
-  // 新增状态：用户授权
+  // User grants state
   const [userGrants, setUserGrants] = useState<UserGrant[]>([]);
   const [ugNodeId, setUgNodeId] = useState("");
   const [ugLocalUser, setUgLocalUser] = useState("");
   const [ugRemoteId, setUgRemoteId] = useState("");
   const [ugScopes, setUgScopes] = useState("");
 
-  // 新增状态：内容策略
+  // Content policy state
   const [policies, setPolicies] = useState<ContentPolicy[]>([]);
   const [policyName, setPolicyName] = useState("");
   const [policyType, setPolicyType] = useState<ContentPolicy["policyType"]>("usage_restriction");
   const [policyRules, setPolicyRules] = useState("");
   const [policyNodes, setPolicyNodes] = useState("");
   const [policyEnabled, setPolicyEnabled] = useState(true);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [editingPolicy, setEditingPolicy] = useState<ContentPolicy | null>(null);
 
-  // 新增状态：审计日志
+  // Audit logs state
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditFilterNode, setAuditFilterNode] = useState("");
 
-  // 表单状态
+  // Form state
   const [formName, setFormName] = useState("");
   const [formEndpoint, setFormEndpoint] = useState("");
   const [formDirection, setFormDirection] = useState<"bi" | "inbound_only" | "outbound_only">("bi");
@@ -144,10 +145,10 @@ export default function FederationClient(props: { locale: string; initial?: Init
   const [formStatus, setFormStatus] = useState<"pending" | "active" | "suspended">("pending");
   const [formTrustLevel, setFormTrustLevel] = useState<"untrusted" | "trusted" | "verified">("untrusted");
 
-  // 测试结果
+  // Test result
   const [testResult, setTestResult] = useState<{ nodeId: string; ok: boolean; latencyMs: number; error?: string } | null>(null);
 
-  // 初始化数据
+  // Initialize data
   useEffect(() => {
     if (props.initial?.json) {
       const data = props.initial.json as { status?: FederationStatus; nodes?: FederationNode[]; activeNodes?: number };
@@ -327,7 +328,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
   const actorTypeLabel = (at: string) => t(props.locale, `gov.federation.audit.actorType.${at}`);
   const outcomeLabel = (o: string) => t(props.locale, `gov.federation.audit.outcome.${o}`);
 
-  // ========== 新增 API 调用 ==========
+  // ========== API Calls ==========
   const refreshPermGrants = useCallback(async () => {
     setError("");
     setBusy(true);
@@ -611,7 +612,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
           label: t(props.locale, "gov.federation.tab.nodes"),
           content: (
             <>
-              {/* 新建节点表单 */}
+              {/* Create node form */}
               <Card title={t(props.locale, "gov.federation.createNode")}>
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
                   <label style={{ display: "grid", gap: 4 }}>
@@ -675,7 +676,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                 </div>
               </Card>
 
-              {/* 节点列表 */}
+              {/* Node list */}
               <Card title={t(props.locale, "gov.federation.nodeList")}>
                 {nodes.length === 0 ? (
                   <p style={{ color: "#888" }}>{t(props.locale, "gov.federation.noNodes")}</p>
@@ -728,7 +729,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                 )}
               </Card>
 
-              {/* 测试结果 */}
+              {/* Test result */}
               {testResult && (
                 <Card title={t(props.locale, "gov.federation.testResult")}>
                   <p style={{ color: testResult.ok ? "green" : "crimson" }}>

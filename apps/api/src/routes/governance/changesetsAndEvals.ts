@@ -935,4 +935,75 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
       throw Errors.badRequest(String(e?.message ?? e));
     }
   });
+
+  /**
+   * 系统状态汇总 API — 用于首页顶栏 Mission Control 状态条
+   * 返回：待审批数、运行异常数、设备在线/离线数
+   */
+  app.get("/governance/system-status", async (req) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "governance", action: "system-status.read" });
+    // 轻量读取，使用 workflow.read 权限
+    const decision = await requirePermission({ req, resourceType: "workflow", action: "read" });
+    req.ctx.audit!.policyDecision = decision;
+
+    // 待审批数
+    const approvalRes = await app.db.query(
+      `SELECT COUNT(*)::int AS pending FROM approvals WHERE tenant_id = $1 AND status = 'pending'`,
+      [subject.tenantId],
+    );
+    const pendingApprovals = Number(approvalRes.rows[0]?.pending ?? 0);
+
+    // 运行异常数（failed/deadletter 状态的 run）
+    const runRes = await app.db.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+         COUNT(*) FILTER (WHERE status = 'needs_approval')::int AS needs_approval
+       FROM runs
+       WHERE tenant_id = $1 AND updated_at >= NOW() - interval '24 hours'`,
+      [subject.tenantId],
+    );
+    const failedRuns = Number(runRes.rows[0]?.failed ?? 0);
+    const runsNeedsApproval = Number(runRes.rows[0]?.needs_approval ?? 0);
+
+    // 死信队列数
+    const dlqRes = await app.db.query(
+      `SELECT COUNT(*)::int AS deadletter FROM steps WHERE status = 'deadletter' AND run_id IN (SELECT run_id FROM runs WHERE tenant_id = $1)`,
+      [subject.tenantId],
+    );
+    const deadletterCount = Number(dlqRes.rows[0]?.deadletter ?? 0);
+
+    // 设备状态（基于 last_seen_at 判断在线：5分钟内视为在线）
+    const spaceId = subject.spaceId;
+    const deviceRes = spaceId
+      ? await app.db.query(
+          `SELECT
+             COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE status = 'active' AND last_seen_at >= NOW() - interval '5 minutes')::int AS online
+           FROM device_records
+           WHERE tenant_id = $1 AND space_id = $2`,
+          [subject.tenantId, spaceId],
+        )
+      : await app.db.query(
+          `SELECT
+             COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE status = 'active' AND last_seen_at >= NOW() - interval '5 minutes')::int AS online
+           FROM device_records
+           WHERE tenant_id = $1`,
+          [subject.tenantId],
+        );
+    const devicesTotal = Number(deviceRes.rows[0]?.total ?? 0);
+    const devicesOnline = Number(deviceRes.rows[0]?.online ?? 0);
+
+    const status = {
+      timestamp: new Date().toISOString(),
+      approvals: { pending: pendingApprovals },
+      runs: { failed: failedRuns, needsApproval: runsNeedsApproval },
+      deadletter: { count: deadletterCount },
+      devices: { total: devicesTotal, online: devicesOnline, offline: devicesTotal - devicesOnline },
+    };
+
+    req.ctx.audit!.outputDigest = status;
+    return status;
+  });
 };

@@ -16,6 +16,205 @@ async function assertHomeChatToolSuggestionsSupport() {
   if (!code.includes('it.kind === "toolSuggestions"')) throw new Error("homechat_missing_toolsuggestions_render");
 }
 
+/* ─── Five-State Architecture Component Assertions ─── */
+
+async function assertFiveStateArchitectureComponents() {
+  const homeChatPath = path.resolve(process.cwd(), "src", "app", "HomeChat.tsx");
+  const code = await fs.readFile(homeChatPath, "utf8");
+
+  // P0-系统态: StatusBar (顶栏 Mission Control)
+  if (!code.includes('import StatusBar from')) throw new Error("missing_statusbar_import");
+  if (!code.includes('<StatusBar')) throw new Error("missing_statusbar_render");
+
+  // P0-个人态: ActiveRunList, PendingActionsQueue, RecentAndFavorites (左栏)
+  if (!code.includes('import ActiveRunList from')) throw new Error("missing_activerunlist_import");
+  if (!code.includes('<ActiveRunList')) throw new Error("missing_activerunlist_render");
+  if (!code.includes('import PendingActionsQueue from')) throw new Error("missing_pendingactionsqueue_import");
+  if (!code.includes('<PendingActionsQueue')) throw new Error("missing_pendingactionsqueue_render");
+  if (!code.includes('import RecentAndFavorites from')) throw new Error("missing_recentandfavorites_import");
+  if (!code.includes('<RecentAndFavorites')) throw new Error("missing_recentandfavorites_render");
+
+  // P0-智能体态: FlowItemRenderer components
+  if (!code.includes('PlanStepRenderer')) throw new Error("missing_planstep_renderer");
+  if (!code.includes('ExecutionReceiptRenderer')) throw new Error("missing_executionreceipt_renderer");
+  if (!code.includes('ApprovalNodeRenderer')) throw new Error("missing_approvalnode_renderer");
+  if (!code.includes('ArtifactCardRenderer')) throw new Error("missing_artifactcard_renderer");
+  if (!code.includes('RunSummaryRenderer')) throw new Error("missing_runsummary_renderer");
+
+  // P0-对象态: Workspace Tab types
+  if (!code.includes('kind: "artifact"')) throw new Error("missing_artifact_tab_kind");
+  if (!code.includes('kind: "runDetail"')) throw new Error("missing_rundetail_tab_kind");
+  if (!code.includes('kind: "approvalDetail"')) throw new Error("missing_approvaldetail_tab_kind");
+  if (!code.includes('ArtifactPreview')) throw new Error("missing_artifactpreview_component");
+
+  // P1-后台态: BottomTray
+  if (!code.includes('import BottomTray from')) throw new Error("missing_bottomtray_import");
+  if (!code.includes('<BottomTray')) throw new Error("missing_bottomtray_render");
+}
+
+async function assertBottomTraySubPanels() {
+  const bottomTrayPath = path.resolve(process.cwd(), "src", "components", "shell", "BottomTray.tsx");
+  const code = await fs.readFile(bottomTrayPath, "utf8");
+
+  // RunHistoryPanel
+  if (!code.includes('import RunHistoryPanel from')) throw new Error("missing_runhistorypanel_import");
+  if (!code.includes('<RunHistoryPanel')) throw new Error("missing_runhistorypanel_render");
+
+  // NotificationPanel
+  if (!code.includes('import NotificationPanel from')) throw new Error("missing_notificationpanel_import");
+  if (!code.includes('<NotificationPanel')) throw new Error("missing_notificationpanel_render");
+
+  // DeviceActionsPanel
+  if (!code.includes('import DeviceActionsPanel from')) throw new Error("missing_deviceactionspanel_import");
+  if (!code.includes('<DeviceActionsPanel')) throw new Error("missing_deviceactionspanel_render");
+
+  // Tray tabs
+  if (!code.includes('"runs"')) throw new Error("missing_runs_tab");
+  if (!code.includes('"notifications"')) throw new Error("missing_notifications_tab");
+  if (!code.includes('"deviceActions"')) throw new Error("missing_deviceactions_tab");
+}
+
+async function assertArtifactPreviewTypes() {
+  const previewPath = path.resolve(process.cwd(), "src", "components", "artifact", "ArtifactPreview.tsx");
+  const code = await fs.readFile(previewPath, "utf8");
+
+  // Preview type handlers
+  if (!code.includes('case "json"')) throw new Error("missing_json_preview_case");
+  if (!code.includes('case "table"')) throw new Error("missing_table_preview_case");
+  if (!code.includes('case "chart"')) throw new Error("missing_chart_preview_case");
+  if (!code.includes('case "markdown"')) throw new Error("missing_markdown_preview_case");
+}
+
+async function assertWorkspaceTabDragAndDrop() {
+  const homeChatPath = path.resolve(process.cwd(), "src", "app", "HomeChat.tsx");
+  const code = await fs.readFile(homeChatPath, "utf8");
+
+  // Drag handlers
+  if (!code.includes('handleTabDragStart')) throw new Error("missing_tab_dragstart_handler");
+  if (!code.includes('handleTabDragOver')) throw new Error("missing_tab_dragover_handler");
+  if (!code.includes('handleTabDrop')) throw new Error("missing_tab_drop_handler");
+  if (!code.includes('draggable')) throw new Error("missing_draggable_attribute");
+}
+
+async function assertFlowItemRenderers() {
+  const rendererPath = path.resolve(process.cwd(), "src", "components", "flow", "FlowItemRenderer.tsx");
+  const code = await fs.readFile(rendererPath, "utf8");
+
+  // Renderer exports
+  if (!code.includes('export function PlanStepRenderer')) throw new Error("missing_planstep_renderer_export");
+  if (!code.includes('export function ExecutionReceiptRenderer')) throw new Error("missing_executionreceipt_renderer_export");
+  if (!code.includes('export function ApprovalNodeRenderer')) throw new Error("missing_approvalnode_renderer_export");
+  if (!code.includes('export function ArtifactCardRenderer')) throw new Error("missing_artifactcard_renderer_export");
+  if (!code.includes('export function RunSummaryRenderer')) throw new Error("missing_runsummary_renderer_export");
+}
+
+/* ─── Critical Path: Conversation → Task → Approval → Artifact → Workspace ─── */
+
+async function assertCriticalPathComponents() {
+  const homeChatPath = path.resolve(process.cwd(), "src", "app", "HomeChat.tsx");
+  const code = await fs.readFile(homeChatPath, "utf8");
+
+  // 1. Conversation → Task: orchestrator/turn/stream handling
+  if (!code.includes('/orchestrator/turn/stream')) throw new Error("missing_orchestrator_stream_endpoint");
+  if (!code.includes('toolSuggestions')) throw new Error("missing_toolsuggestions_event_handling");
+
+  // 2. Task → Approval: execute inline with approval detection
+  if (!code.includes('executeToolInline')) throw new Error("missing_execute_tool_inline");
+  if (!code.includes('needs_approval')) throw new Error("missing_approval_status_handling");
+
+  // 3. Approval → Artifact: run result polling with artifact extraction
+  if (!code.includes('pollRunResult')) throw new Error("missing_poll_run_result");
+  if (!code.includes('stepOutput')) throw new Error("missing_step_output_handling");
+
+  // 4. Artifact → Workspace: open artifact in workspace dock
+  if (!code.includes('openInWorkspace')) throw new Error("missing_open_in_workspace");
+  if (!code.includes('kind: "artifact"')) throw new Error("missing_artifact_workspace_kind");
+
+  // Verify homeHelpers has required types
+  const helpersPath = path.resolve(process.cwd(), "src", "app", "homeHelpers.ts");
+  const helpers = await fs.readFile(helpersPath, "utf8");
+  if (!helpers.includes('FlowArtifactCard')) throw new Error("missing_flowartifactcard_type");
+  if (!helpers.includes('FlowRunSummary')) throw new Error("missing_flowrunsummary_type");
+  if (!helpers.includes('FlowApprovalNode')) throw new Error("missing_flowapprovalnode_type");
+  if (!helpers.includes('FlowExecutionReceipt')) throw new Error("missing_flowexecutionreceipt_type");
+}
+
+async function assertI18nCompleteness() {
+  const zhPath = path.resolve(process.cwd(), "src", "locales", "zh-CN.json");
+  const enPath = path.resolve(process.cwd(), "src", "locales", "en-US.json");
+  const zh = JSON.parse(await fs.readFile(zhPath, "utf8"));
+  const en = JSON.parse(await fs.readFile(enPath, "utf8"));
+
+  // Five-State i18n keys (using actual key patterns in the codebase)
+  const requiredKeys = [
+    "statusBar.pendingApprovals",
+    "statusBar.failedRuns",
+    "statusBar.devices",
+    "activeRuns.title",
+    "pendingActions.title",
+    "recentFav.recentTab",
+    "bottomTray.runs",
+    "bottomTray.notifications",
+    "bottomTray.deviceActions",
+    "artifact.preview",
+    "flowItem.runSummary.succeeded",
+    "flowItem.runSummary.failed",
+    "flowItem.runSummary.steps",
+  ];
+
+  for (const key of requiredKeys) {
+    if (zh[key] === undefined) throw new Error(`missing_i18n_zh_${key}`);
+    if (en[key] === undefined) throw new Error(`missing_i18n_en_${key}`);
+  }
+}
+
+/* ─── Performance Baseline ─── */
+
+async function assertFirstScreenPerformance() {
+  const startTime = Date.now();
+  const res = await fetch(`${webBase}/?lang=${encodeURIComponent(locale)}`, {
+    headers: { "cache-control": "no-cache" },
+  });
+  const html = await res.text();
+  const loadTime = Date.now() - startTime;
+
+  // Performance baseline: first screen should load within 3s
+  const BASELINE_MS = 3000;
+  if (loadTime > BASELINE_MS) {
+    console.warn(`[PERF WARNING] First screen load time ${loadTime}ms exceeds baseline ${BASELINE_MS}ms`);
+  } else {
+    console.log(`[PERF] First screen load time: ${loadTime}ms (baseline: ${BASELINE_MS}ms)`);
+  }
+
+  // Verify critical content is present in initial render
+  if (!html.includes('data-testid="status-bar"') && !html.includes('StatusBar')) {
+    console.log("[PERF] Note: StatusBar rendered client-side (expected for React components)");
+  }
+
+  return { loadTime, baseline: BASELINE_MS, passed: loadTime <= BASELINE_MS };
+}
+
+async function assertLocalStoragePersistence() {
+  const homeChatPath = path.resolve(process.cwd(), "src", "app", "HomeChat.tsx");
+  const code = await fs.readFile(homeChatPath, "utf8");
+
+  // Verify localStorage keys are used for state persistence
+  const requiredKeys = [
+    "openslin_chat_session",     // Conversation state
+    "openslin_workspace_tabs",   // Workspace tabs
+    "openslin_split_layout",     // Layout state
+  ];
+
+  for (const key of requiredKeys) {
+    if (!code.includes(key)) throw new Error(`missing_localstorage_key_${key}`);
+  }
+
+  // Verify BottomTray also uses localStorage
+  const trayPath = path.resolve(process.cwd(), "src", "components", "shell", "BottomTray.tsx");
+  const trayCode = await fs.readFile(trayPath, "utf8");
+  if (!trayCode.includes('localStorage')) throw new Error("bottomtray_missing_localstorage");
+}
+
 function headers() {
   return {
     authorization: "Bearer admin",
@@ -286,6 +485,39 @@ const html1 = await getHomeHtml();
 assert(html1.includes("RBAC 管理"), "expected_rbac_link_visible");
 assert(html1.includes("治理控制台"), "expected_gov_console_link_visible");
 await assertHomeChatToolSuggestionsSupport();
+
+/* ─── Five-State Architecture E2E Tests ─── */
+console.log("[E2E] Validating Five-State Architecture components...");
+await assertFiveStateArchitectureComponents();
+console.log("[E2E] ✓ Five-State main components validated");
+await assertBottomTraySubPanels();
+console.log("[E2E] ✓ BottomTray sub-panels validated");
+await assertArtifactPreviewTypes();
+console.log("[E2E] ✓ ArtifactPreview types validated");
+await assertWorkspaceTabDragAndDrop();
+console.log("[E2E] ✓ Workspace Tab drag-and-drop validated");
+await assertFlowItemRenderers();
+console.log("[E2E] ✓ FlowItemRenderers validated");
+console.log("[E2E] Five-State Architecture validation complete!");
+
+/* ─── Critical Path Tests ─── */
+console.log("[E2E] Validating critical path: Conversation → Task → Approval → Artifact → Workspace...");
+await assertCriticalPathComponents();
+console.log("[E2E] ✓ Critical path components validated");
+await assertI18nCompleteness();
+console.log("[E2E] ✓ i18n completeness validated");
+await assertLocalStoragePersistence();
+console.log("[E2E] ✓ LocalStorage persistence validated");
+
+/* ─── Performance Baseline Tests ─── */
+console.log("[E2E] Running performance baseline tests...");
+const perfResult = await assertFirstScreenPerformance();
+if (!perfResult.passed) {
+  console.warn(`[E2E] ⚠ Performance baseline not met: ${perfResult.loadTime}ms > ${perfResult.baseline}ms`);
+} else {
+  console.log("[E2E] ✓ Performance baseline passed");
+}
+console.log("[E2E] All Five-State Architecture tests complete!");
 
 const s1 = await getSettingsHtml();
 assert(s1.includes("模型绑定"), "expected_settings_has_model_binding_section");

@@ -64,6 +64,9 @@ export const nl2uiGeneratedConfigSchema = z.object({
     layout: nl2uiLayoutSchema,
     blocks: z.array(nl2uiGeneratedBlockSchema),
   }),
+
+  // 页面类型: local=本地可交互, business=业务系统占位页
+  pageType: z.enum(["local", "business"]).optional().default("local").describe("页面类型"),
   
   // 数据绑定配置
   dataBindings: z.array(nl2uiDataBindingSchema),

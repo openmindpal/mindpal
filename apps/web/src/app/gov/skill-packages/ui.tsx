@@ -52,13 +52,13 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
   const [uploadStatus, setUploadStatus] = useState<number>(0);
   const [uploadResult, setUploadResult] = useState<SkillPackageUploadResponse | null>(null);
 
-  // URL 导入
+  // URL import
   const [importUrl, setImportUrl] = useState<string>("");
   const [importUrlFormat, setImportUrlFormat] = useState<"zip" | "tgz">("tgz");
   const [importUrlStatus, setImportUrlStatus] = useState<number>(0);
   const [importUrlResult, setImportUrlResult] = useState<SkillPackageUploadResponse | null>(null);
 
-  // Git 导入
+  // Git import
   const [gitRepoUrl, setGitRepoUrl] = useState<string>("");
   const [gitRef, setGitRef] = useState<string>("");
   const [gitSubdir, setGitSubdir] = useState<string>("");

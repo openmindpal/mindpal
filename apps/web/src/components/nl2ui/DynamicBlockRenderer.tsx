@@ -124,6 +124,8 @@ export interface Nl2UiConfig {
     layout: GeneratedLayout;
     blocks: Block[];
   };
+  /** Page type: local = fully interactive, business = read-only placeholder */
+  pageType?: "local" | "business";
   dataBindings: Array<{
     id: string;
     target: string;
@@ -151,6 +153,8 @@ interface DynamicBlockRendererProps {
   onBlockChange?: (blocks: Block[]) => void;
   /** Card click callback - used for drill-down interactions (e.g. CardList) */
   onCardClick?: (card: { title: string; id?: string; [key: string]: any }) => void;
+  /** Callback when user clicks action on a business page (pageType="business") */
+  onBusinessActionClick?: (actionLabel: string) => void;
   /** Whether to show layout editing controls */
   enableLayoutEdit?: boolean;
   initialLayoutItems?: import("./LayoutEditor").AreaLayoutItem[];
@@ -897,8 +901,12 @@ export function DynamicBlockRenderer(props: DynamicBlockRendererProps) {
 }
 
 function DynamicBlockRendererInner(props: DynamicBlockRendererProps) {
-  const { config, readOnly = false, locale = "zh-CN", onBlockChange, onCardClick, enableLayoutEdit = false, initialLayoutItems, onLayoutChange } = props;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { config, readOnly = false, locale = "zh-CN", onBlockChange, onCardClick, onBusinessActionClick, enableLayoutEdit = false, initialLayoutItems, onLayoutChange } = props;
   const { layout, blocks } = config.ui;
+  const pageType = config.pageType ?? "local";
+  // For business pages, force readOnly and intercept actions
+  const effectiveReadOnly = readOnly || pageType === "business";
   const stylePrefs = config.appliedStylePrefs as StylePrefs | undefined;
 
   // Style prefs → CSS variables
@@ -972,6 +980,25 @@ function DynamicBlockRendererInner(props: DynamicBlockRendererProps) {
     <div ref={containerRef} className={scopeClass} style={containerStyle}>
       {/* Inject theme override CSS */}
       <style>{themeCSS}</style>
+      {/* Business page banner */}
+      {pageType === "business" && (
+        <div style={{
+          gridColumn: isFreeForm ? undefined : "1 / -1",
+          padding: "10px 16px",
+          marginBottom: 12,
+          background: "linear-gradient(90deg, #fef3c7 0%, #fef9c3 100%)",
+          borderRadius: "var(--n2u-radius, 8px)",
+          border: "1px solid #fcd34d",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          fontSize: "var(--n2u-font-base, 13px)",
+          color: "#92400e",
+        }}>
+          <span style={{ fontSize: 16 }}>⚠️</span>
+          <span>{t(locale, "nl2ui.businessPageHint")}</span>
+        </div>
+      )}
       {/* Edit mode visual hints */}
       {layoutEditor.editing && (
         <style>{`
@@ -1065,9 +1092,9 @@ function DynamicBlockRendererInner(props: DynamicBlockRendererProps) {
             dataMap={dataMap}
             locale={locale}
             onRetry={refresh}
-            actions={readOnly ? undefined : actions}
+            actions={effectiveReadOnly ? undefined : actions}
             onCardClick={onCardClick}
-            allowDemoFallback={readOnly}
+            allowDemoFallback={effectiveReadOnly}
           />
         );
 

@@ -7,6 +7,8 @@
   font-family: var(--font-geist-sans);
   background: var(--sl-bg);
   overflow: hidden;
+  /* Account for bottom tray */
+  padding-bottom: 40px;
 }
 
 /* ─── Panel Split Layout (left panel + right chat) ──────────────────── */
@@ -195,6 +197,13 @@
   background: var(--sl-bg);
 }
 
+.panelContent {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
 /* ─── Workspace Tab Bar ─────────────────────────────────────────────── */
 
 .wsTabs {
@@ -262,6 +271,35 @@
   max-width: 110px;
 }
 
+.wsTabIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--sl-muted);
+}
+
+.wsTabActive .wsTabIcon {
+  color: var(--sl-accent);
+}
+
+/* Tab kind specific colors */
+.wsTab_runDetail .wsTabIcon { color: #3b82f6; } /* blue */
+.wsTab_approvalDetail .wsTabIcon { color: #f59e0b; } /* amber */
+.wsTab_knowledgeResult .wsTabIcon { color: #8b5cf6; } /* purple */
+.wsTab_artifact .wsTabIcon { color: #10b981; } /* green */
+.wsTab_workbench .wsTabIcon { color: #ec4899; } /* pink */
+.wsTab_page .wsTabIcon { color: var(--sl-muted); }
+
+.wsTabActive.wsTab_runDetail .wsTabIcon { color: #2563eb; }
+.wsTabActive.wsTab_approvalDetail .wsTabIcon { color: #d97706; }
+.wsTabActive.wsTab_knowledgeResult .wsTabIcon { color: #7c3aed; }
+.wsTabActive.wsTab_artifact .wsTabIcon { color: #059669; }
+.wsTabActive.wsTab_workbench .wsTabIcon { color: #db2777; }
+.wsTabActive.wsTab_page .wsTabIcon { color: var(--sl-accent); }
+
 .wsTabClose {
   display: inline-flex;
   align-items: center;
@@ -305,6 +343,55 @@
 
 .wsTabPin:hover {
   background: var(--sl-accent-bg);
+}
+
+/* Tab drag handle */
+.wsTabDragHandle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--sl-muted);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity var(--sl-transition-fast);
+}
+
+.wsTab:hover .wsTabDragHandle {
+  opacity: 0.5;
+}
+
+.wsTabDragHandle:hover {
+  opacity: 1 !important;
+  color: var(--sl-fg-secondary);
+}
+
+/* Tab dragging state */
+.wsTabDragging {
+  opacity: 0.5;
+  background: var(--sl-accent-bg);
+  cursor: grabbing;
+}
+
+/* Tab drag over state */
+.wsTabDragOver {
+  border-left: 2px solid var(--sl-accent);
+  padding-left: 6px;
+}
+
+.wsTabDragOver::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 4px solid var(--sl-accent);
 }
 
 /* Left panel empty state (no page open) */
@@ -504,6 +591,61 @@
 .bubbleError {
   border-color: color-mix(in srgb, var(--sl-danger) 40%, var(--sl-border));
   background: var(--sl-danger-bg);
+}
+
+/* Plan Step bubble */
+.bubblePlanStep {
+  max-width: 92%;
+  width: 92%;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* Execution Receipt bubble */
+.bubbleExecReceipt {
+  max-width: 92%;
+  width: 92%;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* Approval Node bubble */
+.bubbleApproval {
+  max-width: 92%;
+  width: 92%;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* Phase Indicator bubble */
+.bubblePhase {
+  max-width: 100%;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  align-self: center;
+}
+
+/* Artifact Card bubble */
+.bubbleArtifact {
+  max-width: 92%;
+  width: 92%;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* Run Summary bubble */
+.bubbleRunSummary {
+  max-width: 92%;
+  width: 92%;
+  background: transparent;
+  border: none;
+  padding: 0;
 }
 
 .bubbleText {
@@ -850,6 +992,26 @@
   border-color: var(--sl-accent-border);
   color: var(--sl-accent);
   background: var(--sl-accent-bg);
+}
+
+/* ─── Active Runs Section ───────────────────────────────────────────── */
+
+.activeRunsSection {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto 12px;
+}
+
+.pendingActionsSection {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto 12px;
+}
+
+.recentFavSection {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto 16px;
 }
 
 /* ─── Quick Nav ─────────────────────────────────────────────────────── */

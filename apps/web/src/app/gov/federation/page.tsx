@@ -26,7 +26,7 @@ export default async function GovFederationPage(props: { searchParams: Promise<S
     loadFederationNodes(locale),
   ]);
 
-  // 合并状态和节点数据
+  // Merge status and node data
   const initial = {
     status: statusRes.status,
     json: {

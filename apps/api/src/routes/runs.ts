@@ -509,6 +509,134 @@ export const runRoutes: FastifyPluginAsync = async (app) => {
     return { receipt: { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId, runId: step.runId, stepId: step.stepId }, status: "canceled" as const } };
   });
 
+  /**
+   * GET /runs/active - 获取当前用户进行中的任务列表
+   * 返回 phase 为 planning/executing/reviewing/needs_approval 的 Run
+   * 包括每个 Run 的当前 Step 信息
+   */
+  app.get("/runs/active", async (req) => {
+    setAuditContext(req, { resourceType: "workflow", action: "read" });
+    const decision = await requirePermission({ req, resourceType: "workflow", action: "read" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const subject = req.ctx.subject!;
+    if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
+
+    const q = z
+      .object({
+        limit: z.coerce.number().int().positive().max(50).optional(),
+      })
+      .parse(req.query);
+
+    // Query runs with non-terminal status and their latest step info
+    const res = await app.db.query(
+      `
+      WITH active_runs AS (
+        SELECT
+          r.run_id,
+          r.tenant_id,
+          r.status,
+          r.created_at,
+          r.updated_at,
+          (s1.input->>'spaceId') AS space_id,
+          COALESCE(s1.input->>'traceId', s1.input->>'trace_id') AS trace_id
+        FROM runs r
+        JOIN steps s1 ON s1.run_id = r.run_id AND s1.seq = 1
+        WHERE r.tenant_id = $1
+          AND (s1.input->>'spaceId') = $2
+          AND r.status IN ('pending', 'running', 'needs_approval', 'needs_device', 'needs_arbiter')
+        ORDER BY r.updated_at DESC
+        LIMIT $3
+      ),
+      task_states AS (
+        SELECT DISTINCT ON (run_id)
+          run_id,
+          phase,
+          plan,
+          artifacts_digest,
+          updated_at AS task_updated_at
+        FROM memory_task_states
+        WHERE tenant_id = $1 AND space_id = $2 AND deleted_at IS NULL
+        ORDER BY run_id, updated_at DESC
+      ),
+      current_steps AS (
+        SELECT DISTINCT ON (s.run_id)
+          s.run_id,
+          s.step_id,
+          s.seq,
+          s.status AS step_status,
+          s.tool_ref,
+          s.attempt,
+          s.updated_at AS step_updated_at
+        FROM steps s
+        WHERE EXISTS (SELECT 1 FROM active_runs ar WHERE ar.run_id = s.run_id)
+        ORDER BY s.run_id, s.seq DESC
+      )
+      SELECT
+        ar.run_id,
+        ar.status,
+        ar.created_at,
+        ar.updated_at,
+        ar.space_id,
+        ar.trace_id,
+        ts.phase,
+        ts.plan,
+        ts.artifacts_digest,
+        cs.step_id AS current_step_id,
+        cs.seq AS current_step_seq,
+        cs.step_status AS current_step_status,
+        cs.tool_ref AS current_tool_ref,
+        cs.attempt AS current_attempt
+      FROM active_runs ar
+      LEFT JOIN task_states ts ON ts.run_id = ar.run_id
+      LEFT JOIN current_steps cs ON cs.run_id = ar.run_id
+      ORDER BY ar.updated_at DESC
+      `,
+      [subject.tenantId, subject.spaceId, q.limit ?? 20],
+    );
+
+    const activeRuns = res.rows.map((r: any) => {
+      // Extract step name from plan if available
+      const plan = r.plan ?? {};
+      const planSteps: { stepId?: string; toolRef?: string; name?: string }[] = Array.isArray(plan.steps) ? plan.steps : [];
+      const currentStepIdx = typeof r.current_step_seq === "number" ? r.current_step_seq - 1 : 0;
+      const planStep = planSteps[currentStepIdx] ?? null;
+
+      // Extract progress info from artifacts_digest
+      const artifacts = r.artifacts_digest ?? {};
+      const closedLoop = artifacts.closedLoop ?? {};
+      const cursor = typeof artifacts.cursor === "number" ? artifacts.cursor : 0;
+      const maxSteps = typeof artifacts.maxSteps === "number" ? artifacts.maxSteps : planSteps.length;
+
+      return {
+        runId: r.run_id,
+        status: r.status ?? "unknown",
+        phase: r.phase ?? "executing",
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        traceId: r.trace_id ?? null,
+        progress: {
+          current: cursor,
+          total: maxSteps,
+          percentage: maxSteps > 0 ? Math.round((cursor / maxSteps) * 100) : 0,
+        },
+        currentStep: r.current_step_id
+          ? {
+              stepId: r.current_step_id,
+              seq: r.current_step_seq,
+              status: r.current_step_status,
+              toolRef: r.current_tool_ref ?? planStep?.toolRef ?? null,
+              name: planStep?.name ?? null,
+              attempt: r.current_attempt ?? 1,
+            }
+          : null,
+      };
+    });
+
+    req.ctx.audit!.outputDigest = { count: activeRuns.length };
+    return { activeRuns };
+  });
+
   app.get("/runs", async (req) => {
     setAuditContext(req, { resourceType: "workflow", action: "read" });
     const decision = await requirePermission({ req, resourceType: "workflow", action: "read" });

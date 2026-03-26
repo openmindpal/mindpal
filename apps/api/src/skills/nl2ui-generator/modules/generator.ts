@@ -194,10 +194,11 @@ function buildNl2UiSystemPrompt(params: {
 
   return `你是 UI 生成引擎。根据用户描述生成 JSON 配置。
 意图: intent="ui"(生成界面) 或 "chat"(闲聊)。始终返回 intent + confidence(0-1)。
+页面类型: pageType="local"(笔记/待办/日程等本地可交互页面) 或 "business"(销售订单/ERP/CRM等业务系统页面，仅展示)。
 组件: ${components}
 布局: ${layouts.join(", ")}${entitySection}${styleSection}
 输出纯 JSON:
-{"intent":"ui"|"chat","confidence":0-1,"ui":{"layout":{"variant":"...","areas":[{"name":"...","componentId":"...","props":{"title":"...","mockItems":[]},"dataBindingIds":[]}]},"blocks":[]},"dataBindings":[],"replyText":"...","suggestions":[],"metadata":{"generatedAt":"ISO","modelUsed":"nl2ui","confidence":0.85}}
+{"intent":"ui"|"chat","confidence":0-1,"pageType":"local"|"business","ui":{"layout":{"variant":"...","areas":[{"name":"...","componentId":"...","props":{"title":"...","mockItems":[]},"dataBindingIds":[]}]},"blocks":[]},"dataBindings":[],"replyText":"...","suggestions":[],"metadata":{"generatedAt":"ISO","modelUsed":"nl2ui","confidence":0.85}}
 规则: intent=chat 只返回 {intent,confidence,replyText}。无可用实体时 dataBindings=[]，props 提供 3-6 条中文 mockItems。componentId 必须在组件列表中。只返回纯 JSON，禁止 markdown 包裹。`;
 }
 
@@ -350,9 +351,22 @@ async function callLlmForUiGeneration(params: {
     if (!parsed.metadata.generatedAt) parsed.metadata.generatedAt = new Date().toISOString();
     if (!parsed.metadata.modelUsed) parsed.metadata.modelUsed = "nl2ui-llm-v1";
     if (typeof parsed.metadata.confidence !== "number") parsed.metadata.confidence = confidence;
-    if (!parsed.ui?.blocks) {
-      if (!parsed.ui) parsed.ui = { layout: parsed.ui?.layout, blocks: [] };
-      else parsed.ui.blocks = [];
+    // 关键修复：确保 ui 结构完整
+    if (!parsed.ui) parsed.ui = {};
+    if (!parsed.ui.blocks) parsed.ui.blocks = [];
+    if (!parsed.ui.layout) parsed.ui.layout = {};
+    // variant 必须是有效枚举值
+    const validVariants = ["single-column", "split-horizontal", "split-vertical", "grid"];
+    if (!validVariants.includes(parsed.ui.layout.variant)) {
+      parsed.ui.layout.variant = "single-column";
+    }
+    // areas 必须是数组
+    if (!Array.isArray(parsed.ui.layout.areas)) {
+      parsed.ui.layout.areas = [];
+    }
+    // 关键修复：dataBindings 是 required 字段
+    if (!Array.isArray(parsed.dataBindings)) {
+      parsed.dataBindings = [];
     }
 
     // 使用 safeParse 增强容错

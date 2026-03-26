@@ -20,6 +20,7 @@ export default function SettingsClient(props: { locale: string }) {
   // SSR-safe: use static initial values, then hydrate from localStorage in useEffect
   const [authToken, setAuthToken] = useState<string>("");
   const [authTokenStatus, setAuthTokenStatus] = useState<"unset" | "set">("unset");
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [hydrated, setHydrated] = useState(false);
 
   /* NL2UI Style Preferences */

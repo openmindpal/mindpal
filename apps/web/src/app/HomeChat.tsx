@@ -10,15 +10,20 @@ import { t } from "@/lib/i18n";
 import { type ApiError, errorMessageText, isPlainObject, nextId, safeJsonString } from "@/lib/apiError";
 import { type ToolSuggestion, type ExecuteResponse } from "@/lib/types";
 import DynamicBlockRenderer, { type Nl2UiConfig } from "@/components/nl2ui/DynamicBlockRenderer";
+import StatusBar from "@/components/shell/StatusBar";
+import RecentAndFavorites from "@/components/shell/RecentAndFavorites";
+import BottomTray from "@/components/shell/BottomTray";
 import {
-  type FlowDirective, type FlowNl2UiResult,
+  type FlowDirective, type FlowNl2UiResult, type FlowPlanStep, type FlowExecutionReceipt, type FlowApprovalNode, type FlowPhaseIndicator, type FlowArtifactCard, type FlowRunSummary,
   type WorkspaceTab, type ToolExecState, type ChatFlowItem, type RecentEntry,
   TERMINAL_RUN_STATUSES, NAV_ITEMS,
   loadRecent, addRecent, clearRecent,
   friendlyToolName, riskBadgeKey, riskBadgeClass, friendlyOutputSummary,
   friendlyErrorMessage, targetFromUiDirective,
 } from "./homeHelpers";
-import { IconClose, IconExternal, IconPanel, IconMaximize, IconMinimize, IconChevronLeft, IconChevronRight, IconSearch, IconPage } from "./HomeIcons";
+import { PlanStepRenderer, ExecutionReceiptRenderer, ApprovalNodeRenderer, PhaseIndicatorRenderer, ArtifactCardRenderer, RunSummaryRenderer } from "@/components/flow/FlowItemRenderer";
+import ArtifactPreview from "@/components/artifact/ArtifactPreview";
+import { IconClose, IconExternal, IconPanel, IconMaximize, IconMinimize, IconChevronLeft, IconChevronRight, IconSearch, IconPage, IconRun, IconApproval, IconKnowledge, IconArtifact, IconWorkbench, IconPin, IconDragHandle } from "./HomeIcons";
 import CommandPalette from "./CommandPalette";
 import styles from "./page.module.css";
 
@@ -162,6 +167,10 @@ export default function HomeChat(props: { locale: string }) {
   const [previewTab, setPreviewTab] = useState<WorkspaceTab | null>(null);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
 
+  /* ─── Tab drag state ─── */
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+
   // Persist / restore pinned workspace tabs
   useEffect(() => {
     try {
@@ -191,19 +200,33 @@ export default function HomeChat(props: { locale: string }) {
   }, [pinnedTabs, previewTab, activeTabId]);
 
   // Workspace actions
-  const openInWorkspace = useCallback((entry: { kind: "page" | "workbench"; name: string; url: string }) => {
+  const openInWorkspace = useCallback((entry: { kind: WorkspaceTab["kind"]; name: string; url: string; meta?: WorkspaceTab["meta"] }) => {
     // Check if already pinned — if so, just switch to it
     const existing = pinnedTabs.find((t) => t.kind === entry.kind && t.name === entry.name);
     if (existing) {
       setActiveTabId(existing.id);
     } else {
       // Open as preview (temporary)
-      const tab: WorkspaceTab = { id: "__preview__", kind: entry.kind, name: entry.name, url: entry.url };
+      const tab: WorkspaceTab = { id: "__preview__", kind: entry.kind, name: entry.name, url: entry.url, meta: entry.meta };
       setPreviewTab(tab);
       setActiveTabId("__preview__");
     }
     if (leftCollapsed) setLeftCollapsed(false);
   }, [pinnedTabs, leftCollapsed]);
+
+  // Helper: get icon for tab kind
+  const getTabIcon = (kind: WorkspaceTab["kind"]) => {
+    switch (kind) {
+      case "runDetail": return <IconRun />;
+      case "approvalDetail": return <IconApproval />;
+      case "knowledgeResult": return <IconKnowledge />;
+      case "artifact": return <IconArtifact />;
+      case "workbench": return <IconWorkbench />;
+      case "nl2uiPreview": return <IconPanel />;
+      case "page":
+      default: return <IconPage />;
+    }
+  };
 
   const pinCurrentPreview = useCallback(() => {
     if (!previewTab) return;
@@ -236,6 +259,58 @@ export default function HomeChat(props: { locale: string }) {
       setActiveTabId(pinnedTabs[pinnedTabs.length - 1]?.id ?? null);
     }
   }, [activeTabId, pinnedTabs]);
+
+  /* ─── Tab drag handlers ─── */
+  const handleTabDragStart = useCallback((e: React.DragEvent, tabId: string) => {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", tabId);
+    setDraggedTabId(tabId);
+  }, []);
+
+  const handleTabDragOver = useCallback((e: React.DragEvent, tabId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (draggedTabId && draggedTabId !== tabId) {
+      setDragOverTabId(tabId);
+    }
+  }, [draggedTabId]);
+
+  const handleTabDragLeave = useCallback(() => {
+    setDragOverTabId(null);
+  }, []);
+
+  const handleTabDrop = useCallback((e: React.DragEvent, targetTabId: string) => {
+    e.preventDefault();
+    if (!draggedTabId || draggedTabId === targetTabId) {
+      setDraggedTabId(null);
+      setDragOverTabId(null);
+      return;
+    }
+
+    setPinnedTabs((prev) => {
+      const dragIdx = prev.findIndex((t) => t.id === draggedTabId);
+      const dropIdx = prev.findIndex((t) => t.id === targetTabId);
+      if (dragIdx < 0 || dropIdx < 0) return prev;
+
+      const newTabs = [...prev];
+      const [dragged] = newTabs.splice(dragIdx, 1);
+      newTabs.splice(dropIdx, 0, dragged);
+      return newTabs;
+    });
+
+    setDraggedTabId(null);
+    setDragOverTabId(null);
+  }, [draggedTabId]);
+
+  const handleTabDragEnd = useCallback(() => {
+    setDraggedTabId(null);
+    setDragOverTabId(null);
+  }, []);
+
+  /* ─── Double-click to pin preview ─── */
+  const handlePreviewDoubleClick = useCallback(() => {
+    pinCurrentPreview();
+  }, [pinCurrentPreview]);
 
   /* ─── NL2UI save-as-page state ─── */
   const [savingPageId, setSavingPageId] = useState<string | null>(null);
@@ -605,6 +680,7 @@ export default function HomeChat(props: { locale: string }) {
   }, [router, q]);
 
   /* ─── clear recent ─── */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleClearRecent = useCallback(() => { clearRecent(); setRecent([]); }, []);
 
   /* ─── Poll helper: repeatedly GET /runs/:runId until terminal ─── */
@@ -727,6 +803,8 @@ export default function HomeChat(props: { locale: string }) {
       <header className={styles.topBar}>
         <Link href={`/?lang=${encodeURIComponent(locale)}`} className={styles.brand}>{t(locale, "app.title")}</Link>
         <div className={styles.topRight}>
+          {/* Mission Control status badges */}
+          <StatusBar locale={locale} />
           {/* Docs link */}
           <Link href={`/docs?lang=${encodeURIComponent(locale)}`} className={styles.newChatBtn} style={{ textDecoration: "none" }}>
             {t(locale, "shell.nav.docs")}
@@ -771,23 +849,33 @@ export default function HomeChat(props: { locale: string }) {
                 {pinnedTabs.map((tab) => (
                   <button
                     key={tab.id}
-                    className={`${styles.wsTab} ${activeTabId === tab.id ? styles.wsTabActive : ""}`}
+                    className={`${styles.wsTab} ${activeTabId === tab.id ? styles.wsTabActive : ""} ${styles[`wsTab_${tab.kind}`] || ""} ${draggedTabId === tab.id ? styles.wsTabDragging : ""} ${dragOverTabId === tab.id ? styles.wsTabDragOver : ""}`}
                     onClick={() => setActiveTabId(tab.id)}
                     title={tab.name}
+                    draggable
+                    onDragStart={(e) => handleTabDragStart(e, tab.id)}
+                    onDragOver={(e) => handleTabDragOver(e, tab.id)}
+                    onDragLeave={handleTabDragLeave}
+                    onDrop={(e) => handleTabDrop(e, tab.id)}
+                    onDragEnd={handleTabDragEnd}
                   >
+                    <span className={styles.wsTabDragHandle}><IconDragHandle /></span>
+                    <span className={styles.wsTabIcon}>{getTabIcon(tab.kind)}</span>
                     <span className={styles.wsTabLabel}>{tab.name}</span>
                     <span className={styles.wsTabClose} onClick={(e) => { e.stopPropagation(); unpinTab(tab.id); }} title={t(locale, "workspace.unpin")}>×</span>
                   </button>
                 ))}
                 {previewTab && (
                   <button
-                    className={`${styles.wsTab} ${styles.wsTabPreview} ${activeTabId === "__preview__" ? styles.wsTabActive : ""}`}
+                    className={`${styles.wsTab} ${styles.wsTabPreview} ${activeTabId === "__preview__" ? styles.wsTabActive : ""} ${styles[`wsTab_${previewTab.kind}`] || ""}`}
                     onClick={() => setActiveTabId("__preview__")}
-                    title={`${t(locale, "workspace.preview")}: ${previewTab.name}`}
+                    onDoubleClick={handlePreviewDoubleClick}
+                    title={`${t(locale, "workspace.preview")}: ${previewTab.name} (${t(locale, "workspace.doubleClickToPin")})`}
                   >
+                    <span className={styles.wsTabIcon}>{getTabIcon(previewTab.kind)}</span>
                     <span className={styles.wsTabLabel} style={{ fontStyle: "italic" }}>{previewTab.name}</span>
                     <span className={styles.wsTabPin} onClick={(e) => { e.stopPropagation(); pinCurrentPreview(); }} title={t(locale, "workspace.pin")}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2v10m0 0-3-3m3 3 3-3M5 17h14" /></svg>
+                      <IconPin />
                     </span>
                     <span className={styles.wsTabClose} onClick={(e) => { e.stopPropagation(); closePreview(); }} title={t(locale, "panel.close")}>×</span>
                   </button>
@@ -824,7 +912,31 @@ export default function HomeChat(props: { locale: string }) {
                   </button>
                 </div>
               </div>
-              <iframe className={styles.panelFrame} src={visibleTab.url} title={visibleTab.name} sandbox="allow-scripts allow-same-origin" />
+              {/* Render artifact preview, nl2ui preview, or iframe */}
+              {visibleTab.kind === "artifact" && visibleTab.meta?.artifactData !== undefined ? (
+                <div className={styles.panelContent}>
+                  <ArtifactPreview
+                    type={visibleTab.meta.artifactType || "text"}
+                    data={visibleTab.meta.artifactData}
+                    locale={locale}
+                  />
+                </div>
+              ) : visibleTab.kind === "nl2uiPreview" && visibleTab.meta?.nl2uiConfig ? (
+                <div className={styles.panelContent}>
+                  <DynamicBlockRenderer
+                    config={visibleTab.meta.nl2uiConfig as Nl2UiConfig}
+                    readOnly={false}
+                    locale={locale}
+                  />
+                </div>
+              ) : visibleTab.url ? (
+                <iframe className={styles.panelFrame} src={visibleTab.url} title={visibleTab.name} sandbox="allow-scripts allow-same-origin" />
+              ) : (
+                <div className={styles.panelEmpty}>
+                  <div className={styles.panelEmptyIcon}><IconPage /></div>
+                  <div className={styles.panelEmptyTitle}>{t(locale, "panel.noUrl")}</div>
+                </div>
+              )}
             </>
           ) : (
             <div className={styles.panelEmpty}>
@@ -905,8 +1017,22 @@ export default function HomeChat(props: { locale: string }) {
               <div className={styles.chatFlow} ref={scrollRef}>
                 {flow.map((it) => {
                   const isUser = it.kind === "message" && it.role === "user";
+                  // Compute bubble classes based on kind and phase
+                  const bubbleClasses = [
+                    styles.bubble,
+                    isUser ? styles.bubbleUser : styles.bubbleAssistant,
+                    it.kind === "error" ? styles.bubbleError : "",
+                    it.kind === "nl2uiResult" ? styles.bubbleNl2ui : "",
+                    it.kind === "toolSuggestions" ? styles.bubbleToolSuggestion : "",
+                    it.kind === "planStep" ? styles.bubblePlanStep : "",
+                    it.kind === "executionReceipt" ? styles.bubbleExecReceipt : "",
+                    it.kind === "approvalNode" ? styles.bubbleApproval : "",
+                    it.kind === "phaseIndicator" ? styles.bubblePhase : "",
+                    it.kind === "artifactCard" ? styles.bubbleArtifact : "",
+                    it.kind === "runSummary" ? styles.bubbleRunSummary : "",
+                  ].filter(Boolean).join(" ");
                   return (
-                    <div key={it.id} className={`${styles.bubble} ${isUser ? styles.bubbleUser : styles.bubbleAssistant} ${it.kind === "error" ? styles.bubbleError : ""} ${it.kind === "nl2uiResult" ? styles.bubbleNl2ui : ""} ${it.kind === "toolSuggestions" ? styles.bubbleToolSuggestion : ""}`}>
+                    <div key={it.id} className={bubbleClasses}>
                       {it.kind === "message" && (
                         <div className={styles.bubbleText}>
                           {isUser ? it.text : <ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text}</ReactMarkdown>}
@@ -1085,10 +1211,21 @@ export default function HomeChat(props: { locale: string }) {
                           </div>
                           {/* Render */}
                           <div className={styles.nl2uiPreview}>
-                            <DynamicBlockRenderer config={it.config} readOnly={!it.config.dataBindings?.length} locale={locale} onCardClick={handleCardClick} />
+                            <DynamicBlockRenderer config={it.config} readOnly={!it.config.dataBindings?.length} locale={locale} />
                           </div>
-                          {/* Save as page */}
+                          {/* Actions: Open in Workspace + Save as page */}
                           <div className={styles.nl2uiSuggestions}>
+                            <button
+                              className={styles.suggestChip}
+                              onClick={() => openInWorkspace({
+                                kind: "nl2uiPreview",
+                                name: it.userInput.slice(0, 30) || t(locale, "nl2ui.preview"),
+                                url: "",
+                                meta: { nl2uiConfig: it.config }
+                              })}
+                            >
+                              <IconPanel /> {t(locale, "nl2ui.openInWorkspace")}
+                            </button>
                             {savedPages[it.id] ? (
                               <Link
                                 className={`${styles.suggestChip} ${styles.suggestChipPrimary}`}
@@ -1109,6 +1246,48 @@ export default function HomeChat(props: { locale: string }) {
                             )}
                           </div>
                         </div>
+                      )}
+                      {/* Plan Step */}
+                      {it.kind === "planStep" && (
+                        <PlanStepRenderer item={it as FlowPlanStep} locale={locale} />
+                      )}
+                      {/* Execution Receipt */}
+                      {it.kind === "executionReceipt" && (
+                        <ExecutionReceiptRenderer item={it as FlowExecutionReceipt} locale={locale} />
+                      )}
+                      {/* Approval Node */}
+                      {it.kind === "approvalNode" && (
+                        <ApprovalNodeRenderer item={it as FlowApprovalNode} locale={locale} />
+                      )}
+                      {/* Phase Indicator */}
+                      {it.kind === "phaseIndicator" && (
+                        <PhaseIndicatorRenderer item={it as FlowPhaseIndicator} locale={locale} />
+                      )}
+                      {/* Artifact Card */}
+                      {it.kind === "artifactCard" && (
+                        <ArtifactCardRenderer
+                          item={it as FlowArtifactCard}
+                          locale={locale}
+                          onOpenInWorkspace={(url) => openInWorkspace({
+                            kind: "artifact",
+                            name: (it as FlowArtifactCard).title,
+                            url,
+                            meta: { artifactType: (it as FlowArtifactCard).artifactType, runId: (it as FlowArtifactCard).runId }
+                          })}
+                        />
+                      )}
+                      {/* Run Summary */}
+                      {it.kind === "runSummary" && (
+                        <RunSummaryRenderer
+                          item={it as FlowRunSummary}
+                          locale={locale}
+                          onOpenArtifact={(a) => a.url && openInWorkspace({
+                            kind: "artifact",
+                            name: a.title,
+                            url: a.url,
+                            meta: { artifactType: a.type as "json" | "table" | "chart" | "markdown" | "file" | "text" }
+                          })}
+                        />
                       )}
                     </div>
                   );
@@ -1177,23 +1356,10 @@ export default function HomeChat(props: { locale: string }) {
                   ))}
                 </nav>
 
-                {/* Recent navigation */}
-                {recent.length > 0 && (
-                  <div className={styles.recentNav}>
-                    <div className={styles.recentHeader}>
-                      <span className={styles.recentTitle}>{t(locale, "recentNav.title")}</span>
-                      <button className={styles.recentClearBtn} onClick={handleClearRecent}>{t(locale, "recentNav.clear")}</button>
-                    </div>
-                    <div className={styles.recentList}>
-                      {recent.slice(0, 8).map((r, i) => (
-                        <button key={`${r.kind}_${r.name}_${i}`} className={styles.recentItem} onClick={() => openRecentInPanel(r)}>
-                          <span className={styles.recentKind}>{t(locale, r.kind === "page" ? "recentNav.page" : "recentNav.workbench")}</span>
-                          {r.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* Recent & Favorites panel */}
+                <div className={styles.recentFavSection}>
+                  <RecentAndFavorites locale={locale} onOpen={(kind, name, url) => openInWorkspace({ kind: kind as "page" | "workbench", name, url })} />
+                </div>
               </>
             )}
           </main>
@@ -1250,6 +1416,9 @@ export default function HomeChat(props: { locale: string }) {
         onSelect={handleCmdSelect}
         recent={recent}
       />
+
+      {/* ── Bottom Tray ── */}
+      <BottomTray locale={locale} />
     </div>
   );
 }
