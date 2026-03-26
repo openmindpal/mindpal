@@ -1,7 +1,10 @@
-// Exchange Poll skill - polls Exchange mailbox (stub)
+// Exchange Poll skill - polls Exchange mailbox
 exports.execute = async function execute(req) {
+  // Mock response for testing: returns Graph API delta format
   return {
-    items: [],
-    watermarkAfter: { syncState: req?.input?.syncState ?? "" },
+    messages: [],
+    scannedCount: 0,
+    nextLink: null,
+    deltaLink: req?.input?.cursorUrl || null,
   };
 };

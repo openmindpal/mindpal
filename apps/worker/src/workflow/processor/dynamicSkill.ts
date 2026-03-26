@@ -10,6 +10,7 @@ import { parseToolRef } from "./tooling";
 import type { DynamicSkillExecResult } from "./dynamicSkillTypes";
 import { getSkillRoots, isWithinRoot, resolveArtifactDir, loadManifest, computeDepsDigest, pickExecute, loadTrustedSkillKeys, verifySkillManifestTrust } from "./dynamicSkillArtifact";
 import { getSkillRuntimeBackendPref, loadRemoteRunnerConfig, allowSkillRuntimeContainerFallback } from "./dynamicSkillConfig";
+import { resolveSkillRuntimeRemoteEndpoint } from "@openslin/shared";
 import { executeDynamicSkillSandboxed } from "./dynamicSkillSandbox";
 import { executeDynamicSkillContainered } from "./dynamicSkillContainer";
 import { executeDynamicSkillRemote } from "./dynamicSkillRemote";
@@ -152,6 +153,12 @@ export async function executeDynamicSkill(params: {
           if (pref === "remote") throw e;
         }
       } else if (pref === "remote") {
+        // P0: 检测是否处于测试环境且没有远程配置，避免无限递归
+        const isTestEnv = process.env.NODE_ENV === "test";
+        const hasRemoteOverride = !!resolveSkillRuntimeRemoteEndpoint().value;
+        if (isTestEnv && !hasRemoteOverride) {
+          throw new Error("policy_violation:remote_runtime_not_configured");
+        }
         throw new Error("policy_violation:remote_runtime_not_configured");
       }
     }
