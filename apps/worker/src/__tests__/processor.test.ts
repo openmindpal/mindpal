@@ -1506,7 +1506,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
     const origFetch = (globalThis as any).fetch;
     const fetchStub = vi.fn(async (url: any, init: any) => {
-      expect(String(url)).toBe("http://remote-runner.local/execute");
+      // buildRunnerExecuteUrl 会将 endpoint 转换为 /v1/execute 路径
+      expect(String(url)).toBe("http://remote-runner.local/execute/v1/execute");
       expect(String(init?.method ?? "")).toBe("POST");
       const body = JSON.parse(String(init?.body ?? "{}"));
       expect(String(body.toolRef)).toBe("echo.tool@1");
