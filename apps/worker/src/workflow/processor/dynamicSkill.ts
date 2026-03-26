@@ -153,12 +153,7 @@ export async function executeDynamicSkill(params: {
           if (pref === "remote") throw e;
         }
       } else if (pref === "remote") {
-        // P0: 检测是否处于测试环境且没有远程配置，避免无限递归
-        const isTestEnv = process.env.NODE_ENV === "test";
-        const hasRemoteOverride = !!resolveSkillRuntimeRemoteEndpoint().value;
-        if (isTestEnv && !hasRemoteOverride) {
-          throw new Error("policy_violation:remote_runtime_not_configured");
-        }
+        // remote 模式但无配置时直接抛错，不尝试其他模式
         throw new Error("policy_violation:remote_runtime_not_configured");
       }
     }

@@ -227,13 +227,18 @@ export async function withConcurrency<T>(key: string, maxConcurrency: number, fn
  */
 export async function withTimeout<T>(timeoutMs: number, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
+  let t: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    t = setTimeout(() => {
+      controller.abort();
+      reject(new Error("timeout"));
+    }, timeoutMs);
+  });
+
   try {
-    return await fn(controller.signal);
-  } catch (e) {
-    if (controller.signal.aborted) throw new Error("timeout");
-    throw e;
+    return await Promise.race([fn(controller.signal), timeoutPromise]);
   } finally {
-    clearTimeout(t);
+    if (t !== undefined) clearTimeout(t);
   }
 }
