@@ -4,6 +4,24 @@ import { decryptJson, encryptJson, type EncryptedPayload } from "../secrets/cryp
 
 type Q = Pool | PoolClient;
 
+async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export type PartitionKeyRow = {
   tenantId: string;
   scopeType: string;
@@ -85,20 +103,19 @@ export async function initPartitionKey(params: { pool: Q; tenantId: string; scop
 }
 
 export async function rotatePartitionKey(params: { pool: Pool; tenantId: string; scopeType: string; scopeId: string; masterKey: string }) {
-  await params.pool.query("BEGIN");
-  try {
-    const cur = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const cur = await client.query(
       `SELECT key_version FROM partition_keys WHERE tenant_id = $1 AND scope_type = $2 AND scope_id = $3 ORDER BY key_version DESC LIMIT 1 FOR UPDATE`,
       [params.tenantId, params.scopeType, params.scopeId],
     );
     const nextVersion = cur.rowCount ? Number(cur.rows[0].key_version) + 1 : 1;
-    await params.pool.query(
+    await client.query(
       `UPDATE partition_keys SET status = 'retired', updated_at = now() WHERE tenant_id = $1 AND scope_type = $2 AND scope_id = $3 AND status = 'active'`,
       [params.tenantId, params.scopeType, params.scopeId],
     );
     const keyBytes = randomKeyBytes();
     const encryptedKey = encryptJson(params.masterKey, { k: keyBytes.toString("base64") });
-    const res = await params.pool.query(
+    const res = await client.query(
       `
         INSERT INTO partition_keys (tenant_id, scope_type, scope_id, key_version, status, encrypted_key)
         VALUES ($1,$2,$3,$4,'active',$5)
@@ -106,12 +123,8 @@ export async function rotatePartitionKey(params: { pool: Pool; tenantId: string;
       `,
       [params.tenantId, params.scopeType, params.scopeId, nextVersion, encryptedKey],
     );
-    await params.pool.query("COMMIT");
     return toRow(res.rows[0]);
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 export async function disablePartitionKey(params: { pool: Pool; tenantId: string; scopeType: string; scopeId: string; keyVersion: number }) {

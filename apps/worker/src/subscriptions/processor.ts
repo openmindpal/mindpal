@@ -1,9 +1,27 @@
 import crypto from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { normalizeAuditErrorCategory } from "@openslin/shared";
 import { ExchangePollError, pollExchangeDelta } from "./exchangeGraph";
 import { invokeFirstPartySkill } from "../lib/skillInvoke";
+
+async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
 function stableStringifyValue(v: any): any {
   if (v === null || v === undefined) return null;
@@ -50,10 +68,10 @@ async function loadImapConfig(params: { pool: Pool; tenantId: string; connectorI
         i.status AS instance_status,
         i.egress_policy,
         t.default_egress_policy
-      FROM imap_connector_configs c
+      FROM connector_configs c
       JOIN connector_instances i ON i.id = c.connector_instance_id AND i.tenant_id = c.tenant_id
       JOIN connector_types t ON t.name = i.type_name
-      WHERE c.tenant_id = $1 AND c.connector_instance_id = $2
+      WHERE c.tenant_id = $1 AND c.connector_instance_id = $2 AND c.type_name = 'mail.imap'
       LIMIT 1
     `,
     [params.tenantId, params.connectorInstanceId],
@@ -63,13 +81,13 @@ async function loadImapConfig(params: { pool: Pool; tenantId: string; connectorI
   return {
     connectorInstanceId: r.connector_instance_id as string,
     tenantId: r.tenant_id as string,
-    host: r.host as string,
-    port: Number(r.port),
-    useTls: Boolean(r.use_tls),
-    username: r.username as string,
-    passwordSecretId: r.password_secret_id as string,
-    mailbox: r.mailbox as string,
-    fetchWindowDays: r.fetch_window_days ?? null,
+    host: r.config?.host as string,
+    port: Number(r.config?.port),
+    useTls: Boolean(r.config?.useTls),
+    username: r.config?.username as string,
+    passwordSecretId: r.config?.passwordSecretId as string,
+    mailbox: r.config?.mailbox as string,
+    fetchWindowDays: r.config?.fetchWindowDays ?? null,
     instanceStatus: r.instance_status as string,
     egressPolicy: r.egress_policy,
     defaultEgressPolicy: r.default_egress_policy,
@@ -277,12 +295,12 @@ async function loadExchangeConfig(params: { pool: Pool; tenantId: string; connec
         s.enc_format AS secret_enc_format,
         s.key_ref AS secret_key_ref,
         s.encrypted_payload
-      FROM exchange_connector_configs c
+      FROM connector_configs c
       JOIN connector_instances i ON i.id = c.connector_instance_id AND i.tenant_id = c.tenant_id
       JOIN connector_types t ON t.name = i.type_name
-      JOIN oauth_grants g ON g.tenant_id = c.tenant_id AND g.grant_id = c.oauth_grant_id
+      JOIN oauth_grants g ON g.tenant_id = c.tenant_id AND g.grant_id = (c.config->>'oauthGrantId')::uuid
       JOIN secret_records s ON s.tenant_id = g.tenant_id AND s.id = g.secret_record_id AND s.connector_instance_id = g.connector_instance_id
-      WHERE c.tenant_id = $1 AND c.connector_instance_id = $2
+      WHERE c.tenant_id = $1 AND c.connector_instance_id = $2 AND c.type_name = 'mail.exchange'
       LIMIT 1
     `,
     [params.tenantId, params.connectorInstanceId],
@@ -292,9 +310,9 @@ async function loadExchangeConfig(params: { pool: Pool; tenantId: string; connec
   return {
     connectorInstanceId: r.connector_instance_id as string,
     tenantId: r.tenant_id as string,
-    oauthGrantId: r.oauth_grant_id as string,
-    mailbox: r.mailbox as string,
-    fetchWindowDays: r.fetch_window_days ?? null,
+    oauthGrantId: r.config?.oauthGrantId as string,
+    mailbox: r.config?.mailbox as string,
+    fetchWindowDays: r.config?.fetchWindowDays ?? null,
     instanceStatus: r.instance_status as string,
     egressPolicy: r.egress_policy,
     defaultEgressPolicy: r.default_egress_policy,
@@ -305,7 +323,7 @@ async function loadExchangeConfig(params: { pool: Pool; tenantId: string; connec
     secretScopeType: r.secret_scope_type as string,
     secretScopeId: r.secret_scope_id as string,
     secretKeyVersion: Number(r.secret_key_version),
-    secretEncFormat: (r.secret_enc_format as string) ?? "legacy.a256gcm",
+    secretEncFormat: (r.secret_enc_format as string) ?? "a256gcm",
     secretKeyRef: r.secret_key_ref ?? null,
     encryptedPayload: r.encrypted_payload,
   };
@@ -401,35 +419,30 @@ export async function processSubscriptionPoll(params: { pool: Pool; subscription
   const traceId = uuidv4();
 
   let sub: any;
-  await params.pool.query("BEGIN");
-  try {
-    const res = await params.pool.query("SELECT * FROM subscriptions WHERE subscription_id = $1 FOR UPDATE", [params.subscriptionId]);
+  const txResult = await withTransaction(params.pool, async (client) => {
+    const res = await client.query("SELECT * FROM subscriptions WHERE subscription_id = $1 FOR UPDATE", [params.subscriptionId]);
     if (!res.rowCount) {
-      await params.pool.query("ROLLBACK");
-      return { ok: false, skipped: true, reason: "not_found" };
+      return { shouldContinue: false as const, result: { ok: false, skipped: true, reason: "not_found" as const } };
     }
     sub = res.rows[0];
     if (sub.status !== "enabled") {
-      await params.pool.query("COMMIT");
-      return { ok: true, skipped: true, reason: "disabled" };
+      return { shouldContinue: false as const, result: { ok: true, skipped: true, reason: "disabled" as const } };
     }
     const nextRunAt = sub.next_run_at ? new Date(sub.next_run_at).getTime() : null;
     if (nextRunAt && Date.now() < nextRunAt) {
-      await params.pool.query("COMMIT");
-      return { ok: true, skipped: true, reason: "backoff" };
+      return { shouldContinue: false as const, result: { ok: true, skipped: true, reason: "backoff" as const } };
     }
 
     const lastRunAt = sub.last_run_at ? new Date(sub.last_run_at).getTime() : null;
     const due = !lastRunAt || Date.now() - lastRunAt >= Number(sub.poll_interval_sec) * 1000;
     if (!due) {
-      await params.pool.query("COMMIT");
-      return { ok: true, skipped: true, reason: "not_due" };
+      return { shouldContinue: false as const, result: { ok: true, skipped: true, reason: "not_due" as const } };
     }
-    await params.pool.query("UPDATE subscriptions SET last_run_at = now(), next_run_at = NULL, updated_at = now() WHERE subscription_id = $1", [params.subscriptionId]);
-    await params.pool.query("COMMIT");
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
+    await client.query("UPDATE subscriptions SET last_run_at = now(), next_run_at = NULL, updated_at = now() WHERE subscription_id = $1", [params.subscriptionId]);
+    return { shouldContinue: true as const };
+  });
+  if (!txResult.shouldContinue) {
+    return txResult.result;
   }
 
   const watermarkBefore = sub.watermark ?? null;

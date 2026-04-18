@@ -5,8 +5,10 @@ import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
 import { type ApiError, errText, safeJsonString, toApiError } from "@/lib/apiError";
 import { Card, PageHeader, StatusBadge } from "@/components/ui";
+import { toDisplayText, toRecord } from "@/lib/viewData";
 
 function shallowDiffKeys(a: any, b: any) {
   const ka = a && typeof a === "object" && !Array.isArray(a) ? Object.keys(a) : [];
@@ -26,6 +28,18 @@ function extractTitle(v: any, locale: string): string {
   return "";
 }
 
+function normalizePagePayload(value: unknown) {
+  const record = toRecord(value);
+  if (!record) return null;
+  return {
+    draft: toRecord(record.draft),
+    released: toRecord(record.released),
+    errorCode: typeof record.errorCode === "string" ? record.errorCode : undefined,
+    message: record.message,
+    traceId: typeof record.traceId === "string" ? record.traceId : undefined,
+  };
+}
+
 function inferSource(name: string, draft: any, released: any): string {
   if (name.startsWith("nl2ui.")) return "nl2ui";
   const p = draft?.params ?? released?.params;
@@ -39,15 +53,6 @@ function friendlyPageType(locale: string, pageType: string): string {
   const key = `gov.uiPages.pageType.${pageType}`;
   const val = t(locale, key);
   return val !== key ? val : pageType;
-}
-
-function fmtTime(raw: string | undefined | null): string {
-  if (!raw) return "-";
-  try {
-    const d = new Date(raw);
-    if (isNaN(d.getTime())) return String(raw);
-    return d.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-  } catch { return String(raw); }
 }
 
 function InfoRow(props: { label: string; value: React.ReactNode; mono?: boolean }) {
@@ -64,25 +69,31 @@ export default function GovUiPageDetailClient(props: { locale: string; name: str
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [pageRes, setPageRes] = useState<{ status: number; json: any }>(props.initial?.page ?? { status: 0, json: null });
+  const [pageRes, setPageRes] = useState<{ status: number; json: ReturnType<typeof normalizePagePayload> }>({
+    status: Number(props.initial?.page?.status ?? 0),
+    json: normalizePagePayload(props.initial?.page?.json),
+  });
   const [showDraftJson, setShowDraftJson] = useState(false);
   const [showReleasedJson, setShowReleasedJson] = useState(false);
 
-  const draft = useMemo(() => (pageRes?.json?.draft ?? null) as any, [pageRes]);
-  const released = useMemo(() => (pageRes?.json?.released ?? null) as any, [pageRes]);
+  const draft = useMemo(() => pageRes?.json?.draft ?? null, [pageRes]);
+  const released = useMemo(() => pageRes?.json?.released ?? null, [pageRes]);
 
   const [draftText, setDraftText] = useState(() => safeJsonString(draft ?? { pageType: "page.generic", params: {}, dataBindings: [], actionBindings: [], ui: null }));
 
   const diff = useMemo(() => shallowDiffKeys(draft, released), [draft, released]);
 
   const effective = draft || released;
+  const effectiveParams = toRecord(effective?.params);
+  const effectiveUi = toRecord(effective?.ui);
+  const effectiveLayout = toRecord(effectiveUi?.layout);
   const pageTitle = extractTitle(effective, props.locale) || t(props.locale, "gov.uiPages.noTitle");
-  const pageType = effective?.pageType ?? "";
+  const pageType = toDisplayText(effective?.pageType);
   const source = inferSource(props.name, draft, released);
-  const entityName = effective?.params?.entityName ?? "-";
-  const layoutVariant = effective?.ui?.layout?.variant ?? "-";
+  const entityName = toDisplayText(effectiveParams?.entityName ?? "-");
+  const layoutVariant = toDisplayText(effectiveLayout?.variant ?? "-");
   const dataBindings: any[] = Array.isArray(effective?.dataBindings) ? effective.dataBindings : [];
-  const uiBlocks: any[] = Array.isArray(effective?.ui?.blocks) ? effective.ui.blocks : [];
+  const uiBlocks: any[] = Array.isArray(effectiveUi?.blocks) ? effectiveUi.blocks : [];
 
   const statusKey = draft && released ? "gov.uiPages.summary.statusBoth" : released ? "gov.uiPages.summary.statusReleased" : "gov.uiPages.summary.statusDraft";
   const versionText = `${released ? t(props.locale, "gov.uiPages.version.released").replace("{version}", String(released.version ?? "")) : t(props.locale, "gov.uiPages.version.none")}${draft ? ` / ${t(props.locale, "gov.uiPages.version.draft").replace("{version}", String(draft.version ?? ""))}` : ""}`;
@@ -92,8 +103,8 @@ export default function GovUiPageDetailClient(props: { locale: string; name: str
     setBusy(true);
     try {
       const res = await apiFetch(`/ui/pages/${encodeURIComponent(props.name)}`, { locale: props.locale, cache: "no-store" });
-      const json = await res.json().catch(() => null);
-      setPageRes({ status: res.status, json });
+      const json: unknown = await res.json().catch(() => null);
+      setPageRes({ status: res.status, json: normalizePagePayload(json) });
       if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
     } finally {
       setBusy(false);
@@ -204,8 +215,8 @@ export default function GovUiPageDetailClient(props: { locale: string; name: str
           <InfoRow label={t(props.locale, "gov.uiPages.summary.layout")} value={layoutVariant} />
           <InfoRow label={t(props.locale, "gov.uiPages.summary.status")} value={t(props.locale, statusKey)} />
           <InfoRow label={t(props.locale, "gov.uiPages.summary.version")} value={versionText} />
-          <InfoRow label={t(props.locale, "gov.uiPages.summary.createdAt")} value={fmtTime(effective?.createdAt)} />
-          <InfoRow label={t(props.locale, "gov.uiPages.summary.updatedAt")} value={fmtTime(effective?.updatedAt)} />
+          <InfoRow label={t(props.locale, "gov.uiPages.summary.createdAt")} value={fmtDateTime(effective?.createdAt, props.locale)} />
+          <InfoRow label={t(props.locale, "gov.uiPages.summary.updatedAt")} value={fmtDateTime(effective?.updatedAt, props.locale)} />
         </Card>
       </div>
 
@@ -218,9 +229,9 @@ export default function GovUiPageDetailClient(props: { locale: string; name: str
               {dataBindings.map((db: any, i: number) => (
                 <div key={i} style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid #f8fafc" }}>
                   <span style={{ color: "#64748b" }}>{t(props.locale, "gov.uiPages.dataBindings.target")}:</span>
-                  <span style={{ fontFamily: "monospace" }}>{db.target ?? db.kind ?? "-"}</span>
+                  <span style={{ fontFamily: "monospace" }}>{toDisplayText(db.target ?? db.kind ?? "-")}</span>
                   <span style={{ color: "#64748b", marginLeft: 8 }}>{t(props.locale, "gov.uiPages.dataBindings.entity")}:</span>
-                  <strong>{db.entityName ?? db.params?.entityName ?? "-"}</strong>
+                  <strong>{toDisplayText(db.entityName ?? db.params?.entityName ?? "-")}</strong>
                 </div>
               ))}
             </div>
@@ -235,9 +246,9 @@ export default function GovUiPageDetailClient(props: { locale: string; name: str
               {uiBlocks.map((block: any, i: number) => (
                 <div key={i} style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid #f8fafc" }}>
                   <span style={{ color: "#64748b" }}>{t(props.locale, "gov.uiPages.uiBlocks.slot")}:</span>
-                  <span>{block.slot ?? "-"}</span>
+                  <span>{toDisplayText(block.slot ?? "-")}</span>
                   <span style={{ color: "#64748b", marginLeft: 8 }}>{t(props.locale, "gov.uiPages.uiBlocks.component")}:</span>
-                  <strong style={{ fontFamily: "monospace" }}>{block.componentId ?? "-"}</strong>
+                  <strong style={{ fontFamily: "monospace" }}>{toDisplayText(block.componentId ?? "-")}</strong>
                 </div>
               ))}
             </div>

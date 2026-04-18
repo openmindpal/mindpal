@@ -6,12 +6,16 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "dev": "tsx watch --env-file=../../.env src/index.ts",
+    "dev": "npx --yes tsx watch --env-file=../../.env src/index.ts",
     "build": "tsc -b",
     "db:migrate": "tsx --env-file=../../.env src/cli/migrate.ts",
     "db:seed": "tsx --env-file=../../.env src/cli/seed.ts",
+    "db:migrate:tool-category": "tsx --env-file=../../.env scripts/migrate-tool-category.ts",
+    "verify:tool-category": "tsx --env-file=../../.env scripts/verify-tool-category.ts",
     "start": "node dist/index.js",
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=1",
+    "eval:ci": "tsx scripts/run-eval-ci.ts --baseline ./eval-baseline.json --gate --output ./eval-report.json --executor mock",
+    "eval:ci:real": "tsx scripts/run-eval-ci.ts --baseline ./eval-baseline.json --gate --output ./eval-report.json --executor real",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

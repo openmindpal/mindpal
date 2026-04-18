@@ -1,0 +1,48 @@
+{
+  "identity": {
+    "name": "media.speech.transcribe",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "语音转录与合成",
+    "en-US": "Speech Transcription & Synthesis"
+  },
+  "description": {
+    "zh-CN": "支持语音转文字（transcribe）和文字转语音（TTS）两种模式。STT 三级降级链路：讯飞语音听写 → Whisper 兼容 API → 多模态 LLM。自动检测语言并返回置信度",
+    "en-US": "Supports STT (transcribe) and TTS modes. STT 3-tier fallback: iFlytek → Whisper API → Multimodal LLM. Auto-detects language and returns confidence"
+  },
+  "category": "ai",
+  "priority": 7,
+  "tags": ["speech", "transcription", "tts", "audio", "multimodal", "iflytek", "讯飞"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "media",
+    "action": "speech_transcribe",
+    "idempotencyRequired": false,
+    "riskLevel": "low",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "audioUrl": { "type": "string", "description": "音频文件 URL" },
+        "audioBase64": { "type": "string", "description": "音频 base64 编码数据（与 audioUrl 二选一）" },
+        "format": { "type": "string", "description": "音频格式: wav | mp3 | ogg | webm，默认 wav" },
+        "language": { "type": "string", "description": "期望语言 BCP-47 码（如 zh-CN, en-US），留空自动检测" },
+        "mode": { "type": "string", "description": "模式: transcribe（语音→文字） | tts（文字→语音），默认 transcribe" },
+        "text": { "type": "string", "description": "TTS 模式下待合成的文本" },
+        "voice": { "type": "string", "description": "TTS 模式下的发音人，默认 alloy" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "transcript": { "type": "string", "description": "转录文本（transcribe 模式）" },
+        "language": { "type": "string", "description": "检测到的语言" },
+        "durationMs": { "type": "number", "description": "音频时长(ms)" },
+        "audioBase64": { "type": "string", "description": "合成音频 base64（tts 模式）" },
+        "confidence": { "type": "number", "required": true, "description": "处理置信度 0-1" }
+      }
+    }
+  },
+  "entry": "dist/index.js"
+}

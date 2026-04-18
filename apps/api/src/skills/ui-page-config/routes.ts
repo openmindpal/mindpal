@@ -1,16 +1,45 @@
 import type { FastifyPluginAsync } from "fastify";
+import type { Pool } from "pg";
 import { z } from "zod";
 import { Errors } from "../../lib/errors";
 import { requirePermission } from "../../modules/auth/guard";
 import { setAuditContext } from "../../modules/audit/context";
 import { getLatestReleasedToolVersion, getToolDefinition, getToolVersionByRef } from "../../modules/tools/toolRepo";
 import { buildEffectiveEntitySchema } from "../../modules/metadata/effectiveSchema";
-import { getEffectiveSchema } from "../../modules/metadata/schemaRepo";
+import { getEffectiveSchema, resolveSchemaNameForEntity } from "../../modules/metadata/schemaRepo";
 import { pageDraftSchema, pageViewPrefsSchema } from "./modules/pageModel";
 import { validateUiAgainstRegistry } from "./modules/componentRegistry";
 import { deletePage, getDraft, getLatestReleased, listPages, publishFromDraft, rollbackToPreviousReleased, upsertDraft } from "./modules/pageRepo";
-import { getUserPageViewPrefs, resetUserPageViewPrefs, setUserPageViewPrefs } from "../memory-manager/modules/userPreferencesRepo";
+import { getUserPageViewPrefs, resetUserPageViewPrefs, setUserPageViewPrefs } from "../../modules/memory/userPreferencesRepo";
 import { getLatestReleasedUiComponentRegistry } from "../../modules/governance/uiComponentRegistryRepo";
+
+/** DataBinding.target 白名单 —— 动态加载，带缓存，改配置即生效 */
+const SEED_ALLOWED_TARGETS = ["entities.list", "entities.query", "entities.get", "schema.effective"];
+let _allowedTargetsCache: { targets: Set<string>; ts: number } | null = null;
+
+async function loadAllowedDataBindingTargets(pool: Pool, tenantId: string): Promise<Set<string>> {
+  const now = Date.now();
+  if (_allowedTargetsCache && now - _allowedTargetsCache.ts < 60_000) {
+    return _allowedTargetsCache.targets;
+  }
+  try {
+    const res = await pool.query(
+      "SELECT config_value FROM runtime_config_overrides WHERE tenant_id = $1 AND config_key = 'ui.allowedDataBindingTargets'",
+      [tenantId],
+    );
+    if (res.rowCount && res.rows[0]?.config_value) {
+      const parsed = JSON.parse(res.rows[0].config_value);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const targets = new Set(parsed.map((x: any) => String(x)));
+        _allowedTargetsCache = { targets, ts: now };
+        return targets;
+      }
+    }
+  } catch { /* DB 查询失败时降级为种子默认值 */ }
+  const targets = new Set(SEED_ALLOWED_TARGETS);
+  _allowedTargetsCache = { targets, ts: now };
+  return targets;
+}
 
 function resolveScope(subject: { tenantId: string; spaceId?: string | null }) {
   if (subject.spaceId) return { scopeType: "space" as const, scopeId: subject.spaceId };
@@ -47,7 +76,8 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
       throw Errors.uiConfigDenied("缺少 params.entityName");
     }
 
-    const allowedTargets = new Set(["entities.list", "entities.query", "entities.get", "schema.effective"]);
+    // DataBinding.target 白名单：从 runtime_config_overrides 动态加载，允许前端/治理配置扩展
+    const allowedTargets = await loadAllowedDataBindingTargets(app.db, subject.tenantId);
     for (const b of draft.dataBindings ?? []) {
       if (!allowedTargets.has(b.target)) throw Errors.uiConfigDenied("非法 DataBinding.target");
     }
@@ -107,13 +137,21 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body);
 
-    const schemaName = body.schemaName ?? String(req.headers["x-schema-name"] ?? "core");
     const pageKinds = body.pageKinds ?? ["list", "detail", "new", "edit"];
     const overwriteStrategy = body.overwriteStrategy ?? "skip_existing";
 
     await requirePermission({ req, resourceType: "schema", action: "read" });
     const entityDecision = await requirePermission({ req, resourceType: "entity", action: "read" });
 
+    const resolvedSchemaName = await resolveSchemaNameForEntity({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      entityName: body.entityName,
+      requestedSchemaName: body.schemaName ?? (req.headers["x-schema-name"] as string | undefined),
+    });
+    if (!resolvedSchemaName.ok) throw Errors.badRequest(resolvedSchemaName.reason);
+    const schemaName = resolvedSchemaName.schemaName;
     const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, name: schemaName });
     if (!schema) throw Errors.badRequest("schema not found");
     const effective = buildEffectiveEntitySchema({ schema: schema.schema, entityName: body.entityName, decision: entityDecision });

@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { apiFetch } from "@/lib/api";
+import { t, statusLabel } from "@/lib/i18n";
 import { Badge, Card, PageHeader, Table, StatusBadge } from "@/components/ui";
+import { toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 
 function normalizeSchema(input: any) {
   const schema = input?.schema ?? input;
@@ -62,20 +62,6 @@ function computeSchemaDiffSummary(aRaw: any, bRaw: any) {
     out.requiredChanged += requiredChanged.length;
   }
   return out;
-}
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
 }
 
 export default function SchemaDetailClient(props: {
@@ -167,7 +153,7 @@ export default function SchemaDetailClient(props: {
         }
       })();
       if (!schemaDef) throw toApiError({ errorCode: "INVALID_JSON", message: "invalid schema json" });
-      const id = await createChangeSetWithItems(`schema publish ${props.name}`, [{ kind: "schema.publish", schemaDef }]);
+      const id = await createChangeSetWithItems(`schema publish ${props.name}`, [{ kind: "schema.publish", name: props.name, schemaDef }]);
       window.location.href = `/gov/changesets/${encodeURIComponent(id)}?lang=${encodeURIComponent(props.locale)}`;
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
@@ -180,7 +166,7 @@ export default function SchemaDetailClient(props: {
     setError("");
     setBusy(true);
     try {
-      const id = await createChangeSetWithItems(`schema rollback ${props.name}`, [{ kind: "schema.rollback", schemaName: props.name }]);
+      const id = await createChangeSetWithItems(`schema rollback ${props.name}`, [{ kind: "schema.rollback", name: props.name }]);
       window.location.href = `/gov/changesets/${encodeURIComponent(id)}?lang=${encodeURIComponent(props.locale)}`;
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
@@ -193,7 +179,7 @@ export default function SchemaDetailClient(props: {
     setError("");
     setBusy(true);
     try {
-      const id = await createChangeSetWithItems(`schema set_active ${props.name}@${version}`, [{ kind: "schema.set_active", schemaName: props.name, version }]);
+      const id = await createChangeSetWithItems(`schema set_active ${props.name}@${version}`, [{ kind: "schema.set_active", name: props.name, version }]);
       window.location.href = `/gov/changesets/${encodeURIComponent(id)}?lang=${encodeURIComponent(props.locale)}`;
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
@@ -245,7 +231,12 @@ export default function SchemaDetailClient(props: {
             <button onClick={refresh} disabled={busy}>
               {t(props.locale, "action.refresh")}
             </button>
-            <Link href={`/gov/schemas?lang=${encodeURIComponent(props.locale)}`}>{t(props.locale, "gov.schemas.backLink")}</Link>
+            <Link
+              href={`/gov/schemas?lang=${encodeURIComponent(props.locale)}`}
+              style={{ padding: "6px 12px", border: "1px solid var(--sl-border)", borderRadius: 6, textDecoration: "none", color: "var(--sl-text)" }}
+            >
+              {t(props.locale, "action.back")}
+            </Link>
           </>
         }
       />
@@ -285,7 +276,7 @@ export default function SchemaDetailClient(props: {
                 <tr key={String(v?.version ?? "")}>
                   <td>{String(v?.version ?? "")}</td>
                   <td>
-                    <Badge>{String(v?.status ?? "")}</Badge>
+                    <Badge>{statusLabel(String(v?.status ?? ""), props.locale)}</Badge>
                   </td>
                   <td>{String(v?.publishedAt ?? "-")}</td>
                   <td style={{ display: "flex", gap: 8 }}>
@@ -334,7 +325,7 @@ export default function SchemaDetailClient(props: {
                 <tr key={String(m?.migrationId ?? "")}>
                   <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{String(m?.migrationId ?? "")}</td>
                   <td>
-                    <Badge>{String(m?.status ?? "")}</Badge>
+                    <Badge>{statusLabel(String(m?.status ?? ""), props.locale)}</Badge>
                   </td>
                   <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
                     {m?.latestRunId ? <Link href={`/runs/${encodeURIComponent(String(m.latestRunId))}?lang=${encodeURIComponent(props.locale)}`}>{String(m.latestRunId)}</Link> : "-"}

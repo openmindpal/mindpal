@@ -4,14 +4,75 @@ import { useCallback, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { type ApiError, toApiError, errText } from "@/lib/apiError";
-import { Card, PageHeader, Table, StatusBadge } from "@/components/ui";
+import { Card, PageHeader, Table, StatusBadge, getHelpHref, FormHint, AlertBanner, friendlyError } from "@/components/ui";
 import { useUndoToast, UndoToastContainer } from "@/components/ui/UndoToast";
 import { nextId } from "@/lib/apiError";
 
 type Binding = { id?: string; modelRef?: string; provider?: string; model?: string; baseUrl?: string | null; chatCompletionsPath?: string | null; connectorInstanceId?: string; secretId?: string; secretIds?: string[]; status?: string; updatedAt?: string };
 
-type ProviderKey = "openai_compatible" | "deepseek" | "hunyuan" | "qianwen" | "doubao" | "zhipu" | "kimi";
+type ProviderKey =
+  | "openai_compatible"
+  | "deepseek"
+  | "hunyuan"
+  | "qianwen"
+  | "doubao"
+  | "zhipu"
+  | "kimi"
+  | "kimimax"
+  | "custom_openai"
+  | "anthropic"
+  | "custom_anthropic"
+  | "gemini"
+  | "custom_gemini";
 type OnboardResult = { modelRef: string; provider: string; model: string; baseUrl: string | null; binding?: Binding };
+
+const PROVIDER_OPTIONS: ProviderKey[] = [
+  "deepseek",
+  "hunyuan",
+  "qianwen",
+  "doubao",
+  "zhipu",
+  "kimi",
+  "kimimax",
+  "openai_compatible",
+  "custom_openai",
+  "anthropic",
+  "custom_anthropic",
+  "gemini",
+  "custom_gemini",
+];
+
+const PROVIDER_BASE_URLS: Record<ProviderKey, string> = {
+  deepseek: "https://api.deepseek.com",
+  hunyuan: "https://api.hunyuan.cloud.tencent.com",
+  qianwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  doubao: "https://ark.cn-beijing.volces.com/api/v3",
+  zhipu: "https://open.bigmodel.cn/api/paas/v4",
+  kimi: "https://api.moonshot.cn/v1",
+  kimimax: "https://api.moonshot.cn/v1",
+  openai_compatible: "https://api.openai.com/v1",
+  custom_openai: "https://your-proxy.example.com/v1",
+  anthropic: "https://api.anthropic.com",
+  custom_anthropic: "https://your-proxy.example.com",
+  gemini: "https://generativelanguage.googleapis.com/v1beta",
+  custom_gemini: "https://your-proxy.example.com/v1beta",
+};
+
+const PROVIDER_PATHS: Record<ProviderKey, string> = {
+  deepseek: "/chat/completions",
+  hunyuan: "/chat/completions",
+  qianwen: "/chat/completions",
+  doubao: "/chat/completions",
+  zhipu: "/chat/completions",
+  kimi: "/chat/completions",
+  kimimax: "/chat/completions",
+  openai_compatible: "/chat/completions",
+  custom_openai: "/chat/completions",
+  anthropic: "/v1/messages",
+  custom_anthropic: "/v1/messages",
+  gemini: "/models/{model}:generateContent",
+  custom_gemini: "/models/{model}:generateContent",
+};
 
 export default function GovModelsClient(props: { locale: string; initial: any }) {
   const [busy, setBusy] = useState(false);
@@ -23,15 +84,29 @@ export default function GovModelsClient(props: { locale: string; initial: any })
 
   const bindingItems = useMemo(() => (Array.isArray(bindings?.json?.bindings) ? (bindings.json.bindings as Binding[]) : []), [bindings]);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(bindingItems.length / pageSize));
+  const paged = useMemo(() => bindingItems.slice(page * pageSize, (page + 1) * pageSize), [bindingItems, page]);
+
   const [providerKey, setProviderKey] = useState<ProviderKey>("deepseek");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [chatCompletionsPath, setChatCompletionsPath] = useState("");
+  const [baseUrl, setBaseUrl] = useState(PROVIDER_BASE_URLS.deepseek);
+  const [chatCompletionsPath, setChatCompletionsPath] = useState(PROVIDER_PATHS.deepseek);
   const [apiKey, setApiKey] = useState("");
   const [modelName, setModelName] = useState("");
   const [lastSaved, setLastSaved] = useState<OnboardResult | null>(null);
   const [testOutput, setTestOutput] = useState<{ outputText: string; traceId: string } | null>(null);
   const [testError, setTestError] = useState<string>("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const providerBaseUrlPlaceholder = PROVIDER_BASE_URLS[providerKey];
+  const providerPathPlaceholder = PROVIDER_PATHS[providerKey];
+
+  const handleProviderChange = useCallback((nextProvider: ProviderKey) => {
+    setProviderKey(nextProvider);
+    setBaseUrl(PROVIDER_BASE_URLS[nextProvider]);
+    setChatCompletionsPath(PROVIDER_PATHS[nextProvider]);
+  }, []);
 
   /* Undo toast for delete operations (§07§6 Delay Window) */
   const { toasts: undoToasts, enqueue: enqueueUndo, undo: undoAction } = useUndoToast();
@@ -44,6 +119,7 @@ export default function GovModelsClient(props: { locale: string; initial: any })
   }, [props.locale]);
 
   const refreshBindings = useCallback(async () => {
+    setPage(0);
     const res = await apiFetch(`/models/bindings`, { locale: props.locale, cache: "no-store" });
     const json = await res.json().catch(() => null);
     setBindings({ status: res.status, json });
@@ -159,6 +235,7 @@ export default function GovModelsClient(props: { locale: string; initial: any })
     <div>
       <PageHeader
         title={t(props.locale, "gov.models.title")}
+        helpHref={getHelpHref("/gov/models", props.locale) ?? undefined}
         actions={
           <>
             <StatusBadge locale={props.locale} status={bindings.status} />
@@ -169,8 +246,8 @@ export default function GovModelsClient(props: { locale: string; initial: any })
         }
       />
 
-      {error ? <pre style={{ color: "crimson", whiteSpace: "pre-wrap" }}>{error}</pre> : null}
-      {notice ? <pre style={{ color: "seagreen", whiteSpace: "pre-wrap" }}>{notice}</pre> : null}
+      {error ? (() => { const fe = friendlyError(error, props.locale); return <AlertBanner severity="error" locale={props.locale} technical={error} recovery={fe.recovery}>{fe.message}</AlertBanner>; })() : null}
+      {notice ? <AlertBanner severity="success" locale={props.locale}>{notice}</AlertBanner> : null}
 
       <div style={{ marginTop: 16 }}>
         <Card title={t(props.locale, "gov.models.bindingsTitle")}>
@@ -188,7 +265,9 @@ export default function GovModelsClient(props: { locale: string; initial: any })
               </tr>
             </thead>
             <tbody>
-              {bindingItems.map((b, idx) => (
+              {paged.length === 0 ? (
+                  <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                ) : paged.map((b, idx) => (
                 <tr key={String(b.id ?? b.modelRef ?? idx)}>
                   <td>{String(b.modelRef ?? "")}</td>
                   <td>{String(b.provider ?? "")}</td>
@@ -215,6 +294,19 @@ export default function GovModelsClient(props: { locale: string; initial: any })
               ))}
             </tbody>
           </Table>
+          {totalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, bindingItems.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(bindingItems.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+                <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -222,31 +314,27 @@ export default function GovModelsClient(props: { locale: string; initial: any })
         <Card title={t(props.locale, "gov.models.onboardTitle")}>
           <div style={{ display: "grid", gap: 10, marginTop: 12, maxWidth: 820 }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <div>{t(props.locale, "gov.models.provider")}</div>
-              <select value={providerKey} onChange={(e) => setProviderKey(e.target.value as ProviderKey)} disabled={busy}>
-                <option value="deepseek">{t(props.locale, "gov.models.provider.deepseek")}</option>
-                <option value="hunyuan">{t(props.locale, "gov.models.provider.hunyuan")}</option>
-                <option value="qianwen">{t(props.locale, "gov.models.provider.qianwen")}</option>
-                <option value="doubao">{t(props.locale, "gov.models.provider.doubao")}</option>
-                <option value="zhipu">{t(props.locale, "gov.models.provider.zhipu")}</option>
-                <option value="kimi">{t(props.locale, "gov.models.provider.kimi")}</option>
-                <option value="openai_compatible">{t(props.locale, "gov.models.provider.openai_compatible")}</option>
+              <div>{t(props.locale, "gov.models.provider")}<FormHint text={t(props.locale, "gov.models.hint.provider")} /></div>
+              <select value={providerKey} onChange={(e) => handleProviderChange(e.target.value as ProviderKey)} disabled={busy}>
+                {PROVIDER_OPTIONS.map((provider) => (
+                  <option key={provider} value={provider}>{t(props.locale, `gov.models.provider.${provider}`)}</option>
+                ))}
               </select>
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <div>{t(props.locale, "gov.models.baseUrl")}</div>
-              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} disabled={busy} placeholder="https://api.openai.com" />
+              <div>{t(props.locale, "gov.models.baseUrl")}<FormHint text={t(props.locale, "gov.models.hint.baseUrl")} /></div>
+              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} disabled={busy} placeholder={providerBaseUrlPlaceholder} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <div>{t(props.locale, "gov.models.chatPath")}</div>
-              <input value={chatCompletionsPath} onChange={(e) => setChatCompletionsPath(e.target.value)} disabled={busy} placeholder="/chat/completions" />
+              <div>{t(props.locale, "gov.models.chatPath")}<FormHint text={t(props.locale, "gov.models.hint.chatPath")} /></div>
+              <input value={chatCompletionsPath} onChange={(e) => setChatCompletionsPath(e.target.value)} disabled={busy} placeholder={providerPathPlaceholder} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <div>{t(props.locale, "gov.models.apiKey")}</div>
+              <div>{t(props.locale, "gov.models.apiKey")}<FormHint text={t(props.locale, "gov.models.hint.apiKey")} /></div>
               <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} disabled={busy} type="password" />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <div>{t(props.locale, "gov.models.modelName")}</div>
+              <div>{t(props.locale, "gov.models.modelName")}<FormHint text={t(props.locale, "gov.models.hint.modelName")} /></div>
               <input value={modelName} onChange={(e) => setModelName(e.target.value)} disabled={busy} placeholder="deepseek-v3" />
             </label>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

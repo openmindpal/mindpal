@@ -1,9 +1,6 @@
 import type { Pool } from "pg";
 import { decryptSecretPayload, encryptSecretEnvelopeWithKeyVersion } from "../../secrets/envelope";
-
-function isPlainObject(v: any): v is Record<string, any> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
+import { isPlainObject } from "@openslin/shared";
 
 function mergeMetaInput(decrypted: any, metaInput: any) {
   if (!isPlainObject(decrypted) || !isPlainObject(metaInput)) return decrypted;
@@ -46,9 +43,10 @@ export async function decryptStepInputIfNeeded(params: { pool: Pool; tenantId: s
   const encFormat = params.step?.input_enc_format as string | null;
   const encryptedPayload = params.step?.input_encrypted_payload as any;
   if (encFormat === "envelope.v1" && isPlainObject(encryptedPayload)) {
-    const scopeType = String(encryptedPayload?.keyRef?.scopeType ?? "space");
-    const scopeId = String(encryptedPayload?.keyRef?.scopeId ?? params.metaInput?.spaceId ?? params.metaInput?.space_id ?? "");
-    const keyVersion = Number(encryptedPayload?.keyRef?.keyVersion ?? params.step?.input_key_version ?? 0);
+    const keyRef = encryptedPayload.keyRef as Record<string, unknown> | undefined;
+    const scopeType = String(keyRef?.scopeType ?? "space");
+    const scopeId = String(keyRef?.scopeId ?? params.metaInput?.spaceId ?? params.metaInput?.space_id ?? "");
+    const keyVersion = Number(keyRef?.keyVersion ?? params.step?.input_key_version ?? 0);
     if (scopeId && Number.isFinite(keyVersion) && keyVersion > 0) {
       const dec = await decryptSecretPayload({
         pool: params.pool,

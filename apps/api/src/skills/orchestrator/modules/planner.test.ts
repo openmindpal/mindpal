@@ -21,11 +21,11 @@ vi.mock("../../../modules/auth/authz", () => ({
   authorize: async () => ({ decision: "allow" }),
 }));
 
-import { buildHeuristicPlanV4 } from "./planner";
+import { buildHeuristicPlan } from "./planner";
 
 describe("planner", () => {
-  it("buildHeuristicPlanV4 按启发式对候选打分并优先选择 create", async () => {
-    const res = await buildHeuristicPlanV4({
+  it("buildHeuristicPlan 按启发式对候选打分并优先选择 create", async () => {
+    const res = await buildHeuristicPlan({
       pool: {} as any,
       tenantId: "t1",
       spaceId: "s1",

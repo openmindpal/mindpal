@@ -2,31 +2,17 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { apiFetch } from "@/lib/api";
+import { t, statusLabel } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
 import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type RunLite = { runId: string; status: string; jobType?: string | null; toolRef?: string | null };
 type TaskDetailResp = { task?: unknown; runs?: RunLite[] } & ApiError;
 type MessagesResp = { messages?: unknown[] } & ApiError;
 type CollabRunLite = { collabRunId: string; status: string; roles?: unknown; limits?: unknown; primaryRunId?: string | null; createdAt?: string; updatedAt?: string };
 type CollabRunsResp = { items?: CollabRunLite[]; nextBefore?: string | null } & ApiError;
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
 
 export default function TaskDetailClient(props: {
   locale: string;
@@ -94,6 +80,7 @@ export default function TaskDetailClient(props: {
   }
 
   async function cancelRun(runId: string) {
+    if (!confirm(t(props.locale, "tasks.confirmCancel"))) return;
     await runAction(async () => {
       const res = await apiFetch(`/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST", locale: props.locale });
       const json: unknown = await res.json().catch(() => null);
@@ -196,10 +183,10 @@ export default function TaskDetailClient(props: {
         <Table header={<span>{t(props.locale, "tasks.runsTitle")}</span>}>
           <thead>
             <tr>
-              <th align="left">runId</th>
-              <th align="left">status</th>
-              <th align="left">jobType</th>
-              <th align="left">toolRef</th>
+              <th align="left">{t(props.locale, "tasks.col.run")}</th>
+              <th align="left">{t(props.locale, "tasks.col.status")}</th>
+              <th align="left">{t(props.locale, "tasks.col.jobType")}</th>
+              <th align="left">{t(props.locale, "runs.table.toolRef")}</th>
               <th align="left">{t(props.locale, "tasks.col.actions")}</th>
             </tr>
           </thead>
@@ -210,7 +197,7 @@ export default function TaskDetailClient(props: {
                   <Link href={`/runs/${encodeURIComponent(r.runId)}?lang=${encodeURIComponent(props.locale)}`}>{r.runId}</Link>
                 </td>
                 <td>
-                  <Badge>{r.status}</Badge>
+                  <Badge>{statusLabel(r.status, props.locale)}</Badge>
                 </td>
                 <td>{r.jobType ?? "-"}</td>
                 <td>{r.toolRef ?? "-"}</td>
@@ -219,7 +206,7 @@ export default function TaskDetailClient(props: {
                     <button onClick={() => cancelRun(r.runId)} disabled={busy || !r.runId}>
                       {t(props.locale, "action.cancel")}
                     </button>
-                    <button onClick={() => continueAgentRun(r.runId)} disabled={busy || r.jobType !== "agent.run" || r.status !== "needs_approval"}>
+                    <button onClick={() => continueAgentRun(r.runId)} disabled={busy || r.jobType !== "agent.run" || r.status !== "paused"}>
                       {t(props.locale, "action.continue")}
                     </button>
                   </div>
@@ -249,10 +236,10 @@ export default function TaskDetailClient(props: {
             <Table header={<span>{t(props.locale, "tasks.collabRunsTitle")}</span>}>
               <thead>
                 <tr>
-                  <th align="left">collabRunId</th>
-                  <th align="left">status</th>
-                  <th align="left">roles</th>
-                  <th align="left">primaryRunId</th>
+                  <th align="left">{t(props.locale, "collab.collabRunId")}</th>
+                  <th align="left">{t(props.locale, "tasks.col.status")}</th>
+                  <th align="left">{t(props.locale, "collab.roles")}</th>
+                  <th align="left">{t(props.locale, "collab.primaryRunId")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -267,7 +254,7 @@ export default function TaskDetailClient(props: {
                         </Link>
                       </td>
                       <td>
-                        <Badge>{c.status}</Badge>
+                        <Badge>{statusLabel(c.status, props.locale)}</Badge>
                       </td>
                       <td>{roleNames.length ? roleNames.join(", ") : "-"}</td>
                       <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
@@ -286,7 +273,7 @@ export default function TaskDetailClient(props: {
         <Card title={t(props.locale, "tasks.messagesTitle")}>
           <div style={{ display: "grid", gap: 12 }}>
             <div style={{ display: "grid", gap: 6, maxWidth: 720 }}>
-              <div>handoff</div>
+              <div>{t(props.locale, "tasks.handoffLabel")}</div>
               <textarea
                 value={handoffText}
                 onChange={(e) => setHandoffText(e.target.value)}
@@ -297,21 +284,21 @@ export default function TaskDetailClient(props: {
                 {t(props.locale, "submit")}
               </button>
             </div>
-            <Table header={<span>timeline</span>}>
+            <Table header={<span>{t(props.locale, "tasks.messagesTimeline")}</span>}>
               <thead>
                 <tr>
-                  <th align="left">createdAt</th>
-                  <th align="left">role</th>
-                  <th align="left">intent</th>
-                  <th align="left">correlation</th>
-                  <th align="left">evidenceRefs</th>
-                  <th align="left">outputs</th>
+                  <th align="left">{t(props.locale, "runs.table.createdAt")}</th>
+                  <th align="left">{t(props.locale, "tasks.msg.role")}</th>
+                  <th align="left">{t(props.locale, "tasks.msg.intent")}</th>
+                  <th align="left">{t(props.locale, "tasks.msg.correlation")}</th>
+                  <th align="left">{t(props.locale, "tasks.msg.evidenceRefs")}</th>
+                  <th align="left">{t(props.locale, "tasks.msg.outputs")}</th>
                 </tr>
               </thead>
               <tbody>
                 {messageSummaries.map((m) => (
                   <tr key={m.key}>
-                    <td>{m.createdAt || "-"}</td>
+                    <td>{fmtDateTime(m.createdAt, props.locale)}</td>
                     <td>{m.role || "-"}</td>
                     <td>
                       <Badge>{m.intent || "-"}</Badge>

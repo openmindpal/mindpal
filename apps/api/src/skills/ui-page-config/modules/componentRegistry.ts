@@ -7,7 +7,11 @@ export type UiComponentSpec = {
   requiredProps?: string[];
 };
 
-const registry: UiComponentSpec[] = [
+/**
+ * 种子默认值：仅在 DB 注册表为空时作为 fallback。
+ * 正式环境应通过 ui_component_registry_items 表管理组件白名单。
+ */
+const SEED_DEFAULTS: UiComponentSpec[] = [
   { componentId: "EntityList.Table", allowedPageTypes: ["entity.list"], maxPerPage: 1 },
   { componentId: "EntityList.Cards", allowedPageTypes: ["entity.list"], maxPerPage: 1 },
   { componentId: "EntityDetail.Panel", allowedPageTypes: ["entity.detail"], maxPerPage: 3 },
@@ -17,6 +21,11 @@ const registry: UiComponentSpec[] = [
   { componentId: "Chart.Pie", allowedPageTypes: ["dashboard"], maxPerPage: 10 },
   { componentId: "Widget.Summary", allowedPageTypes: ["dashboard", "entity.list"], maxPerPage: 6 },
   { componentId: "Widget.Markdown", allowedPageTypes: ["dashboard", "entity.detail"], maxPerPage: 5 },
+  { componentId: "FlowRenderer", allowedPageTypes: ["dashboard", "entity.detail"], maxPerPage: 4, requiredProps: ["config"] },
+  { componentId: "FlowDiagram", allowedPageTypes: ["dashboard", "entity.detail"], maxPerPage: 4, requiredProps: ["config"] },
+  { componentId: "ProcessFlow", allowedPageTypes: ["dashboard", "entity.detail"], maxPerPage: 4, requiredProps: ["config"] },
+  { componentId: "AnimatedList", allowedPageTypes: ["dashboard", "entity.list", "entity.detail"], maxPerPage: 6 },
+  { componentId: "AnimatedCards", allowedPageTypes: ["dashboard", "entity.list", "entity.detail"], maxPerPage: 6 },
 ];
 
 /* ─── Dynamic registry from DB (governance) ─── */
@@ -30,9 +39,12 @@ export function setDynamicRegistry(specs: UiComponentSpec[]) {
 
 function getEffectiveRegistry(): UiComponentSpec[] {
   if (dynamicRegistry && dynamicRegistryExpiresAt > Date.now()) {
-    return [...registry, ...dynamicRegistry];
+    // DB 注册表有数据时，优先使用 DB 数据，并合并种子默认值中 DB 未覆盖的组件
+    const dbIds = new Set(dynamicRegistry.map(s => s.componentId));
+    const fallback = SEED_DEFAULTS.filter(s => !dbIds.has(s.componentId));
+    return [...dynamicRegistry, ...fallback];
   }
-  return registry;
+  return SEED_DEFAULTS;
 }
 
 export function listUiComponentRegistryComponentIds(): string[] {

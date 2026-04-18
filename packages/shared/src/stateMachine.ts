@@ -14,9 +14,11 @@
 export const STEP_STATUSES = [
   "pending",
   "running",
+  "paused",        // P1-1.1: 新增暂停状态
   "needs_approval",
   "needs_device",
   "needs_arbiter",
+  "streaming",     // P0-2: 流式控制中（高频传感器数据 + 实时指令）
   "succeeded",
   "failed",
   "deadletter",
@@ -25,15 +27,18 @@ export const STEP_STATUSES = [
 
 export type StepStatus = (typeof STEP_STATUSES)[number];
 
-export const STEP_TERMINAL: ReadonlySet<StepStatus> = new Set(["succeeded", "deadletter"]);
-export const STEP_BLOCKING: ReadonlySet<StepStatus> = new Set(["needs_approval", "needs_device", "needs_arbiter"]);
+export const STEP_TERMINAL: ReadonlySet<StepStatus> = new Set(["succeeded", "failed", "deadletter", "canceled"]);
+export const STEP_BLOCKING: ReadonlySet<StepStatus> = new Set(["needs_approval", "needs_device", "needs_arbiter", "paused"]);
+export const STEP_STREAMING: ReadonlySet<StepStatus> = new Set(["streaming"]); // P0-2: 流式控制状态
 
 export const STEP_TRANSITIONS: Readonly<Record<StepStatus, ReadonlySet<StepStatus>>> = {
-  pending:        new Set(["running", "needs_approval", "needs_device", "needs_arbiter", "canceled"]),
-  running:        new Set(["succeeded", "failed", "canceled", "deadletter"]),
-  needs_approval: new Set(["pending", "canceled"]),
-  needs_device:   new Set(["pending", "canceled"]),
-  needs_arbiter:  new Set(["pending", "canceled"]),
+  pending:        new Set(["running", "needs_approval", "needs_device", "needs_arbiter", "streaming", "canceled"]),
+  running:        new Set(["succeeded", "failed", "canceled", "deadletter", "paused", "streaming"]),  // P1-1.1: running 可以转 paused
+  paused:         new Set(["pending", "canceled", "streaming"]),  // P0-2: paused 可以转为 streaming
+  needs_approval: new Set(["pending", "canceled", "streaming"]),  // P0-2: 审批通过后可以直接进入 streaming
+  needs_device:   new Set(["pending", "canceled", "streaming"]),  // P0-2: 设备就绪后可以进入 streaming
+  needs_arbiter:  new Set(["pending", "canceled", "streaming"]),
+  streaming:      new Set(["running", "succeeded", "failed", "canceled", "paused"]),  // P0-2: streaming 可以转回 running 或成功/失败
   succeeded:      new Set([]),
   failed:         new Set(["pending", "deadletter", "canceled"]),
   deadletter:     new Set([]),
@@ -48,6 +53,7 @@ export const RUN_STATUSES = [
   "created",
   "queued",
   "running",
+  "paused",         // P1-1.1: 新增暂停状态
   "needs_approval",
   "needs_device",
   "needs_arbiter",
@@ -65,8 +71,9 @@ export const RUN_TERMINAL: ReadonlySet<RunStatus> = new Set(["succeeded", "faile
 
 export const RUN_TRANSITIONS: Readonly<Record<RunStatus, ReadonlySet<RunStatus>>> = {
   created:        new Set(["queued", "canceled"]),
-  queued:         new Set(["running", "needs_approval", "needs_device", "needs_arbiter", "canceled", "failed"]),
-  running:        new Set(["succeeded", "failed", "needs_approval", "needs_device", "needs_arbiter", "canceled", "stopped", "compensating"]),
+  queued:         new Set(["running", "needs_approval", "needs_device", "needs_arbiter", "canceled", "failed", "paused"]),
+  running:        new Set(["succeeded", "failed", "needs_approval", "needs_device", "needs_arbiter", "canceled", "stopped", "compensating", "paused"]),  // P1-1.1: running 可以转 paused
+  paused:         new Set(["queued", "canceled", "stopped"]),  // P1-1.1: paused 可以恢复到 queued 或取消/停止
   needs_approval: new Set(["queued", "canceled", "failed"]),
   needs_device:   new Set(["queued", "canceled", "failed"]),
   needs_arbiter:  new Set(["queued", "canceled", "failed"]),
@@ -85,6 +92,7 @@ export const RUN_TRANSITIONS: Readonly<Record<RunStatus, ReadonlySet<RunStatus>>
 export const COLLAB_PHASES = [
   "planning",
   "executing",
+  "paused",         // P1-1.1: 新增暂停状态
   "needs_approval",
   "needs_device",
   "needs_arbiter",
@@ -98,8 +106,9 @@ export type CollabPhase = (typeof COLLAB_PHASES)[number];
 export const COLLAB_TERMINAL: ReadonlySet<CollabPhase> = new Set(["succeeded", "failed", "stopped"]);
 
 export const COLLAB_TRANSITIONS: Readonly<Record<CollabPhase, ReadonlySet<CollabPhase>>> = {
-  planning:       new Set(["executing", "needs_approval", "failed", "stopped"]),
-  executing:      new Set(["needs_approval", "needs_device", "needs_arbiter", "succeeded", "failed", "stopped"]),
+  planning:       new Set(["executing", "needs_approval", "failed", "stopped", "paused"]),  // P1-1.1: planning 可以暂停
+  executing:      new Set(["needs_approval", "needs_device", "needs_arbiter", "succeeded", "failed", "stopped", "paused"]),  // P1-1.1: executing 可以暂停
+  paused:         new Set(["executing", "planning", "stopped"]),  // P1-1.1: paused 可以恢复或停止
   needs_approval: new Set(["executing", "failed", "stopped"]),
   needs_device:   new Set(["executing", "failed", "stopped"]),
   needs_arbiter:  new Set(["executing", "failed", "stopped"]),

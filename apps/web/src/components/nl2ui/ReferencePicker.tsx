@@ -65,7 +65,6 @@ export function ReferencePicker({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          schemaName: "core",
           limit: 20,
           select: [displayField],
           filters: { and: filterConds },

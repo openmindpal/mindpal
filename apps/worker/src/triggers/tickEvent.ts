@@ -1,10 +1,7 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import { fireEventTrigger, toTrigger, type TriggerDefinitionRow } from "./runner";
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
+import { isPlainObject } from "@openslin/shared";
 
 function safePath(path: unknown) {
   const raw = String(path ?? "").trim();

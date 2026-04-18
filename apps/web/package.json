@@ -4,13 +4,16 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "node --max-old-space-size=4096 ../../node_modules/next/dist/bin/next dev --webpack --hostname 127.0.0.1 --port 4000",
     "build": "node --max-old-space-size=4096 ../../node_modules/next/dist/bin/next build",
     "start": "next start",
     "lint": "node scripts/check-no-zh.mjs && eslint --max-warnings 0",
     "test": "node scripts/e2e-console-mode.mjs"
   },
   "dependencies": {
+    "@xyflow/react": "^12.10.2",
+    "framer-motion": "^12.38.0",
+    "highlight.js": "^11.11.1",
     "lib0": "^0.2.114",
     "next": "16.1.6",
     "react": "19.2.3",

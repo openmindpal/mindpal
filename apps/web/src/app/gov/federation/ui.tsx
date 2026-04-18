@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table, StatusBadge, TabNav } from "@/components/ui";
+import { apiFetch } from "@/lib/api"
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { t, statusLabel } from "@/lib/i18n";
+import { Badge, Card, PageHeader, Table, StatusBadge, TabNav, getHelpHref, AlertBanner, friendlyError } from "@/components/ui";
+import { useUndoToast, UndoToastContainer } from "@/components/ui/UndoToast";
+import { nextId, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type InitialData = { status: number; json: unknown };
 
 type FederationNode = {
@@ -39,63 +41,73 @@ type PermissionType = "read" | "write" | "forward" | "audit" | "invoke" | "subsc
 
 type PermissionGrant = {
   grantId: string;
+  tenantId: string;
   nodeId: string;
+  capabilityId: string;
   permissionType: PermissionType;
-  resourcePattern: string;
-  conditions: Record<string, unknown> | null;
+  grantedBy: string | null;
   expiresAt: string | null;
-  grantedBy: string;
   revokedAt: string | null;
+  revokeReason: string | null;
+  metadata: Record<string, unknown>;
   createdAt: string;
+  updatedAt: string;
 };
 
 type UserGrant = {
   userGrantId: string;
-  nodeId: string;
-  localUserId: string;
-  remoteIdentity: string;
-  scopes: string[];
-  consentedAt: string;
+  tenantId: string;
+  grantorSubject: string;
+  granteeNodeId: string;
+  granteeSubject: string;
+  capabilityId: string | null;
+  permissionType: PermissionType;
+  scope: "specific" | "all_capabilities";
+  expiresAt: string | null;
   revokedAt: string | null;
+  revokeReason: string | null;
+  metadata: Record<string, unknown>;
   createdAt: string;
+  updatedAt: string;
 };
 
 type ContentPolicy = {
   policyId: string;
-  policyName: string;
+  tenantId: string;
+  name: string;
   policyType: "usage_restriction" | "lifecycle" | "redaction" | "encryption";
+  targetType: "all" | "capability" | "node" | "user";
+  targetId: string | null;
   rules: Record<string, unknown>;
-  appliesToNodes: string[] | null;
+  priority: number;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
 };
 
+type AuditDecision = "allowed" | "denied" | "rate_limited" | "policy_blocked";
+type AuditOperationType = "permission_check" | "data_access" | "capability_invoke" | "grant_change";
+
 type AuditLog = {
   logId: string;
-  nodeId: string;
-  eventType: string;
-  actorType: "user" | "node" | "system";
-  actorId: string;
-  targetResource: string;
-  outcome: "success" | "denied" | "error";
-  metadata: Record<string, unknown> | null;
+  tenantId: string;
+  correlationId: string | null;
+  nodeId: string | null;
+  direction: "inbound" | "outbound" | "internal";
+  operationType: AuditOperationType;
+  subjectId: string | null;
+  targetCapability: string | null;
+  permissionType: string | null;
+  decision: AuditDecision;
+  decisionReason: string | null;
+  policyIds: string[];
+  requestDigest: Record<string, unknown> | null;
+  responseDigest: Record<string, unknown> | null;
+  latencyMs: number | null;
+  clientIp: string | null;
+  userAgent: string | null;
   createdAt: string;
 };
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
 
 export default function FederationClient(props: { locale: string; initial?: InitialData }) {
   const [busy, setBusy] = useState(false);
@@ -111,24 +123,28 @@ export default function FederationClient(props: { locale: string; initial?: Init
   // Permission grants state
   const [permGrants, setPermGrants] = useState<PermissionGrant[]>([]);
   const [permNodeId, setPermNodeId] = useState("");
+  const [permCapabilityId, setPermCapabilityId] = useState("");
   const [permType, setPermType] = useState<PermissionType>("read");
-  const [permResource, setPermResource] = useState("");
-  const [permConditions, setPermConditions] = useState("");
   const [permExpires, setPermExpires] = useState("");
+  const [permMetadata, setPermMetadata] = useState("");
 
   // User grants state
   const [userGrants, setUserGrants] = useState<UserGrant[]>([]);
   const [ugNodeId, setUgNodeId] = useState("");
-  const [ugLocalUser, setUgLocalUser] = useState("");
-  const [ugRemoteId, setUgRemoteId] = useState("");
-  const [ugScopes, setUgScopes] = useState("");
+  const [ugGranteeSubject, setUgGranteeSubject] = useState("");
+  const [ugCapabilityId, setUgCapabilityId] = useState("");
+  const [ugPermType, setUgPermType] = useState<PermissionType>("read");
+  const [ugScope, setUgScope] = useState<"specific" | "all_capabilities">("specific");
+  const [ugExpires, setUgExpires] = useState("");
 
   // Content policy state
   const [policies, setPolicies] = useState<ContentPolicy[]>([]);
   const [policyName, setPolicyName] = useState("");
   const [policyType, setPolicyType] = useState<ContentPolicy["policyType"]>("usage_restriction");
+  const [policyTargetType, setPolicyTargetType] = useState<ContentPolicy["targetType"]>("all");
+  const [policyTargetId, setPolicyTargetId] = useState("");
   const [policyRules, setPolicyRules] = useState("");
-  const [policyNodes, setPolicyNodes] = useState("");
+  const [policyPriority, setPolicyPriority] = useState("100");
   const [policyEnabled, setPolicyEnabled] = useState(true);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [editingPolicy, setEditingPolicy] = useState<ContentPolicy | null>(null);
@@ -136,6 +152,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
   // Audit logs state
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditFilterNode, setAuditFilterNode] = useState("");
+  const [auditFilterDecision, setAuditFilterDecision] = useState("");
 
   // Form state
   const [formName, setFormName] = useState("");
@@ -147,6 +164,8 @@ export default function FederationClient(props: { locale: string; initial?: Init
 
   // Test result
   const [testResult, setTestResult] = useState<{ nodeId: string; ok: boolean; latencyMs: number; error?: string } | null>(null);
+
+  const { toasts: undoToasts, enqueue: enqueueUndo, undo: undoAction } = useUndoToast();
 
   // Initialize data
   useEffect(() => {
@@ -262,23 +281,31 @@ export default function FederationClient(props: { locale: string; initial?: Init
   }
 
   async function deleteNode(nodeId: string) {
-    if (!confirm(t(props.locale, "gov.federation.confirmDelete"))) return;
+    const undoId = nextId("undo");
     setError("");
-    setBusy(true);
-    try {
-      const res = await apiFetch(`/governance/federation/nodes/${nodeId}`, {
-        method: "DELETE",
-        locale: props.locale,
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw toApiError(json);
-      await refreshNodes();
-      await refreshStatus();
-    } catch (e) {
-      setError(errText(props.locale, toApiError(e)));
-    } finally {
-      setBusy(false);
-    }
+    enqueueUndo({
+      id: undoId,
+      label: `${t(props.locale, "gov.federation.delete")} ${nodeId}`,
+      durationMs: 5000,
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          const res = await apiFetch(`/governance/federation/nodes/${nodeId}`, {
+            method: "DELETE",
+            locale: props.locale,
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok) throw toApiError(json);
+          await refreshNodes();
+          await refreshStatus();
+        } catch (e) {
+          setError(errText(props.locale, toApiError(e)));
+        } finally {
+          setBusy(false);
+        }
+      },
+      onUndo: () => {},
+    });
   }
 
   async function testNode(nodeId: string) {
@@ -309,7 +336,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
     return d;
   };
 
-  const statusLabel = (s: string) => {
+  const fedStatusLabel = (s: string) => {
     if (s === "active") return t(props.locale, "gov.federation.status.active");
     if (s === "pending") return t(props.locale, "gov.federation.status.pending");
     if (s === "suspended") return t(props.locale, "gov.federation.status.suspended");
@@ -325,8 +352,10 @@ export default function FederationClient(props: { locale: string; initial?: Init
 
   const permTypeLabel = (pt: PermissionType) => t(props.locale, `gov.federation.perm.type.${pt}`);
   const policyTypeLabel = (pt: string) => t(props.locale, `gov.federation.policy.type.${pt === "usage_restriction" ? "usageRestriction" : pt}`);
-  const actorTypeLabel = (at: string) => t(props.locale, `gov.federation.audit.actorType.${at}`);
-  const outcomeLabel = (o: string) => t(props.locale, `gov.federation.audit.outcome.${o}`);
+  const operationTypeLabel = (ot: string) => t(props.locale, `gov.federation.audit.operationType.${ot}`);
+  const directionLabelAudit = (d: string) => t(props.locale, `gov.federation.audit.direction.${d}`);
+  const decisionLabel = (d: string) => t(props.locale, `gov.federation.audit.decision.${d}`);
+  const scopeLabel = (s: string) => t(props.locale, `gov.federation.userGrant.scope.${s}`);
 
   // ========== API Calls ==========
   const refreshPermGrants = useCallback(async () => {
@@ -345,17 +374,17 @@ export default function FederationClient(props: { locale: string; initial?: Init
   }, [props.locale]);
 
   async function createPermGrant() {
-    if (!permNodeId) {
-      setError(t(props.locale, "gov.federation.perm.selectNode"));
+    if (!permNodeId || !permCapabilityId) {
+      setError(t(props.locale, "gov.federation.perm.selectNodeAndCapability"));
       return;
     }
     setError("");
     setInfo("");
     setBusy(true);
     try {
-      let conditions: Record<string, unknown> | null = null;
-      if (permConditions.trim()) {
-        conditions = JSON.parse(permConditions);
+      let metadata: Record<string, unknown> | undefined;
+      if (permMetadata.trim()) {
+        metadata = JSON.parse(permMetadata);
       }
       const res = await apiFetch("/governance/federation/permission-grants", {
         method: "POST",
@@ -363,19 +392,19 @@ export default function FederationClient(props: { locale: string; initial?: Init
         locale: props.locale,
         body: JSON.stringify({
           nodeId: permNodeId,
+          capabilityId: permCapabilityId,
           permissionType: permType,
-          resourcePattern: permResource || "*",
-          conditions,
-          expiresAt: permExpires || null,
+          expiresAt: permExpires || undefined,
+          metadata,
         }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setInfo(t(props.locale, "gov.federation.perm.created"));
       setPermNodeId("");
-      setPermResource("");
-      setPermConditions("");
+      setPermCapabilityId("");
       setPermExpires("");
+      setPermMetadata("");
       await refreshPermGrants();
     } catch (e) {
       setError(errText(props.locale, toApiError(e)));
@@ -385,24 +414,32 @@ export default function FederationClient(props: { locale: string; initial?: Init
   }
 
   async function revokePermGrant(grantId: string) {
-    if (!confirm(t(props.locale, "gov.federation.perm.confirmRevoke"))) return;
+    const undoId = nextId("undo");
     setError("");
-    setBusy(true);
-    try {
-      const res = await apiFetch(`/governance/federation/permission-grants/${grantId}/revoke`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        locale: props.locale,
-        body: JSON.stringify({}),
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw toApiError(json);
-      await refreshPermGrants();
-    } catch (e) {
-      setError(errText(props.locale, toApiError(e)));
-    } finally {
-      setBusy(false);
-    }
+    enqueueUndo({
+      id: undoId,
+      label: `${t(props.locale, "gov.federation.perm.revoke")} ${grantId}`,
+      durationMs: 5000,
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          const res = await apiFetch(`/governance/federation/permission-grants/${grantId}/revoke`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            locale: props.locale,
+            body: JSON.stringify({}),
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok) throw toApiError(json);
+          await refreshPermGrants();
+        } catch (e) {
+          setError(errText(props.locale, toApiError(e)));
+        } finally {
+          setBusy(false);
+        }
+      },
+      onUndo: () => {},
+    });
   }
 
   const refreshUserGrants = useCallback(async () => {
@@ -421,8 +458,8 @@ export default function FederationClient(props: { locale: string; initial?: Init
   }, [props.locale]);
 
   async function createUserGrant() {
-    if (!ugNodeId || !ugLocalUser.trim() || !ugRemoteId.trim()) {
-      setError(t(props.locale, "gov.federation.perm.selectNode"));
+    if (!ugNodeId || !ugGranteeSubject.trim()) {
+      setError(t(props.locale, "gov.federation.userGrant.fieldsRequired"));
       return;
     }
     setError("");
@@ -434,19 +471,21 @@ export default function FederationClient(props: { locale: string; initial?: Init
         headers: { "content-type": "application/json" },
         locale: props.locale,
         body: JSON.stringify({
-          nodeId: ugNodeId,
-          localUserId: ugLocalUser.trim(),
-          remoteIdentity: ugRemoteId.trim(),
-          scopes: ugScopes.split(",").map((s) => s.trim()).filter(Boolean),
+          granteeNodeId: ugNodeId,
+          granteeSubject: ugGranteeSubject.trim(),
+          capabilityId: ugCapabilityId || undefined,
+          permissionType: ugPermType,
+          scope: ugScope,
+          expiresAt: ugExpires || undefined,
         }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setInfo(t(props.locale, "gov.federation.userGrant.created"));
       setUgNodeId("");
-      setUgLocalUser("");
-      setUgRemoteId("");
-      setUgScopes("");
+      setUgGranteeSubject("");
+      setUgCapabilityId("");
+      setUgExpires("");
       await refreshUserGrants();
     } catch (e) {
       setError(errText(props.locale, toApiError(e)));
@@ -456,24 +495,32 @@ export default function FederationClient(props: { locale: string; initial?: Init
   }
 
   async function revokeUserGrant(userGrantId: string) {
-    if (!confirm(t(props.locale, "gov.federation.userGrant.confirmRevoke"))) return;
+    const undoId = nextId("undo");
     setError("");
-    setBusy(true);
-    try {
-      const res = await apiFetch(`/governance/federation/user-grants/${userGrantId}/revoke`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        locale: props.locale,
-        body: JSON.stringify({}),
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw toApiError(json);
-      await refreshUserGrants();
-    } catch (e) {
-      setError(errText(props.locale, toApiError(e)));
-    } finally {
-      setBusy(false);
-    }
+    enqueueUndo({
+      id: undoId,
+      label: `${t(props.locale, "gov.federation.perm.revoke")} ${userGrantId}`,
+      durationMs: 5000,
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          const res = await apiFetch(`/governance/federation/user-grants/${userGrantId}/revoke`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            locale: props.locale,
+            body: JSON.stringify({}),
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok) throw toApiError(json);
+          await refreshUserGrants();
+        } catch (e) {
+          setError(errText(props.locale, toApiError(e)));
+        } finally {
+          setBusy(false);
+        }
+      },
+      onUndo: () => {},
+    });
   }
 
   const refreshPolicies = useCallback(async () => {
@@ -493,7 +540,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
 
   async function createPolicy() {
     if (!policyName.trim()) {
-      setError("Policy name is required");
+      setError(t(props.locale, "gov.federation.policy.nameRequired"));
       return;
     }
     setError("");
@@ -509,10 +556,12 @@ export default function FederationClient(props: { locale: string; initial?: Init
         headers: { "content-type": "application/json" },
         locale: props.locale,
         body: JSON.stringify({
-          policyName: policyName.trim(),
+          name: policyName.trim(),
           policyType,
+          targetType: policyTargetType,
+          targetId: policyTargetId.trim() || undefined,
           rules,
-          appliesToNodes: policyNodes.trim() ? policyNodes.split(",").map((s) => s.trim()) : null,
+          priority: parseInt(policyPriority) || 100,
           enabled: policyEnabled,
         }),
       });
@@ -521,7 +570,8 @@ export default function FederationClient(props: { locale: string; initial?: Init
       setInfo(t(props.locale, "gov.federation.policy.created"));
       setPolicyName("");
       setPolicyRules("");
-      setPolicyNodes("");
+      setPolicyTargetId("");
+      setPolicyPriority("100");
       await refreshPolicies();
     } catch (e) {
       setError(errText(props.locale, toApiError(e)));
@@ -553,30 +603,41 @@ export default function FederationClient(props: { locale: string; initial?: Init
   }
 
   async function deletePolicy(policyId: string) {
-    if (!confirm(t(props.locale, "gov.federation.policy.confirmDelete"))) return;
+    const undoId = nextId("undo");
     setError("");
-    setBusy(true);
-    try {
-      const res = await apiFetch(`/governance/federation/content-policies/${policyId}`, {
-        method: "DELETE",
-        locale: props.locale,
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw toApiError(json);
-      await refreshPolicies();
-    } catch (e) {
-      setError(errText(props.locale, toApiError(e)));
-    } finally {
-      setBusy(false);
-    }
+    enqueueUndo({
+      id: undoId,
+      label: `${t(props.locale, "gov.federation.delete")} ${policyId}`,
+      durationMs: 5000,
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          const res = await apiFetch(`/governance/federation/content-policies/${policyId}`, {
+            method: "DELETE",
+            locale: props.locale,
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok) throw toApiError(json);
+          await refreshPolicies();
+        } catch (e) {
+          setError(errText(props.locale, toApiError(e)));
+        } finally {
+          setBusy(false);
+        }
+      },
+      onUndo: () => {},
+    });
   }
 
   const refreshAuditLogs = useCallback(async () => {
     setError("");
     setBusy(true);
     try {
-      const query = auditFilterNode ? `?nodeId=${auditFilterNode}&limit=100` : "?limit=100";
-      const res = await apiFetch(`/governance/federation/audit-logs${query}`, { locale: props.locale, cache: "no-store" });
+      const params = new URLSearchParams();
+      params.set("limit", "100");
+      if (auditFilterNode) params.set("nodeId", auditFilterNode);
+      if (auditFilterDecision) params.set("decision", auditFilterDecision);
+      const res = await apiFetch(`/governance/federation/audit-logs?${params.toString()}`, { locale: props.locale, cache: "no-store" });
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setAuditLogs((json?.logs as AuditLog[]) ?? []);
@@ -585,12 +646,13 @@ export default function FederationClient(props: { locale: string; initial?: Init
     } finally {
       setBusy(false);
     }
-  }, [props.locale, auditFilterNode]);
+  }, [props.locale, auditFilterDecision, auditFilterNode]);
 
   return (
     <div style={{ padding: 24, display: "grid", gap: 16 }}>
       <PageHeader
         title={t(props.locale, "gov.nav.federation")}
+        helpHref={getHelpHref("/gov/federation", props.locale) ?? undefined}
         actions={
           <>
             <StatusBadge locale={props.locale} status={federationStatus?.enabled ? 200 : 0} />
@@ -603,8 +665,8 @@ export default function FederationClient(props: { locale: string; initial?: Init
         }
       />
 
-      {error ? <pre style={{ color: "crimson", whiteSpace: "pre-wrap" }}>{error}</pre> : null}
-      {info ? <pre style={{ color: "green", whiteSpace: "pre-wrap" }}>{info}</pre> : null}
+      {error ? (() => { const fe = friendlyError(error, props.locale); return <AlertBanner severity="error" locale={props.locale} technical={error} recovery={fe.recovery}>{fe.message}</AlertBanner>; })() : null}
+      {info ? <AlertBanner severity="success" locale={props.locale}>{info}</AlertBanner> : null}
 
       <TabNav tabs={[
         {
@@ -699,9 +761,9 @@ export default function FederationClient(props: { locale: string; initial?: Init
                           <td>{n.name}</td>
                           <td style={{ fontSize: 12, wordBreak: "break-all", maxWidth: 200 }}>{n.endpoint}</td>
                           <td>{directionLabel(n.direction)}</td>
-                          <td><Badge>{statusLabel(n.status)}</Badge></td>
+                          <td><Badge>{fedStatusLabel(n.status)}</Badge></td>
                           <td><Badge>{trustLabel(n.trustLevel)}</Badge></td>
-                          <td>{n.lastHeartbeat ? new Date(n.lastHeartbeat).toLocaleString() : "-"}</td>
+                          <td>{n.lastHeartbeat ? fmtDateTime(n.lastHeartbeat, props.locale) : "-"}</td>
                           <td>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                               <button onClick={() => testNode(n.nodeId)} disabled={busy}>
@@ -766,10 +828,10 @@ export default function FederationClient(props: { locale: string; initial?: Init
                   <tbody>
                     {logs.map((log) => (
                       <tr key={log.logId}>
-                        <td>{new Date(log.createdAt).toLocaleString()}</td>
+                        <td>{fmtDateTime(log.createdAt, props.locale)}</td>
                         <td>{log.direction === "inbound" ? t(props.locale, "gov.federation.log.inbound") : t(props.locale, "gov.federation.log.outbound")}</td>
                         <td>{log.envelopeType}</td>
-                        <td><Badge>{log.status}</Badge></td>
+                        <td><Badge>{statusLabel(log.status, props.locale)}</Badge></td>
                         <td>{log.latencyMs != null ? `${log.latencyMs}ms` : "-"}</td>
                       </tr>
                     ))}
@@ -794,6 +856,11 @@ export default function FederationClient(props: { locale: string; initial?: Init
                     </select>
                   </label>
                   <label style={{ display: "grid", gap: 4 }}>
+                    <span>{t(props.locale, "gov.federation.perm.capabilityId")}</span>
+                    <input type="text" value={permCapabilityId} onChange={(e) => setPermCapabilityId(e.target.value)}
+                      placeholder={t(props.locale, "gov.federation.perm.capabilityId.placeholder")} style={{ padding: 8 }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
                     <span>{t(props.locale, "gov.federation.perm.permissionType")}</span>
                     <select value={permType} onChange={(e) => setPermType(e.target.value as PermissionType)} style={{ padding: 8 }}>
                       {(["read", "write", "forward", "audit", "invoke", "subscribe"] as PermissionType[]).map((pt) => (
@@ -802,18 +869,13 @@ export default function FederationClient(props: { locale: string; initial?: Init
                     </select>
                   </label>
                   <label style={{ display: "grid", gap: 4 }}>
-                    <span>{t(props.locale, "gov.federation.perm.resourcePattern")}</span>
-                    <input type="text" value={permResource} onChange={(e) => setPermResource(e.target.value)}
-                      placeholder={t(props.locale, "gov.federation.perm.resourcePattern.placeholder")} style={{ padding: 8 }} />
-                  </label>
-                  <label style={{ display: "grid", gap: 4 }}>
-                    <span>{t(props.locale, "gov.federation.perm.conditions")}</span>
-                    <input type="text" value={permConditions} onChange={(e) => setPermConditions(e.target.value)}
-                      placeholder={t(props.locale, "gov.federation.perm.conditions.placeholder")} style={{ padding: 8 }} />
-                  </label>
-                  <label style={{ display: "grid", gap: 4 }}>
                     <span>{t(props.locale, "gov.federation.perm.expiresAt")}</span>
                     <input type="datetime-local" value={permExpires} onChange={(e) => setPermExpires(e.target.value)} style={{ padding: 8 }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span>{t(props.locale, "gov.federation.perm.metadata")}</span>
+                    <input type="text" value={permMetadata} onChange={(e) => setPermMetadata(e.target.value)}
+                      placeholder={t(props.locale, "gov.federation.perm.metadata.placeholder")} style={{ padding: 8 }} />
                   </label>
                 </div>
                 <div style={{ marginTop: 16 }}>
@@ -829,8 +891,8 @@ export default function FederationClient(props: { locale: string; initial?: Init
                     <thead>
                       <tr>
                         <th align="left">{t(props.locale, "gov.federation.perm.nodeId")}</th>
+                        <th align="left">{t(props.locale, "gov.federation.perm.capabilityId")}</th>
                         <th align="left">{t(props.locale, "gov.federation.perm.permissionType")}</th>
-                        <th align="left">{t(props.locale, "gov.federation.perm.resourcePattern")}</th>
                         <th align="left">{t(props.locale, "gov.federation.perm.expiresAt")}</th>
                         <th align="left">{t(props.locale, "gov.federation.perm.grantedAt")}</th>
                         <th align="left">{t(props.locale, "gov.federation.actions")}</th>
@@ -840,10 +902,10 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       {permGrants.map((g) => (
                         <tr key={g.grantId}>
                           <td>{nodes.find((n) => n.nodeId === g.nodeId)?.name ?? g.nodeId}</td>
+                          <td style={{ fontSize: 12 }}>{g.capabilityId}</td>
                           <td><Badge>{permTypeLabel(g.permissionType)}</Badge></td>
-                          <td style={{ fontSize: 12 }}>{g.resourcePattern}</td>
-                          <td>{g.expiresAt ? new Date(g.expiresAt).toLocaleString() : "-"}</td>
-                          <td>{new Date(g.createdAt).toLocaleString()}</td>
+                          <td>{g.expiresAt ? fmtDateTime(g.expiresAt, props.locale) : "-"}</td>
+                          <td>{fmtDateTime(g.createdAt, props.locale)}</td>
                           <td>
                             {g.revokedAt ? (
                               <Badge>{t(props.locale, "gov.federation.perm.revoked")}</Badge>
@@ -870,25 +932,40 @@ export default function FederationClient(props: { locale: string; initial?: Init
               <Card title={t(props.locale, "gov.federation.userGrant.create")}>
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
                   <label style={{ display: "grid", gap: 4 }}>
-                    <span>{t(props.locale, "gov.federation.perm.nodeId")}</span>
+                    <span>{t(props.locale, "gov.federation.userGrant.granteeNode")}</span>
                     <select value={ugNodeId} onChange={(e) => setUgNodeId(e.target.value)} style={{ padding: 8 }}>
                       <option value="">{t(props.locale, "gov.federation.perm.selectNode")}</option>
                       {nodes.map((n) => <option key={n.nodeId} value={n.nodeId}>{n.name}</option>)}
                     </select>
                   </label>
                   <label style={{ display: "grid", gap: 4 }}>
-                    <span>{t(props.locale, "gov.federation.userGrant.localUserId")}</span>
-                    <input type="text" value={ugLocalUser} onChange={(e) => setUgLocalUser(e.target.value)} style={{ padding: 8 }} />
+                    <span>{t(props.locale, "gov.federation.userGrant.granteeSubject")}</span>
+                    <input type="text" value={ugGranteeSubject} onChange={(e) => setUgGranteeSubject(e.target.value)}
+                      placeholder={t(props.locale, "gov.federation.userGrant.granteeSubject.placeholder")} style={{ padding: 8 }} />
                   </label>
                   <label style={{ display: "grid", gap: 4 }}>
-                    <span>{t(props.locale, "gov.federation.userGrant.remoteIdentity")}</span>
-                    <input type="text" value={ugRemoteId} onChange={(e) => setUgRemoteId(e.target.value)}
-                      placeholder={t(props.locale, "gov.federation.userGrant.remoteIdentity.placeholder")} style={{ padding: 8 }} />
+                    <span>{t(props.locale, "gov.federation.userGrant.capabilityId")}</span>
+                    <input type="text" value={ugCapabilityId} onChange={(e) => setUgCapabilityId(e.target.value)}
+                      placeholder={t(props.locale, "gov.federation.userGrant.capabilityId.placeholder")} style={{ padding: 8 }} />
                   </label>
                   <label style={{ display: "grid", gap: 4 }}>
-                    <span>{t(props.locale, "gov.federation.userGrant.scopes")}</span>
-                    <input type="text" value={ugScopes} onChange={(e) => setUgScopes(e.target.value)}
-                      placeholder={t(props.locale, "gov.federation.userGrant.scopes.placeholder")} style={{ padding: 8 }} />
+                    <span>{t(props.locale, "gov.federation.perm.permissionType")}</span>
+                    <select value={ugPermType} onChange={(e) => setUgPermType(e.target.value as PermissionType)} style={{ padding: 8 }}>
+                      {(["read", "write", "forward", "audit"] as PermissionType[]).map((pt) => (
+                        <option key={pt} value={pt}>{permTypeLabel(pt)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span>{t(props.locale, "gov.federation.userGrant.scope")}</span>
+                    <select value={ugScope} onChange={(e) => setUgScope(e.target.value as "specific" | "all_capabilities")} style={{ padding: 8 }}>
+                      <option value="specific">{t(props.locale, "gov.federation.userGrant.scope.specific")}</option>
+                      <option value="all_capabilities">{t(props.locale, "gov.federation.userGrant.scope.all_capabilities")}</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span>{t(props.locale, "gov.federation.perm.expiresAt")}</span>
+                    <input type="datetime-local" value={ugExpires} onChange={(e) => setUgExpires(e.target.value)} style={{ padding: 8 }} />
                   </label>
                 </div>
                 <div style={{ marginTop: 16 }}>
@@ -903,22 +980,24 @@ export default function FederationClient(props: { locale: string; initial?: Init
                   <Table header={<span>{t(props.locale, "gov.federation.userGrant.title")} <Badge>{userGrants.length}</Badge></span>}>
                     <thead>
                       <tr>
-                        <th align="left">{t(props.locale, "gov.federation.perm.nodeId")}</th>
-                        <th align="left">{t(props.locale, "gov.federation.userGrant.localUserId")}</th>
-                        <th align="left">{t(props.locale, "gov.federation.userGrant.remoteIdentity")}</th>
-                        <th align="left">{t(props.locale, "gov.federation.userGrant.scopes")}</th>
-                        <th align="left">{t(props.locale, "gov.federation.userGrant.consentedAt")}</th>
+                        <th align="left">{t(props.locale, "gov.federation.userGrant.granteeNode")}</th>
+                        <th align="left">{t(props.locale, "gov.federation.userGrant.granteeSubject")}</th>
+                        <th align="left">{t(props.locale, "gov.federation.perm.permissionType")}</th>
+                        <th align="left">{t(props.locale, "gov.federation.userGrant.scope")}</th>
+                        <th align="left">{t(props.locale, "gov.federation.perm.expiresAt")}</th>
+                        <th align="left">{t(props.locale, "gov.federation.perm.grantedAt")}</th>
                         <th align="left">{t(props.locale, "gov.federation.actions")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {userGrants.map((g) => (
                         <tr key={g.userGrantId}>
-                          <td>{nodes.find((n) => n.nodeId === g.nodeId)?.name ?? g.nodeId}</td>
-                          <td>{g.localUserId}</td>
-                          <td>{g.remoteIdentity}</td>
-                          <td>{g.scopes.join(", ")}</td>
-                          <td>{new Date(g.consentedAt).toLocaleString()}</td>
+                          <td>{nodes.find((n) => n.nodeId === g.granteeNodeId)?.name ?? g.granteeNodeId}</td>
+                          <td style={{ fontSize: 12 }}>{g.granteeSubject}</td>
+                          <td><Badge>{permTypeLabel(g.permissionType)}</Badge></td>
+                          <td><Badge>{scopeLabel(g.scope)}</Badge></td>
+                          <td>{g.expiresAt ? fmtDateTime(g.expiresAt, props.locale) : "-"}</td>
+                          <td>{fmtDateTime(g.createdAt, props.locale)}</td>
                           <td>
                             {g.revokedAt ? (
                               <Badge>{t(props.locale, "gov.federation.perm.revoked")}</Badge>
@@ -958,14 +1037,30 @@ export default function FederationClient(props: { locale: string; initial?: Init
                     </select>
                   </label>
                   <label style={{ display: "grid", gap: 4 }}>
+                    <span>{t(props.locale, "gov.federation.policy.targetType")}</span>
+                    <select value={policyTargetType} onChange={(e) => setPolicyTargetType(e.target.value as ContentPolicy["targetType"])} style={{ padding: 8 }}>
+                      <option value="all">{t(props.locale, "gov.federation.policy.targetType.all")}</option>
+                      <option value="capability">{t(props.locale, "gov.federation.policy.targetType.capability")}</option>
+                      <option value="node">{t(props.locale, "gov.federation.policy.targetType.node")}</option>
+                      <option value="user">{t(props.locale, "gov.federation.policy.targetType.user")}</option>
+                    </select>
+                  </label>
+                  {policyTargetType !== "all" && (
+                    <label style={{ display: "grid", gap: 4 }}>
+                      <span>{t(props.locale, "gov.federation.policy.targetId")}</span>
+                      <input type="text" value={policyTargetId} onChange={(e) => setPolicyTargetId(e.target.value)}
+                        placeholder={t(props.locale, "gov.federation.policy.targetId.placeholder")} style={{ padding: 8 }} />
+                    </label>
+                  )}
+                  <label style={{ display: "grid", gap: 4 }}>
                     <span>{t(props.locale, "gov.federation.policy.rules")}</span>
                     <input type="text" value={policyRules} onChange={(e) => setPolicyRules(e.target.value)}
                       placeholder={t(props.locale, "gov.federation.policy.rules.placeholder")} style={{ padding: 8 }} />
                   </label>
                   <label style={{ display: "grid", gap: 4 }}>
-                    <span>{t(props.locale, "gov.federation.policy.appliesToNodes")}</span>
-                    <input type="text" value={policyNodes} onChange={(e) => setPolicyNodes(e.target.value)}
-                      placeholder={t(props.locale, "gov.federation.policy.appliesToNodes.all")} style={{ padding: 8 }} />
+                    <span>{t(props.locale, "gov.federation.policy.priority")}</span>
+                    <input type="number" value={policyPriority} onChange={(e) => setPolicyPriority(e.target.value)}
+                      placeholder="100" style={{ padding: 8 }} />
                   </label>
                   <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <input type="checkbox" checked={policyEnabled} onChange={(e) => setPolicyEnabled(e.target.checked)} />
@@ -986,7 +1081,8 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       <tr>
                         <th align="left">{t(props.locale, "gov.federation.policy.policyName")}</th>
                         <th align="left">{t(props.locale, "gov.federation.policy.policyType")}</th>
-                        <th align="left">{t(props.locale, "gov.federation.policy.appliesToNodes")}</th>
+                        <th align="left">{t(props.locale, "gov.federation.policy.targetType")}</th>
+                        <th align="left">{t(props.locale, "gov.federation.policy.priority")}</th>
                         <th align="left">{t(props.locale, "gov.federation.status")}</th>
                         <th align="left">{t(props.locale, "gov.federation.actions")}</th>
                       </tr>
@@ -994,9 +1090,10 @@ export default function FederationClient(props: { locale: string; initial?: Init
                     <tbody>
                       {policies.map((p) => (
                         <tr key={p.policyId}>
-                          <td>{p.policyName}</td>
+                          <td>{p.name}</td>
                           <td><Badge>{policyTypeLabel(p.policyType)}</Badge></td>
-                          <td>{p.appliesToNodes?.join(", ") || t(props.locale, "gov.federation.policy.appliesToNodes.all")}</td>
+                          <td>{p.targetType}{p.targetId ? ` → ${p.targetId}` : ""}</td>
+                          <td>{p.priority}</td>
                           <td><Badge>{p.enabled ? t(props.locale, "gov.federation.policy.enabled") : t(props.locale, "gov.federation.policy.disabled")}</Badge></td>
                           <td>
                             <div style={{ display: "flex", gap: 8 }}>
@@ -1022,12 +1119,22 @@ export default function FederationClient(props: { locale: string; initial?: Init
           label: t(props.locale, "gov.federation.tab.audit"),
           content: (
             <Card title={t(props.locale, "gov.federation.audit.title")}>
-              <div style={{ display: "flex", gap: 12, marginBottom: 12, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 12, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
                 <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <span>{t(props.locale, "gov.federation.audit.filter.nodeId")}</span>
                   <select value={auditFilterNode} onChange={(e) => setAuditFilterNode(e.target.value)} style={{ padding: 8 }}>
                     <option value="">{t(props.locale, "gov.federation.audit.filter.all")}</option>
                     {nodes.map((n) => <option key={n.nodeId} value={n.nodeId}>{n.name}</option>)}
+                  </select>
+                </label>
+                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span>{t(props.locale, "gov.federation.audit.filter.decision")}</span>
+                  <select value={auditFilterDecision} onChange={(e) => setAuditFilterDecision(e.target.value)} style={{ padding: 8 }}>
+                    <option value="">{t(props.locale, "gov.federation.audit.filter.all")}</option>
+                    <option value="allowed">{t(props.locale, "gov.federation.audit.decision.allowed")}</option>
+                    <option value="denied">{t(props.locale, "gov.federation.audit.decision.denied")}</option>
+                    <option value="rate_limited">{t(props.locale, "gov.federation.audit.decision.rate_limited")}</option>
+                    <option value="policy_blocked">{t(props.locale, "gov.federation.audit.decision.policy_blocked")}</option>
                   </select>
                 </label>
                 <button onClick={refreshAuditLogs} disabled={busy}>{t(props.locale, "action.refresh")}</button>
@@ -1039,22 +1146,22 @@ export default function FederationClient(props: { locale: string; initial?: Init
                   <thead>
                     <tr>
                       <th align="left">{t(props.locale, "gov.federation.audit.timestamp")}</th>
-                      <th align="left">{t(props.locale, "gov.federation.audit.eventType")}</th>
-                      <th align="left">{t(props.locale, "gov.federation.audit.actorType")}</th>
-                      <th align="left">{t(props.locale, "gov.federation.audit.actorId")}</th>
-                      <th align="left">{t(props.locale, "gov.federation.audit.targetResource")}</th>
-                      <th align="left">{t(props.locale, "gov.federation.audit.outcome")}</th>
+                      <th align="left">{t(props.locale, "gov.federation.audit.direction")}</th>
+                      <th align="left">{t(props.locale, "gov.federation.audit.operationType")}</th>
+                      <th align="left">{t(props.locale, "gov.federation.audit.subjectId")}</th>
+                      <th align="left">{t(props.locale, "gov.federation.audit.targetCapability")}</th>
+                      <th align="left">{t(props.locale, "gov.federation.audit.decision")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {auditLogs.map((log) => (
                       <tr key={log.logId}>
-                        <td>{new Date(log.createdAt).toLocaleString()}</td>
-                        <td>{log.eventType}</td>
-                        <td><Badge>{actorTypeLabel(log.actorType)}</Badge></td>
-                        <td style={{ fontSize: 12 }}>{log.actorId}</td>
-                        <td style={{ fontSize: 12, wordBreak: "break-all", maxWidth: 200 }}>{log.targetResource}</td>
-                        <td><Badge tone={log.outcome === "success" ? "success" : log.outcome === "denied" ? "warning" : "danger"}>{outcomeLabel(log.outcome)}</Badge></td>
+                        <td>{fmtDateTime(log.createdAt, props.locale)}</td>
+                        <td><Badge>{directionLabelAudit(log.direction)}</Badge></td>
+                        <td>{operationTypeLabel(log.operationType)}</td>
+                        <td style={{ fontSize: 12 }}>{log.subjectId ?? "-"}</td>
+                        <td style={{ fontSize: 12, wordBreak: "break-all", maxWidth: 200 }}>{log.targetCapability ?? "-"}</td>
+                        <td><Badge tone={log.decision === "allowed" ? "success" : log.decision === "denied" ? "warning" : "danger"}>{decisionLabel(log.decision)}</Badge></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1064,6 +1171,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
           ),
         },
       ]} />
+      <UndoToastContainer toasts={undoToasts} onUndo={undoAction} undoLabel={t(props.locale, "action.undo")} />
     </div>
   );
 }

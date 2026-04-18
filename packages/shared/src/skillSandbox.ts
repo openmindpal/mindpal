@@ -209,10 +209,14 @@ export function checkModuleForbidden(
   forbiddenSet: Set<string>,
 ): { forbidden: true; baseName: string } | { forbidden: false } {
   const req = String(moduleName ?? "");
-  const norm = req.startsWith("node:") ? req : req ? `node:${req}` : req;
-  if (forbiddenSet.has(req) || forbiddenSet.has(norm)) {
-    const baseName = req.startsWith("node:") ? req.slice("node:".length) : req;
-    return { forbidden: true, baseName };
+  if (!req) return { forbidden: false };
+
+  // 统一生成两种变体：带 node: 前缀和不带前缀
+  const bare = req.startsWith("node:") ? req.slice(5) : req;
+  const prefixed = `node:${bare}`;
+
+  if (forbiddenSet.has(bare) || forbiddenSet.has(prefixed)) {
+    return { forbidden: true, baseName: bare };
   }
   return { forbidden: false };
 }

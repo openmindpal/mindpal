@@ -1,11 +1,8 @@
 import { Errors } from "../../../lib/errors";
 import { openaiCompatibleProviders } from "./catalog";
+export { isPlainObject } from "@openslin/shared";
 
 export type OutputSchemaFieldType = "string" | "number" | "boolean" | "json" | "datetime";
-
-export function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
 
 export function resolveScope(subject: { tenantId: string; spaceId?: string | null }) {
   if (subject.spaceId) return { scopeType: "space" as const, scopeId: subject.spaceId };
@@ -85,7 +82,30 @@ export function normalizeOpenAiCompatibleBaseUrl(input: unknown) {
   let out = u.toString().replace(/\/+$/g, "");
   out = out.replace(/\/chat\/completions\/?$/i, "").replace(/\/+$/g, "");
   out = out.replace(/\/v1\/chat\/completions\/?$/i, "/v1").replace(/\/+$/g, "");
+  out = out.replace(/\/v1\/messages\/?$/i, "/v1").replace(/\/+$/g, "");
+  out = out.replace(/\/messages\/?$/i, "").replace(/\/+$/g, "");
   return out;
+}
+
+export function normalizeGeminiBaseUrl(input: unknown) {
+  const base = normalizeBaseUrl(input, "https");
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    throw Errors.badRequest("baseUrl 非法");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw Errors.badRequest("baseUrl 协议不支持");
+  u.search = "";
+  u.hash = "";
+  let out = u.toString().replace(/\/+$/g, "");
+  out = out.replace(/\/models\/[^/]+:(generateContent|streamGenerateContent)\/?$/i, "").replace(/\/+$/g, "");
+  return out;
+}
+
+export function normalizeProviderBaseUrl(provider: string, input: unknown) {
+  if (provider === "gemini" || provider === "custom_gemini") return normalizeGeminiBaseUrl(input);
+  return normalizeOpenAiCompatibleBaseUrl(input);
 }
 
 export function normalizeChatCompletionsPath(input: unknown) {

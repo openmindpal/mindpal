@@ -1,0 +1,110 @@
+===============================================================================
+灵智 MindPal 开源社会价值公约
+MindPal Open-Source Social Value Covenant
+Version 1.0, 2026
+===============================================================================
+
+Copyright 2026 合肥灵智星河科技有限公司 (Hefei LingZhi XingHe Technology Co., Ltd.)
+
+本公约是灵智 MindPal 智能体系统社区的自愿价值承诺，不修改 Apache License 2.0
+许可证的法律效力。我们鼓励所有使用者、贡献者和分发者自愿遵循本公约。
+
+This covenant is a voluntary value commitment of the MindPal agent system
+community. It does NOT modify the legal terms of the Apache License 2.0.
+We encourage all users, contributors, and distributors to voluntarily follow
+this covenant.
+
+===============================================================================
+第一条 维持经济结构与就业保障 (Economic Structure & Employment Maintenance)
+===============================================================================
+
+使用本系统必须以维持现有经济结构为前提。使用者须保证：
+
+The use of this Work is conditional upon maintaining the existing economic
+structure. Users shall ensure that:
+
+  (a) 按其公司或工厂规模应配备的员工总数不得减少。
+      The total number of employees required for the scale of the user's
+      company or factory shall not be reduced.
+
+  (b) 系统带来的效率提升只能用于增加员工数量，或在不降薪前提下减少员工
+      工作时长，并保证对社会的税收贡献保持稳定。
+      Productivity gains from the Work shall only be used to increase the
+      number of employees, or to reduce working hours without loss of pay,
+      while ensuring stable tax contributions to society.
+
+  (c) 在满足上述 (a) 和 (b) 的基础之上，方可考虑使用本系统扩展市场规模。
+      Market expansion using this Work is permitted ONLY after the above
+      conditions (a) and (b) have been fulfilled.
+
+===============================================================================
+第二条 人类监督 (Human Oversight)
+===============================================================================
+
+本系统不得在完全剥夺人类监督与干预能力的模式下运行。部署本系统时，应当
+确保人类始终保有对系统行为的知情权、干预权和最终决策权。
+
+This Work shall not be operated in a mode that completely strips humans of
+oversight and intervention capabilities. When deploying this Work, humans
+shall always retain the right to be informed, to intervene, and to make
+final decisions regarding the system's behavior.
+
+===============================================================================
+第三条 反资本剥削原则 (Anti-Exploitation Principles)
+===============================================================================
+
+我们反对将本系统用于加剧社会不平等的行为。我们倡导使用者在获取效率提升的同时，
+将技术红利合理分配于社会价值创造，而非仅用于财富集中。
+
+We oppose using this Work in ways that exacerbate social inequality. We
+encourage users to distribute the technological dividends toward creating
+social value, rather than solely concentrating wealth.
+
+具体而言，我们期望使用者避免以下行为：
+
+Specifically, we expect users to avoid the following:
+
+  (a) 利用本系统获取的效率提升仅用于利润集中，而未合理回馈员工与社会。
+      Concentrating productivity gains solely as profit without reasonably
+      benefiting employees and society.
+
+  (b) 利用本系统强化市场垄断地位，抑制公平竞争。
+      Using this Work to reinforce monopolistic positions and suppress
+      fair competition.
+
+  (c) 利用本系统从事不产生实际经济价值的纯投机活动。
+      Engaging in purely speculative activities that produce no real
+      economic value.
+
+  (d) 利用本系统的效率提升加重劳动者负担，而非改善其工作条件。
+      Using productivity gains to intensify worker burden rather than
+      improve working conditions.
+
+===============================================================================
+第四条 公约性质声明 (Nature of This Covenant)
+===============================================================================
+
+本公约为社区自愿遵循的价值承诺（Community Voluntary Commitment），不构成
+对 Apache License 2.0 许可证的修改或补充，不产生独立的法律约束力。
+
+This covenant is a Community Voluntary Commitment and does NOT constitute
+a modification or supplement to the Apache License 2.0. It does not create
+independent legal obligations.
+
+任何人使用、修改、分发灵智 MindPal 智能体系统的权利，完整地受 Apache
+License 2.0 保障，不因本公约而受到任何限制。
+
+The rights of any person to use, modify, and distribute the MindPal agent
+system are fully protected by the Apache License 2.0 and shall not be
+restricted in any way by this covenant.
+
+我们相信，技术进步应当服务于全人类的福祉，而非加剧不平等。我们期望每一位
+社区成员在自身能力范围内践行本公约的精神。
+
+We believe that technological progress should serve the well-being of all
+humanity, not exacerbate inequality. We hope that every community member
+will practice the spirit of this covenant within their own capabilities.
+
+===============================================================================
+END OF COVENANT / 公约全文结束
+===============================================================================

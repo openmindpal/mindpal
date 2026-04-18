@@ -5,7 +5,7 @@ import AuditClient from "./ui";
 
 async function loadInitialAudit(locale: string) {
   const token = (await cookies()).get("openslin_token")?.value ?? "";
-  const res = await apiFetch(`/audit?limit=50`, { token, locale, cache: "no-store" });
+  const res = await apiFetch(`/audit?limit=100`, { token, locale, cache: "no-store" });
   const json: unknown = await res.json().catch(() => null);
   return { status: res.status, json };
 }

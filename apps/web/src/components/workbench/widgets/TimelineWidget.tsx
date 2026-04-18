@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtShortDateTime } from "@/lib/fmtDateTime";
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface TimelineEvent {
@@ -119,15 +121,8 @@ export function TimelineWidget(props: TimelineWidgetProps) {
 }
 
 function formatDate(timestamp: string, locale: string): string {
-  try {
-    const d = new Date(timestamp);
-    if (Number.isNaN(d.getTime())) return timestamp;
-    return d.toLocaleDateString(locale === "zh-CN" ? "zh-CN" : "en-US", {
-      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-    });
-  } catch {
-    return timestamp;
-  }
+  const formatted = fmtShortDateTime(timestamp, locale);
+  return formatted === "—" ? timestamp : formatted;
 }
 
 export default TimelineWidget;

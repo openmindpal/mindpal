@@ -4,11 +4,64 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
 import { type ApiError, errText } from "@/lib/apiError";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { Badge, Card, PageHeader, Table, StatusBadge, EmptyState } from "@/components/ui";
+import type { BadgeTone } from "@/components/ui";
 
-type ApprovalRow = { approvalId?: string; status?: string; runId?: string; createdAt?: string };
+type ApprovalRow = {
+  approvalId?: unknown;
+  status?: unknown;
+  runId?: unknown;
+  createdAt?: unknown;
+  requestedAt?: unknown;
+  toolRef?: unknown;
+  requestedBySubjectId?: unknown;
+};
 type ApprovalsResponse = ApiError & { items?: ApprovalRow[] };
+
+function safeStr(v: unknown, fallback = "-"): string {
+  if (v == null) return fallback;
+  if (typeof v === "string") return v || fallback;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v);
+}
+
+function shortId(v: unknown): string {
+  const s = safeStr(v, "");
+  if (!s) return "-";
+  return s.length > 8 ? s.slice(0, 8) + "…" : s;
+}
+
+function statusLabel(locale: string, raw: unknown): string {
+  const s = safeStr(raw, "").toLowerCase();
+  if (s === "pending") return t(locale, "gov.approvals.status.pending");
+  if (s === "approved") return t(locale, "gov.approvals.status.approved");
+  if (s === "rejected") return t(locale, "gov.approvals.status.rejected");
+  return safeStr(raw);
+}
+
+function statusTone(raw: unknown): BadgeTone {
+  const s = safeStr(raw, "").toLowerCase();
+  if (s === "pending") return "warning";
+  if (s === "approved") return "success";
+  if (s === "rejected") return "danger";
+  return "neutral";
+}
+
+function fmtToolRef(v: unknown): string {
+  const s = safeStr(v, "");
+  if (!s) return "-";
+  const at = s.lastIndexOf("@");
+  return at > 0 ? s.slice(0, at) : s;
+}
+
+const STATUS_OPTIONS = [
+  { value: "", labelKey: "gov.approvals.status.all" },
+  { value: "pending", labelKey: "gov.approvals.status.pending" },
+  { value: "approved", labelKey: "gov.approvals.status.approved" },
+  { value: "rejected", labelKey: "gov.approvals.status.rejected" },
+];
 
 export default function ApprovalsClient(props: { locale: string; initial: unknown; initialStatus: number }) {
   const [data, setData] = useState<ApprovalsResponse | null>((props.initial as ApprovalsResponse) ?? null);
@@ -37,13 +90,15 @@ export default function ApprovalsClient(props: { locale: string; initial: unknow
     return "";
   }, [data, props.locale, status]);
 
+  const mono = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
   return (
     <div>
       <PageHeader
         title={t(props.locale, "gov.approvals.title")}
         actions={
           <>
-            <Badge>{status}</Badge>
+            <StatusBadge locale={props.locale} status={status} />
             <button onClick={refresh}>{t(props.locale, "action.refresh")}</button>
           </>
         }
@@ -54,14 +109,24 @@ export default function ApprovalsClient(props: { locale: string; initial: unknow
 
       <div style={{ marginTop: 16 }}>
         <Card title={t(props.locale, "gov.approvals.filterTitle")}>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
             <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <span>{t(props.locale, "gov.approvals.status")}</span>
-              <input value={qStatus} onChange={(e) => setQStatus(e.target.value)} style={{ width: 160 }} placeholder={t(props.locale, "gov.approvals.statusPlaceholder")} />
+              <select
+                value={qStatus}
+                onChange={(e) => setQStatus(e.target.value)}
+                style={{ width: 160, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--sl-border, #d1d5db)" }}
+              >
+                {STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {t(props.locale, opt.labelKey)}
+                  </option>
+                ))}
+              </select>
             </label>
             <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <span>{t(props.locale, "gov.approvals.limit")}</span>
-              <input value={limit} onChange={(e) => setLimit(e.target.value)} style={{ width: 100 }} />
+              <input value={limit} onChange={(e) => setLimit(e.target.value)} style={{ width: 80, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--sl-border, #d1d5db)" }} />
             </label>
             <button onClick={refresh}>{t(props.locale, "action.apply")}</button>
           </div>
@@ -81,36 +146,54 @@ export default function ApprovalsClient(props: { locale: string; initial: unknow
             <tr>
               <th align="left">{t(props.locale, "gov.approvals.col.approvalId")}</th>
               <th align="left">{t(props.locale, "gov.approvals.status")}</th>
+              <th align="left">{t(props.locale, "gov.approvals.col.toolRef")}</th>
               <th align="left">{t(props.locale, "gov.approvals.col.runId")}</th>
               <th align="left">{t(props.locale, "gov.approvals.createdAt")}</th>
               <th align="left">{t(props.locale, "gov.approvals.actions")}</th>
             </tr>
           </thead>
           <tbody>
-            {items.map((a, idx) => {
-              const approvalId = a.approvalId ?? "";
-              return (
-                <tr key={`${approvalId}:${idx}`}>
-                  <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{approvalId || "-"}</td>
-                  <td>{a.status ?? "-"}</td>
-                  <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{a.runId ?? "-"}</td>
-                  <td>{a.createdAt ?? "-"}</td>
-                  <td>
-                    {approvalId ? (
-                      <Link href={`/gov/approvals/${encodeURIComponent(approvalId)}?lang=${encodeURIComponent(props.locale)}`}>
-                        {t(props.locale, "action.open")}
-                      </Link>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            {items.length === 0 ? (
+              <tr>
+                <td colSpan={6}>
+                  <EmptyState text={t(props.locale, "gov.approvals.emptyTitle")} />
+                </td>
+              </tr>
+            ) : (
+              items.map((a, idx) => {
+                const approvalId = safeStr(a.approvalId, "");
+                return (
+                  <tr key={`${approvalId}:${idx}`}>
+                    <td style={{ fontFamily: mono }}>
+                      <span title={approvalId}>{shortId(a.approvalId)}</span>
+                    </td>
+                    <td>
+                      <Badge tone={statusTone(a.status)}>{statusLabel(props.locale, a.status)}</Badge>
+                    </td>
+                    <td>{fmtToolRef(a.toolRef)}</td>
+                    <td style={{ fontFamily: mono }}>
+                      <span title={safeStr(a.runId, "")}>{shortId(a.runId)}</span>
+                    </td>
+                    <td>{fmtDateTime(a.requestedAt ?? a.createdAt, props.locale)}</td>
+                    <td>
+                      {approvalId ? (
+                        <Link
+                          href={`/gov/approvals/${encodeURIComponent(approvalId)}?lang=${encodeURIComponent(props.locale)}`}
+                          style={{ color: "var(--sl-accent, #2563eb)", textDecoration: "none", fontWeight: 500 }}
+                        >
+                          {t(props.locale, "action.open")}
+                        </Link>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </Table>
       </div>
     </div>
   );
 }
-

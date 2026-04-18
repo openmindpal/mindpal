@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { Card, PageHeader, Table, StructuredData, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { toDisplayText, toRecord } from "@/lib/viewData";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type EvalSet = Record<string, unknown>;
 type EvalRun = Record<string, unknown>;
 type EvalSetsResp = ApiError & { sets?: EvalSet[] };
@@ -13,22 +15,63 @@ type EvalRunsResp = ApiError & { runs?: EvalRun[] };
 type CreateSetResp = ApiError & { set?: EvalSet };
 type RunResp = ApiError & { run?: EvalRun };
 
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
+/** P1-3g: 指标卡片组件 */
+function MetricCard({ label, value, delta, unit = "%" }: { label: string; value: number | null; delta?: number | null; unit?: string }) {
+  if (value == null) return null;
+  const display = unit === "%" ? `${(value * 100).toFixed(1)}%` : String(value);
+  const deltaColor = delta != null ? (delta >= 0 ? "#22c55e" : "#ef4444") : undefined;
+  const deltaText = delta != null
+    ? `${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(2)}%`
+    : null;
+  return (
+    <div style={{ padding: "12px 16px", border: "1px solid var(--sl-border, #e5e7eb)", borderRadius: 8, minWidth: 120, textAlign: "center" }}>
+      <div style={{ fontSize: 12, color: "var(--sl-muted, #6b7280)", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 600 }}>{display}</div>
+      {deltaText && <div style={{ fontSize: 11, color: deltaColor, marginTop: 2 }}>{deltaText}</div>}
+    </div>
+  );
 }
 
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
+/** P1-3g: 回归告警横幅 */
+function RegressionAlert({ status, reasons }: { status: string; reasons: string[] }) {
+  if (status === "passed") {
+    return <div style={{ padding: "8px 12px", background: "#f0fdf4", borderRadius: 6, border: "1px solid #86efac", color: "#166534" }}>✅ Regression gate: PASSED</div>;
+  }
+  return (
+    <div style={{ padding: "8px 12px", background: "#fef2f2", borderRadius: 6, border: "1px solid #fca5a5", color: "#991b1b" }}>
+      <div>⛔ Regression gate: BLOCKED</div>
+      {reasons.map((r, i) => <div key={i} style={{ fontSize: 12, marginTop: 4 }}>• {r}</div>)}
+    </div>
+  );
 }
 
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+/** P1-3g: 趋势迷你横条图 */
+function MiniBar({ value, max = 1, color = "#3b82f6" }: { value: number; max?: number; color?: string }) {
+  const pct = Math.min(100, Math.max(0, (value / max) * 100));
+  return (
+    <div style={{ width: 80, height: 8, background: "var(--sl-border, #e5e7eb)", borderRadius: 4, overflow: "hidden", display: "inline-block", verticalAlign: "middle", marginLeft: 8 }}>
+      <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 4 }} />
+    </div>
+  );
+}
+
+/** P1-3g: 从评测运行结果中提取高级指标 */
+function extractAdvancedMetrics(metrics: any): {
+  hitAtK: number | null; mrrAtK: number | null; ndcgAtK: number | null;
+  mapAtK: number | null; precisionAtK: number | null; recallAtK: number | null;
+  f1AtK: number | null; hallucinationRate: number | null;
+} | null {
+  if (!metrics || typeof metrics !== "object") return null;
+  return {
+    hitAtK: metrics.hitAtK ?? metrics.hitAtk ?? metrics.hit_at_k ?? null,
+    mrrAtK: metrics.mrrAtK ?? metrics.mrrAtk ?? metrics.mrr_at_k ?? null,
+    ndcgAtK: metrics.ndcgAtK ?? metrics.ndcg_at_k ?? null,
+    mapAtK: metrics.mapAtK ?? metrics.map_at_k ?? null,
+    precisionAtK: metrics.precisionAtK ?? metrics.precision_at_k ?? null,
+    recallAtK: metrics.recallAtK ?? metrics.recall_at_k ?? null,
+    f1AtK: metrics.f1AtK ?? metrics.f1_at_k ?? null,
+    hallucinationRate: metrics.hallucinationRate ?? metrics.hallucination_rate ?? null,
+  };
 }
 
 type InitialData = { status: number; json: unknown };
@@ -67,9 +110,9 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
       setSets((sJson as EvalSetsResp) ?? null);
 
       const id = selectedEvalSetId ?? (() => {
-        const arr = (sJson as any)?.sets;
+        const arr = toRecord(sJson)?.sets;
         const first = Array.isArray(arr) && arr.length ? arr[0] : null;
-        return first && typeof first === "object" ? String((first as any).id ?? "") : "";
+        return toDisplayText(toRecord(first)?.id);
       })();
       const q = new URLSearchParams();
       q.set("limit", "50");
@@ -100,7 +143,7 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       const out = (json as CreateSetResp) ?? {};
-      const id = out.set && typeof out.set === "object" ? String((out.set as any).id ?? "") : "";
+      const id = toDisplayText(toRecord(out.set)?.id);
       await refresh(id || undefined);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
@@ -121,8 +164,8 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       const out = (json as RunResp) ?? {};
-      const run = out.run && typeof out.run === "object" ? (out.run as EvalRun) : null;
-      const setId = run ? String((run as any).evalSetId ?? evalSetId) : evalSetId;
+      const run = toRecord(out.run);
+      const setId = run ? toDisplayText(run.evalSetId ?? evalSetId) : evalSetId;
       await refresh(setId);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
@@ -137,7 +180,7 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
         title={t(props.locale, "gov.nav.knowledgeQuality")}
         actions={
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <Badge>{status || "-"}</Badge>
+            <StatusBadge locale={props.locale} status={status || 0} />
             <button disabled={busy} onClick={() => refresh()}>
               {busy ? t(props.locale, "action.loading") : t(props.locale, "action.refresh")}
             </button>
@@ -181,17 +224,19 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
             </tr>
           </thead>
           <tbody>
-            {setRows.map((s) => {
-              const rec = asRecord(s);
-              const id = rec ? String(rec.id ?? "") : "";
-              const name = rec ? String(rec.name ?? "") : "";
+            {setRows.length === 0 ? (
+                  <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                ) : setRows.map((s) => {
+              const rec = toRecord(s);
+              const id = rec ? toDisplayText(rec.id) : "";
+              const name = rec ? toDisplayText(rec.name) : "";
               const queries = rec ? (rec.queries as unknown) : null;
               const qCount = Array.isArray(queries) ? queries.length : 0;
               return (
                 <tr key={id}>
                   <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{id}</td>
                   <td>{name || "-"}</td>
-                  <td>{rec ? String(rec.createdAt ?? "-") : "-"}</td>
+                  <td>{fmtDateTime(rec?.createdAt, props.locale)}</td>
                   <td>{qCount}</td>
                   <td>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -210,6 +255,37 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
         </Table>
       </Card>
 
+      {/* P1-3g: 最新评测运行的高级指标卡片组 */}
+      {(() => {
+        const latestRun = runRows[0];
+        const latestRec = latestRun ? toRecord(latestRun) : null;
+        const adv = latestRec ? extractAdvancedMetrics(latestRec.metrics) : null;
+        const prevRun = runRows.length >= 2 ? toRecord(runRows[1]!) : null;
+        const prevAdv = prevRun ? extractAdvancedMetrics(prevRun.metrics) : null;
+        const regression = latestRec?.regression as any;
+
+        if (!adv) return null;
+        const delta = (cur: number | null, prev: number | null) => (cur != null && prev != null) ? cur - prev : null;
+
+        return (
+          <Card title="Retrieval Quality Overview">
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+              <MetricCard label="Hit@K" value={adv.hitAtK} delta={delta(adv.hitAtK, prevAdv?.hitAtK ?? null)} />
+              <MetricCard label="MRR@K" value={adv.mrrAtK} delta={delta(adv.mrrAtK, prevAdv?.mrrAtK ?? null)} />
+              <MetricCard label="NDCG@K" value={adv.ndcgAtK} delta={delta(adv.ndcgAtK, prevAdv?.ndcgAtK ?? null)} />
+              <MetricCard label="MAP@K" value={adv.mapAtK} delta={delta(adv.mapAtK, prevAdv?.mapAtK ?? null)} />
+              <MetricCard label="Precision@K" value={adv.precisionAtK} delta={delta(adv.precisionAtK, prevAdv?.precisionAtK ?? null)} />
+              <MetricCard label="Recall@K" value={adv.recallAtK} delta={delta(adv.recallAtK, prevAdv?.recallAtK ?? null)} />
+              <MetricCard label="F1@K" value={adv.f1AtK} delta={delta(adv.f1AtK, prevAdv?.f1AtK ?? null)} />
+              <MetricCard label="Hallucination" value={adv.hallucinationRate} delta={delta(adv.hallucinationRate, prevAdv?.hallucinationRate ?? null)} />
+            </div>
+            {regression && typeof regression === "object" && regression.gateResult && (
+              <RegressionAlert status={regression.gateResult} reasons={Array.isArray(regression.blockedReasons) ? regression.blockedReasons : []} />
+            )}
+          </Card>
+        );
+      })()}
+
       <Card title={t(props.locale, "gov.knowledgeQuality.runsTitle")}>
         <Table header={<span>{runRows.length ? `${runRows.length}` : "-"}</span>}>
           <thead>
@@ -222,21 +298,33 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
             </tr>
           </thead>
           <tbody>
-            {runRows.map((r, idx) => {
-              const rec = asRecord(r);
-              const id = rec ? String(rec.id ?? idx) : String(idx);
+            {runRows.length === 0 ? (
+                  <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                ) : runRows.map((r, idx) => {
+              const rec = toRecord(r);
+              const id = rec ? toDisplayText(rec.id ?? idx) : String(idx);
+              const adv = extractAdvancedMetrics(rec?.metrics);
               return (
                 <tr key={id}>
                   <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{id}</td>
-                  <td>{rec ? String(rec.status ?? "-") : "-"}</td>
-                  <td>{rec ? String(rec.createdAt ?? "-") : "-"}</td>
+                  <td>{rec ? toDisplayText(rec.status ?? "-") : "-"}</td>
+                  <td>{fmtDateTime(rec?.createdAt, props.locale)}</td>
                   <td>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(rec?.metrics ?? null, null, 2)}</pre>
+                    {adv ? (
+                      <div style={{ display: "grid", gap: 2, fontSize: 12 }}>
+                        {adv.hitAtK != null && <div>Hit@K: {(adv.hitAtK * 100).toFixed(1)}%<MiniBar value={adv.hitAtK} /></div>}
+                        {adv.mrrAtK != null && <div>MRR@K: {(adv.mrrAtK * 100).toFixed(1)}%<MiniBar value={adv.mrrAtK} color="#8b5cf6" /></div>}
+                        {adv.ndcgAtK != null && <div>NDCG@K: {(adv.ndcgAtK * 100).toFixed(1)}%<MiniBar value={adv.ndcgAtK} color="#f59e0b" /></div>}
+                        {adv.hallucinationRate != null && <div>Halluc.: {(adv.hallucinationRate * 100).toFixed(1)}%<MiniBar value={adv.hallucinationRate} color="#ef4444" /></div>}
+                      </div>
+                    ) : (
+                      <StructuredData data={rec?.metrics ?? null} />
+                    )}
                   </td>
                   <td>
                     <details>
                       <summary>{t(props.locale, "gov.knowledgeQuality.json")}</summary>
-                      <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(r, null, 2)}</pre>
+                      <StructuredData data={r} />
                     </details>
                   </td>
                 </tr>

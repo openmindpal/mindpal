@@ -12,6 +12,7 @@ function readCookieValue(cookieHeader: unknown, name: string) {
   const key = `${encodeURIComponent(name)}=`;
   for (const p of parts) {
     if (!p.startsWith(key)) continue;
+    // P2-2: 取 key= 后的全部内容（不再用 split('=')[1]，避免 Base64 值中的 '=' 被截断）
     const v = p.slice(key.length);
     try {
       return decodeURIComponent(v);
@@ -33,7 +34,14 @@ export const authenticationPlugin: FastifyPluginAsync = async (app) => {
           : `Bearer ${cookieToken}`
         : undefined;
     const subject = await authenticate({ pool: app.db, authorization: headerAuth ?? cookieAuth });
-    if (!subject) return;
+    // 4.2 FIX: 认证失败时记录日志，而不是静默继续
+    if (!subject) {
+      // 公开路由无需认证，其它路由在下游通过 requirePermission 保护
+      if (!req.url.startsWith("/health") && !req.url.startsWith("/healthz") && !req.url.startsWith("/readyz") && !req.url.startsWith("/internal/")) {
+        app.log.debug({ url: req.url, method: req.method }, "[authn] 未认证请求，将由下游 requirePermission 拦截");
+      }
+      return;
+    }
     req.ctx.subject = subject;
   });
 

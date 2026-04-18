@@ -3,7 +3,7 @@
  *
  * This module lives in lib/ so that plugins/authentication.ts can resolve
  * device tokens WITHOUT importing from the device-runtime Skill's modules.
- * The device-runtime Skill's deviceRepo.ts re-exports this for backward compat.
+ * The device-runtime Skill's deviceRepo.ts re-exports this for convenience.
  */
 import type { Pool } from "pg";
 

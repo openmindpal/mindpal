@@ -2,18 +2,19 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors, isAppError } from "../../lib/errors";
 import { requirePermission } from "../../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { setAuditContext } from "../../modules/audit/context";
 import { enqueueAuditOutboxForRequest } from "../../modules/audit/requestOutbox";
 import { encryptSecretEnvelope } from "../../modules/secrets/envelope";
 import { createSecretRecord } from "../../modules/secrets/secretRepo";
 import { createConnectorInstance, getConnectorInstanceByName, getConnectorType } from "../connector-manager/modules/connectorRepo";
 import { createBinding } from "./modules/bindingRepo";
-import { openAiChatWithSecretRotation } from "./modules/openaiChat";
+import { invokeProviderChatWithSecretRotation } from "./modules/providerAdapterRegistry";
 import {
   getHostFromBaseUrl,
   normalizeAllowedDomains,
   normalizeChatCompletionsPath,
-  normalizeOpenAiCompatibleBaseUrl,
+  normalizeProviderBaseUrl,
   resolveScope,
 } from "./modules/helpers";
 
@@ -22,9 +23,9 @@ export const modelOnboardRoutes: FastifyPluginAsync = async (app) => {
     const idempotencyKey = (req.headers["idempotency-key"] as string | undefined) ?? (req.headers["x-idempotency-key"] as string | undefined) ?? "";
     setAuditContext(req, { resourceType: "model", action: "onboard", requireOutbox: true, idempotencyKey: idempotencyKey || undefined });
 
-    const connectorDecision = await requirePermission({ req, resourceType: "connector", action: "create" });
-    const secretDecision = await requirePermission({ req, resourceType: "secret", action: "create" });
-    const modelDecision = await requirePermission({ req, resourceType: "model", action: "bind" });
+    const connectorDecision = await requirePermission({ req, ...PERM.CONNECTOR_CREATE });
+    const secretDecision = await requirePermission({ req, ...PERM.SECRET_CREATE });
+    const modelDecision = await requirePermission({ req, ...PERM.MODEL_BIND });
     req.ctx.audit!.policyDecision = { connectorCreate: connectorDecision, secretCreate: secretDecision, modelBind: modelDecision };
 
     if (!idempotencyKey) throw Errors.badRequest("缺少 idempotency-key");
@@ -33,16 +34,17 @@ export const modelOnboardRoutes: FastifyPluginAsync = async (app) => {
     const scope = resolveScope(subject);
     const body = z
       .object({
-        provider: z.enum(["openai_compatible", "deepseek", "hunyuan", "qianwen", "doubao", "zhipu", "kimi", "kimimax"]),
+        provider: z.enum(["openai_compatible", "deepseek", "hunyuan", "qianwen", "doubao", "zhipu", "kimi", "kimimax", "custom_openai", "anthropic", "custom_anthropic", "gemini", "custom_gemini"]),
         baseUrl: z.string().min(1),
         chatCompletionsPath: z.string().max(200).optional(),
         apiKey: z.string().min(1),
         modelName: z.string().min(1),
         connectorInstanceName: z.string().min(1).optional(),
         modelRef: z.string().min(3).max(200).optional(),
+        skipConnectionTest: z.boolean().optional(), // Vision 模型可跳过测试
       })
       .parse(req.body);
-    const normalizedBaseUrl = normalizeOpenAiCompatibleBaseUrl(body.baseUrl);
+    const normalizedBaseUrl = normalizeProviderBaseUrl(body.provider, body.baseUrl);
     const endpointHost = getHostFromBaseUrl(normalizedBaseUrl);
     const chatCompletionsPath = normalizeChatCompletionsPath(body.chatCompletionsPath);
 
@@ -137,19 +139,29 @@ export const modelOnboardRoutes: FastifyPluginAsync = async (app) => {
         encryptedPayload: secretEnvelope.encryptedPayload,
       });
 
-      try {
-        await openAiChatWithSecretRotation({
-          fetchFn: fetch,
-          baseUrl: normalizedBaseUrl,
-          chatCompletionsPath: chatCompletionsPath ?? "/chat/completions",
-          model: canonModelName,
-          messages: [{ role: "user", content: "ping" }],
-          apiKeys: [body.apiKey],
-          timeoutMs: 15000,
-        });
-      } catch (testErr: any) {
-        const detail = testErr?.message ?? String(testErr);
-        throw Errors.badRequest(`模型连接测试失败，未保存: ${detail}`);
+      // Vision 模型或用户要求时跳过连接测试
+      const isVisionModel = body.modelName.toLowerCase().includes("v") || body.modelName.toLowerCase().includes("vision");
+      const shouldSkipTest = Boolean(body.skipConnectionTest) || isVisionModel;
+      
+      if (!shouldSkipTest) {
+        try {
+          await invokeProviderChatWithSecretRotation({
+            provider: body.provider,
+            fetchFn: fetch,
+            baseUrl: normalizedBaseUrl,
+            requestPath: chatCompletionsPath,
+            model: canonModelName,
+            messages: [{ role: "user", content: "ping" }],
+            apiKeys: [body.apiKey],
+            timeoutMs: 15000,
+          });
+        } catch (testErr: any) {
+          const i18n = testErr?.messageI18n;
+          const detail = (i18n && typeof i18n === "object")
+            ? String(i18n["zh-CN"] ?? i18n["en-US"] ?? Object.values(i18n)[0] ?? testErr.message)
+            : (testErr?.message ?? String(testErr));
+          throw Errors.badRequest(`模型连接测试失败，未保存：${detail}`);
+        }
       }
 
       const binding = await createBinding({

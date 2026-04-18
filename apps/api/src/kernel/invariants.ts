@@ -13,6 +13,10 @@
  * 不变式检查不阻塞执行（warn-only），但为旁路检测提供依据。
  */
 
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "invariants" });
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -131,8 +135,8 @@ export function assertExecutionInvariants(input: StepInvariantInput): InvariantV
 
   // 8. run status 合法性
   const validRunStatuses = new Set([
-    "created", "queued", "running", "needs_approval", "needs_device",
-    "needs_arbiter", "succeeded", "failed", "canceled", "stopped",
+    "created", "queued", "running", "paused", "needs_approval", "needs_device",
+    "needs_arbiter", "streaming", "succeeded", "failed", "canceled", "stopped",
     "compensating", "compensated",
   ]);
   if (input.runStatus && !validRunStatuses.has(input.runStatus)) {
@@ -146,8 +150,8 @@ export function assertExecutionInvariants(input: StepInvariantInput): InvariantV
 
   // 9. step status 合法性
   const validStepStatuses = new Set([
-    "pending", "running", "needs_approval", "needs_device",
-    "needs_arbiter", "succeeded", "failed", "deadletter", "canceled",
+    "pending", "running", "paused", "needs_approval", "needs_device",
+    "needs_arbiter", "streaming", "succeeded", "failed", "deadletter", "canceled",
   ]);
   if (input.status && !validStepStatuses.has(input.status)) {
     violations.push({
@@ -166,13 +170,13 @@ export function assertExecutionInvariants(input: StepInvariantInput): InvariantV
 // ---------------------------------------------------------------------------
 
 /**
- * 将不变式违规输出到 console.warn。
+ * 将不变式违规输出到结构化日志。
  * 不阻塞执行，仅记录，用于可观测性。
  */
 export function logInvariantViolations(violations: InvariantViolation[]): void {
   for (const v of violations) {
     const level = v.severity === "error" ? "error" : "warn";
-    console[level](`[invariant] ${v.code}: ${v.message}`);
+    _logger[level](`[invariant] ${v.code}: ${v.message}`);
   }
 }
 

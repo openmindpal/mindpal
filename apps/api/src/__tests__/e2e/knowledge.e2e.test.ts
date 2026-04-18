@@ -100,7 +100,7 @@ describe.sequential("e2e:knowledge", { timeout: 60_000 }, () => {
 
     const r = await ctx.app.inject({
       method: "POST",
-      url: "/orchestrator/execute",
+      url: "/orchestrator/dispatch/execute",
       headers: { ...h, "idempotency-key": `idem-ks-${crypto.randomUUID()}`, "x-trace-id": `t-ks-${crypto.randomUUID()}` },
       payload: JSON.stringify({ toolRef: "knowledge.search@1", input: { query: "测试查询", limit: 5 } }),
     });
@@ -108,7 +108,7 @@ describe.sequential("e2e:knowledge", { timeout: 60_000 }, () => {
     expect([200, 400, 403, 404, 500].includes(r.statusCode)).toBe(true);
   });
 
-  it("orchestrator：turn 在 knowledge.search 未启用时不返回建议", async () => {
+  it("orchestrator：dispatch 在 knowledge.search 未启用时不返回建议", async () => {
     if (!ctx.canRun) return;
     const h = {
       authorization: "Bearer admin",
@@ -129,9 +129,9 @@ describe.sequential("e2e:knowledge", { timeout: 60_000 }, () => {
 
     const r = await ctx.app.inject({
       method: "POST",
-      url: "/orchestrator/turn",
+      url: "/orchestrator/dispatch",
       headers: { ...h, "x-trace-id": `t-turn-no-ks-${crypto.randomUUID()}` },
-      payload: JSON.stringify({ message: "搜索文档" }),
+      payload: JSON.stringify({ message: "搜索文档", mode: "answer" }),
     });
     expect(r.statusCode).toBe(200);
   });

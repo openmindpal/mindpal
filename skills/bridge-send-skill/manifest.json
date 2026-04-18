@@ -3,6 +3,17 @@
     "name": "bridge.send",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "Bridge 桥接消息发送",
+    "en-US": "Bridge Message Send"
+  },
+  "description": {
+    "zh-CN": "通过 Bridge 协议向 IM 平台（QQ、iMessage 等）发送消息，支持幂等性和追踪",
+    "en-US": "Sends messages to IM platforms (QQ, iMessage, etc.) via Bridge protocol, supports idempotency and tracing"
+  },
+  "category": "communication",
+  "priority": 7,
+  "tags": ["bridge", "im", "qq", "imessage", "outbound"],
   "contract": {
     "scope": "write",
     "resourceType": "channel",

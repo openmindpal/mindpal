@@ -5,7 +5,7 @@
 import {
   describe, expect, it, beforeAll, afterAll,
   crypto, pool,
-  getTestContext, releaseTestContext,
+  getTestContext, releaseTestContext, TEST_SCHEMA_NAME,
   type TestContext,
 } from "./setup";
 
@@ -29,13 +29,13 @@ describe.sequential("e2e:entity", { timeout: 60_000 }, () => {
       "x-trace-id": "t-idem",
       "idempotency-key": "idem-1",
       "content-type": "application/json",
-      "x-schema-name": "core",
+      "x-schema-name": TEST_SCHEMA_NAME,
     };
     const payload = JSON.stringify({ title: "hello" });
-    const r1 = await ctx.app.inject({ method: "POST", url: "/entities/notes", headers, payload });
+    const r1 = await ctx.app.inject({ method: "POST", url: "/entities/test_items", headers, payload });
     expect(r1.statusCode).toBe(200);
     const b1 = r1.json() as any;
-    const r2 = await ctx.app.inject({ method: "POST", url: "/entities/notes", headers, payload });
+    const r2 = await ctx.app.inject({ method: "POST", url: "/entities/test_items", headers, payload });
     expect(r2.statusCode).toBe(200);
     const b2 = r2.json() as any;
     expect(b1.id).toBe(b2.id);
@@ -52,34 +52,34 @@ describe.sequential("e2e:entity", { timeout: 60_000 }, () => {
 
     const a1 = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes",
-      headers: { ...headersBase, "x-trace-id": "t-query-seed-1", "idempotency-key": `idem-q-${crypto.randomUUID()}`, "x-schema-name": "core" },
+      url: "/entities/test_items",
+      headers: { ...headersBase, "x-trace-id": "t-query-seed-1", "idempotency-key": `idem-q-${crypto.randomUUID()}`, "x-schema-name": TEST_SCHEMA_NAME },
       payload: JSON.stringify({ title: "Alpha" }),
     });
     expect(a1.statusCode).toBe(200);
 
     const a2 = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes",
-      headers: { ...headersBase, "x-trace-id": "t-query-seed-2", "idempotency-key": `idem-q-${crypto.randomUUID()}`, "x-schema-name": "core" },
+      url: "/entities/test_items",
+      headers: { ...headersBase, "x-trace-id": "t-query-seed-2", "idempotency-key": `idem-q-${crypto.randomUUID()}`, "x-schema-name": TEST_SCHEMA_NAME },
       payload: JSON.stringify({ title: "Beta" }),
     });
     expect(a2.statusCode).toBe(200);
 
     const a3 = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes",
-      headers: { ...headersBase, "x-trace-id": "t-query-seed-3", "idempotency-key": `idem-q-${crypto.randomUUID()}`, "x-schema-name": "core" },
+      url: "/entities/test_items",
+      headers: { ...headersBase, "x-trace-id": "t-query-seed-3", "idempotency-key": `idem-q-${crypto.randomUUID()}`, "x-schema-name": TEST_SCHEMA_NAME },
       payload: JSON.stringify({ title: "Alpha 2" }),
     });
     expect(a3.statusCode).toBe(200);
 
     const q1 = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes/query",
+      url: "/entities/test_items/query",
       headers: { ...headersBase, "x-trace-id": "t-entity-query-1" },
       payload: JSON.stringify({
-        schemaName: "core",
+        schemaName: TEST_SCHEMA_NAME,
         filters: { field: "title", op: "contains", value: "Alpha" },
         orderBy: [{ field: "updatedAt", direction: "desc" }],
         limit: 1,
@@ -94,10 +94,10 @@ describe.sequential("e2e:entity", { timeout: 60_000 }, () => {
 
     const q2 = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes/query",
+      url: "/entities/test_items/query",
       headers: { ...headersBase, "x-trace-id": "t-entity-query-2" },
       payload: JSON.stringify({
-        schemaName: "core",
+        schemaName: TEST_SCHEMA_NAME,
         filters: { field: "title", op: "contains", value: "Alpha" },
         orderBy: [{ field: "updatedAt", direction: "desc" }],
         limit: 10,
@@ -110,9 +110,9 @@ describe.sequential("e2e:entity", { timeout: 60_000 }, () => {
 
     const badField = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes/query",
+      url: "/entities/test_items/query",
       headers: { ...headersBase, "x-trace-id": "t-entity-query-bad" },
-      payload: JSON.stringify({ schemaName: "core", filters: { field: "nope", op: "eq", value: "x" } }),
+      payload: JSON.stringify({ schemaName: TEST_SCHEMA_NAME, filters: { field: "nope", op: "eq", value: "x" } }),
     });
     expect(badField.statusCode).toBe(400);
   });
@@ -127,9 +127,9 @@ describe.sequential("e2e:entity", { timeout: 60_000 }, () => {
     };
     const q = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes/query",
+      url: "/entities/test_items/query",
       headers: { ...h, "x-trace-id": `t-entities-query-${crypto.randomUUID()}` },
-      payload: JSON.stringify({ schemaName: "core", limit: 2 }),
+      payload: JSON.stringify({ schemaName: TEST_SCHEMA_NAME, limit: 2 }),
     });
     expect(q.statusCode).toBe(200);
     const b = q.json() as any;

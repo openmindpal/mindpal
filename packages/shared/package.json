@@ -5,10 +5,62 @@
   "license": "Apache-2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./document": {
+      "types": "./dist/documentParser.d.ts",
+      "default": "./dist/documentParser.js"
+    },
+    "./policyExpr": {
+      "types": "./dist/policyExpr.d.ts",
+      "default": "./dist/policyExpr.js"
+    },
+    "./circuitBreaker": {
+      "types": "./dist/circuitBreaker.d.ts",
+      "default": "./dist/circuitBreaker.js"
+    },
+    "./configRegistry": {
+      "types": "./dist/configRegistry.d.ts",
+      "default": "./dist/configRegistry.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    },
+    "./stateMachine": {
+      "types": "./dist/stateMachine.d.ts",
+      "default": "./dist/stateMachine.js"
+    },
+    "./structuredLogger": {
+      "types": "./dist/structuredLogger.d.ts",
+      "default": "./dist/structuredLogger.js"
+    }
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -b --force",
-    "test": "node -e \"process.exit(0)\"",
+    "test": "vitest run --passWithNoTests",
     "lint": "node -e \"process.exit(0)\""
+  },
+  "typesVersions": {
+    "*": {
+      "document": ["dist/documentParser.d.ts"],
+      "policyExpr": ["dist/policyExpr.d.ts"]
+    }
+  },
+  "dependencies": {
+    "unzipper": "^0.12.3"
+  },
+  "optionalDependencies": {
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.8.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/pdf-parse": "^1.1.4",
+    "@types/unzipper": "^0.10.10"
   }
 }

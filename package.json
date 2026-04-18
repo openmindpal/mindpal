@@ -14,6 +14,8 @@
     "build": "npm run build -w @openslin/shared && npm run build -w @openslin/api && npm run build -w @openslin/worker && npm run build -w @openslin/device-agent && npm run build -w @openslin/runner && npm run build -w @openslin/admin-cli && npm run build -w @openslin/web",
     "test": "npm run test -w @openslin/api && npm run test -w @openslin/device-agent && npm run test -w @openslin/web && npm run test -w @openslin/worker && npm run test -w @openslin/shared",
     "lint": "npm -ws run lint --if-present",
+    "boundary-scan": "node scripts/boundary-scan.mjs",
+    "verify": "npm run lint && npm run boundary-scan && npm run build && npm test",
     "verify:arch07": "npm run build && npm run lint && npm test"
   },
   "keywords": [],

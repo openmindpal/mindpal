@@ -1,17 +1,19 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { redactValue } from "@openslin/shared";
-import { Errors } from "../../lib/errors";
+import { collabStreamRedisChannel, createCollabStreamSignal, isToolAllowedForPolicy, redactValue } from "@openslin/shared";
+import { Errors, isAppError } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { createCollabRun, getCollabRun, listCollabRunsByTask, setCollabRunPrimaryRun, updateCollabRunStatus } from "./modules/collabRepo";
 import { appendCollabRunEvent, listCollabRunEvents } from "./modules/collabEventRepo";
 import { appendCollabEnvelope, listCollabEnvelopes } from "./modules/collabEnvelopeRepo";
 import { runPlanningPipeline, type PlanFailureCategory } from "../../kernel/planningKernel";
 import { getTask } from "../task-manager/modules/taskRepo";
 import { appendAgentMessage } from "../task-manager/modules/agentMessageRepo";
-import { getTaskState, upsertTaskState } from "../memory-manager/modules/repo";
+import { getTaskState, upsertTaskState } from "../../modules/memory/repo";
 import { createApproval } from "../../modules/workflow/approvalRepo";
+import { assessToolExecutionRisk } from "../../kernel/approvalRuleEngine";
 import { createJobRun } from "../../modules/workflow/jobRepo";
 import { acquireWriteLease } from "../../modules/workflow/writeLease";
 import { digestInputV1 } from "../../lib/digest";
@@ -19,6 +21,10 @@ import { enqueueWorkflowStep, setRunAndJobStatus } from "../../modules/workflow/
 import { createTaskAssignment, registerAgentRole, updateAgentRoleStatus, upsertPermissionContext, updateTaskAssignmentStatus, validateRoleConstraints } from "./modules/collabProtocolRepo";
 import { listAgentRoles, listPermissionContexts, listTaskAssignments } from "./modules/collabProtocolRepo";
 import { executeCollabPipeline } from "./collabExecutor";
+import { getCollabState, mapCollabStatusToPhase, syncCollabPhase, syncRoleState } from "./modules/stateSync";
+import { openSse } from "../../lib/sse";
+import { resolveRequestDlpPolicyContext } from "../../lib/dlpPolicy";
+import { finalizeAuditForStream } from "../../plugins/audit";
 
 function toSafeEnvelope(env: any) {
   if (!env || typeof env !== "object") return env;
@@ -28,6 +34,26 @@ function toSafeEnvelope(env: any) {
 function toDigestRef(d: any) {
   if (!d || typeof d !== "object" || Array.isArray(d)) return d;
   return { sha256_8: (d as any).sha256_8 ?? null, keyCount: (d as any).keyCount ?? null };
+}
+
+async function publishCollabStream(params: {
+  redis?: { publish(channel: string, message: string): Promise<number> };
+  tenantId: string;
+  collabRunId: string;
+  taskId?: string | null;
+  kind: "state" | "event" | "envelope" | "status";
+}) {
+  if (!params.redis) return;
+  await params.redis.publish(
+    collabStreamRedisChannel(params.collabRunId),
+    JSON.stringify(createCollabStreamSignal({
+      collabRunId: params.collabRunId,
+      tenantId: params.tenantId,
+      taskId: params.taskId ?? null,
+      kind: params.kind,
+      source: "api",
+    })),
+  ).catch(() => {});
 }
 
 function normalizeBudgetV1(b: any) {
@@ -43,11 +69,131 @@ function normalizeBudgetV1(b: any) {
   return Object.keys(out).length ? out : null;
 }
 
+function toSerializableCollabState(state: any) {
+  if (!state || typeof state !== "object") return null;
+  const roleStates = state.roleStates instanceof Map
+    ? Object.fromEntries(Array.from((state.roleStates as Map<string, unknown>).entries()))
+    : state.roleStates ?? {};
+  return {
+    collabRunId: state.collabRunId ?? null,
+    phase: state.phase ?? null,
+    currentTurn: state.currentTurn ?? 0,
+    currentRole: state.currentRole ?? null,
+    roleStates,
+    completedStepIds: Array.isArray(state.completedStepIds) ? state.completedStepIds : [],
+    failedStepIds: Array.isArray(state.failedStepIds) ? state.failedStepIds : [],
+    pendingStepIds: Array.isArray(state.pendingStepIds) ? state.pendingStepIds : [],
+    replanCount: state.replanCount ?? 0,
+    startedAt: state.startedAt ?? null,
+    lastUpdatedAt: state.lastUpdatedAt ?? null,
+    version: state.version ?? null,
+  };
+}
+
+async function ensureReadableCollabContext(params: {
+  pool: any;
+  tenantId: string;
+  spaceId: string | null | undefined;
+  taskId: string;
+  collabRunId: string;
+}) {
+  if (!params.spaceId) throw Errors.badRequest("缺少 spaceId");
+  const task = await getTask({ pool: params.pool, tenantId: params.tenantId, taskId: params.taskId });
+  if (!task) return { task: null, collab: null } as const;
+  if (task.spaceId && task.spaceId !== params.spaceId) throw Errors.forbidden();
+  const collab = await getCollabRun({ pool: params.pool, tenantId: params.tenantId, collabRunId: params.collabRunId });
+  if (!collab) return { task, collab: null } as const;
+  if (String(collab.taskId) !== String(params.taskId)) throw Errors.forbidden();
+  if (collab.spaceId && collab.spaceId !== params.spaceId) throw Errors.forbidden();
+  return { task, collab } as const;
+}
+
+async function buildCollabDetailSnapshot(params: {
+  app: any;
+  tenantId: string;
+  spaceId: string;
+  taskId: string;
+  collabRunId: string;
+  eventLimit?: number;
+  envelopeLimit?: number;
+}) {
+  const { app, tenantId, spaceId, taskId, collabRunId } = params;
+  const eventLimit = Math.max(1, Math.min(200, params.eventLimit ?? 50));
+  const envelopeLimit = Math.max(1, Math.min(200, params.envelopeLimit ?? 50));
+  const { task, collab } = await ensureReadableCollabContext({ pool: app.db, tenantId, spaceId, taskId, collabRunId });
+  if (!task) return { missing: "task" as const };
+  if (!collab) return { missing: "collab" as const };
+
+  const runsRes = await app.db.query(
+    `
+      SELECT run_id, status, tool_ref, policy_snapshot_ref, idempotency_key, created_at, updated_at
+      FROM runs
+      WHERE tenant_id = $1 AND (input_digest->>'taskId') = $2 AND (input_digest->>'collabRunId') = $3
+      ORDER BY created_at DESC
+      LIMIT 20
+    `,
+    [tenantId, taskId, collab.collabRunId],
+  );
+  const related = runsRes.rows.map((r: any) => ({
+    runId: r.run_id,
+    status: r.status,
+    toolRef: r.tool_ref,
+    policySnapshotRef: r.policy_snapshot_ref,
+    idempotencyKey: r.idempotency_key,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+  const events = await listCollabRunEvents({ pool: app.db, tenantId, collabRunId: collab.collabRunId, limit: eventLimit });
+  const envelopes = (await listCollabEnvelopes({ pool: app.db, tenantId, collabRunId: collab.collabRunId, limit: envelopeLimit })).map(toSafeEnvelope);
+  const nextEnvelopeBefore = envelopes.length ? envelopes[envelopes.length - 1]!.createdAt : null;
+  const collabState = toSerializableCollabState(await getCollabState({ pool: app.db, tenantId, collabRunId: collab.collabRunId }));
+  const stateUpdatesRes = await app.db.query(
+    `
+      SELECT update_id, source_role, update_type, payload, version, created_at
+      FROM collab_state_updates
+      WHERE tenant_id = $1 AND collab_run_id = $2
+      ORDER BY created_at DESC
+      LIMIT 50
+    `,
+    [tenantId, collab.collabRunId],
+  );
+  const recentStateUpdates = stateUpdatesRes.rows.map((row: any) => ({
+    updateId: row.update_id,
+    sourceRole: row.source_role,
+    updateType: row.update_type,
+    payload: row.payload ?? null,
+    version: row.version,
+    createdAt: row.created_at,
+  }));
+  const taskState = collab.primaryRunId ? await getTaskState({ pool: app.db, tenantId, spaceId, runId: collab.primaryRunId }) : null;
+  const streamVersion = JSON.stringify({
+    collabUpdatedAt: collab.updatedAt ?? null,
+    collabStatus: collab.status ?? null,
+    collabStateVersion: collabState?.version ?? null,
+    latestEventAt: events[0]?.createdAt ?? null,
+    latestEnvelopeAt: envelopes[0]?.createdAt ?? null,
+    latestStateUpdateAt: recentStateUpdates[0]?.createdAt ?? null,
+  });
+  return {
+    missing: null,
+    snapshot: {
+      collabRun: collab,
+      runs: related,
+      latestEvents: events,
+      collabState,
+      recentStateUpdates,
+      taskState,
+      envelopes: { items: envelopes, nextBefore: nextEnvelopeBefore },
+    },
+    streamVersion,
+  };
+}
+
 export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
   app.get("/tasks/:taskId/collab-runs", async (req, reply) => {
     const params = z.object({ taskId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "agent_runtime", action: "collab.read" });
-    const decision = await requirePermission({ req, resourceType: "agent_runtime", action: "collab.read" });
+    const decision = await requirePermission({ req, ...PERM.AGENT_RUNTIME_COLLAB_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -76,7 +222,7 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
   app.post("/tasks/:taskId/collab-runs", async (req, reply) => {
     const params = z.object({ taskId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "agent_runtime", action: "collab.create" });
-    const decision = await requirePermission({ req, resourceType: "agent_runtime", action: "collab.create" });
+    const decision = await requirePermission({ req, ...PERM.AGENT_RUNTIME_COLLAB_CREATE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -154,9 +300,9 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const maxSteps = body.limits?.maxSteps ?? 3;
-    const maxWallTimeMs = body.limits?.maxWallTimeMs ?? 5 * 60 * 1000;
-    const limits = normalizeBudgetV1({ maxSteps, maxWallTimeMs, maxTokens: body.limits?.maxTokens, maxCostUsd: body.limits?.maxCostUsd }) ?? { maxSteps, maxWallTimeMs };
+    const maxSteps = body.limits?.maxSteps;
+    const maxWallTimeMs = body.limits?.maxWallTimeMs;
+    const limits = normalizeBudgetV1({ maxSteps, maxWallTimeMs, maxTokens: body.limits?.maxTokens, maxCostUsd: body.limits?.maxCostUsd }) ?? {};
 
     for (const r of roles) {
       (r as any).budget = normalizeBudgetV1((r as any).budget);
@@ -274,7 +420,7 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
     for (const p of planSteps) {
       const actorRole = String(p.actorRole ?? "");
       const allowed = roleAllowed.get(actorRole) ?? null;
-      if (allowed && !allowed.has(String(p.toolRef))) {
+      if (allowed && !isToolAllowedForPolicy(allowed, String(p.toolRef ?? ""))) {
         await updateCollabRunStatus({ pool: app.db, tenantId: subject.tenantId, collabRunId: collab.collabRunId, status: "stopped" });
         await appendCollabRunEvent({
           pool: app.db,
@@ -364,16 +510,47 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
 
     const arbiterAuto = roles.some((r) => String((r as any)?.roleName ?? "") === "arbiter" && String((r as any)?.mode ?? "") === "auto");
 
-    const pipelineResult = await executeCollabPipeline({
-      pool: app.db, queue: app.queue,
-      tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId,
-      collabRunId: collab.collabRunId, taskId: params.taskId,
-      runId: run.runId, jobId: job.jobId,
-      masterKey: app.cfg.secrets.masterKey, traceId: req.ctx.traceId,
-      planSteps, roles, limits, message: body.message,
-      correlationId, arbiterAuto,
-      checkPermission: (p) => requirePermission({ req, ...p }),
-    });
+    let pipelineResult;
+    try {
+      pipelineResult = await executeCollabPipeline({
+        pool: app.db, queue: app.queue,
+        redis: app.redis,
+        tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId,
+        collabRunId: collab.collabRunId, taskId: params.taskId,
+        runId: run.runId, jobId: job.jobId,
+        masterKey: app.cfg.secrets.masterKey, traceId: req.ctx.traceId,
+        planSteps, roles, limits, message: body.message,
+        correlationId, arbiterAuto,
+        checkPermission: (p) => requirePermission({ req, ...p }),
+      });
+    } catch (err) {
+      if (isAppError(err) && (err.errorCode === "TOOL_DISABLED" || err.errorCode === "AUTH_FORBIDDEN")) {
+        await updateCollabRunStatus({ pool: app.db, tenantId: subject.tenantId, collabRunId: collab.collabRunId, status: "stopped" });
+        await setRunAndJobStatus({ pool: app.db, tenantId: subject.tenantId, runId: run.runId, jobId: job.jobId, runStatus: "stopped", jobStatus: "stopped" });
+        await appendCollabRunEvent({
+          pool: app.db,
+          tenantId: subject.tenantId,
+          spaceId: subject.spaceId ?? null,
+          collabRunId: collab.collabRunId,
+          taskId: params.taskId,
+          type: "collab.run.stopped",
+          correlationId,
+          payloadDigest: { reason: "pipeline_admission_failed", errorCode: err.errorCode },
+          runId: run.runId,
+        });
+        req.ctx.audit!.outputDigest = { collabRunId: collab.collabRunId, runId: run.runId, jobId: job.jobId, status: "stopped", reason: "pipeline_admission_failed", errorCode: err.errorCode };
+        return reply.status(409).send({
+          collabRunId: collab.collabRunId,
+          runId: run.runId,
+          jobId: job.jobId,
+          stepId: null,
+          status: "stopped" as const,
+          errorCode: err.errorCode === "TOOL_DISABLED" ? ("COLLAB_STEP_TOOL_DISABLED" as const) : ("COLLAB_STEP_POLICY_DENIED" as const),
+          traceId: req.ctx.traceId,
+        });
+      }
+      throw err;
+    }
 
     if (!pipelineResult.ok) {
       req.ctx.audit!.outputDigest = { collabRunId: collab.collabRunId, status: "stopped", reason: "retriever_tool_disabled", toolRef: pipelineResult.retrieverToolRef };
@@ -408,59 +585,117 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
   app.get("/tasks/:taskId/collab-runs/:collabRunId", async (req, reply) => {
     const params = z.object({ taskId: z.string().uuid(), collabRunId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "agent_runtime", action: "collab.read" });
-    const decision = await requirePermission({ req, resourceType: "agent_runtime", action: "collab.read" });
+    const decision = await requirePermission({ req, ...PERM.AGENT_RUNTIME_COLLAB_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
     if (!subject.spaceId) return reply.status(400).send({ errorCode: "BAD_REQUEST", message: { "zh-CN": "缺少 spaceId", "en-US": "Missing spaceId" }, traceId: req.ctx.traceId });
+    const built = await buildCollabDetailSnapshot({
+      app,
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      taskId: params.taskId,
+      collabRunId: params.collabRunId,
+      eventLimit: 20,
+      envelopeLimit: 50,
+    });
+    if (built.missing === "task") return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "Task 不存在", "en-US": "Task not found" }, traceId: req.ctx.traceId });
+    if (built.missing === "collab") return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "CollabRun 不存在", "en-US": "CollabRun not found" }, traceId: req.ctx.traceId });
+    const snapshot = built.snapshot;
+    req.ctx.audit!.outputDigest = {
+      collabRunId: snapshot.collabRun.collabRunId,
+      status: snapshot.collabRun.status,
+      eventCount: snapshot.latestEvents.length,
+      runCount: snapshot.runs.length,
+      phase: (snapshot.taskState as any)?.phase ?? null,
+      collabPhase: snapshot.collabState?.phase ?? null,
+      stateUpdateCount: snapshot.recentStateUpdates.length,
+    };
+    return {
+      collabRun: snapshot.collabRun,
+      runs: snapshot.runs,
+      latestEvents: snapshot.latestEvents,
+      collabState: snapshot.collabState,
+      recentStateUpdates: snapshot.recentStateUpdates,
+      taskState: snapshot.taskState,
+    };
+  });
 
-    const task = await getTask({ pool: app.db, tenantId: subject.tenantId, taskId: params.taskId });
-    if (!task) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "Task 不存在", "en-US": "Task not found" }, traceId: req.ctx.traceId });
-    if (task.spaceId && task.spaceId !== subject.spaceId) {
-      req.ctx.audit!.errorCategory = "policy_violation";
-      throw Errors.forbidden();
-    }
+  app.get("/tasks/:taskId/collab-runs/:collabRunId/stream", async (req, reply) => {
+    const params = z.object({ taskId: z.string().uuid(), collabRunId: z.string().uuid() }).parse(req.params);
+    setAuditContext(req, { resourceType: "agent_runtime", action: "collab.read" });
+    const decision = await requirePermission({ req, ...PERM.AGENT_RUNTIME_COLLAB_READ });
+    req.ctx.audit!.policyDecision = decision;
 
-    const collab = await getCollabRun({ pool: app.db, tenantId: subject.tenantId, collabRunId: params.collabRunId });
-    if (!collab) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "CollabRun 不存在", "en-US": "CollabRun not found" }, traceId: req.ctx.traceId });
-    if (String(collab.taskId) !== String(params.taskId)) {
-      req.ctx.audit!.errorCategory = "policy_violation";
-      throw Errors.forbidden();
-    }
-    if (collab.spaceId && collab.spaceId !== subject.spaceId) {
-      req.ctx.audit!.errorCategory = "policy_violation";
-      throw Errors.forbidden();
-    }
+    const subject = requireSubject(req);
+    if (!subject.spaceId) return reply.status(400).send({ errorCode: "BAD_REQUEST", message: { "zh-CN": "缺少 spaceId", "en-US": "Missing spaceId" }, traceId: req.ctx.traceId });
+    const dlpContext = await resolveRequestDlpPolicyContext({
+      db: app.db,
+      subject,
+    });
+    const sse = openSse({
+      req,
+      reply,
+      dlpContext,
+      onClose: () => finalizeAuditForStream(app, { req, reply }),
+    });
+    reply.hijack();
+    req.ctx.audit!.outputDigest = { collabRunId: params.collabRunId, transport: "sse" };
 
-    const runsRes = await app.db.query(
-      `
-        SELECT run_id, status, tool_ref, policy_snapshot_ref, idempotency_key, created_at, updated_at
-        FROM runs
-        WHERE tenant_id = $1 AND (input_digest->>'taskId') = $2 AND (input_digest->>'collabRunId') = $3
-        ORDER BY created_at DESC
-        LIMIT 20
-      `,
-      [subject.tenantId, params.taskId, collab.collabRunId],
-    );
-    const related = runsRes.rows.map((r: any) => ({
-      runId: r.run_id,
-      status: r.status,
-      toolRef: r.tool_ref,
-      policySnapshotRef: r.policy_snapshot_ref,
-      idempotencyKey: r.idempotency_key,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-    }));
-    const events = await listCollabRunEvents({ pool: app.db, tenantId: subject.tenantId, collabRunId: collab.collabRunId, limit: 20 });
-    const taskState = collab.primaryRunId ? await getTaskState({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, runId: collab.primaryRunId }) : null;
-    req.ctx.audit!.outputDigest = { collabRunId: collab.collabRunId, status: collab.status, eventCount: events.length, runCount: related.length, phase: taskState?.phase ?? null };
-    return { collabRun: collab, runs: related, latestEvents: events, taskState };
+    let lastVersion = "";
+    const sendSnapshot = async () => {
+      const built = await buildCollabDetailSnapshot({
+        app,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId!,
+        taskId: params.taskId,
+        collabRunId: params.collabRunId,
+        eventLimit: 50,
+        envelopeLimit: 50,
+      });
+      if (built.missing === "task") {
+        sse.sendEvent("error", { errorCode: "NOT_FOUND", message: "Task not found" });
+        sse.close();
+        return false;
+      }
+      if (built.missing === "collab") {
+        sse.sendEvent("error", { errorCode: "NOT_FOUND", message: "CollabRun not found" });
+        sse.close();
+        return false;
+      }
+      if (built.streamVersion !== lastVersion) {
+        lastVersion = built.streamVersion;
+        sse.sendEvent("snapshot", built.snapshot);
+      }
+      return !sse.isClosed();
+    };
+
+    const initialOk = await sendSnapshot();
+    if (!initialOk) return;
+    const subClient = app.redis.duplicate();
+    await subClient.connect().catch(() => undefined);
+    await subClient.subscribe(collabStreamRedisChannel(params.collabRunId));
+    subClient.on("message", (_channel: string, _raw: string) => {
+      if (sse.isClosed()) return;
+      void sendSnapshot().catch((error: any) => {
+        sse.sendEvent("error", { errorCode: "INTERNAL_ERROR", message: String(error?.message ?? error) });
+      });
+    });
+    const pingTimer = setInterval(() => {
+      if (sse.isClosed()) return;
+      sse.sendEvent("ping", { ts: Date.now() });
+    }, 15000);
+    sse.signal.addEventListener("abort", () => {
+      clearInterval(pingTimer);
+      try { subClient.removeAllListeners("message"); } catch {}
+      subClient.quit().catch(() => {});
+    }, { once: true });
   });
 
   app.post("/tasks/:taskId/collab-runs/:collabRunId/envelopes", async (req, reply) => {
     const params = z.object({ taskId: z.string().uuid(), collabRunId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "agent_runtime", action: "collab.envelopes.write" });
-    const decision = await requirePermission({ req, resourceType: "agent_runtime", action: "collab.envelopes.write" });
+    const decision = await requirePermission({ req, ...PERM.AGENT_RUNTIME_COLLAB_ENVELOPES_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -512,6 +747,13 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
       payloadDigest,
       payloadRedacted: null,
     });
+    await publishCollabStream({
+      redis: app.redis,
+      tenantId: subject.tenantId,
+      collabRunId: collab.collabRunId,
+      taskId: params.taskId,
+      kind: "envelope",
+    });
 
     await appendCollabRunEvent({
       pool: app.db,
@@ -533,7 +775,7 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
   app.get("/tasks/:taskId/collab-runs/:collabRunId/envelopes", async (req, reply) => {
     const params = z.object({ taskId: z.string().uuid(), collabRunId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "agent_runtime", action: "collab.envelopes.read" });
-    const decision = await requirePermission({ req, resourceType: "agent_runtime", action: "collab.envelopes.read" });
+    const decision = await requirePermission({ req, ...PERM.AGENT_RUNTIME_COLLAB_ENVELOPES_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -574,7 +816,7 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
   app.get("/tasks/:taskId/collab-runs/:collabRunId/protocol", async (req, reply) => {
     const params = z.object({ taskId: z.string().uuid(), collabRunId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "agent_runtime", action: "collab.read" });
-    const decision = await requirePermission({ req, resourceType: "agent_runtime", action: "collab.read" });
+    const decision = await requirePermission({ req, ...PERM.AGENT_RUNTIME_COLLAB_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -608,7 +850,7 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
   app.post("/tasks/:taskId/collab-runs/:collabRunId/arbiter/commit", async (req, reply) => {
     const params = z.object({ taskId: z.string().uuid(), collabRunId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "agent_runtime", action: "collab.arbiter.commit" });
-    const decision = await requirePermission({ req, resourceType: "agent_runtime", action: "collab.arbiter.commit" });
+    const decision = await requirePermission({ req, ...PERM.AGENT_RUNTIME_COLLAB_ARBITER_COMMIT });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -770,6 +1012,30 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
     const updated = body.status ? await updateCollabRunStatus({ pool: app.db, tenantId: subject.tenantId, collabRunId: collab.collabRunId, status: body.status }) : collab;
     if (!updated) throw Errors.internal();
     await updateAgentRoleStatus({ pool: app.db, tenantId: subject.tenantId, collabRunId: collab.collabRunId, roleName: "arbiter", status: "committed" });
+    const desiredPhase = mapCollabStatusToPhase(body.status ?? "executing");
+    if (desiredPhase) {
+      await syncCollabPhase({
+        pool: app.db,
+        redis: app.redis,
+        tenantId: subject.tenantId,
+        collabRunId: collab.collabRunId,
+        taskId: params.taskId,
+        toPhase: desiredPhase,
+        triggeredBy: "arbiter",
+        reason: "arbiter_commit",
+        currentRole: desiredPhase === "succeeded" || desiredPhase === "failed" || desiredPhase === "stopped" ? null : "arbiter",
+      });
+    }
+    await syncRoleState({
+      pool: app.db,
+      redis: app.redis,
+      tenantId: subject.tenantId,
+      collabRunId: collab.collabRunId,
+      taskId: params.taskId,
+      roleName: "arbiter",
+      status: desiredPhase === "succeeded" || desiredPhase === "failed" || desiredPhase === "stopped" ? "completed" : "active",
+      progress: 100,
+    });
     await appendCollabRunEvent({
       pool: app.db,
       tenantId: subject.tenantId,
@@ -782,6 +1048,9 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
       policySnapshotRef: decision.snapshotRef ?? null,
       correlationId,
       payloadDigest: { status: body.status ?? null, decisionDigest, outputDigest, dlpSummary: { decision: decisionVal.summary, output: outputVal.summary } },
+      // P2-5: 责任链追溯 — 仲裁决策
+      reviewedBy: "arbiter",
+      approvedBy: subject.subjectId,
     });
 
     let arbiterAssignment = (await listTaskAssignments({ pool: app.db, tenantId: subject.tenantId, collabRunId: collab.collabRunId, status: null, limit: 200 })).find(
@@ -846,6 +1115,7 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
       const stepInputDigest = pick.input_digest ?? null;
 
       if (!queueJobId) {
+        const nextRole = stepInput?.actorRole ? String(stepInput.actorRole) : "executor";
         const approvalRequired = Boolean(stepInput?.toolContract?.approvalRequired) || stepInput?.toolContract?.riskLevel === "high";
         if (approvalRequired) {
           await setRunAndJobStatus({ pool: app.db, tenantId: subject.tenantId, runId: updated.primaryRunId, jobId, runStatus: "needs_approval", jobStatus: "needs_approval" });
@@ -859,8 +1129,36 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
             toolRef: stepToolRef,
             policySnapshotRef: stepPolicySnapshotRef ?? null,
             inputDigest: stepInputDigest ?? null,
+            assessmentContext: await assessToolExecutionRisk({
+              pool: app.db,
+              tenantId: subject.tenantId,
+              toolRef: stepToolRef ?? "",
+              inputDraft: (typeof stepInput === "object" && stepInput) ? stepInput as Record<string, unknown> : {},
+            }),
           });
           await updateCollabRunStatus({ pool: app.db, tenantId: subject.tenantId, collabRunId: collab.collabRunId, status: "needs_approval" });
+          await syncCollabPhase({
+            pool: app.db,
+            redis: app.redis,
+            tenantId: subject.tenantId,
+            collabRunId: collab.collabRunId,
+            taskId: params.taskId,
+            toPhase: "needs_approval",
+            triggeredBy: "arbiter",
+            reason: "awaiting_step_approval",
+            currentRole: nextRole,
+          });
+          await syncRoleState({
+            pool: app.db,
+            redis: app.redis,
+            tenantId: subject.tenantId,
+            collabRunId: collab.collabRunId,
+            taskId: params.taskId,
+            roleName: nextRole,
+            status: "blocked",
+            currentStepId: stepId,
+            progress: 0,
+          });
           await appendCollabRunEvent({
             pool: app.db,
             tenantId: subject.tenantId,
@@ -874,6 +1172,9 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
             policySnapshotRef: decision.snapshotRef ?? null,
             correlationId,
             payloadDigest: { approvalId: approval.approvalId, toolRef: stepToolRef },
+            // P2-5: 责任链追溯 — 审批请求
+            proposedBy: stepInput?.actorRole ? String(stepInput.actorRole) : "executor",
+            executedBy: subject.subjectId,
           });
           const prev = await getTaskState({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, runId: updated.primaryRunId });
           await upsertTaskState({
@@ -893,6 +1194,28 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
         await updateCollabRunStatus({ pool: app.db, tenantId: subject.tenantId, collabRunId: collab.collabRunId, status: "executing" });
         await setRunAndJobStatus({ pool: app.db, tenantId: subject.tenantId, runId: updated.primaryRunId, jobId, runStatus: "queued", jobStatus: "queued" });
         await enqueueWorkflowStep({ queue: app.queue, pool: app.db, jobId, runId: updated.primaryRunId, stepId });
+        await syncCollabPhase({
+          pool: app.db,
+          redis: app.redis,
+          tenantId: subject.tenantId,
+          collabRunId: collab.collabRunId,
+          taskId: params.taskId,
+          toPhase: "executing",
+          triggeredBy: "arbiter",
+          reason: "arbiter_released_next_ready_step",
+          currentRole: nextRole,
+        });
+        await syncRoleState({
+          pool: app.db,
+          redis: app.redis,
+          tenantId: subject.tenantId,
+          collabRunId: collab.collabRunId,
+          taskId: params.taskId,
+          roleName: nextRole,
+          status: "active",
+          currentStepId: stepId,
+          progress: 0,
+        });
         await appendCollabRunEvent({
           pool: app.db,
           tenantId: subject.tenantId,
@@ -930,7 +1253,7 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
   app.get("/tasks/:taskId/collab-runs/:collabRunId/events", async (req, reply) => {
     const params = z.object({ taskId: z.string().uuid(), collabRunId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "agent_runtime", action: "collab.events" });
-    const decision = await requirePermission({ req, resourceType: "agent_runtime", action: "collab.events" });
+    const decision = await requirePermission({ req, ...PERM.AGENT_RUNTIME_COLLAB_EVENTS });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);

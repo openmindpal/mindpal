@@ -1,9 +1,27 @@
 import crypto from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { normalizeAuditErrorCategory } from "@openslin/shared";
 import { decryptSecretPayload } from "../secrets/envelope";
 import { invokeFirstPartySkill } from "../lib/skillInvoke";
+
+async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
 function stable(v: any): any {
   if (v === null || v === undefined) return null;
@@ -73,9 +91,8 @@ function computeBackoffMs(base: number, attemptCount: number) {
 }
 
 async function claimOne(params: { pool: Pool }) {
-  await params.pool.query("BEGIN");
-  try {
-    const res = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const res = await client.query(
       `
         SELECT
           m.*,
@@ -99,11 +116,10 @@ async function claimOne(params: { pool: Pool }) {
       `,
     );
     if (!res.rowCount) {
-      await params.pool.query("COMMIT");
       return null;
     }
     const row = res.rows[0] as any;
-    const upd = await params.pool.query(
+    const upd = await client.query(
       `
         UPDATE channel_outbox_messages
         SET status = 'processing',
@@ -117,7 +133,6 @@ async function claimOne(params: { pool: Pool }) {
       `,
       [row.id],
     );
-    await params.pool.query("COMMIT");
     return {
       msg: upd.rows[0] as any,
       cfg: {
@@ -129,10 +144,7 @@ async function claimOne(params: { pool: Pool }) {
         backoffMsBase: Number(row.cfg_backoff_ms_base ?? 500),
       },
     };
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 async function loadSecretPayload(params: { pool: Pool; tenantId: string; secretId: string; masterKey: string }) {
@@ -155,7 +167,7 @@ async function loadSecretPayload(params: { pool: Pool; tenantId: string; secretI
     scopeType: String(r.scope_type ?? ""),
     scopeId: String(r.scope_id ?? ""),
     keyVersion: Number(r.key_version ?? 1),
-    encFormat: String(r.enc_format ?? "legacy.a256gcm"),
+    encFormat: String(r.enc_format ?? "a256gcm"),
     encryptedPayload: r.encrypted_payload,
   });
   return payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};

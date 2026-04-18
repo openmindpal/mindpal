@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors } from "../lib/errors";
 import { requirePermission } from "../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { setAuditContext } from "../modules/audit/context";
 import { applyReadFieldRules, applyWriteFieldRules } from "../modules/data/fieldRules";
 import { getIdempotencyRecord, insertIdempotencyRecord } from "../modules/data/idempotencyRepo";
@@ -9,17 +10,34 @@ import { deleteRecord, getRecord, insertRecord, listRecords, queryRecords, updat
 import { entityQueryRequestSchema } from "../modules/data/queryModel";
 import { validateEntityQuery } from "../modules/data/queryValidate";
 import { validateEntityPayload, validateReferenceFields } from "../modules/data/validate";
-import { getEffectiveSchema } from "../modules/metadata/schemaRepo";
+import { getEffectiveSchema, resolveSchemaNameForEntity } from "../modules/metadata/schemaRepo";
 import crypto from "node:crypto";
 import { createJobRunStepWithoutToolRef } from "../modules/workflow/jobRepo";
 import { enqueueAuditOutboxForRequest } from "../modules/audit/requestOutbox";
 import type { AuditEventInput } from "../modules/audit/auditRepo";
 
 export const entityRoutes: FastifyPluginAsync = async (app) => {
+  async function resolveSchemaNameOrThrow(params: {
+    tenantId: string;
+    spaceId?: string;
+    entityName: string;
+    requestedSchemaName?: string | null;
+  }) {
+    const resolved = await resolveSchemaNameForEntity({
+      pool: app.db,
+      tenantId: params.tenantId,
+      spaceId: params.spaceId,
+      entityName: params.entityName,
+      requestedSchemaName: params.requestedSchemaName,
+    });
+    if (!resolved.ok) throw Errors.badRequest(resolved.reason);
+    return resolved.schemaName;
+  }
+
   app.get("/entities/:entity", async (req) => {
     const params = z.object({ entity: z.string() }).parse(req.params);
     setAuditContext(req, { resourceType: "entity", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "entity", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.ENTITY_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -55,7 +73,7 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
   app.get("/entities/:entity/:id", async (req, reply) => {
     const params = z.object({ entity: z.string(), id: z.string() }).parse(req.params);
     setAuditContext(req, { resourceType: "entity", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "entity", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.ENTITY_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -84,12 +102,17 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
   app.post("/entities/:entity/query", async (req) => {
     const params = z.object({ entity: z.string() }).parse(req.params);
     setAuditContext(req, { resourceType: "entity", action: "query" });
-    const decision = await requirePermission({ req, resourceType: "entity", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.ENTITY_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
     const body = entityQueryRequestSchema.parse(req.body);
-    const schemaName = body.schemaName ?? "core";
+    const schemaName = await resolveSchemaNameOrThrow({
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      entityName: params.entity,
+      requestedSchemaName: body.schemaName,
+    });
     const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, name: schemaName });
     if (!schema) throw Errors.badRequest(`Schema 未发布：${schemaName}`);
 
@@ -169,7 +192,7 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
   app.post("/entities/:entity/export", async (req) => {
     const params = z.object({ entity: z.string() }).parse(req.params);
     setAuditContext(req, { resourceType: "entity", action: "export" });
-    const decision = await requirePermission({ req, resourceType: "entity", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.ENTITY_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -178,7 +201,12 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
         format: z.enum(["jsonl", "json"]).optional(),
       })
       .parse(req.body);
-    const schemaName = body.schemaName ?? "core";
+    const schemaName = await resolveSchemaNameOrThrow({
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      entityName: params.entity,
+      requestedSchemaName: body.schemaName,
+    });
     const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, name: schemaName });
     if (!schema) throw Errors.badRequest(`Schema 未发布：${schemaName}`);
     if (!schema.schema.entities?.[params.entity]) throw Errors.badRequest("实体不存在");
@@ -226,7 +254,7 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
   app.post("/entities/:entity/import", async (req) => {
     const params = z.object({ entity: z.string() }).parse(req.params);
     setAuditContext(req, { resourceType: "entity", action: "import" });
-    const decision = await requirePermission({ req, resourceType: "entity", action: "create" });
+    const decision = await requirePermission({ req, ...PERM.ENTITY_CREATE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -239,7 +267,12 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body);
 
-    const schemaName = body.schemaName ?? "core";
+    const schemaName = await resolveSchemaNameOrThrow({
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      entityName: params.entity,
+      requestedSchemaName: body.schemaName,
+    });
     const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, name: schemaName });
     if (!schema) throw Errors.badRequest(`Schema 未发布：${schemaName}`);
     if (!schema.schema.entities?.[params.entity]) throw Errors.badRequest("实体不存在");
@@ -316,7 +349,7 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
     if (!idempotencyKey) throw Errors.badRequest("缺少 idempotency-key");
 
     setAuditContext(req, { resourceType: "entity", action: "create", idempotencyKey, requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "entity", action: "create" });
+    const decision = await requirePermission({ req, ...PERM.ENTITY_CREATE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -353,7 +386,12 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const schemaName = (req.headers["x-schema-name"] as string | undefined) ?? "core";
+    const schemaName = await resolveSchemaNameOrThrow({
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      entityName: params.entity,
+      requestedSchemaName: req.headers["x-schema-name"] as string | undefined,
+    });
     const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, name: schemaName });
     if (!schema) throw Errors.badRequest(`Schema 未发布：${schemaName}`);
 
@@ -415,7 +453,7 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
     if (!idempotencyKey) throw Errors.badRequest("缺少 idempotency-key");
 
     setAuditContext(req, { resourceType: "entity", action: "update", idempotencyKey, requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "entity", action: "update" });
+    const decision = await requirePermission({ req, ...PERM.ENTITY_UPDATE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -464,7 +502,12 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
       req.ctx.audit!.errorCategory = "policy_violation";
       throw Errors.fieldWriteForbidden();
     }
-    const schemaName = (req.headers["x-schema-name"] as string | undefined) ?? "core";
+    const schemaName = await resolveSchemaNameOrThrow({
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      entityName: params.entity,
+      requestedSchemaName: req.headers["x-schema-name"] as string | undefined,
+    });
     const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, name: schemaName });
     if (!schema) throw Errors.badRequest(`Schema 未发布：${schemaName}`);
     const refValidation = await validateReferenceFields({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, schema: schema.schema, entityName: params.entity, payload: patch });
@@ -521,7 +564,7 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
     if (!idempotencyKey) throw Errors.badRequest("缺少 idempotency-key");
 
     setAuditContext(req, { resourceType: "entity", action: "delete", idempotencyKey, requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "entity", action: "delete" });
+    const decision = await requirePermission({ req, ...PERM.ENTITY_DELETE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;

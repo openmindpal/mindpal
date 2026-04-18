@@ -8,8 +8,25 @@ export const knowledgeRagWorker: WorkerSkillContribution = {
   jobs: [
     {
       kind: "knowledge.index",
-      process: async ({ pool, data }) => {
-        await processKnowledgeIndexJob({ pool, indexJobId: data.indexJobId });
+      process: async ({ pool, data, queue }) => {
+        const out = await processKnowledgeIndexJob({ pool, indexJobId: data.indexJobId });
+        if (out && out.chunkCount > 0) {
+          const embeddingModelRef = String(process.env.KNOWLEDGE_EMBEDDING_MODEL_REF ?? "").trim() || "minhash:16@1";
+          const ins = await pool.query(
+            `
+              INSERT INTO knowledge_embedding_jobs (tenant_id, space_id, document_id, document_version, embedding_model_ref, status)
+              VALUES ($1,$2,$3,$4,$5,'queued')
+              ON CONFLICT (tenant_id, space_id, document_id, document_version, embedding_model_ref)
+              DO UPDATE SET updated_at = now()
+              RETURNING id
+            `,
+            [out.tenantId, out.spaceId, out.documentId, out.documentVersion, embeddingModelRef],
+          );
+          const embeddingJobId = ins.rowCount ? String(ins.rows[0].id) : "";
+          if (embeddingJobId) {
+            await queue.add("knowledge.embed", { kind: "knowledge.embed", embeddingJobId }, { attempts: 3, backoff: { type: "exponential", delay: 1000 } });
+          }
+        }
       },
     },
     {

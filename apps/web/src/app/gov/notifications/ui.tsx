@@ -1,26 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
 import { Card, PageHeader, Table, StatusBadge, TabNav } from "@/components/ui";
+import { toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type OutboxItem = Record<string, unknown>;
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
 
 type InitialData = { status: number; json: any };
 
@@ -37,8 +24,8 @@ export default function GovNotificationsClient(props: { locale: string; initial?
   const [createTemplateStatus, setCreateTemplateStatus] = useState(0);
   const [createTemplateResult, setCreateTemplateResult] = useState<any>(null);
 
-  const [versionTitle, setVersionTitle] = useState("Hello");
-  const [versionBody, setVersionBody] = useState("Hi {{name}}");
+  const [versionTitle, setVersionTitle] = useState(() => t(props.locale, "gov.notifications.sample.title"));
+  const [versionBody, setVersionBody] = useState(() => t(props.locale, "gov.notifications.sample.body"));
   const [createVersionStatus, setCreateVersionStatus] = useState(0);
   const [createVersionResult, setCreateVersionResult] = useState<any>(null);
 
@@ -46,7 +33,7 @@ export default function GovNotificationsClient(props: { locale: string; initial?
   const [publishStatus, setPublishStatus] = useState(0);
   const [publishResult, setPublishResult] = useState<any>(null);
 
-  const [previewParams, setPreviewParams] = useState("{\"name\":\"world\"}");
+  const [previewParams, setPreviewParams] = useState(() => t(props.locale, "gov.notifications.sample.previewParams"));
   const [previewStatus, setPreviewStatus] = useState(0);
   const [previewResult, setPreviewResult] = useState<any>(null);
 
@@ -253,7 +240,7 @@ export default function GovNotificationsClient(props: { locale: string; initial?
                     <td>{String((o as any).recipientRef ?? "")}</td>
                     <td>{String((o as any).deliveryStatus ?? (o as any).status ?? "")}</td>
                     <td>{String((o as any).attemptCount ?? "")}</td>
-                    <td>{String((o as any).nextAttemptAt ?? "")}</td>
+                    <td>{fmtDateTime((o as any).nextAttemptAt, props.locale)}</td>
                     <td>{String((o as any).lastErrorCategory ?? "")}{(o as any).lastErrorDigest ? `:${String((o as any).lastErrorDigest)}` : ""}</td>
                     <td>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

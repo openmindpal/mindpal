@@ -6,11 +6,10 @@ import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
 import { getTask } from "../task-manager/modules/taskRepo";
 import { appendAgentMessage } from "../task-manager/modules/agentMessageRepo";
-import { getTaskState, upsertTaskState } from "../memory-manager/modules/repo";
-import { createApproval } from "../../modules/workflow/approvalRepo";
-import { appendStepToRun, createJobRun, getRunForSpace, listSteps } from "../../modules/workflow/jobRepo";
-import { enqueueWorkflowStep, setRunAndJobStatus } from "../../modules/workflow/queue";
-import { resolveAndValidateTool, admitAndBuildStepEnvelope, buildStepInputPayload } from "../../kernel/executionKernel";
+import { getTaskState, upsertTaskState } from "../../modules/memory/repo";
+import { createJobRun, getRunForSpace, listSteps } from "../../modules/workflow/jobRepo";
+import { type WorkflowQueue } from "../../modules/workflow/queue";
+import { resolveAndValidateTool, admitAndBuildStepEnvelope, buildStepInputPayload, submitStepToExistingRun } from "../../kernel/executionKernel";
 import { runPlanningPipeline, type PlanFailureCategory } from "../../kernel/planningKernel";
 
 export const agentRuntimeRoutes: FastifyPluginAsync = async (app) => {
@@ -42,8 +41,8 @@ export const agentRuntimeRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body);
 
-    const maxSteps = body.limits?.maxSteps ?? 3;
-    const maxWallTimeMs = body.limits?.maxWallTimeMs ?? 5 * 60 * 1000;
+    const maxSteps = body.limits?.maxSteps;
+    const maxWallTimeMs = body.limits?.maxWallTimeMs;
 
     /* ── Use planning kernel: discover + LLM + parse + validate ── */
     const planResult = await runPlanningPipeline({
@@ -161,50 +160,60 @@ export const agentRuntimeRoutes: FastifyPluginAsync = async (app) => {
         extra: { planStepId: p.stepId, actorRole: String(p.actorRole ?? "executor"), dependsOn: Array.isArray(p.dependsOn) ? p.dependsOn : [] },
       });
 
-      const step = await appendStepToRun({
-        pool: app.db, tenantId: subject.tenantId, jobType: "agent.run", runId: run.runId,
-        toolRef: resolved.toolRef, policySnapshotRef: opDecision.snapshotRef, masterKey: app.cfg.secrets.masterKey,
-        input: stepInput,
-      });
-      createdSteps.push(step);
+      // P0-1 FIX: 使用统一执行内核的 submitStepToExistingRun，确保治理一致性
+      if (i === 0) {
+        const result = await submitStepToExistingRun({
+          pool: app.db,
+          queue: app.queue as WorkflowQueue,
+          tenantId: subject.tenantId,
+          resolved,
+          opDecision,
+          stepInput,
+          runId: run.runId,
+          jobId: job.jobId,
+          jobType: "agent.run",
+          masterKey: app.cfg.secrets.masterKey,
+        });
+        createdSteps.push({ stepId: result.stepId, toolRef: resolved.toolRef, policySnapshotRef: opDecision.snapshotRef, inputDigest: stepInput });
+        
+        // 根据结果返回
+        if (result.outcome === "needs_approval") {
+          const { taskState } = await upsertTaskState({
+            pool: app.db,
+            tenantId: subject.tenantId,
+            spaceId: subject.spaceId,
+            runId: run.runId,
+            stepId: result.stepId,
+            phase: "needs_approval",
+            plan,
+            artifactsDigest: { taskId: params.taskId, approvalId: result.approvalId },
+            approvalStatus: "pending",
+          });
+          req.ctx.audit!.outputDigest = { runId: run.runId, jobId: job.jobId, stepId: result.stepId, status: "needs_approval" };
+          return { runtime: "agent-runtime" as const, runId: run.runId, jobId: job.jobId, stepId: result.stepId, approvalId: result.approvalId, status: "needs_approval" as const, taskState };
+        }
+      } else {
+        // 后续步骤也通过统一内核
+        const result = await submitStepToExistingRun({
+          pool: app.db,
+          queue: app.queue as WorkflowQueue,
+          tenantId: subject.tenantId,
+          resolved,
+          opDecision,
+          stepInput,
+          runId: run.runId,
+          jobId: job.jobId,
+          jobType: "agent.run",
+          masterKey: app.cfg.secrets.masterKey,
+        });
+        createdSteps.push({ stepId: result.stepId, toolRef: resolved.toolRef, policySnapshotRef: opDecision.snapshotRef, inputDigest: stepInput });
+      }
     }
 
-    const step = createdSteps[0];
-    const stepRow = await app.db.query("SELECT tool_ref, input, policy_snapshot_ref, input_digest FROM steps WHERE step_id = $1 LIMIT 1", [step.stepId]);
-    const stepInput = stepRow.rowCount ? (stepRow.rows[0].input as any) : null;
-    const approvalRequired = Boolean(stepInput?.toolContract?.approvalRequired) || stepInput?.toolContract?.riskLevel === "high";
-
-    if (approvalRequired) {
-      await setRunAndJobStatus({ pool: app.db, tenantId: subject.tenantId, runId: run.runId, jobId: job.jobId, runStatus: "needs_approval", jobStatus: "needs_approval" });
-      const approval = await createApproval({
-        pool: app.db,
-        tenantId: subject.tenantId,
-        spaceId: subject.spaceId,
-        runId: run.runId,
-        stepId: step.stepId,
-        requestedBySubjectId: subject.subjectId,
-        toolRef: step.toolRef ?? null,
-        policySnapshotRef: step.policySnapshotRef ?? null,
-        inputDigest: step.inputDigest ?? null,
-      });
-      const { taskState: taskState1 } = await upsertTaskState({
-        pool: app.db,
-        tenantId: subject.tenantId,
-        spaceId: subject.spaceId,
-        runId: run.runId,
-        stepId: step.stepId,
-        phase: "needs_approval",
-        plan,
-        artifactsDigest: { taskId: params.taskId, approvalId: approval.approvalId },
-      });
-      req.ctx.audit!.outputDigest = { runId: run.runId, jobId: job.jobId, stepId: step.stepId, status: "needs_approval" };
-      return { runtime: "agent-runtime" as const, runId: run.runId, jobId: job.jobId, stepId: step.stepId, approvalId: approval.approvalId, status: "needs_approval" as const, taskState: taskState1 };
-    }
-
-    await setRunAndJobStatus({ pool: app.db, tenantId: subject.tenantId, runId: run.runId, jobId: job.jobId, runStatus: "queued", jobStatus: "queued" });
-    await enqueueWorkflowStep({ queue: app.queue, pool: app.db, jobId: job.jobId, runId: run.runId, stepId: step.stepId });
-    req.ctx.audit!.outputDigest = { runId: run.runId, jobId: job.jobId, stepId: step.stepId, status: "queued" };
-    return { runtime: "agent-runtime" as const, runId: run.runId, jobId: job.jobId, stepId: step.stepId, status: "queued" as const, taskState: taskState0 };
+    // 第一个步骤已处理完毕，直接返回
+    const firstStep = createdSteps[0];
+    req.ctx.audit!.outputDigest = { runId: run.runId, jobId: job.jobId, stepId: firstStep.stepId, status: "queued" };
+    return { runtime: "agent-runtime" as const, runId: run.runId, jobId: job.jobId, stepId: firstStep.stepId, status: "queued" as const, taskState: taskState0 };
   });
 
   app.get("/tasks/:taskId/agent-runs/:runId", async (req, reply) => {
@@ -285,6 +294,9 @@ export const agentRuntimeRoutes: FastifyPluginAsync = async (app) => {
       runId: params.runId,
       phase: "canceled",
       artifactsDigest: { taskId: params.taskId },
+      clearBlockReason: true,
+      clearNextAction: true,
+      clearApprovalStatus: true,
     });
     req.ctx.audit!.outputDigest = { runId: params.runId, status: "canceled" };
     return { runtime: "agent-runtime" as const, runId: params.runId, status: "canceled" as const };

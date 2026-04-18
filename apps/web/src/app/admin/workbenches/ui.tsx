@@ -97,10 +97,10 @@ export default function AdminWorkbenchesClient(props: { locale: string; initial:
       <table cellPadding={6} style={{ borderCollapse: "collapse", width: "100%" }}>
         <thead>
           <tr>
-            <th align="left">workbenchKey</th>
-            <th align="left">draft</th>
-            <th align="left">released</th>
-            <th align="left">actions</th>
+            <th align="left">{t(props.locale, "admin.workbenches.col.workbenchKey")}</th>
+            <th align="left">{t(props.locale, "admin.workbenches.col.draft")}</th>
+            <th align="left">{t(props.locale, "admin.workbenches.col.released")}</th>
+            <th align="left">{t(props.locale, "admin.workbenches.col.actions")}</th>
           </tr>
         </thead>
         <tbody>
@@ -111,7 +111,7 @@ export default function AdminWorkbenchesClient(props: { locale: string; initial:
             return (
               <tr key={key} style={{ borderTop: "1px solid #ddd" }}>
                 <td>{key}</td>
-                <td>{draft ? `draft` : ""}</td>
+                <td>{draft ? t(props.locale, "admin.workbenches.draftText") : ""}</td>
                 <td>{released ? `v${released.version}` : ""}</td>
                 <td>
                   <button

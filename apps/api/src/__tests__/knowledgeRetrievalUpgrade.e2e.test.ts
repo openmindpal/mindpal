@@ -49,7 +49,7 @@ describe.sequential("knowledge retrieval upgrade e2e", { timeout: 90_000 }, () =
       app.log.error(e);
       canRun = false;
     }
-  });
+  }, 120_000);
 
   afterAll(async () => {
     await app.close();

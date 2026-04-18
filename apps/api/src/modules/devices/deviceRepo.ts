@@ -149,6 +149,21 @@ export async function revokeDeviceRecord(params: { pool: Pool; tenantId: string;
   return toRow(res.rows[0]);
 }
 
+export async function rotateDeviceRecordToken(params: { pool: Pool; tenantId: string; deviceId: string; deviceTokenHash: string }) {
+  const res = await params.pool.query(
+    `
+      UPDATE device_records
+      SET device_token_hash = $3,
+          updated_at = now()
+      WHERE tenant_id = $1 AND device_id = $2 AND status = 'active'
+      RETURNING *
+    `,
+    [params.tenantId, params.deviceId, params.deviceTokenHash],
+  );
+  if (!res.rowCount) return null;
+  return toRow(res.rows[0]);
+}
+
 export async function getDeviceByTokenHash(params: { pool: Pool; deviceTokenHash: string }) {
   const res = await params.pool.query("SELECT * FROM device_records WHERE device_token_hash = $1 AND status = 'active' LIMIT 1", [
     params.deviceTokenHash,

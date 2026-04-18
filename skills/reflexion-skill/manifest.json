@@ -1,0 +1,44 @@
+{
+  "identity": {
+    "name": "agent.reflect",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "智能体反思",
+    "en-US": "Agent Reflection"
+  },
+  "description": {
+    "zh-CN": "分析任务执行结果，总结成功经验和失败教训，生成改进建议并写入长期记忆",
+    "en-US": "Analyzes task execution results, summarizes lessons learned, generates improvement suggestions for long-term memory"
+  },
+  "category": "ai",
+  "priority": 8,
+  "tags": ["reflection", "learning", "improvement", "memory"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "agent",
+    "action": "reflect",
+    "idempotencyRequired": false,
+    "riskLevel": "low",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "goal": { "type": "string", "required": true, "description": "原始任务目标" },
+        "outcome": { "type": "string", "required": true, "description": "最终结果: succeeded | failed | partial" },
+        "steps": { "type": "json", "required": true, "description": "执行步骤列表 [{seq, toolRef, status, durationMs, error?}]" },
+        "totalDurationMs": { "type": "number", "description": "总耗时(ms)" },
+        "context": { "type": "string", "description": "额外上下文信息" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "reflection": { "type": "json", "required": true, "description": "{whatWorked, whatFailed, rootCause, lessonsLearned, improvementSuggestions}" },
+        "lesson": { "type": "string", "required": true, "description": "一句话教训摘要，可直接写入记忆" },
+        "confidence": { "type": "number", "required": true, "description": "反思置信度 0-1" }
+      }
+    }
+  },
+  "entry": "dist/index.js"
+}

@@ -1,6 +1,6 @@
 /**
  * Audit 模块 E2E 测试
- * 包含：audit outbox、hashchain、retention、siem、审计追溯
+ * 包含：audit outbox、hashchain、siem、审计追溯
  */
 import {
   describe, expect, it, beforeAll, afterAll,
@@ -8,6 +8,7 @@ import {
   getTestContext, releaseTestContext,
   dispatchAuditOutboxBatch,
   processAuditExport,
+  TEST_SCHEMA_NAME,
   type TestContext,
 } from "./setup";
 
@@ -29,7 +30,7 @@ describe.sequential("e2e:audit", { timeout: 60_000 }, () => {
     process.env.AUDIT_OUTBOX_FORCE_FAIL = "1";
     const r = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes",
+      url: "/entities/test_items",
       headers: {
         authorization: "Bearer admin",
         "x-tenant-id": "tenant_dev",
@@ -37,7 +38,7 @@ describe.sequential("e2e:audit", { timeout: 60_000 }, () => {
         "x-trace-id": traceId,
         "idempotency-key": idem,
         "content-type": "application/json",
-        "x-schema-name": "core",
+        "x-schema-name": TEST_SCHEMA_NAME,
       },
       payload: JSON.stringify({ title: `outbox fail ${crypto.randomUUID()}` }),
     });
@@ -47,7 +48,7 @@ describe.sequential("e2e:audit", { timeout: 60_000 }, () => {
     expect(b.errorCode).toBe("AUDIT_OUTBOX_WRITE_FAILED");
 
     const idemRes = await pool.query(
-      "SELECT id FROM idempotency_records WHERE tenant_id = $1 AND idempotency_key = $2 AND operation = 'create' AND entity_name = 'notes' LIMIT 1",
+      "SELECT id FROM idempotency_records WHERE tenant_id = $1 AND idempotency_key = $2 AND operation = 'create' AND entity_name = 'test_items' LIMIT 1",
       ["tenant_dev", idem],
     );
     expect(idemRes.rowCount).toBe(0);
@@ -154,7 +155,7 @@ describe.sequential("e2e:audit", { timeout: 60_000 }, () => {
     const traceId = `t-outbox-ok-${crypto.randomUUID()}`;
     const r = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes",
+      url: "/entities/test_items",
       headers: {
         authorization: "Bearer admin",
         "x-tenant-id": "tenant_dev",
@@ -162,7 +163,7 @@ describe.sequential("e2e:audit", { timeout: 60_000 }, () => {
         "x-trace-id": traceId,
         "idempotency-key": idem,
         "content-type": "application/json",
-        "x-schema-name": "core",
+        "x-schema-name": TEST_SCHEMA_NAME,
       },
       payload: JSON.stringify({ title: `outbox ok ${crypto.randomUUID()}` }),
     });
@@ -237,7 +238,7 @@ describe.sequential("e2e:audit", { timeout: 60_000 }, () => {
     process.env.AUDIT_OUTBOX_FORCE_FAIL = "1";
     const r = await ctx.app.inject({
       method: "POST",
-      url: "/entities/notes",
+      url: "/entities/test_items",
       headers: {
         authorization: "Bearer admin",
         "x-tenant-id": "tenant_dev",
@@ -245,7 +246,7 @@ describe.sequential("e2e:audit", { timeout: 60_000 }, () => {
         "x-trace-id": traceId,
         "idempotency-key": idem,
         "content-type": "application/json",
-        "x-schema-name": "core",
+        "x-schema-name": TEST_SCHEMA_NAME,
       },
       payload: JSON.stringify({ title: `audit fail ${crypto.randomUUID()}` }),
     });

@@ -26,8 +26,8 @@ function rowToRecord(r: any): EntityRecord {
     payload: r.payload,
     ownerSubjectId: r.owner_subject_id ?? null,
     revision: r.revision,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+    updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
   };
 }
 

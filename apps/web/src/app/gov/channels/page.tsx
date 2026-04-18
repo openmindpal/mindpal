@@ -1,17 +1,23 @@
-import { apiFetch, pickLocale } from "@/lib/api";
+import { apiFetch, pickLocale, SSR_TIMEOUT_MS } from "@/lib/api";
 import type { SearchParams } from "@/lib/types";
 import GovChannelsClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadInitial(locale: string) {
   const token = (await cookies()).get("openslin_token")?.value ?? "";
-  const [cfgRes, evRes] = await Promise.all([
+  const [cfgRes, evRes, spacesRes] = await Promise.all([
     apiFetch(`/governance/channels/webhook/configs?limit=50`, { token, locale, cache: "no-store" }),
     apiFetch(`/governance/channels/ingress-events?status=deadletter&limit=20`, { token, locale, cache: "no-store" }),
+    apiFetch(`/spaces`, { token, locale, cache: "no-store", signal: AbortSignal.timeout(SSR_TIMEOUT_MS) }).catch(() => null),
   ]);
   const cfgJson: unknown = await cfgRes.json().catch(() => null);
   const evJson: unknown = await evRes.json().catch(() => null);
-  return { configs: { status: cfgRes.status, json: cfgJson }, events: { status: evRes.status, json: evJson } };
+  const spacesJson: unknown = spacesRes ? await spacesRes.json().catch(() => null) : null;
+  return {
+    configs: { status: cfgRes.status, json: cfgJson },
+    events: { status: evRes.status, json: evJson },
+    spaces: spacesJson,
+  };
 }
 
 export default async function GovChannelsPage(props: { searchParams: Promise<SearchParams> }) {

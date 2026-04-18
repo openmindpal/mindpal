@@ -1,0 +1,359 @@
+.phaseBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.phasePanel {
+  border-radius: 10px;
+  border: 1px solid transparent;
+  padding: 12px;
+}
+
+.phaseSuccess {
+  color: #15803d;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.phaseFailed {
+  color: #dc2626;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.phaseMuted {
+  color: #4b5563;
+  background: #f9fafb;
+  border-color: #e5e7eb;
+}
+
+.phaseBlocking {
+  color: #d97706;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.phaseRunning {
+  color: #2563eb;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.pulseDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.statusIcon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.panelHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.panelMeta {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.blockReason {
+  margin-top: 8px;
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.progressWrap {
+  margin-top: 8px;
+}
+
+.progressMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.progressTrack {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.progressBar {
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+  transition: width 180ms ease;
+}
+
+.approvalCard {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #fde68a;
+  background: rgba(255, 251, 235, 0.7);
+}
+
+.approvalSummary {
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #b45309;
+}
+
+.approvalSummaryStrong {
+  font-weight: 600;
+}
+
+.approvalState {
+  font-size: 12px;
+}
+
+.approvalStateLoading {
+  color: #6b7280;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.approvalStateEmpty {
+  color: #6b7280;
+}
+
+.approvalStateSuccess {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.approvalStateError {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.approvalMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.approvalMetaMuted {
+  color: #6b7280;
+}
+
+.approvalMetaMono {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.approvalReasonInput {
+  width: 100%;
+  margin-bottom: 8px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--sl-fg);
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.approvalReasonInput:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.approvalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approvalAction {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  text-decoration: none;
+}
+
+.approveBtn {
+  color: #fff;
+  background: #22c55e;
+}
+
+.approveBtn:hover:not(:disabled) {
+  background: #16a34a;
+  color: #fff;
+}
+
+.rejectBtn {
+  color: #fff;
+  background: #ef4444;
+}
+
+.rejectBtn:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+
+.detailLink {
+  color: #4b5563;
+  background: #fff;
+  border-color: #d1d5db;
+}
+
+.detailLink:hover {
+  color: #111827;
+  border-color: #9ca3af;
+  background: #fff;
+}
+
+.modeSelector {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--sl-bg);
+  border: 1px solid var(--sl-border);
+}
+
+.modeButton {
+  min-height: 0;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sl-muted);
+  box-shadow: none;
+}
+
+.modeButton:hover:not(:disabled) {
+  color: var(--sl-fg);
+  background: rgba(255, 255, 255, 0.65);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.modeButtonActive {
+  color: #2563eb;
+  background: #fff;
+  border-color: rgba(37, 99, 235, 0.12);
+  box-shadow: var(--sl-shadow-xs);
+}
+
+.modeButtonActive:hover:not(:disabled) {
+  color: #2563eb;
+  background: #fff;
+  border-color: rgba(37, 99, 235, 0.12);
+}
+
+.modeButtonDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modeIcon {
+  margin-right: 4px;
+}
+
+/* ── Inline Action Buttons (integrated into panel header) ── */
+
+.inlineActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.inlineActionBtn {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.inlineActionBtn:active {
+  transform: scale(0.97);
+}
+
+.inlineActionStop {
+  color: #991b1b;
+  background: rgba(254, 202, 202, 0.5);
+  border-color: #fecaca;
+}
+
+.inlineActionStop:hover {
+  background: #fecaca;
+  border-color: #f87171;
+}
+
+.inlineActionContinue {
+  color: #166534;
+  background: rgba(187, 247, 208, 0.4);
+  border-color: #bbf7d0;
+}
+
+.inlineActionContinue:hover {
+  background: #bbf7d0;
+  border-color: #4ade80;
+}
+
+.inlineActionRetry {
+  color: #92400e;
+  background: rgba(253, 230, 138, 0.4);
+  border-color: #fde68a;
+}
+
+.inlineActionRetry:hover {
+  background: #fde68a;
+  border-color: #fbbf24;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}

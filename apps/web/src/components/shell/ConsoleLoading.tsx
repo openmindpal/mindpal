@@ -15,7 +15,7 @@ export default function ConsoleLoading() {
           <div className={shellStyles.headerRow}>
             <div className={shellStyles.headerLeft}>
               <span className={shellStyles.appTitle} style={{ opacity: 0.5 }}>
-                MindPal
+                {"\u7075\u667aMindpal"}
               </span>
             </div>
           </div>

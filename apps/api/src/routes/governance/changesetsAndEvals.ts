@@ -3,10 +3,11 @@ import { z } from "zod";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { sha256Hex, stableStringify } from "../../lib/digest";
 import { computeEvalSummary } from "../../modules/governance/evalLogic";
 import { addChangeSetItem, approveChangeSet, createChangeSet, getChangeSet, listChangeSetItems, listChangeSets, preflightChangeSet, promoteChangeSet, releaseChangeSet, rollbackChangeSet, submitChangeSet } from "../../modules/governance/changeSetRepo";
-import { createEvalRun, createEvalSuite, getActiveEvalRunForChangeSet, getEvalRun, getEvalSuite, listChangeSetEvalBindings, listEvalRuns, listEvalSuites, replaceChangeSetEvalBindings, setEvalRunFinished, updateEvalSuite } from "../../modules/governance/evalRepo";
+import { createEvalRun, createEvalSuite, getActiveEvalRunForChangeSet, getEvalRun, getEvalSuite, listChangeSetEvalBindings, listEvalRuns, listEvalSuites, replaceChangeSetEvalBindings, setEvalRunFinished, updateEvalSuite, getEvalDashboardOverview, getEvalPassRateTrend, getEvalFailedCases, getEvalCategoryBreakdown } from "../../modules/governance/evalRepo";
 import { schemaDefSchema } from "../../modules/metadata/schemaModel";
 import { evalReportDigest8FromCases, isHighRiskChangeSet } from "./_shared";
 
@@ -41,7 +42,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
   app.post("/governance/changesets", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "changeset.create" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "changeset.create" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_CHANGESET_CREATE });
     req.ctx.audit!.policyDecision = decision;
 
     const body = z.object({ title: z.string().min(1), scope: z.enum(["tenant", "space"]).optional(), canaryTargets: z.array(z.string().min(1)).max(50).optional() }).parse(req.body);
@@ -59,7 +60,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ suiteIds: z.array(z.string().uuid()).max(20) }).parse(req.body);
     setAuditContext(req, { resourceType: "governance", action: "changeset.bind_evals" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "changeset.update" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_CHANGESET_UPDATE });
     req.ctx.audit!.policyDecision = decision;
 
     await replaceChangeSetEvalBindings({ pool: app.db, tenantId: subject.tenantId, changesetId: params.id, suiteIds: body.suiteIds });
@@ -71,7 +72,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const subject = req.ctx.subject!;
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "governance", action: "changeset.read" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "changeset.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_CHANGESET_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const suiteIds = await listChangeSetEvalBindings({ pool: app.db, tenantId: subject.tenantId, changesetId: params.id });
@@ -83,7 +84,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const subject = req.ctx.subject!;
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "governance", action: "evalrun.enqueue" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalrun.execute" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALRUN_EXECUTE });
     req.ctx.audit!.policyDecision = decision;
 
     const cs = await getChangeSet({ pool: app.db, tenantId: subject.tenantId, id: params.id });
@@ -100,7 +101,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const subject = req.ctx.subject!;
     const body = z.object({ name: z.string().min(1), description: z.string().max(2000).optional(), cases: z.array(z.any()).max(200).optional(), thresholds: z.record(z.string(), z.any()).optional() }).parse(req.body);
     setAuditContext(req, { resourceType: "governance", action: "evalsuite.write" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalsuite.write" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const suite = await createEvalSuite({ pool: app.db, tenantId: subject.tenantId, name: body.name, description: body.description ?? null, casesJson: body.cases ?? [], thresholds: body.thresholds ?? {} });
@@ -113,7 +114,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ description: z.string().max(2000).nullable().optional(), cases: z.array(z.any()).max(200).optional(), thresholds: z.record(z.string(), z.any()).optional() }).parse(req.body);
     setAuditContext(req, { resourceType: "governance", action: "evalsuite.write" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalsuite.write" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     try {
@@ -127,7 +128,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
   app.get("/governance/evals/suites", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "evalsuite.read" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalsuite.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const q = z.object({ limit: z.coerce.number().int().positive().max(50).optional() }).parse(req.query);
@@ -139,7 +140,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const subject = req.ctx.subject!;
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "governance", action: "evalsuite.read" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalsuite.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const suite = await getEvalSuite({ pool: app.db, tenantId: subject.tenantId, id: params.id });
@@ -152,7 +153,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ runId: z.string().min(3), stepId: z.string().min(3) }).parse(req.body);
     setAuditContext(req, { resourceType: "governance", action: "evalsuite.write" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalsuite.write" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const suite = await getEvalSuite({ pool: app.db, tenantId: subject.tenantId, id: params.id });
@@ -213,7 +214,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ changesetId: z.string().uuid().optional(), execute: z.boolean().optional(), status: z.enum(["queued", "running", "succeeded", "failed"]).optional(), summary: z.record(z.string(), z.any()).optional(), evidenceDigest: z.record(z.string(), z.any()).optional() }).parse(req.body);
     setAuditContext(req, { resourceType: "governance", action: "evalrun.execute" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalrun.execute" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALRUN_EXECUTE });
     req.ctx.audit!.policyDecision = decision;
 
     const suite = await getEvalSuite({ pool: app.db, tenantId: subject.tenantId, id: params.id });
@@ -266,7 +267,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
   app.get("/governance/evals/runs", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "evalrun.read" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalrun.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALRUN_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const q = z.object({ suiteId: z.string().uuid().optional(), changesetId: z.string().uuid().optional(), limit: z.coerce.number().int().positive().max(50).optional() }).parse(req.query);
@@ -278,7 +279,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const subject = req.ctx.subject!;
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "governance", action: "evalrun.read" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalrun.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALRUN_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const run = await getEvalRun({ pool: app.db, tenantId: subject.tenantId, id: params.id });
@@ -289,7 +290,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
   app.get("/governance/evals/metrics", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "evalrun.read" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "evalrun.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALRUN_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const collabRes = await app.db.query(
@@ -377,7 +378,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
   app.get("/governance/changesets", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "changeset.read" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "changeset.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_CHANGESET_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const q = z.object({ scope: z.enum(["tenant", "space"]).optional(), limit: z.coerce.number().int().positive().max(50).optional() }).parse(req.query);
@@ -390,7 +391,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
   app.get("/governance/changesets/pipelines", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "changeset.pipeline.list" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "changeset.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_CHANGESET_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const q = z.object({ scope: z.enum(["tenant", "space"]).optional(), limit: z.coerce.number().int().positive().max(50).optional(), mode: z.enum(["full", "canary"]).optional() }).parse(req.query);
@@ -424,7 +425,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const subject = req.ctx.subject!;
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "governance", action: "changeset.read" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "changeset.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_CHANGESET_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const cs = await getChangeSet({ pool: app.db, tenantId: subject.tenantId, id: params.id });
@@ -439,80 +440,12 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const q = z.object({ mode: z.enum(["full", "canary"]).optional() }).parse(req.query);
     const mode = q.mode ?? "full";
     setAuditContext(req, { resourceType: "governance", action: "changeset.pipeline.read" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "changeset.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_CHANGESET_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const cs = await getChangeSet({ pool: app.db, tenantId: subject.tenantId, id: params.id });
     if (!cs) throw Errors.badRequest("changeset 不存在");
     const out = await preflightChangeSet({ pool: app.db, tenantId: subject.tenantId, id: cs.id, mode });
-
-    function computeQuotaGate(preflight: any) {
-      const plan: any[] = Array.isArray(preflight?.plan) ? preflight.plan : [];
-      const current: any[] = Array.isArray(preflight?.currentStateDigest) ? preflight.currentStateDigest : [];
-      const modelLimits = plan.filter((p) => p?.kind === "model_limits.set");
-      const toolLimits = plan.filter((p) => p?.kind === "tool_limits.set");
-      const modelPrev = new Map<string, number | null>();
-      const toolPrev = new Map<string, number | null>();
-      for (const c of current) {
-        if (c?.kind === "model.quota_limit") {
-          const k = `${String(c.scopeType ?? "")}:${String(c.scopeId ?? "")}`;
-          const prevRpm = c?.prev && typeof c.prev === "object" ? Number((c.prev as any).modelChatRpm) : null;
-          modelPrev.set(k, Number.isFinite(prevRpm as any) ? (prevRpm as any) : null);
-        }
-        if (c?.kind === "tool.limit") {
-          const k = String(c.toolRef ?? "");
-          const prevC = c?.prev && typeof c.prev === "object" ? Number((c.prev as any).defaultMaxConcurrency) : null;
-          toolPrev.set(k, Number.isFinite(prevC as any) ? (prevC as any) : null);
-        }
-      }
-      let modelIncreases = 0;
-      let modelDecreases = 0;
-      let toolIncreases = 0;
-      let toolDecreases = 0;
-      let modelMaxNextRpm = 0;
-      let modelMaxPrevRpm = 0;
-      let toolMaxNextC = 0;
-      let toolMaxPrevC = 0;
-      const deltaSummary: any[] = [];
-      for (const p of modelLimits) {
-        const scopeType = String(p.scopeType ?? "");
-        const scopeId = String(p.scopeId ?? "");
-        const next = Number(p.modelChatRpm);
-        const k = `${scopeType}:${scopeId}`;
-        const prev = modelPrev.has(k) ? modelPrev.get(k)! : null;
-        if (Number.isFinite(next)) {
-          modelMaxNextRpm = Math.max(modelMaxNextRpm, next);
-          if (typeof prev === "number" && Number.isFinite(prev)) modelMaxPrevRpm = Math.max(modelMaxPrevRpm, prev);
-        }
-        if (typeof prev === "number" && Number.isFinite(prev) && Number.isFinite(next)) {
-          if (next > prev) modelIncreases += 1;
-          else if (next < prev) modelDecreases += 1;
-        } else if (Number.isFinite(next)) {
-          modelIncreases += 1;
-        }
-        deltaSummary.push({ kind: "model_limits.set", scopeType, scopeId, next: Number.isFinite(next) ? next : null, prev });
-      }
-      for (const p of toolLimits) {
-        const toolRef = String(p.toolRef ?? "");
-        const next = Number(p.defaultMaxConcurrency);
-        const prev = toolPrev.has(toolRef) ? toolPrev.get(toolRef)! : null;
-        if (Number.isFinite(next)) {
-          toolMaxNextC = Math.max(toolMaxNextC, next);
-          if (typeof prev === "number" && Number.isFinite(prev)) toolMaxPrevC = Math.max(toolMaxPrevC, prev);
-        }
-        if (typeof prev === "number" && Number.isFinite(prev) && Number.isFinite(next)) {
-          if (next > prev) toolIncreases += 1;
-          else if (next < prev) toolDecreases += 1;
-        } else if (Number.isFinite(next)) {
-          toolIncreases += 1;
-        }
-        deltaSummary.push({ kind: "tool_limits.set", toolRef, next: Number.isFinite(next) ? next : null, prev });
-      }
-      const increaseCount = modelIncreases + toolIncreases;
-      const status = increaseCount > 0 ? "warn" : "pass";
-      const digest8 = sha256Hex(JSON.stringify(deltaSummary.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))).slice(0, 8);
-      return { gateType: "quota", required: false, status, detailsDigest: { modelLimitsCount: modelLimits.length, toolLimitsCount: toolLimits.length, modelIncreases, modelDecreases, toolIncreases, toolDecreases, modelMaxNextRpm: modelMaxNextRpm || null, modelMaxPrevRpm: modelMaxPrevRpm || null, toolMaxNextConcurrency: toolMaxNextC || null, toolMaxPrevConcurrency: toolMaxPrevC || null, deltaDigest8: digest8 } };
-    }
 
     function computeGates(params2: { cs: any; preflight: any }) {
       const cs2 = params2.cs;
@@ -524,12 +457,10 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
       const evalRequired = (evalRequiredSuiteIds.length > 0 && isHighRisk) || evalAdmissionRequired;
       const evalAllPassed = evalSuites.every((e: any) => Boolean(e?.passed));
       const approvalsOk = preflight.gate.approvalsCount >= preflight.gate.requiredApprovals;
-      const quotaGate = computeQuotaGate(preflight as any);
       const gates = [
         { gateType: "eval_admission", required: evalRequired, status: evalAllPassed ? "pass" : evalRequired ? "fail" : evalSuites.length > 0 ? "warn" : "pass", detailsDigest: { requiredSuites: evalRequiredSuiteIds.length, suites: evalSuites.length, failedSuites: evalSuites.filter((e: any) => !e?.passed).length, latestRunIdsDigest8: sha256Hex(JSON.stringify(evalSuites.map((e: any) => e.latestRunId ?? null))).slice(0, 8) } },
         { gateType: "approval", required: preflight.gate.requiredApprovals > 0, status: approvalsOk ? "pass" : "fail", detailsDigest: { requiredApprovals: preflight.gate.requiredApprovals, approvalsCount: preflight.gate.approvalsCount } },
         { gateType: "risk", required: false, status: cs2.riskLevel === "low" ? "pass" : "warn", detailsDigest: { riskLevel: cs2.riskLevel } },
-        quotaGate,
       ];
       return { gates };
     }
@@ -552,7 +483,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const subject = req.ctx.subject!;
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "governance", action: "changeset.update" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "changeset.update" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_CHANGESET_UPDATE });
     req.ctx.audit!.policyDecision = decision;
 
     const body = z
@@ -576,8 +507,6 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
         z.object({ kind: z.literal("schema.rollback"), name: z.string().min(1) }),
         z.object({ kind: z.literal("model_routing.upsert"), purpose: z.string().min(1).max(100), primaryModelRef: z.string().min(3), fallbackModelRefs: z.array(z.string().min(3)).max(10).optional(), enabled: z.boolean().optional() }),
         z.object({ kind: z.literal("model_routing.disable"), purpose: z.string().min(1).max(100) }),
-        z.object({ kind: z.literal("model_limits.set"), scopeType: z.enum(["tenant", "space"]), scopeId: z.string().min(1), modelChatRpm: z.number().int().positive().max(100000) }),
-        z.object({ kind: z.literal("tool_limits.set"), toolRef: z.string().min(3), defaultMaxConcurrency: z.number().int().positive().max(1000) }),
         z.object({ kind: z.literal("artifact_policy.upsert"), scopeType: z.enum(["tenant", "space"]), scopeId: z.string().min(1), downloadTokenExpiresInSec: z.number().int().positive().max(3600), downloadTokenMaxUses: z.number().int().positive().max(10), watermarkHeadersEnabled: z.boolean() }),
       ])
       .parse(req.body);
@@ -615,11 +544,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
                                   ? { purpose: body.purpose, primaryModelRef: body.primaryModelRef, fallbackModelRefs: body.fallbackModelRefs ?? [], enabled: body.enabled ?? true }
                                   : body.kind === "model_routing.disable"
                                     ? { purpose: body.purpose }
-                                    : body.kind === "model_limits.set"
-                                      ? { scopeType: body.scopeType, scopeId: body.scopeId, modelChatRpm: body.modelChatRpm }
-                                      : body.kind === "tool_limits.set"
-                                        ? { toolRef: body.toolRef, defaultMaxConcurrency: body.defaultMaxConcurrency }
-                                        : { scopeType: body.scopeType, scopeId: body.scopeId, downloadTokenExpiresInSec: body.downloadTokenExpiresInSec, downloadTokenMaxUses: body.downloadTokenMaxUses, watermarkHeadersEnabled: body.watermarkHeadersEnabled };
+                                    : { scopeType: body.scopeType, scopeId: body.scopeId, downloadTokenExpiresInSec: body.downloadTokenExpiresInSec, downloadTokenMaxUses: body.downloadTokenMaxUses, watermarkHeadersEnabled: body.watermarkHeadersEnabled };
 
     try {
       const item = await addChangeSetItem({ pool: app.db, tenantId: subject.tenantId, changesetId: params.id, kind: body.kind, payload });
@@ -693,92 +618,19 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
           const evalRequired = (evalRequiredSuiteIds.length > 0 && isHighRisk) || evalAdmissionRequired;
           const evalAllPassed = evalSuites.every((e: any) => Boolean(e?.passed));
           const approvalsOk = preflightOut.gate.approvalsCount >= preflightOut.gate.requiredApprovals;
-          const plan: any[] = Array.isArray(preflightOut?.plan) ? preflightOut.plan : [];
-          const current: any[] = Array.isArray(preflightOut?.currentStateDigest) ? preflightOut.currentStateDigest : [];
-          const modelLimits = plan.filter((p) => p?.kind === "model_limits.set");
-          const toolLimits = plan.filter((p) => p?.kind === "tool_limits.set");
-          const modelPrev = new Map<string, number | null>();
-          const toolPrev = new Map<string, number | null>();
-          for (const c of current) {
-            if (c?.kind === "model.quota_limit") {
-              const k = `${String(c.scopeType ?? "")}:${String(c.scopeId ?? "")}`;
-              const prevRpm = c?.prev && typeof c.prev === "object" ? Number((c.prev as any).modelChatRpm) : null;
-              modelPrev.set(k, Number.isFinite(prevRpm as any) ? (prevRpm as any) : null);
-            }
-            if (c?.kind === "tool.limit") {
-              const k = String(c.toolRef ?? "");
-              const prevC = c?.prev && typeof c.prev === "object" ? Number((c.prev as any).defaultMaxConcurrency) : null;
-              toolPrev.set(k, Number.isFinite(prevC as any) ? (prevC as any) : null);
-            }
-          }
-          let modelIncreases = 0;
-          let modelDecreases = 0;
-          let toolIncreases = 0;
-          let toolDecreases = 0;
-          let modelMaxNextRpm = 0;
-          let modelMaxPrevRpm = 0;
-          let toolMaxNextC = 0;
-          let toolMaxPrevC = 0;
-          const deltaSummary: any[] = [];
-          for (const p of modelLimits) {
-            const scopeType = String(p.scopeType ?? "");
-            const scopeId = String(p.scopeId ?? "");
-            const next = Number(p.modelChatRpm);
-            const k = `${scopeType}:${scopeId}`;
-            const prev = modelPrev.has(k) ? modelPrev.get(k)! : null;
-            if (Number.isFinite(next)) {
-              modelMaxNextRpm = Math.max(modelMaxNextRpm, next);
-              if (typeof prev === "number" && Number.isFinite(prev)) modelMaxPrevRpm = Math.max(modelMaxPrevRpm, prev);
-            }
-            if (typeof prev === "number" && Number.isFinite(prev) && Number.isFinite(next)) {
-              if (next > prev) modelIncreases += 1;
-              else if (next < prev) modelDecreases += 1;
-            } else if (Number.isFinite(next)) {
-              modelIncreases += 1;
-            }
-            deltaSummary.push({ kind: "model_limits.set", scopeType, scopeId, next: Number.isFinite(next) ? next : null, prev });
-          }
-          for (const p of toolLimits) {
-            const toolRef = String(p.toolRef ?? "");
-            const next = Number(p.defaultMaxConcurrency);
-            const prev = toolPrev.has(toolRef) ? toolPrev.get(toolRef)! : null;
-            if (Number.isFinite(next)) {
-              toolMaxNextC = Math.max(toolMaxNextC, next);
-              if (typeof prev === "number" && Number.isFinite(prev)) toolMaxPrevC = Math.max(toolMaxPrevC, prev);
-            }
-            if (typeof prev === "number" && Number.isFinite(prev) && Number.isFinite(next)) {
-              if (next > prev) toolIncreases += 1;
-              else if (next < prev) toolDecreases += 1;
-            } else if (Number.isFinite(next)) {
-              toolIncreases += 1;
-            }
-            deltaSummary.push({ kind: "tool_limits.set", toolRef, next: Number.isFinite(next) ? next : null, prev });
-          }
-          const increaseCount = modelIncreases + toolIncreases;
-          const quotaStatus = increaseCount > 0 ? "warn" : "pass";
-          const deltaDigest8 = sha256Hex(JSON.stringify(deltaSummary.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))).slice(0, 8);
           preflightGates = [
             { gateType: "eval_admission", required: evalRequired, status: evalAllPassed ? "pass" : evalRequired ? "fail" : evalSuites.length > 0 ? "warn" : "pass", detailsDigest: { requiredSuites: evalRequiredSuiteIds.length, suites: evalSuites.length, failedSuites: evalSuites.filter((e: any) => !e?.passed).length, latestRunIdsDigest8: sha256Hex(JSON.stringify(evalSuites.map((e: any) => e.latestRunId ?? null))).slice(0, 8) } },
             { gateType: "approval", required: preflightOut.gate.requiredApprovals > 0, status: approvalsOk ? "pass" : "fail", detailsDigest: { requiredApprovals: preflightOut.gate.requiredApprovals, approvalsCount: preflightOut.gate.approvalsCount } },
             { gateType: "risk", required: false, status: csForGates.riskLevel === "low" ? "pass" : "warn", detailsDigest: { riskLevel: csForGates.riskLevel } },
-            { gateType: "quota", required: false, status: quotaStatus, detailsDigest: { modelLimitsCount: modelLimits.length, toolLimitsCount: toolLimits.length, modelIncreases, modelDecreases, toolIncreases, toolDecreases, modelMaxNextRpm: modelMaxNextRpm || null, modelMaxPrevRpm: modelMaxPrevRpm || null, toolMaxNextConcurrency: toolMaxNextC || null, toolMaxPrevConcurrency: toolMaxPrevC || null, deltaDigest8 } },
           ];
         }
       } catch {
       }
 
-      if (preflightOut) {
-        const csForGates = preflightOut?.changeset ?? null;
-        const isHighRisk = csForGates ? isHighRiskChangeSet(csForGates) : false;
-        const evalRequiredSuiteIds = Array.isArray(preflightOut?.evalGate?.requiredSuiteIds) ? (preflightOut.evalGate.requiredSuiteIds as any[]) : [];
-        const evalSuites = Array.isArray(preflightOut?.evalGate?.suites) ? (preflightOut.evalGate.suites as any[]) : [];
-        const evalAdmissionRequired = Boolean(preflightOut?.evalGate?.evalAdmissionRequired);
-        const evalRequired = (evalRequiredSuiteIds.length > 0 && isHighRisk) || evalAdmissionRequired;
-        const evalAllPassed = evalSuites.every((e: any) => Boolean(e?.passed));
-        if (evalRequired && !evalAllPassed) {
-          throw new Error("eval_not_passed");
-        }
-      }
+      // P0-2 安全修复：移除路由层 eval pre-check。
+      // 门禁优先级由 releaseChangeSet() 内部保证：schema compat > eval admission > approval。
+      // 此前 eval pre-check 会在 schema_breaking_change/schema_migration_required 前拦截，
+      // 导致 schema 专用错误码被通用 eval_not_passed 覆盖。
 
       const cs = await releaseChangeSet({ pool: app.db, tenantId: subject.tenantId, id: params.id, releasedBy: subject.subjectId, mode });
       req.ctx.audit!.outputDigest = { changesetId: cs.id, mode, gateStatuses: Array.isArray(preflightGates) ? preflightGates.map((g: any) => ({ gateType: g.gateType, status: g.status })) : null };
@@ -789,8 +641,18 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
         app.metrics.incGovernancePipelineAction({ action: mode === "canary" ? "release.canary" : "release.full", result: "denied" });
         app.metrics.incGovernanceGateFailed({ gateType: "eval_admission" });
         req.ctx.audit!.errorCategory = "policy_violation";
-        req.ctx.audit!.outputDigest = { changesetId: params.id, mode, gateFailed: { gateType: "eval_admission" }, gateStatuses: Array.isArray(preflightGates) ? preflightGates.map((g: any) => ({ gateType: g.gateType, status: g.status })) : null, warnings: Array.isArray(preflightOut?.warnings) ? preflightOut.warnings.slice(0, 10) : null };
-        throw Errors.evalNotPassed();
+        // P2-7: 将详细门禁失败信息注入审计和响应
+        const evalGateFailures = Array.isArray(e?.evalGateFailures) ? e.evalGateFailures : null;
+        req.ctx.audit!.outputDigest = {
+          changesetId: params.id, mode,
+          gateFailed: { gateType: "eval_admission", failures: evalGateFailures?.map((f: any) => ({ suiteId: f.suiteId, reason: f.reason })) ?? null },
+          gateStatuses: Array.isArray(preflightGates) ? preflightGates.map((g: any) => ({ gateType: g.gateType, status: g.status })) : null,
+          warnings: Array.isArray(preflightOut?.warnings) ? preflightOut.warnings.slice(0, 10) : null,
+        };
+        const err = Errors.evalNotPassed();
+        // P2-7: 将 evalGateFailures 附加到错误响应
+        if (evalGateFailures) (err as any).evalGateFailures = evalGateFailures;
+        throw err;
       }
       if (String(e?.message ?? e) === "trust_not_verified") {
         app.metrics.incGovernancePipelineAction({ action: mode === "canary" ? "release.canary" : "release.full", result: "denied" });
@@ -870,7 +732,7 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const q = z.object({ mode: z.enum(["full", "canary"]).optional() }).parse(req.query);
     setAuditContext(req, { resourceType: "governance", action: "changeset.preflight" });
-    const decision = await requirePermission({ req, resourceType: "governance", action: "changeset.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_CHANGESET_READ });
     req.ctx.audit!.policyDecision = decision;
 
     try {
@@ -1005,5 +867,90 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
 
     req.ctx.audit!.outputDigest = status;
     return status;
+  });
+
+  // ── P2-9: Eval Dashboard API ─────────────────────────────
+
+  /** 评测总览 — 所有 suite 状态 + 最新运行 */
+  app.get("/governance/evals/dashboard/overview", async (req) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "governance", action: "eval.dashboard.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_READ });
+    req.ctx.audit!.policyDecision = decision;
+
+    const overview = await getEvalDashboardOverview({ pool: app.db, tenantId: subject.tenantId });
+
+    // 汇总统计
+    const totalSuites = overview.length;
+    const allPassed = overview.filter((s) => s.latestRun?.summary?.result === "pass").length;
+    const allFailed = overview.filter((s) => s.latestRun?.summary?.result === "fail").length;
+    const noRuns = overview.filter((s) => !s.latestRun).length;
+
+    req.ctx.audit!.outputDigest = { totalSuites, allPassed, allFailed, noRuns };
+    return {
+      summary: { totalSuites, allPassed, allFailed, noRuns },
+      suites: overview,
+    };
+  });
+
+  /** 通过率趋势（按天） */
+  app.get("/governance/evals/dashboard/trend", async (req) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "governance", action: "eval.dashboard.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_READ });
+    req.ctx.audit!.policyDecision = decision;
+
+    const q = z.object({
+      suiteId: z.string().uuid().optional(),
+      days: z.coerce.number().int().min(1).max(365).optional(),
+    }).parse(req.query);
+
+    const trend = await getEvalPassRateTrend({
+      pool: app.db, tenantId: subject.tenantId,
+      suiteId: q.suiteId, days: q.days,
+    });
+
+    req.ctx.audit!.outputDigest = { dataPoints: trend.length, suiteId: q.suiteId ?? "all", days: q.days ?? 30 };
+    return { trend };
+  });
+
+  /** 失败用例详情 */
+  app.get("/governance/evals/dashboard/failures/:suiteId", async (req) => {
+    const subject = req.ctx.subject!;
+    const params = z.object({ suiteId: z.string().uuid() }).parse(req.params);
+    setAuditContext(req, { resourceType: "governance", action: "eval.dashboard.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_READ });
+    req.ctx.audit!.policyDecision = decision;
+
+    const q = z.object({
+      runId: z.string().uuid().optional(),
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+    }).parse(req.query);
+
+    const result = await getEvalFailedCases({
+      pool: app.db, tenantId: subject.tenantId,
+      suiteId: params.suiteId, runId: q.runId, limit: q.limit,
+    });
+
+    req.ctx.audit!.outputDigest = { suiteId: params.suiteId, runId: result.runId, failedCount: result.cases.length };
+    return result;
+  });
+
+  /** 分类维度统计 */
+  app.get("/governance/evals/dashboard/categories/:suiteId", async (req) => {
+    const subject = req.ctx.subject!;
+    const params = z.object({ suiteId: z.string().uuid() }).parse(req.params);
+    setAuditContext(req, { resourceType: "governance", action: "eval.dashboard.read" });
+    const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_READ });
+    req.ctx.audit!.policyDecision = decision;
+
+    const result = await getEvalCategoryBreakdown({
+      pool: app.db, tenantId: subject.tenantId,
+      suiteId: params.suiteId,
+    });
+    if (!result) throw Errors.badRequest("suite 不存在");
+
+    req.ctx.audit!.outputDigest = { suiteId: params.suiteId, categories: result.categories.length, totalCases: result.totalCases };
+    return result;
   });
 };

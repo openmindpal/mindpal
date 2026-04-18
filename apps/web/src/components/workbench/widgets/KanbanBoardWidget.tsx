@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { t } from "@/lib/i18n";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -36,23 +37,23 @@ export interface KanbanBoardProps {
 let _kanbanIdCounter = 0;
 function kId(prefix: string): string { return `${prefix}_${Date.now()}_${++_kanbanIdCounter}`; }
 
-const PRIORITY_META: Record<Priority, { icon: string; color: string; label: string }> = {
-  urgent: { icon: "🔴", color: "#ef4444", label: "Urgent" },
-  high:   { icon: "🟠", color: "#f97316", label: "High" },
-  medium: { icon: "🟡", color: "#eab308", label: "Medium" },
-  low:    { icon: "🔵", color: "#3b82f6", label: "Low" },
-  none:   { icon: "⚪", color: "#94a3b8", label: "None" },
+const PRIORITY_META: Record<Priority, { icon: string; color: string; labelKey: string }> = {
+  urgent: { icon: "🔴", color: "#ef4444", labelKey: "widget.kanban.priority.urgent" },
+  high:   { icon: "🟠", color: "#f97316", labelKey: "widget.kanban.priority.high" },
+  medium: { icon: "🟡", color: "#eab308", labelKey: "widget.kanban.priority.medium" },
+  low:    { icon: "🔵", color: "#3b82f6", labelKey: "widget.kanban.priority.low" },
+  none:   { icon: "⚪", color: "#94a3b8", labelKey: "widget.kanban.priority.none" },
 };
 
 const COLUMN_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
 
 const LABEL_COLORS = [
-  { bg: "#ede9fe", fg: "#7c3aed", name: "Feature" },
-  { bg: "#dbeafe", fg: "#2563eb", name: "Bug" },
-  { bg: "#dcfce7", fg: "#16a34a", name: "Enhancement" },
-  { bg: "#fef3c7", fg: "#d97706", name: "Review" },
-  { bg: "#fce7f3", fg: "#db2777", name: "Design" },
-  { bg: "#e0f2fe", fg: "#0284c7", name: "Research" },
+  { bg: "#ede9fe", fg: "#7c3aed", name: "Feature", labelKey: "widget.kanban.label.feature" },
+  { bg: "#dbeafe", fg: "#2563eb", name: "Bug", labelKey: "widget.kanban.label.bug" },
+  { bg: "#dcfce7", fg: "#16a34a", name: "Enhancement", labelKey: "widget.kanban.label.enhancement" },
+  { bg: "#fef3c7", fg: "#d97706", name: "Review", labelKey: "widget.kanban.label.review" },
+  { bg: "#fce7f3", fg: "#db2777", name: "Design", labelKey: "widget.kanban.label.design" },
+  { bg: "#e0f2fe", fg: "#0284c7", name: "Research", labelKey: "widget.kanban.label.research" },
 ];
 
 const KB_CSS = `
@@ -71,11 +72,12 @@ const KB_CSS = `
 
 function CardItem(props: {
   card: KanbanCard; colId: string; readOnly: boolean;
+  locale: string;
   onUpdate: (colId: string, cardId: string, updates: Partial<KanbanCard>) => void;
   onRemove: (colId: string, cardId: string) => void;
   onDragStart: (colId: string, cardId: string) => void;
 }) {
-  const { card, colId, readOnly, onUpdate, onRemove, onDragStart } = props;
+  const { card, colId, readOnly, locale, onUpdate, onRemove, onDragStart } = props;
   const [expanded, setExpanded] = useState(false);
   const pm = PRIORITY_META[card.priority];
 
@@ -108,7 +110,7 @@ function CardItem(props: {
               <span key={lbl} style={{
                 fontSize: 10, fontWeight: 600, padding: "1px 8px", borderRadius: 12,
                 background: lc.bg, color: lc.fg,
-              }}>{lbl}</span>
+              }}>{lc.name === lbl ? t(locale, lc.labelKey) : lbl}</span>
             );
           })}
         </div>
@@ -135,7 +137,7 @@ function CardItem(props: {
 
       {/* Footer row */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-        <span style={{ fontSize: 10, display: "flex", alignItems: "center", gap: 2 }} title={pm.label}>
+        <span style={{ fontSize: 10, display: "flex", alignItems: "center", gap: 2 }} title={t(locale, pm.labelKey)}>
           <span>{pm.icon}</span>
         </span>
         {card.assignee && (
@@ -162,10 +164,10 @@ function CardItem(props: {
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--sl-border, #f1f5f9)", display: "flex", gap: 4, flexWrap: "wrap" }}>
           <select value={card.priority} onChange={(e) => onUpdate(colId, card.id, { priority: e.target.value as Priority })}
             style={{ fontSize: 10, padding: "2px 4px", borderRadius: 4, border: "1px solid var(--sl-border, #e5e7eb)" }}>
-            {Object.entries(PRIORITY_META).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+            {Object.entries(PRIORITY_META).map(([k, v]) => <option key={k} value={k}>{v.icon} {t(locale, v.labelKey)}</option>)}
           </select>
           <input value={card.assignee ?? ""} onChange={(e) => onUpdate(colId, card.id, { assignee: e.target.value || undefined })}
-            placeholder="Assignee" style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, border: "1px solid var(--sl-border, #e5e7eb)", width: 70 }} />
+            placeholder={t(locale, "widget.kanban.assignee")} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, border: "1px solid var(--sl-border, #e5e7eb)", width: 70 }} />
           <input type="date" value={card.dueDate ?? ""} onChange={(e) => onUpdate(colId, card.id, { dueDate: e.target.value || undefined })}
             style={{ fontSize: 10, padding: "2px 4px", borderRadius: 4, border: "1px solid var(--sl-border, #e5e7eb)" }} />
         </div>
@@ -178,6 +180,7 @@ function CardItem(props: {
 
 function Column(props: {
   col: KanbanColumn; readOnly: boolean;
+  locale: string;
   onUpdate: (colId: string, updates: Partial<KanbanColumn>) => void;
   onRemove: (colId: string) => void;
   onCardUpdate: (colId: string, cardId: string, updates: Partial<KanbanCard>) => void;
@@ -188,7 +191,7 @@ function Column(props: {
   onDrop: (colId: string) => void;
   isDragOver: boolean;
 }) {
-  const { col, readOnly, onUpdate, onRemove, onCardUpdate, onCardRemove, onCardAdd, onDragStart, onDragOver, onDrop, isDragOver } = props;
+  const { col, readOnly, locale, onUpdate, onRemove, onCardUpdate, onCardRemove, onCardAdd, onDragStart, onDragOver, onDrop, isDragOver } = props;
   const count = col.cards.length;
   const isOverLimit = col.limit != null && count > col.limit;
 
@@ -231,7 +234,7 @@ function Column(props: {
       {/* Cards */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "0 10px", flex: 1, overflowY: "auto", maxHeight: 500 }}>
         {col.cards.map((card) => (
-          <CardItem key={card.id} card={card} colId={col.id} readOnly={readOnly}
+          <CardItem key={card.id} card={card} colId={col.id} readOnly={readOnly} locale={locale}
             onUpdate={onCardUpdate} onRemove={onCardRemove} onDragStart={onDragStart} />
         ))}
       </div>
@@ -245,7 +248,7 @@ function Column(props: {
             border: "1px dashed var(--sl-border, #e5e7eb)", borderRadius: 8,
             background: "transparent", color: "var(--sl-muted, #94a3b8)", cursor: "pointer",
           }}>
-          + Add card
+          + {t(locale, "widget.kanban.addCard")}
         </button>
       )}
     </div>
@@ -256,6 +259,7 @@ function Column(props: {
 
 export function KanbanBoardWidget(props: KanbanBoardProps) {
   const { columns, onChange, readOnly = false } = props;
+  const locale = props.locale ?? "zh-CN";
   const [dragState, setDragState] = useState<{ fromCol: string; cardId: string } | null>(null);
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
 
@@ -276,9 +280,9 @@ export function KanbanBoardWidget(props: KanbanBoardProps) {
   }, [columns, onChange]);
 
   const handleCardAdd = useCallback((colId: string) => {
-    const newCard: KanbanCard = { id: kId("card"), title: "New task", priority: "none" };
+    const newCard: KanbanCard = { id: kId("card"), title: t(locale, "widget.kanban.newTask"), priority: "none" };
     onChange(columns.map((c) => c.id === colId ? { ...c, cards: [...c.cards, newCard] } : c));
-  }, [columns, onChange]);
+  }, [columns, locale, onChange]);
 
   const handleDragStart = useCallback((colId: string, cardId: string) => {
     setDragState({ fromCol: colId, cardId });
@@ -303,11 +307,11 @@ export function KanbanBoardWidget(props: KanbanBoardProps) {
   const handleAddColumn = useCallback(() => {
     const idx = columns.length;
     const newCol: KanbanColumn = {
-      id: kId("col"), title: "New Column",
+      id: kId("col"), title: t(locale, "widget.kanban.newColumn"),
       color: COLUMN_COLORS[idx % COLUMN_COLORS.length], cards: [],
     };
     onChange([...columns, newCol]);
-  }, [columns, onChange]);
+  }, [columns, locale, onChange]);
 
   return (
     <div>
@@ -315,7 +319,7 @@ export function KanbanBoardWidget(props: KanbanBoardProps) {
       {/* Board */}
       <div style={{ display: "flex", gap: 14, overflowX: "auto", padding: "4px 0 12px", alignItems: "flex-start" }}>
         {columns.map((col) => (
-          <Column key={col.id} col={col} readOnly={readOnly}
+          <Column key={col.id} col={col} readOnly={readOnly} locale={locale}
             onUpdate={handleColUpdate} onRemove={handleColRemove}
             onCardUpdate={handleCardUpdate} onCardRemove={handleCardRemove} onCardAdd={handleCardAdd}
             onDragStart={handleDragStart} onDragOver={setDragOverCol} onDrop={handleDrop}
@@ -333,7 +337,7 @@ export function KanbanBoardWidget(props: KanbanBoardProps) {
               fontSize: 13, fontWeight: 500, cursor: "pointer", transition: "all 0.15s",
               flexShrink: 0,
             }}>
-            + Add Column
+            + {t(locale, "widget.kanban.addColumn")}
           </button>
         )}
       </div>
@@ -347,7 +351,7 @@ export function KanbanBoardWidget(props: KanbanBoardProps) {
         }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: "var(--sl-fg, #475569)" }}>
-            {readOnly ? "No board configured" : "Click '+ Add Column' to create your first column"}
+            {readOnly ? t(locale, "widget.kanban.noBoard") : t(locale, "widget.kanban.firstColumnHint")}
           </div>
         </div>
       )}

@@ -194,7 +194,10 @@ export function structuredScore(params: {
   return { total, dimensions, reasons };
 }
 
-export async function buildHeuristicPlanV4(params: {
+/**
+ * 启发式规划器：基于结构化评分引擎筛选工具并生成规划步骤。
+ */
+export async function buildHeuristicPlan(params: {
   pool: Pool;
   tenantId: string;
   spaceId: string;
@@ -413,7 +416,7 @@ export async function replanOnFailure(params: {
   const maxAttempts = Math.min(Math.max(0, config.maxReplanAttempts), 5);
 
   let attempt = 0;
-  let result = await buildHeuristicPlanV4(params);
+  let result = await buildHeuristicPlan(params);
 
   while (result.planSteps.length === 0 && attempt < maxAttempts) {
     attempt++;
@@ -424,7 +427,7 @@ export async function replanOnFailure(params: {
       // Slightly increase step budget on retry
       maxSteps: params.maxSteps + attempt,
     };
-    result = await buildHeuristicPlanV4(relaxedParams);
+    result = await buildHeuristicPlan(relaxedParams);
   }
 
   if (result.planSteps.length === 0 && config.fallbackStrategy === "error") {

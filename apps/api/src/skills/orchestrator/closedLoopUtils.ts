@@ -8,8 +8,37 @@ import { sha256Hex } from "../../lib/digest";
 /*  Types                                                               */
 /* ================================================================== */
 
-export type ClosedLoopPhase = "planning" | "executing" | "reviewing" | "needs_approval" | "succeeded" | "failed" | "stopped";
-export type ClosedLoopNextActionKind = "wait" | "continue" | "needs_approval" | "stop";
+/**
+ * P1-1: Run Phase 覆盖全生命周期
+ * 统一的运行阶段定义，与前端 RUN_PHASE_LABELS 和 stateMachine RUN_STATUSES 对应
+ */
+export type ClosedLoopPhase = 
+  | "queued"           // 排队等待
+  | "retrieving"       // 知识检索中
+  | "planning"         // 规划中
+  | "executing"        // 执行中
+  | "reviewing"        // 复核中
+  | "needs_approval"   // 待审批
+  | "needs_device"     // 等待设备
+  | "needs_arbiter"    // 等待仲裁
+  | "paused"           // 已暂停
+  | "succeeded"        // 已完成
+  | "failed"           // 已失败
+  | "stopped"          // 已停止
+  | "compensating"     // 补偿中
+  | "compensated";     // 已补偿
+
+/** 终态 phase 集合 */
+export const CLOSED_LOOP_TERMINAL_PHASES: ReadonlySet<ClosedLoopPhase> = new Set([
+  "succeeded", "failed", "stopped", "compensated"
+]);
+
+/** 阻塞性 phase 集合（需要外部介入） */
+export const CLOSED_LOOP_BLOCKING_PHASES: ReadonlySet<ClosedLoopPhase> = new Set([
+  "needs_approval", "needs_device", "needs_arbiter", "paused"
+]);
+
+export type ClosedLoopNextActionKind = "wait" | "continue" | "needs_approval" | "stop" | "resume" | "retry";
 export type PlanningMode = "plan_execute" | "react";
 export type ExecutionSemantics = "execute" | "dry_run" | "replay_only";
 

@@ -3,6 +3,17 @@
     "name": "http.get",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "HTTP GET 请求",
+    "en-US": "HTTP GET Request"
+  },
+  "description": {
+    "zh-CN": "发起 HTTP GET 请求获取指定 URL 的内容，返回状态码和响应长度",
+    "en-US": "Makes HTTP GET request to fetch content from specified URL, returns status code and response length"
+  },
+  "category": "integration",
+  "priority": 6,
+  "tags": ["http", "api", "web", "fetch"],
   "contract": {
     "scope": "read",
     "resourceType": "tool",

@@ -1,27 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { Badge, Card, PageHeader, Table, StructuredData, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type Runner = { runnerId: string; endpoint: string; enabled: boolean; authSecretId: string | null; capabilities: any | null; createdAt: string; updatedAt: string };
 type ListResp = ApiError & { items?: Runner[] };
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
 
 type InitialData = { status: number; json: unknown };
 
@@ -131,7 +117,7 @@ export default function SkillRuntimeClient(props: { locale: string; initial?: In
         title={t(props.locale, "gov.nav.skillRuntime")}
         actions={
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <Badge>{status || "-"}</Badge>
+            <StatusBadge locale={props.locale} status={status || 0} />
             <button disabled={busy} onClick={refresh}>
               {busy ? t(props.locale, "action.loading") : t(props.locale, "action.refresh")}
             </button>
@@ -193,7 +179,7 @@ export default function SkillRuntimeClient(props: { locale: string; initial?: In
             </button>
             {createStatus ? <Badge>{createStatus}</Badge> : null}
           </div>
-          {createResult ? <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(createResult, null, 2)}</pre> : null}
+          {createResult ? <StructuredData data={createResult} /> : null}
         </div>
       </Card>
 
@@ -205,7 +191,7 @@ export default function SkillRuntimeClient(props: { locale: string; initial?: In
           </div>
         }
       >
-        <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(testResult, null, 2)}</pre>
+        <StructuredData data={testResult} />
       </Card>
     </div>
   );

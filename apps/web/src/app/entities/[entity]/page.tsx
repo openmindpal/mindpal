@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { apiFetch, pickLocale, text } from "../../../lib/api";
+import { fmtDateTime } from "../../../lib/fmtDateTime";
 import { t } from "../../../lib/i18n";
 import type { EffectiveSchema, FieldDef, SearchParams } from "../../../lib/types";
 import { Card, Table } from "../../../components/ui";
@@ -8,7 +9,7 @@ import { resolveReferenceLabels, type RefLabelMap } from "../../../lib/reference
 
 async function loadEffectiveSchema(locale: string, entity: string) {
   const token = (await cookies()).get("openslin_token")?.value ?? "";
-  const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective?schemaName=core`, {
+  const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective`, {
     method: "GET",
     token,
     locale,
@@ -105,9 +106,7 @@ function formatValue(def: FieldDef | undefined, v: unknown, locale: string, reso
     return resolvedLabel || String(v);
   }
   if (type === "datetime") {
-    const d = new Date(String(v));
-    if (!Number.isNaN(d.getTime())) return d.toLocaleString(locale);
-    return String(v);
+    return fmtDateTime(v, locale);
   }
   if (type === "json") {
     try {
@@ -155,7 +154,7 @@ export default async function EntityListPage(props: {
       : null;
   const orderBy = cursor ? [{ field: "updatedAt", direction: "desc" }] : parsedSort ? [parsedSort] : [{ field: "updatedAt", direction: "desc" }];
 
-  const queryBody = { schemaName: "core", limit: 50, select: fieldKeys, filters, orderBy, cursor };
+  const queryBody = { limit: 50, select: fieldKeys, filters, orderBy, cursor };
   const data = await loadEntityQuery(locale, entity, queryBody);
 
   // Resolve reference field display labels

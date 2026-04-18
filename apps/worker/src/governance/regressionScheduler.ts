@@ -33,6 +33,42 @@ function evalReportDigest8FromCases(casesJson: any[]) {
   return sha256Hex(stableStringify(digestInput)).slice(0, 8);
 }
 
+async function markEvalRunEnqueueFailed(params: {
+  pool: any;
+  tenantId: string;
+  evalRunId: string;
+  totalCases: number;
+  reportDigest8: string;
+  errorMessage: string;
+}) {
+  const errorDigest8 = sha256Hex(params.errorMessage).slice(0, 8);
+  await params.pool.query(
+    `UPDATE eval_runs
+     SET status = 'failed',
+         summary = $3::jsonb,
+         evidence_digest = $4::jsonb,
+         finished_at = COALESCE(finished_at, now())
+     WHERE tenant_id = $1 AND id = $2`,
+    [
+      params.tenantId,
+      params.evalRunId,
+      JSON.stringify({
+        totalCases: params.totalCases,
+        reportDigest8: params.reportDigest8,
+        result: "fail",
+        errorCategory: "queue_error",
+        errorDigest8,
+      }),
+      JSON.stringify({
+        caseCount: params.totalCases,
+        reportDigest8: params.reportDigest8,
+        errorCategory: "queue_error",
+        errorDigest8,
+      }),
+    ],
+  ).catch(() => undefined);
+}
+
 export type RegressionScanResult = {
   scannedBindings: number;
   enqueued: number;
@@ -155,11 +191,23 @@ export async function scanAndEnqueueRegressionEvals(params: {
         ],
       );
       const evalRunId = String(createRes.rows[0].id);
-      await params.queue.add(
-        "governance.eval",
-        { kind: "governance.evalrun.execute", tenantId, changesetId, suiteId, evalRunId, requestedBySubjectId: null },
-        { attempts: 3, backoff: { type: "exponential", delay: 1000 } },
-      );
+      try {
+        await params.queue.add(
+          "governance.eval",
+          { kind: "governance.evalrun.execute", tenantId, changesetId, suiteId, evalRunId, requestedBySubjectId: null },
+          { attempts: 3, backoff: { type: "exponential", delay: 1000 } },
+        );
+      } catch (enqueueErr: any) {
+        await markEvalRunEnqueueFailed({
+          pool: params.pool,
+          tenantId,
+          evalRunId,
+          totalCases,
+          reportDigest8,
+          errorMessage: String(enqueueErr?.message ?? enqueueErr).slice(0, 1000),
+        });
+        throw enqueueErr;
+      }
       params.onMetric?.("enqueue");
       result.enqueued += 1;
       result.details.push({ tenantId, changesetId, suiteId, action: "enqueued", evalRunId, reportDigest8 });

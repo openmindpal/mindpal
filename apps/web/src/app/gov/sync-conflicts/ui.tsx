@@ -1,26 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader } from "@/components/ui";
+import { apiFetch } from "@/lib/api";
+import { t, statusLabel } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { Badge, Card, PageHeader, StructuredData, JsonFormEditor, StatusBadge } from "@/components/ui";
+import { toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
 
 export default function GovSyncConflictsClient(props: { locale: string; initial: unknown; initialStatus: number }) {
   const [status, setStatus] = useState<number>(props.initialStatus);
@@ -147,7 +133,7 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
         title={t(props.locale, "gov.syncConflicts.title")}
         actions={
           <>
-            <Badge>{status}</Badge>
+            <StatusBadge locale={props.locale} status={status} />
             <button onClick={refresh} disabled={busy}>
               {t(props.locale, "action.refresh")}
             </button>
@@ -183,7 +169,7 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
                       </td>
                       <td style={{ padding: "6px 4px" }}>{String(tk.status ?? "")}</td>
                       <td style={{ padding: "6px 4px" }}>{String(tk.mergeId ?? "")}</td>
-                      <td style={{ padding: "6px 4px", textAlign: "right" }}>{String(tk.updatedAt ?? "")}</td>
+                      <td style={{ padding: "6px 4px", textAlign: "right" }}>{fmtDateTime(tk.updatedAt, props.locale)}</td>
                       <td style={{ padding: "6px 4px", textAlign: "right" }}>{conflictCount}</td>
                     </tr>
                   );
@@ -205,7 +191,7 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
                 return <div style={{ marginTop: 8 }}>{`proposalCount=${count}`}</div>;
               })()}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <Badge>{String(ticketDetail.status ?? "")}</Badge>
+                <Badge>{statusLabel(String(ticketDetail.status ?? ""), props.locale)}</Badge>
                 <span>{String(ticketDetail.ticketId ?? "")}</span>
                 <a href={`/gov/audit?lang=${encodeURIComponent(props.locale)}&traceId=${encodeURIComponent(String(ticketDetail.traceId ?? ""))}&limit=50`}>
                   {t(props.locale, "gov.syncConflicts.openAudit")}
@@ -304,10 +290,12 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
                 </button>
               </div>
               <div style={{ marginTop: 8 }}>
-                <label style={{ display: "block" }}>{t(props.locale, "gov.syncConflicts.resolutionJson")}</label>
-                <textarea value={resolutionJson} onChange={(e) => setResolutionJson(e.target.value)} rows={6} style={{ width: "100%" }} />
+                <label style={{ display: "block", marginBottom: 4 }}>{t(props.locale, "gov.syncConflicts.resolutionJson")}</label>
+                <JsonFormEditor value={resolutionJson} onChange={setResolutionJson} locale={props.locale} disabled={actionBusy} rows={6} />
               </div>
-              <pre style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>{JSON.stringify(ticketDetail, null, 2)}</pre>
+              <div style={{ marginTop: 12 }}>
+                <StructuredData data={ticketDetail} />
+              </div>
             </div>
           ) : null}
         </Card>

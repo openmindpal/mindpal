@@ -20,12 +20,17 @@ export function buildSafeToolOutput(toolName: string, output: any) {
     const out: any = {};
     if (isPlainObject(output.entry)) out.entry = output.entry;
     if (isPlainObject(output.dlpSummary)) out.dlpSummary = output.dlpSummary;
+    if (isPlainObject(output.riskEvaluation)) out.riskEvaluation = output.riskEvaluation;
     return out;
   }
   if (toolName === "memory.read") {
     const out: any = {};
     if (typeof output.candidateCount === "number") out.candidateCount = output.candidateCount;
-    if (Array.isArray(output.evidence)) out.evidenceCount = output.evidence.length;
+    // P0-FIX: 保留 evidence 实际内容（已经过 redact + 280 字截断），否则 Agent Loop LLM 看不到记忆数据
+    if (Array.isArray(output.evidence)) {
+      out.evidenceCount = output.evidence.length;
+      out.evidence = output.evidence.slice(0, 10); // 最多保留 10 条
+    }
     return out;
   }
   if (toolName === "knowledge.search") {

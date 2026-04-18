@@ -103,7 +103,7 @@ export default function EntityEditForm(props: {
         headers: { "content-type": "application/json" },
         locale: props.locale,
         idempotencyKey: idempotencyKey,
-        body: JSON.stringify({ schemaName: "core", entityName: props.entity, recordId: props.recordId, patch }),
+        body: JSON.stringify({ entityName: props.entity, recordId: props.recordId, patch }),
       });
       if (!res.ok) throw new Error("update_failed");
       const json = await res.json();

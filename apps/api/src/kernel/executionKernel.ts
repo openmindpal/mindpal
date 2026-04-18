@@ -18,7 +18,10 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type { CapabilityEnvelopeV1 } from "@openslin/shared";
+import { StructuredLogger } from "@openslin/shared";
 import { Errors } from "../lib/errors";
+
+const _kernelLogger = new StructuredLogger({ module: "executionKernel" });
 import { getLatestReleasedToolVersion, getToolDefinition, getToolVersionByRef, type ToolDefinition, type ToolVersion } from "../modules/tools/toolRepo";
 import { resolveEffectiveToolRef } from "../modules/tools/resolve";
 import { isToolEnabled } from "../modules/governance/toolGovernanceRepo";
@@ -28,6 +31,9 @@ import { createApproval } from "../modules/workflow/approvalRepo";
 import { appendStepToRun, createJobRunStep } from "../modules/workflow/jobRepo";
 import { enqueueWorkflowStep, setRunAndJobStatus } from "../modules/workflow/queue";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
+import { resolveConfig } from "../modules/governance/configGovernanceRepo";
+import { runPreExecutionChecks, type CheckpointContext, type GovernanceCheckpoint } from "./governanceCheckpoint";
+import { assessToolExecutionRisk } from "./approvalRuleEngine";
 
 /* ================================================================== */
 /*  Phase 1 — Resolve & Validate Tool                                  */
@@ -161,6 +167,64 @@ export interface AdmittedTool {
  */
 export async function admitAndBuildStepEnvelope(params: AdmitToolParams): Promise<AdmittedTool> {
   const { pool, tenantId, spaceId, subjectId, resolved, opDecision } = params;
+
+  // ── P0-2: 运行时治理检查点（准入阶段） ──
+  // 在 admission 之前执行策略、安全检查
+  if (spaceId && subjectId) {
+    const govCtx: CheckpointContext = {
+      tenantId,
+      spaceId,
+      subjectId,
+      runId: "",  // 尚未创建 run，留空
+      toolRef: resolved.toolRef,
+      input: params.limits ?? {},
+    };
+    try {
+      const checkpoint = await runPreExecutionChecks({ pool, context: govCtx });
+      if (!checkpoint.overallPassed && checkpoint.blockingFailures > 0) {
+        const blockingResults = checkpoint.results.filter(r => !r.passed && r.blocking);
+        const firstBlocking = blockingResults[0];
+        if (firstBlocking?.checkType === "policy" && firstBlocking.metadata?.requiresApproval) {
+          // 策略要求审批 —— 不阻止，交由后续 approval 流程处理
+        } else {
+          throw Errors.badRequest(
+            firstBlocking?.message ?? "治理检查未通过"
+          );
+        }
+      }
+    } catch (err: any) {
+      // 治理检查本身的 Errors 直接抛出，其它异常按 fail-closed 处理
+      if (err?.httpStatus) throw err;
+      // ── 降级审计：记录治理检查基础设施异常，确保可追溯 ──
+      const degradedDetail = {
+        tenantId,
+        spaceId,
+        subjectId,
+        toolRef: resolved.toolRef,
+        errorMessage: err?.message ?? "unknown",
+        errorName: err?.name ?? "Error",
+        degradedAt: new Date().toISOString(),
+      };
+      _kernelLogger.error(
+        "governance pre-check failed (degraded)",
+        degradedDetail as Record<string, unknown>,
+      );
+      // 异步写入审计表（降级记录），不阻塞主流程
+      insertAuditEvent(pool, {
+        tenantId,
+        spaceId,
+        subjectId,
+        resourceType: "governance",
+        action: "pre_check.degraded",
+        inputDigest: degradedDetail,
+        outputDigest: { degraded: true },
+        result: "error",
+        traceId: "",
+      }).catch(() => { /* 审计写入失败不影响主流程 */ });
+      throw Errors.badRequest("治理检查不可用，已拒绝执行");
+    }
+  }
+
   const admitted = await admitToolExecution({
     pool,
     tenantId,
@@ -287,10 +351,45 @@ export type SubmitResult =
       idempotencyKey?: string | null;
     };
 
+export const APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY = "APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK";
+
+export function buildApprovalInputDigest(params: {
+  inputDigest: any;
+  resolved: ResolvedTool;
+  requireDualApprovalForHighRisk: boolean;
+}): Record<string, any> | null {
+  const approvalRequired = Boolean(params.resolved.definition.approvalRequired) || params.resolved.definition.riskLevel === "high";
+  const baseInputDigest =
+    params.inputDigest && typeof params.inputDigest === "object" && !Array.isArray(params.inputDigest)
+      ? params.inputDigest
+      : null;
+
+  if (!(approvalRequired && params.resolved.definition.riskLevel === "high" && params.requireDualApprovalForHighRisk)) {
+    return baseInputDigest ?? params.inputDigest ?? null;
+  }
+
+  return {
+    ...(baseInputDigest ?? {}),
+    approvalPolicy: {
+      ...(baseInputDigest?.approvalPolicy && typeof baseInputDigest.approvalPolicy === "object" ? baseInputDigest.approvalPolicy : {}),
+      requireDualApproval: true,
+    },
+  };
+}
+
+async function shouldRequireDualApprovalForHighRisk(params: { pool: Pool; tenantId: string }): Promise<boolean> {
+  const resolved = await resolveConfig({
+    pool: params.pool,
+    tenantId: params.tenantId,
+    configKey: APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY,
+  });
+  return Boolean(resolved.value);
+}
+
 /**
  * Phase 3a: Create a new Run + Job + Step, then enqueue or request approval.
  *
- * Used by orchestrator/execute and routes/tools.ts execute.
+ * Used by orchestrator/dispatch/execute and routes/tools.ts execute.
  */
 export async function submitNewToolRun(params: SubmitNewRunParams): Promise<SubmitResult> {
   const { pool, queue, tenantId, resolved, opDecision, stepInput, createdBySubjectId, trigger, masterKey } = params;
@@ -375,8 +474,23 @@ async function _handleApprovalOrEnqueue(params: {
   const stepId = step.stepId ?? step.step_id;
 
   const approvalRequired = Boolean(resolved.definition.approvalRequired) || resolved.definition.riskLevel === "high";
+  const requireDualApprovalForHighRisk = approvalRequired
+    ? await shouldRequireDualApprovalForHighRisk({ pool, tenantId })
+    : false;
+  const approvalInputDigest = buildApprovalInputDigest({
+    inputDigest: step.inputDigest,
+    resolved,
+    requireDualApprovalForHighRisk,
+  });
 
   if (approvalRequired) {
+    await pool.query("UPDATE steps SET status = 'needs_approval', updated_at = now() WHERE step_id = $1", [stepId]);
+    if (JSON.stringify(step.inputDigest ?? null) !== JSON.stringify(approvalInputDigest ?? null)) {
+      await pool.query("UPDATE steps SET input_digest = $2 WHERE step_id = $1", [stepId, approvalInputDigest]);
+      await pool.query("UPDATE runs SET input_digest = $2 WHERE run_id = $1", [runId, approvalInputDigest]);
+      step.inputDigest = approvalInputDigest;
+      run.inputDigest = approvalInputDigest;
+    }
     await setRunAndJobStatus({ pool, tenantId, runId, jobId, runStatus: "needs_approval", jobStatus: "needs_approval" });
     const approval = await createApproval({
       pool,
@@ -387,7 +501,18 @@ async function _handleApprovalOrEnqueue(params: {
       requestedBySubjectId: subjectId ?? "",
       toolRef: resolved.toolRef,
       policySnapshotRef: opDecision.snapshotRef ?? null,
-      inputDigest: step.inputDigest ?? null,
+      inputDigest: approvalInputDigest,
+      assessmentContext: await assessToolExecutionRisk({
+        pool,
+        tenantId,
+        toolRef: resolved.toolRef,
+        inputDraft: (typeof step.inputDigest === "object" && step.inputDigest) ? step.inputDigest : {},
+        toolDefinition: resolved.definition ? {
+          riskLevel: resolved.definition.riskLevel as any,
+          approvalRequired: resolved.definition.approvalRequired,
+          scope: resolved.definition.scope ?? undefined,
+        } : undefined,
+      }),
     });
     await insertAuditEvent(pool, {
       subjectId: subjectId ?? undefined,

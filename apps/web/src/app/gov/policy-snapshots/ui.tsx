@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { Badge, Card, PageHeader, Table, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { numberField, stringField, toDisplayText, toRecord } from "@/lib/viewData";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type Cursor = { createdAt: string; snapshotId: string };
 type PolicySnapshotRow = {
   snapshotId: string;
@@ -22,23 +24,51 @@ type PolicySnapshotRow = {
 };
 type ListResponse = ApiError & { items?: PolicySnapshotRow[]; nextCursor?: Cursor };
 
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
+function normalizeCursor(value: unknown): Cursor | undefined {
+  const record = toRecord(value);
+  if (!record) return undefined;
+  const createdAt = toDisplayText(record.createdAt);
+  const snapshotId = toDisplayText(record.snapshotId);
+  if (!createdAt || !snapshotId) return undefined;
+  return { createdAt, snapshotId };
 }
 
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
+function normalizeRow(value: unknown): PolicySnapshotRow | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  const snapshotId = toDisplayText(record.snapshotId);
+  if (!snapshotId) return null;
+  return {
+    snapshotId,
+    tenantId: toDisplayText(record.tenantId),
+    spaceId: record.spaceId == null ? null : toDisplayText(record.spaceId),
+    subjectId: toDisplayText(record.subjectId),
+    resourceType: toDisplayText(record.resourceType),
+    action: toDisplayText(record.action),
+    decision: toDisplayText(record.decision) === "deny" ? "deny" : "allow",
+    reason: record.reason == null ? null : toDisplayText(record.reason),
+    rowFilters: record.rowFilters ?? null,
+    fieldRules: record.fieldRules ?? null,
+    createdAt: toDisplayText(record.createdAt),
+  };
+}
+
+function normalizeListResponse(value: unknown): ListResponse | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  return {
+    errorCode: stringField(record, "errorCode"),
+    message: record.message,
+    traceId: stringField(record, "traceId"),
+    dimension: stringField(record, "dimension"),
+    retryAfterSec: numberField(record, "retryAfterSec"),
+    items: Array.isArray(record.items) ? record.items.map(normalizeRow).filter((item): item is PolicySnapshotRow => Boolean(item)) : undefined,
+    nextCursor: normalizeCursor(record.nextCursor),
+  };
 }
 
 export default function GovPolicySnapshotsClient(props: { locale: string; initial: unknown; initialStatus: number }) {
-  const [data, setData] = useState<ListResponse | null>((props.initial as ListResponse) ?? null);
+  const [data, setData] = useState<ListResponse | null>(normalizeListResponse(props.initial));
   const [status, setStatus] = useState<number>(props.initialStatus);
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -77,7 +107,7 @@ export default function GovPolicySnapshotsClient(props: { locale: string; initia
       setStatus(res.status);
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
-      const out = (json as ListResponse) ?? {};
+      const out = normalizeListResponse(json) ?? {};
       if (!params.append) {
         setData(out);
       } else {
@@ -103,7 +133,7 @@ export default function GovPolicySnapshotsClient(props: { locale: string; initia
         title={t(props.locale, "gov.policySnapshots.title")}
         actions={
           <>
-            <Badge>{status}</Badge>
+            <StatusBadge locale={props.locale} status={status} />
             <button onClick={() => fetchList({ append: false })} disabled={busy}>
               {t(props.locale, "action.refresh")}
             </button>
@@ -185,20 +215,23 @@ export default function GovPolicySnapshotsClient(props: { locale: string; initia
               </tr>
             </thead>
             <tbody>
-              {items.map((r) => {
-                const href = `/gov/policy-snapshots/${encodeURIComponent(r.snapshotId)}?lang=${encodeURIComponent(props.locale)}`;
+              {items.length === 0 ? (
+                  <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                ) : items.map((r) => {
+                const snapshotIdText = toDisplayText(r.snapshotId);
+                const href = `/gov/policy-snapshots/${encodeURIComponent(snapshotIdText)}?lang=${encodeURIComponent(props.locale)}`;
                 return (
-                  <tr key={r.snapshotId}>
-                    <td>{r.createdAt}</td>
+                  <tr key={snapshotIdText}>
+                    <td>{fmtDateTime(r.createdAt, props.locale)}</td>
                     <td>
-                      <Badge>{r.decision}</Badge>
+                      <Badge>{toDisplayText(r.decision)}</Badge>
                     </td>
-                    <td>{r.resourceType}</td>
-                    <td>{r.action}</td>
-                    <td>{r.subjectId}</td>
-                    <td>{r.spaceId ?? ""}</td>
+                    <td>{toDisplayText(r.resourceType)}</td>
+                    <td>{toDisplayText(r.action)}</td>
+                    <td>{toDisplayText(r.subjectId)}</td>
+                    <td>{toDisplayText(r.spaceId)}</td>
                     <td>
-                      <a href={href}>{r.snapshotId}</a>
+                      <a href={href}>{snapshotIdText}</a>
                     </td>
                   </tr>
                 );

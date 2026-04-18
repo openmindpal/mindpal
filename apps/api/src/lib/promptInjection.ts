@@ -7,8 +7,9 @@
  *
  * All heavy lifting is delegated to @openslin/shared.
  */
-import { detectPromptInjection, resolvePromptInjectionPolicy, resolvePromptInjectionPolicyFromEnv, shouldDenyPromptInjection } from "@openslin/shared";
-import type { PromptInjectionMode, PromptInjectionPolicy } from "@openslin/shared";
+import { detectPromptInjection, resolvePromptInjectionPolicy, resolvePromptInjectionPolicyFromEnv, shouldDenyPromptInjection, resolveRuntimeConfig } from "@openslin/shared";
+import type { PromptInjectionMode, PromptInjectionPolicy, RuntimeConfigOverrides } from "@openslin/shared";
+import { getConfigOverridesWithHotCache } from "./hotConfigEngine";
 
 export type PromptInjectionSummary = {
   hitCount: number;
@@ -30,6 +31,33 @@ export function getPromptInjectionDenyTargetsFromEnv(): Set<string> {
 
 export function getPromptInjectionPolicyFromEnv(): PromptInjectionPolicy {
   return resolvePromptInjectionPolicyFromEnv();
+}
+
+/**
+ * P2-04b: 从热配置 + env + 默认值解析 Prompt Injection 策略。
+ * 优先级：governance 覆盖 > 环境变量 > 注册表默认值
+ */
+export function resolvePromptInjectionPolicyFromHotConfig(tenantOverrides: RuntimeConfigOverrides = {}): PromptInjectionPolicy {
+  const env = process.env as Record<string, string | undefined>;
+  const mode = resolveRuntimeConfig("SAFETY_PI_MODE", env, tenantOverrides).value;
+  const denyTargets = resolveRuntimeConfig("SAFETY_PI_DENY_TARGETS", env, tenantOverrides).value;
+  const denyScore = resolveRuntimeConfig("SAFETY_PI_DENY_SCORE", env, tenantOverrides).value;
+  return resolvePromptInjectionPolicy({ version: "v1", mode, denyTargets, denyScore });
+}
+
+/**
+ * P2-04b: 异步获取结合热配置的 PI 策略（带租户上下文）
+ */
+export async function getPromptInjectionPolicyWithHotConfig(params: {
+  pool: any;
+  tenantId: string;
+}): Promise<PromptInjectionPolicy> {
+  try {
+    const overrides = await getConfigOverridesWithHotCache({ pool: params.pool, tenantId: params.tenantId });
+    return resolvePromptInjectionPolicyFromHotConfig(overrides);
+  } catch {
+    return resolvePromptInjectionPolicyFromEnv();
+  }
 }
 
 export function scanPromptInjection(text: string) {

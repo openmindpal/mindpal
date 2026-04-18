@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader } from "@/components/ui";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { Badge, Card, PageHeader, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { numberField, stringField, toDisplayText, toRecord } from "@/lib/viewData";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type ExplainView = ApiError & {
   snapshotId?: string;
   tenantId?: string;
@@ -20,19 +22,27 @@ type ExplainView = ApiError & {
   createdAt?: string;
 };
 
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
+function normalizeExplainView(value: unknown): ExplainView | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  return {
+    errorCode: stringField(record, "errorCode"),
+    message: record.message,
+    traceId: stringField(record, "traceId"),
+    dimension: stringField(record, "dimension"),
+    retryAfterSec: numberField(record, "retryAfterSec"),
+    snapshotId: toDisplayText(record.snapshotId),
+    tenantId: toDisplayText(record.tenantId),
+    spaceId: record.spaceId == null ? null : toDisplayText(record.spaceId),
+    resourceType: toDisplayText(record.resourceType),
+    action: toDisplayText(record.action),
+    decision: toDisplayText(record.decision),
+    reason: record.reason == null ? null : toDisplayText(record.reason),
+    matchedRules: record.matchedRules ?? null,
+    rowFilters: record.rowFilters ?? null,
+    fieldRules: record.fieldRules ?? null,
+    createdAt: toDisplayText(record.createdAt),
+  };
 }
 
 function jsonBlock(v: unknown) {
@@ -44,7 +54,7 @@ function jsonBlock(v: unknown) {
 }
 
 export default function GovPolicySnapshotDetailClient(props: { locale: string; snapshotId: string; initial: unknown; initialStatus: number }) {
-  const [data, setData] = useState<ExplainView | null>((props.initial as ExplainView) ?? null);
+  const [data, setData] = useState<ExplainView | null>(normalizeExplainView(props.initial));
   const [status, setStatus] = useState<number>(props.initialStatus);
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -59,8 +69,9 @@ export default function GovPolicySnapshotDetailClient(props: { locale: string; s
       });
       setStatus(res.status);
       const json: unknown = await res.json().catch(() => null);
-      setData((json as ExplainView) ?? null);
-      if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
+      const normalized = normalizeExplainView(json);
+      setData(normalized);
+      if (!res.ok) setError(errText(props.locale, normalized ?? { errorCode: String(res.status) }));
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -85,7 +96,7 @@ export default function GovPolicySnapshotDetailClient(props: { locale: string; s
         title={t(props.locale, "gov.policySnapshotDetail.title")}
         actions={
           <>
-            <Badge>{status}</Badge>
+            <StatusBadge locale={props.locale} status={status} />
             <button onClick={refresh} disabled={busy}>
               {t(props.locale, "action.refresh")}
             </button>
@@ -101,25 +112,25 @@ export default function GovPolicySnapshotDetailClient(props: { locale: string; s
         <Card title={t(props.locale, "gov.policySnapshotDetail.metaTitle")}>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <div>
-              <b>{t(props.locale, "gov.policySnapshots.snapshotId")}</b>: {data?.snapshotId ?? props.snapshotId}{" "}
-              <button onClick={() => copy(String(data?.snapshotId ?? props.snapshotId))} disabled={busy}>
+              <b>{t(props.locale, "gov.policySnapshots.snapshotId")}</b>: {toDisplayText(data?.snapshotId ?? props.snapshotId)}{" "}
+              <button onClick={() => copy(toDisplayText(data?.snapshotId ?? props.snapshotId))} disabled={busy}>
                 {t(props.locale, "action.copy")}
               </button>
             </div>
             <div>
-              <b>{t(props.locale, "gov.policySnapshots.createdAt")}</b>: {data?.createdAt ?? ""}
+              <b>{t(props.locale, "gov.policySnapshots.createdAt")}</b>: {fmtDateTime(data?.createdAt, props.locale)}
             </div>
             <div>
-              <b>{t(props.locale, "gov.policySnapshots.resourceType")}</b>: {data?.resourceType ?? ""}
+              <b>{t(props.locale, "gov.policySnapshots.resourceType")}</b>: {toDisplayText(data?.resourceType)}
             </div>
             <div>
-              <b>{t(props.locale, "gov.policySnapshots.action")}</b>: {data?.action ?? ""}
+              <b>{t(props.locale, "gov.policySnapshots.action")}</b>: {toDisplayText(data?.action)}
             </div>
             <div>
-              <b>tenantId</b>: {data?.tenantId ?? ""}
+              <b>tenantId</b>: {toDisplayText(data?.tenantId)}
             </div>
             <div>
-              <b>{t(props.locale, "gov.policySnapshots.spaceId")}</b>: {data?.spaceId ?? ""}
+              <b>{t(props.locale, "gov.policySnapshots.spaceId")}</b>: {toDisplayText(data?.spaceId)}
             </div>
           </div>
         </Card>
@@ -129,10 +140,10 @@ export default function GovPolicySnapshotDetailClient(props: { locale: string; s
         <Card title={t(props.locale, "gov.policySnapshotDetail.decisionTitle")}>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
             <div>
-              <b>{t(props.locale, "gov.policySnapshots.decision")}</b>: <Badge>{String(data?.decision ?? "")}</Badge>
+              <b>{t(props.locale, "gov.policySnapshots.decision")}</b>: <Badge>{toDisplayText(data?.decision)}</Badge>
             </div>
             <div>
-              <b>{t(props.locale, "gov.policySnapshotDetail.reason")}</b>: {data?.reason ? String(data.reason) : ""}
+              <b>{t(props.locale, "gov.policySnapshotDetail.reason")}</b>: {data?.reason ? toDisplayText(data.reason) : ""}
             </div>
           </div>
         </Card>

@@ -48,8 +48,8 @@ async function spawnAsync(
     });
     let stdout = "";
     let stderr = "";
-    p.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-    p.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    p.stdout.on("data", (d: Buffer) => { stdout += d.toString("utf8"); });
+    p.stderr.on("data", (d: Buffer) => { stderr += d.toString("utf8"); });
     if (opts?.stdin) { p.stdin.write(opts.stdin); p.stdin.end(); } else { p.stdin.end(); }
     p.on("error", reject);
     p.on("exit", (code) => resolve({ code: code ?? 1, stdout, stderr }));
@@ -123,6 +123,7 @@ export async function ocrScreen(capture: ScreenCapture): Promise<OcrMatch[]> {
 async function ocrWindows(capture: ScreenCapture): Promise<OcrMatch[]> {
   // 通过 PowerShell 调用 WinRT OCR API，输出 JSON 格式结果
   const script = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Media.Ocr.OcrEngine,Windows.Foundation,ContentType=WindowsRuntime]
 $null = [Windows.Graphics.Imaging.BitmapDecoder,Windows.Foundation,ContentType=WindowsRuntime]
@@ -268,7 +269,9 @@ export async function moveMouse(x: number, y: number): Promise<void> {
 
   if (process.platform === "win32") {
     const script = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${ix},${iy})`;
-    await spawnAsync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]);
+    const r = await spawnAsync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]);
+    if (r.code !== 0) throw new Error(`moveMouse failed (exit ${r.code}): ${r.stderr.slice(0, 300)}`);
+    console.log(`[moveMouse] moved to (${ix},${iy}) ok`);
     return;
   }
   if (process.platform === "darwin") {
@@ -302,7 +305,9 @@ export async function clickMouse(x: number, y: number, button: "left" | "right" 
       `'@`,
       `[MouseSim]::Click(${button === "right" ? "$true" : "$false"})`,
     ].join("\n");
-    await spawnAsync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]);
+    const r = await spawnAsync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]);
+    if (r.code !== 0) throw new Error(`clickMouse failed (exit ${r.code}): ${r.stderr.slice(0, 300)}`);
+    console.log(`[clickMouse] clicked at (${ix},${iy}) button=${button} ok`);
     return;
   }
   if (process.platform === "darwin") {
@@ -324,7 +329,20 @@ export async function doubleClick(x: number, y: number): Promise<void> {
 
 export async function typeText(text: string): Promise<void> {
   if (process.platform === "win32") {
-    // 使用 SendKeys 输入文字（对特殊字符做转义）
+    // 检测是否包含非 ASCII 字符（中文、日文等）
+    const hasNonAscii = /[^\x00-\x7F]/.test(text);
+    if (hasNonAscii) {
+      // SendKeys 不支持 CJK/Unicode 字符，使用剪贴板 + Ctrl+V 方式输入
+      const script = [
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+        `Set-Clipboard -Value '${text.replaceAll("'", "''")}'`,
+        "Add-Type -AssemblyName System.Windows.Forms",
+        "[System.Windows.Forms.SendKeys]::SendWait('^v')",
+      ].join("; ");
+      await spawnAsync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]);
+      return;
+    }
+    // ASCII 文字使用 SendKeys 直接输入（对特殊字符做转义）
     const escaped = text
       .replace(/[+^%~(){}[\]]/g, "{$&}")
       .replace(/\n/g, "{ENTER}");

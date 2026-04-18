@@ -1,0 +1,42 @@
+{
+  "identity": {
+    "name": "memory.graph.query",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "记忆图谱查询",
+    "en-US": "Memory Graph Query"
+  },
+  "description": {
+    "zh-CN": "基于任务相似度查询记忆图谱，找出相关的历史任务运行记录及其关联关系",
+    "en-US": "Queries memory graph based on task similarity to find related historical task runs and their relationships"
+  },
+  "category": "ai",
+  "priority": 7,
+  "tags": ["memory", "graph", "similarity", "history"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "memory",
+    "action": "graph_query",
+    "idempotencyRequired": false,
+    "riskLevel": "low",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "currentSummary": { "type": "string", "required": true, "description": "当前任务摘要文本" },
+        "candidates": { "type": "json", "required": true, "description": "候选任务列表 [{runId, summary, phase, createdAt}]" },
+        "topK": { "type": "number", "description": "返回最相关的前K个结果，默认5" },
+        "minSimilarity": { "type": "number", "description": "最低相似度阈值 0-1，默认0.15" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "relatedRuns": { "type": "json", "required": true, "description": "[{runId, similarity, summary, relationship}]" },
+        "graphEdges": { "type": "json", "required": true, "description": "[{from, to, weight, reason}]" }
+      }
+    }
+  },
+  "entry": "dist/index.js"
+}

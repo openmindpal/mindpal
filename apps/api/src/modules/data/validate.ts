@@ -1,14 +1,11 @@
 import type { SchemaDef } from "../metadata/schemaModel";
 import type { Pool, PoolClient } from "pg";
+import { isPlainObject } from "@openslin/shared";
 
 type ValidationError = { ok: false; reason: string };
 type ValidationOk = { ok: true };
 
 export type ValidationResult = ValidationOk | ValidationError;
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
 
 function checkType(type: string, value: unknown): boolean {
   if (value === null || value === undefined) return true;

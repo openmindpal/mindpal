@@ -25,7 +25,7 @@ const masterKey = cfg.secrets.masterKey;
 const cwd = process.cwd();
 const isWorkerCwd = cwd.replaceAll("\\", "/").endsWith("/apps/worker");
 const migrationsDir = isWorkerCwd ? path.resolve(cwd, "../api/migrations") : path.resolve(cwd, "apps/api/migrations");
-const seedSchemaPath = isWorkerCwd ? path.resolve(cwd, "../api/seed/core.schema.json") : path.resolve(cwd, "apps/api/seed/core.schema.json");
+const TEST_SCHEMA_NAME = "testkit";
 
 function withCapabilityEnvelope(input: any) {
   const tenantId = typeof input?.tenantId === "string" ? String(input.tenantId) : "tenant_dev";
@@ -86,16 +86,26 @@ async function seed() {
     [JSON.stringify(encryptJson(masterKey, { k: pk }))],
   );
 
-  const schemaExists = await pool.query("SELECT 1 FROM schemas WHERE name = 'core' AND status = 'released' LIMIT 1");
-  if (!schemaExists.rowCount) {
-    const raw = await fs.readFile(seedSchemaPath, "utf8");
-    const schema = JSON.parse(raw);
-    schema.version = 1;
-    await pool.query(
-      "INSERT INTO schemas (name, version, status, schema_json, published_at) VALUES ('core', 1, 'released', $1, now())",
-      [schema],
-    );
-  }
+  const testSchema = {
+    name: TEST_SCHEMA_NAME,
+    version: 1,
+    displayName: { "zh-CN": "测试 Schema", "en-US": "Test Schema" },
+    entities: {
+      test_items: {
+        displayName: { "zh-CN": "测试项", "en-US": "Test Item" },
+        inlineCreatable: true,
+        fields: {
+          title: { type: "string" },
+          content: { type: "string" },
+        },
+      },
+    },
+  };
+  await pool.query("DELETE FROM schemas WHERE name = $1", [TEST_SCHEMA_NAME]);
+  await pool.query(
+    "INSERT INTO schemas (name, version, status, schema_json, published_at) VALUES ($1, 1, 'released', $2, now())",
+    [TEST_SCHEMA_NAME, testSchema],
+  );
 
   await pool.query(
     `
@@ -285,8 +295,8 @@ describe("workflow tooling", () => {
 
   it("computeWriteLeaseResourceRef 对 entity 与 memory 生成稳定资源键", () => {
     expect(computeWriteLeaseResourceRef({ toolName: "memory.write", spaceId: "space_dev", idempotencyKey: null, toolInput: {} })).toBe("memory:space_dev");
-    expect(computeWriteLeaseResourceRef({ toolName: "entity.create", spaceId: "space_dev", idempotencyKey: "idem1", toolInput: { entityName: "notes" } })).toBe("entity:notes:create:idem1");
-    expect(computeWriteLeaseResourceRef({ toolName: "entity.update", spaceId: "space_dev", idempotencyKey: null, toolInput: { entityName: "notes", id: "r1" } })).toBe("entity:notes:r1");
+    expect(computeWriteLeaseResourceRef({ toolName: "entity.create", spaceId: "space_dev", idempotencyKey: "idem1", toolInput: { entityName: "test_items" } })).toBe("entity:test_items:create:idem1");
+    expect(computeWriteLeaseResourceRef({ toolName: "entity.update", spaceId: "space_dev", idempotencyKey: null, toolInput: { entityName: "test_items", id: "r1" } })).toBe("entity:test_items:r1");
   });
 
   it("buildSafeToolOutput 对大字段做裁剪", () => {
@@ -351,8 +361,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
               }
               const payload = (await readBody()) ?? {};
               const inserted = await pool.query(
-                "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id) VALUES ('tenant_dev','space_dev',$1,'core',1,$2,'admin') RETURNING id",
-                [entityName, payload],
+                "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id) VALUES ('tenant_dev','space_dev',$1,$2,1,$3,'admin') RETURNING id",
+                [entityName, TEST_SCHEMA_NAME, payload],
               );
               const recordId = String(inserted.rows[0].id);
               await pool.query(
@@ -474,7 +484,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
       toolContract: { scope: "write", resourceType: "entity", action: "create", fieldRules: { read: { allow: ["*"] }, write: { allow: ["*"] } }, rowFilters: null },
       limits: {},
       networkPolicy: { allowedDomains: [], rules: [] },
-      input: { schemaName: "core", entityName: "notes", payload: { title: "w" } },
+      input: { schemaName: TEST_SCHEMA_NAME, entityName: "test_items", payload: { title: "w" } },
     });
     const env = await encryptSecretEnvelopeWithKeyVersion({
       pool,
@@ -545,7 +555,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
       "INSERT INTO steps (run_id, seq, status, tool_ref, input, input_digest, error_category, last_error) VALUES ($1, 1, 'failed', 'entity.create@1', $2, $3, 'retryable', 'boom') RETURNING step_id",
       [
         run.rows[0].run_id,
-        { toolRef: "entity.create@1", traceId: "trace-worker-dlq-1", spaceId: "space_dev", subjectId: "admin", input: { schemaName: "core", entityName: "notes", payload: { title: "w" } } },
+        { toolRef: "entity.create@1", traceId: "trace-worker-dlq-1", spaceId: "space_dev", subjectId: "admin", input: { schemaName: TEST_SCHEMA_NAME, entityName: "test_items", payload: { title: "w" } } },
         { toolRef: "entity.create@1" },
       ],
     );
@@ -669,17 +679,17 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
     const mig = await pool.query(
       `
         INSERT INTO schema_migrations (tenant_id, scope_type, scope_id, schema_name, target_version, kind, plan_json, status, created_by_subject_id)
-        VALUES ($1,'tenant',$1,'core',1,'unsupported_kind',$2::jsonb,'created','admin')
+        VALUES ($1,'tenant',$1,$2,1,'unsupported_kind',$3::jsonb,'created','admin')
         RETURNING migration_id
       `,
-      [tenantId, { batchSize: 1 }],
+      [tenantId, TEST_SCHEMA_NAME, { batchSize: 1 }],
     );
     const migrationId = String(mig.rows[0].migration_id);
     const step = await pool.query(
       "INSERT INTO steps (run_id, seq, status, tool_ref, input, input_digest) VALUES ($1, 1, 'pending', NULL, $2, $3) RETURNING step_id",
       [
         run.rows[0].run_id,
-        { kind: "schema.migration", migrationId, tenantId, scopeType: "tenant", scopeId: tenantId, schemaName: "core", targetVersion: 1, traceId: "t-mig-unsupported", subjectId: "admin" },
+        { kind: "schema.migration", migrationId, tenantId, scopeType: "tenant", scopeId: tenantId, schemaName: TEST_SCHEMA_NAME, targetVersion: 1, traceId: "t-mig-unsupported", subjectId: "admin" },
         { kind: "schema.migration", migrationId },
       ],
     );
@@ -737,8 +747,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
   it("执行 entity.update@1 并写入审计", async () => {
     const rec = await pool.query(
-      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id) VALUES ('tenant_dev', 'space_dev', 'notes', 'core', 1, $1, 'admin') RETURNING id",
-      [{ title: "a" }],
+      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id) VALUES ('tenant_dev', 'space_dev', 'test_items', $1, 1, $2, 'admin') RETURNING id",
+      [TEST_SCHEMA_NAME, { title: "a" }],
     );
     const job = await pool.query("INSERT INTO jobs (tenant_id, job_type, status) VALUES ('tenant_dev', 'tool.execute', 'queued') RETURNING job_id");
     const run = await pool.query(
@@ -757,7 +767,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
           toolContract: { scope: "write", resourceType: "entity", action: "update", fieldRules: { read: { allow: ["*"] }, write: { allow: ["*"] } }, rowFilters: null },
           limits: {},
           networkPolicy: { allowedDomains: [], rules: [] },
-          input: { schemaName: "core", entityName: "notes", id: rec.rows[0].id, patch: { title: "b" } },
+          input: { schemaName: TEST_SCHEMA_NAME, entityName: "test_items", id: rec.rows[0].id, patch: { title: "b" } },
         }),
         { toolRef: "entity.update@1" },
       ],
@@ -864,6 +874,76 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
     const a = await pool.query("SELECT output_digest FROM audit_events WHERE trace_id = $1 ORDER BY timestamp DESC, event_id DESC LIMIT 1", ["trace-cap-invalid"]);
     expect(a.rowCount).toBe(1);
     expect(a.rows[0].output_digest?.capabilityEnvelopeSummary?.status).toBe("invalid");
+  });
+
+  it("篡改 capabilityEnvelope：按 mismatch fail-closed 并写入差异摘要（worker）", async () => {
+    const job = await pool.query("INSERT INTO jobs (tenant_id, job_type, status) VALUES ('tenant_dev', 'tool.execute', 'queued') RETURNING job_id");
+    const run = await pool.query(
+      "INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key) VALUES ('tenant_dev', 'created', 'sleep@1', $1, $2) RETURNING run_id",
+      [{ toolRef: "sleep@1" }, `idem-cap-mismatch-${crypto.randomUUID()}`],
+    );
+    const input = withCapabilityEnvelope({
+      toolRef: "sleep@1",
+      traceId: "trace-cap-mismatch",
+      spaceId: "space_dev",
+      subjectId: "admin",
+      toolContract: { scope: "read", resourceType: "tool", action: "execute", fieldRules: { read: { allow: ["*"] }, write: { allow: ["*"] } }, rowFilters: null },
+      limits: { timeoutMs: 1000, maxConcurrency: 10 },
+      networkPolicy: { allowedDomains: [], rules: [] },
+      input: { ms: 1 },
+    }) as any;
+    input.capabilityEnvelope.dataDomain.toolContract.action = "tampered";
+    const step = await pool.query(
+      "INSERT INTO steps (run_id, seq, status, tool_ref, input) VALUES ($1, 1, 'pending', 'sleep@1', $2) RETURNING step_id",
+      [run.rows[0].run_id, input],
+    );
+    await processStep({ pool, masterKey, jobId: job.rows[0].job_id, runId: run.rows[0].run_id, stepId: step.rows[0].step_id });
+    const s = await pool.query("SELECT status, error_category, last_error FROM steps WHERE step_id = $1", [step.rows[0].step_id]);
+    expect(s.rows[0].status).toBe("failed");
+    expect(s.rows[0].error_category).toBe("policy_violation");
+    expect(String(s.rows[0].last_error ?? "")).toContain("policy_violation:capability_envelope_mismatch:dataDomain");
+    const a = await pool.query("SELECT output_digest FROM audit_events WHERE trace_id = $1 ORDER BY timestamp DESC, event_id DESC LIMIT 1", ["trace-cap-mismatch"]);
+    expect(a.rowCount).toBe(1);
+    expect(a.rows[0].output_digest?.capabilityEnvelopeSummary?.status).toBe("mismatch");
+    expect(a.rows[0].output_digest?.capabilityEnvelopeSummary?.diffs).toContain("dataDomain");
+  });
+
+  it("角色工具白名单允许使用无版本工具名匹配已解析 toolRef（worker）", async () => {
+    const job = await pool.query("INSERT INTO jobs (tenant_id, job_type, status) VALUES ('tenant_dev', 'tool.execute', 'queued') RETURNING job_id");
+    const run = await pool.query(
+      "INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key) VALUES ('tenant_dev', 'created', 'sleep@1', $1, $2) RETURNING run_id",
+      [{ toolRef: "sleep@1" }, `idem-collab-role-${crypto.randomUUID()}`],
+    );
+    const step = await pool.query(
+      "INSERT INTO steps (run_id, seq, status, tool_ref, input) VALUES ($1, 1, 'pending', 'sleep@1', $2) RETURNING step_id",
+      [
+        run.rows[0].run_id,
+        withCapabilityEnvelope({
+          toolRef: "sleep@1",
+          traceId: "trace-collab-role-name-match",
+          spaceId: "space_dev",
+          subjectId: "admin",
+          collabRunId: `collab_${crypto.randomUUID()}`,
+          taskId: `task_${crypto.randomUUID()}`,
+          actorRole: "executor",
+          rolePermissionContext: {
+            roleName: "executor",
+            allowedTools: ["sleep"],
+            policySnapshotRef: "snap-role",
+          },
+          toolContract: { scope: "read", resourceType: "tool", action: "execute", fieldRules: { read: { allow: ["*"] }, write: { allow: ["*"] } }, rowFilters: null },
+          limits: { timeoutMs: 1000, maxConcurrency: 10 },
+          networkPolicy: { allowedDomains: [], rules: [] },
+          input: { ms: 1 },
+        }),
+      ],
+    );
+    await processStep({ pool, masterKey, jobId: job.rows[0].job_id, runId: run.rows[0].run_id, stepId: step.rows[0].step_id });
+    const s = await pool.query("SELECT status, error_category, last_error, output FROM steps WHERE step_id = $1", [step.rows[0].step_id]);
+    expect(s.rows[0].status).toBe("succeeded");
+    expect(s.rows[0].error_category).toBeNull();
+    expect(s.rows[0].last_error).toBeNull();
+    expect(s.rows[0].output?.sleptMs).toBe(1);
   });
 
   it("timeoutMs 超时生效（timeout）", async () => {
@@ -1018,8 +1098,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
   it("write lease busy：并发写被阻断（retryable）", async () => {
     const rec = await pool.query(
-      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id) VALUES ('tenant_dev', 'space_dev', 'notes', 'core', 1, $1, 'admin') RETURNING id",
-      [{ title: "a" }],
+      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id) VALUES ('tenant_dev', 'space_dev', 'test_items', $1, 1, $2, 'admin') RETURNING id",
+      [TEST_SCHEMA_NAME, { title: "a" }],
     );
     const job = await pool.query("INSERT INTO jobs (tenant_id, job_type, status) VALUES ('tenant_dev', 'tool.execute', 'queued') RETURNING job_id");
     const run = await pool.query(
@@ -1038,7 +1118,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
           toolContract: { scope: "write", resourceType: "entity", action: "update", fieldRules: { read: { allow: ["*"] }, write: { allow: ["*"] } }, rowFilters: null },
           limits: {},
           networkPolicy: { allowedDomains: [], rules: [] },
-          input: { schemaName: "core", entityName: "notes", id: rec.rows[0].id, patch: { title: "b" } },
+          input: { schemaName: TEST_SCHEMA_NAME, entityName: "test_items", id: rec.rows[0].id, patch: { title: "b" } },
         }),
       ],
     );
@@ -1048,7 +1128,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
         INSERT INTO workflow_write_leases (tenant_id, space_id, resource_ref, owner_run_id, owner_step_id, owner_trace_id, expires_at)
         VALUES ('tenant_dev', 'space_dev', $1, 'r1', 's1', 't1', now() + interval '60 seconds')
       `,
-      [`entity:notes:${rec.rows[0].id}`],
+      [`entity:test_items:${rec.rows[0].id}`],
     );
 
     await expect(processStep({ pool, masterKey, jobId: job.rows[0].job_id, runId: run.rows[0].run_id, stepId: step.rows[0].step_id })).rejects.toBeTruthy();
@@ -1060,8 +1140,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
   it("write lease TTL：过期后可重新获取并释放", async () => {
     const rec = await pool.query(
-      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id) VALUES ('tenant_dev', 'space_dev', 'notes', 'core', 1, $1, 'admin') RETURNING id",
-      [{ title: "a" }],
+      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id) VALUES ('tenant_dev', 'space_dev', 'test_items', $1, 1, $2, 'admin') RETURNING id",
+      [TEST_SCHEMA_NAME, { title: "a" }],
     );
     const job = await pool.query("INSERT INTO jobs (tenant_id, job_type, status) VALUES ('tenant_dev', 'tool.execute', 'queued') RETURNING job_id");
     const run = await pool.query(
@@ -1080,7 +1160,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
           toolContract: { scope: "write", resourceType: "entity", action: "update", fieldRules: { read: { allow: ["*"] }, write: { allow: ["*"] } }, rowFilters: null },
           limits: {},
           networkPolicy: { allowedDomains: [], rules: [] },
-          input: { schemaName: "core", entityName: "notes", id: rec.rows[0].id, patch: { title: "b" } },
+          input: { schemaName: TEST_SCHEMA_NAME, entityName: "test_items", id: rec.rows[0].id, patch: { title: "b" } },
         }),
       ],
     );
@@ -1090,7 +1170,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
         INSERT INTO workflow_write_leases (tenant_id, space_id, resource_ref, owner_run_id, owner_step_id, owner_trace_id, expires_at)
         VALUES ('tenant_dev', 'space_dev', $1, 'r1', 's1', 't1', now() - interval '1 second')
       `,
-      [`entity:notes:${rec.rows[0].id}`],
+      [`entity:test_items:${rec.rows[0].id}`],
     );
 
     await processStep({ pool, masterKey, jobId: job.rows[0].job_id, runId: run.rows[0].run_id, stepId: step.rows[0].step_id });
@@ -1098,7 +1178,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
     const s = await pool.query("SELECT status FROM steps WHERE step_id = $1", [step.rows[0].step_id]);
     expect(s.rows[0].status).toBe("succeeded");
     const lease = await pool.query("SELECT 1 FROM workflow_write_leases WHERE tenant_id = 'tenant_dev' AND space_id = 'space_dev' AND resource_ref = $1 LIMIT 1", [
-      `entity:notes:${rec.rows[0].id}`,
+      `entity:test_items:${rec.rows[0].id}`,
     ]);
     expect(lease.rowCount).toBe(0);
   });
@@ -1559,14 +1639,14 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
   it("执行 entity.export 并生成 export artifact", async () => {
     await pool.query(
-      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload) VALUES ('tenant_dev','space_dev','notes','core',1,$1)",
-      [{ title: "Export A", content: "c1" }],
+      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload) VALUES ('tenant_dev','space_dev','test_items',$1,1,$2)",
+      [TEST_SCHEMA_NAME, { title: "Export A", content: "c1" }],
     );
 
     const job = await pool.query("INSERT INTO jobs (tenant_id, job_type, status) VALUES ('tenant_dev', 'entity.export', 'queued') RETURNING job_id");
     const run = await pool.query(
-      "INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key) VALUES ('tenant_dev', 'created', 'entity.export:notes', $1, NULL) RETURNING run_id",
-      [{ entityName: "notes" }],
+      "INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key) VALUES ('tenant_dev', 'created', 'entity.export:test_items', $1, NULL) RETURNING run_id",
+      [{ entityName: "test_items" }],
     );
     const step = await pool.query(
       "INSERT INTO steps (run_id, seq, status, tool_ref, input) VALUES ($1, 1, 'pending', NULL, $2) RETURNING step_id",
@@ -1574,8 +1654,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
         run.rows[0].run_id,
         {
           kind: "entity.export",
-          entityName: "notes",
-          schemaName: "core",
+          entityName: "test_items",
+          schemaName: TEST_SCHEMA_NAME,
           query: { filters: { field: "title", op: "contains", value: "Export" } },
           select: ["title"],
           format: "jsonl",
@@ -1609,8 +1689,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
     const job = await pool.query("INSERT INTO jobs (tenant_id, job_type, status) VALUES ('tenant_dev', 'entity.import', 'queued') RETURNING job_id");
     const idem = `idem-import-${crypto.randomUUID()}`;
     const run = await pool.query(
-      "INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key) VALUES ('tenant_dev', 'created', 'entity.import:notes', $1, $2) RETURNING run_id",
-      [{ entityName: "notes" }, idem],
+      "INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key) VALUES ('tenant_dev', 'created', 'entity.import:test_items', $1, $2) RETURNING run_id",
+      [{ entityName: "test_items" }, idem],
     );
     const step = await pool.query(
       "INSERT INTO steps (run_id, seq, status, tool_ref, input) VALUES ($1, 1, 'pending', NULL, $2) RETURNING step_id",
@@ -1618,8 +1698,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
         run.rows[0].run_id,
         {
           kind: "entity.import",
-          entityName: "notes",
-          schemaName: "core",
+          entityName: "test_items",
+          schemaName: TEST_SCHEMA_NAME,
           format: "jsonl",
           records: [{ title: "Bulk 1" }, { title: 1 }],
           fieldRules: { read: { allow: ["*"], deny: [] }, write: { allow: ["*"], deny: [] } },
@@ -1644,7 +1724,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
     expect(report.rejectedCount).toBe(1);
 
     const exists = await pool.query(
-      "SELECT 1 FROM entity_records WHERE tenant_id = 'tenant_dev' AND space_id = 'space_dev' AND entity_name = 'notes' AND payload->>'title' = $1 LIMIT 1",
+      "SELECT 1 FROM entity_records WHERE tenant_id = 'tenant_dev' AND space_id = 'space_dev' AND entity_name = 'test_items' AND payload->>'title' = $1 LIMIT 1",
       ["Bulk 1"],
     );
     expect(exists.rowCount).toBe(1);
@@ -1652,8 +1732,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
   it("执行 space.backup 并生成 backup artifact 与 backups 记录", async () => {
     await pool.query(
-      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload) VALUES ('tenant_dev','space_dev','notes','core',1,$1)",
-      [{ title: "Backup A", content: "c1" }],
+      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload) VALUES ('tenant_dev','space_dev','test_items',$1,1,$2)",
+      [TEST_SCHEMA_NAME, { title: "Backup A", content: "c1" }],
     );
 
     const job = await pool.query("INSERT INTO jobs (tenant_id, job_type, status) VALUES ('tenant_dev', 'space.backup', 'queued') RETURNING job_id");
@@ -1668,8 +1748,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
         {
           kind: "space.backup",
           spaceId: "space_dev",
-          schemaName: "core",
-          entityNames: ["notes"],
+          schemaName: TEST_SCHEMA_NAME,
+          entityNames: ["test_items"],
           format: "jsonl",
           fieldRules: { read: { allow: ["*"], deny: [] }, write: { allow: ["*"], deny: [] } },
           tenantId: "tenant_dev",
@@ -1680,8 +1760,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
     );
     await pool.query("UPDATE jobs SET run_id = $1 WHERE job_id = $2", [run.rows[0].run_id, job.rows[0].job_id]);
     const backup = await pool.query(
-      "INSERT INTO backups (tenant_id, space_id, status, schema_name, entity_names, format, run_id, step_id, created_by_subject_id) VALUES ('tenant_dev','space_dev','created','core',$1::jsonb,'jsonl',$2,$3,'admin') RETURNING backup_id",
-      [JSON.stringify(["notes"]), run.rows[0].run_id, step.rows[0].step_id],
+      "INSERT INTO backups (tenant_id, space_id, status, schema_name, entity_names, format, run_id, step_id, created_by_subject_id) VALUES ('tenant_dev','space_dev','created',$1,$2::jsonb,'jsonl',$3,$4,'admin') RETURNING backup_id",
+      [TEST_SCHEMA_NAME, JSON.stringify(["test_items"]), run.rows[0].run_id, step.rows[0].step_id],
     );
 
     await processStep({ pool, masterKey, jobId: job.rows[0].job_id, runId: run.rows[0].run_id, stepId: step.rows[0].step_id });
@@ -1698,20 +1778,20 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
       .map((x) => x.trim())
       .filter(Boolean);
     const first = JSON.parse(lines[0]);
-    expect(first.entityName).toBe("notes");
+    expect(first.entityName).toBe("test_items");
     expect(first.payload.title).toBeTruthy();
   });
 
   it("执行 space.restore（upsert）并生成 restore_report artifact", async () => {
     const seed = await pool.query(
-      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload) VALUES ('tenant_dev','space_dev','notes','core',1,$1) RETURNING id",
-      [{ title: "Restore A", content: "c1" }],
+      "INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload) VALUES ('tenant_dev','space_dev','test_items',$1,1,$2) RETURNING id",
+      [TEST_SCHEMA_NAME, { title: "Restore A", content: "c1" }],
     );
     const recordId = seed.rows[0].id as string;
 
     const contentText =
       JSON.stringify({
-        entityName: "notes",
+        entityName: "test_items",
         id: recordId,
         payload: { title: "Restore A2", content: "c2" },
       }) + "\n";
@@ -1737,7 +1817,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
         {
           kind: "space.restore",
           spaceId: "space_dev",
-          schemaName: "core",
+          schemaName: TEST_SCHEMA_NAME,
           backupArtifactId,
           conflictStrategy: "upsert",
           fieldRules: { read: { allow: ["*"], deny: [] }, write: { allow: ["*"], deny: [] } },
@@ -1762,6 +1842,70 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
     const updated = await pool.query("SELECT payload->>'title' AS title FROM entity_records WHERE id = $1 LIMIT 1", [recordId]);
     expect(updated.rowCount).toBe(1);
     expect(updated.rows[0].title).toBe("Restore A2");
+  });
+
+  it("执行 space.restore 可恢复到新空间", async () => {
+    const targetSpaceId = `space_restore_${Date.now()}`;
+    await pool.query("INSERT INTO spaces (id, tenant_id, name) VALUES ($1, 'tenant_dev', 'Restore Target')", [targetSpaceId]);
+
+    const contentText =
+      JSON.stringify({
+        entityName: "test_items",
+        id: `restore_${Date.now()}`,
+        payload: { title: "Restore Target", content: "isolated" },
+      }) + "\n";
+    const art = await pool.query(
+      `
+        INSERT INTO artifacts (tenant_id, space_id, type, format, content_type, byte_size, content_text, source)
+        VALUES ('tenant_dev','space_dev','backup','jsonl','application/x-ndjson; charset=utf-8',$1,$2,$3)
+        RETURNING artifact_id
+      `,
+      [Buffer.byteLength(contentText, "utf8"), contentText, { spaceId: "space_dev" }],
+    );
+    const backupArtifactId = art.rows[0].artifact_id as string;
+
+    const job = await pool.query("INSERT INTO jobs (tenant_id, job_type, status) VALUES ('tenant_dev', 'space.restore', 'queued') RETURNING job_id");
+    const run = await pool.query(
+      "INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key) VALUES ('tenant_dev', 'created', $1, $2, NULL) RETURNING run_id",
+      [`space.restore:${targetSpaceId}`, { spaceId: targetSpaceId, sourceSpaceId: "space_dev", targetSpaceId }],
+    );
+    const step = await pool.query(
+      "INSERT INTO steps (run_id, seq, status, tool_ref, input) VALUES ($1, 1, 'pending', NULL, $2) RETURNING step_id",
+      [
+        run.rows[0].run_id,
+        {
+          kind: "space.restore",
+          spaceId: targetSpaceId,
+          sourceSpaceId: "space_dev",
+          targetSpaceId,
+          schemaName: TEST_SCHEMA_NAME,
+          backupArtifactId,
+          conflictStrategy: "upsert",
+          fieldRules: { read: { allow: ["*"], deny: [] }, write: { allow: ["*"], deny: [] } },
+          tenantId: "tenant_dev",
+          subjectId: "admin",
+          traceId: "t-space-restore-isolated",
+        },
+      ],
+    );
+    await pool.query("UPDATE jobs SET run_id = $1 WHERE job_id = $2", [run.rows[0].run_id, job.rows[0].job_id]);
+
+    await processStep({ pool, masterKey, jobId: job.rows[0].job_id, runId: run.rows[0].run_id, stepId: step.rows[0].step_id });
+
+    const restored = await pool.query(
+      "SELECT payload->>'title' AS title FROM entity_records WHERE tenant_id = 'tenant_dev' AND space_id = $1 AND payload->>'title' = 'Restore Target' LIMIT 1",
+      [targetSpaceId],
+    );
+    expect(restored.rowCount).toBe(1);
+
+    const report = await pool.query(
+      "SELECT content_text FROM artifacts WHERE tenant_id = 'tenant_dev' AND run_id = $1 AND type = 'restore_report' ORDER BY created_at DESC LIMIT 1",
+      [run.rows[0].run_id],
+    );
+    expect(report.rowCount).toBe(1);
+    const parsed = JSON.parse(String(report.rows[0].content_text));
+    expect(parsed.sourceSpaceId).toBe("space_dev");
+    expect(parsed.targetSpaceId).toBe(targetSpaceId);
   });
 
   it("subscription runner：poll 产出 ingress event 并推进 watermark", async () => {
@@ -1833,8 +1977,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
     await pool.query(
       `
-        INSERT INTO imap_connector_configs (connector_instance_id, tenant_id, host, port, use_tls, username, password_secret_id, mailbox)
-        VALUES ($1,'tenant_dev',$2,993,true,'u',$3,'INBOX')
+        INSERT INTO connector_configs (connector_instance_id, tenant_id, type_name, config)
+        VALUES ($1,'tenant_dev','mail.imap', jsonb_build_object('host',$2,'port',993,'useTls',true,'username','u','passwordSecretId',$3,'mailbox','INBOX'))
       `,
       [connectorInstanceId, host, secretId],
     );
@@ -1905,8 +2049,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
     await pool.query(
       `
-        INSERT INTO exchange_connector_configs (connector_instance_id, tenant_id, oauth_grant_id, mailbox)
-        VALUES ($1,'tenant_dev',$2,'user@example.com')
+        INSERT INTO connector_configs (connector_instance_id, tenant_id, type_name, config)
+        VALUES ($1,'tenant_dev','mail.exchange', jsonb_build_object('oauthGrantId',$2,'mailbox','user@example.com'))
       `,
       [connectorInstanceId, oauthGrantId],
     );
@@ -1991,8 +2135,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
     await pool.query(
       `
-        INSERT INTO exchange_connector_configs (connector_instance_id, tenant_id, oauth_grant_id, mailbox)
-        VALUES ($1,'tenant_dev',$2,'user2@example.com')
+        INSERT INTO connector_configs (connector_instance_id, tenant_id, type_name, config)
+        VALUES ($1,'tenant_dev','mail.exchange', jsonb_build_object('oauthGrantId',$2,'mailbox','user2@example.com'))
       `,
       [connectorInstanceId, oauthGrantId],
     );
@@ -2104,8 +2248,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
     await pool.query(
       `
-        INSERT INTO exchange_connector_configs (connector_instance_id, tenant_id, oauth_grant_id, mailbox)
-        VALUES ($1,'tenant_dev',$2,'user3@example.com')
+        INSERT INTO connector_configs (connector_instance_id, tenant_id, type_name, config)
+        VALUES ($1,'tenant_dev','mail.exchange', jsonb_build_object('oauthGrantId',$2,'mailbox','user3@example.com'))
       `,
       [connectorInstanceId, oauthGrantId],
     );
@@ -2163,8 +2307,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
     await pool.query(
       `
-        INSERT INTO smtp_connector_configs (connector_instance_id, tenant_id, host, port, use_tls, username, password_secret_id, from_address)
-        VALUES ($1,'tenant_dev',$2,587,true,'u',$3,'noreply@example.com')
+        INSERT INTO connector_configs (connector_instance_id, tenant_id, type_name, config)
+        VALUES ($1,'tenant_dev','mail.smtp', jsonb_build_object('host',$2,'port',587,'useTls',true,'username','u','passwordSecretId',$3,'fromAddress','noreply@example.com'))
       `,
       [connectorInstanceId, host, secretId],
     );
@@ -2228,8 +2372,8 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
 
     await pool.query(
       `
-        INSERT INTO smtp_connector_configs (connector_instance_id, tenant_id, host, port, use_tls, username, password_secret_id, from_address)
-        VALUES ($1,'tenant_dev',$2,587,true,'u',$3,'noreply@example.com')
+        INSERT INTO connector_configs (connector_instance_id, tenant_id, type_name, config)
+        VALUES ($1,'tenant_dev','mail.smtp', jsonb_build_object('host',$2,'port',587,'useTls',true,'username','u','passwordSecretId',$3,'fromAddress','noreply@example.com'))
       `,
       [connectorInstanceId, host, secretId],
     );
@@ -2275,7 +2419,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
     const prevApiBase = process.env.WORKER_API_BASE;
     const prevAuthnMode = process.env.AUTHN_MODE;
     const server = http.createServer((req, res) => {
-      if (req.method === "POST" && req.url === "/orchestrator/turn") {
+      if (req.method === "POST" && req.url === "/orchestrator/dispatch") {
         let buf = "";
         req.on("data", (c) => (buf += String(c)));
         req.on("end", () => {
@@ -2376,7 +2520,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
       const secret = await pool.query(
         `
           INSERT INTO secret_records (tenant_id, scope_type, scope_id, connector_instance_id, status, key_version, enc_format, encrypted_payload)
-          VALUES ('tenant_dev','space','space_dev',$1,'active',1,'legacy.a256gcm',$2::jsonb)
+          VALUES ('tenant_dev','space','space_dev',$1,'active',1,'a256gcm',$2::jsonb)
           RETURNING id
         `,
         [inst.rows[0].id, JSON.stringify(encryptJson(masterKey, { webhookUrl: `http://127.0.0.1:${port}/` }))],
@@ -2465,7 +2609,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
       const secret = await pool.query(
         `
           INSERT INTO secret_records (tenant_id, scope_type, scope_id, connector_instance_id, status, key_version, enc_format, encrypted_payload)
-          VALUES ('tenant_dev','space','space_dev',$1,'active',1,'legacy.a256gcm',$2::jsonb)
+          VALUES ('tenant_dev','space','space_dev',$1,'active',1,'a256gcm',$2::jsonb)
           RETURNING id
         `,
         [inst.rows[0].id, JSON.stringify(encryptJson(masterKey, { webhookUrl: `http://127.0.0.1:${port}/` }))],
@@ -2513,7 +2657,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
     const prevApiBase = process.env.WORKER_API_BASE;
     const prevAuthnMode = process.env.AUTHN_MODE;
     const server = http.createServer((req, res) => {
-      if (req.method === "POST" && req.url === "/orchestrator/turn") {
+      if (req.method === "POST" && req.url === "/orchestrator/dispatch") {
         res.statusCode = 500;
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify({ errorCode: "INTERNAL_ERROR", message: { "zh-CN": "failed" } }));
@@ -2604,7 +2748,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
       const secret = await pool.query(
         `
           INSERT INTO secret_records (tenant_id, scope_type, scope_id, connector_instance_id, status, key_version, enc_format, encrypted_payload)
-          VALUES ('tenant_dev','space','space_dev',$1,'active',1,'legacy.a256gcm',$2::jsonb)
+          VALUES ('tenant_dev','space','space_dev',$1,'active',1,'a256gcm',$2::jsonb)
           RETURNING id
         `,
         [inst.rows[0].id, JSON.stringify(encryptJson(masterKey, { webhookUrl: `http://127.0.0.1:${port}/` }))],

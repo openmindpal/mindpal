@@ -7,7 +7,7 @@ import { EntityForm } from "../../new/ui";
 
 async function loadEffectiveSchema(locale: string, entity: string) {
   const token = (await cookies()).get("openslin_token")?.value ?? "";
-  const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective?schemaName=core`, {
+  const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective`, {
     method: "GET",
     token,
     locale,
@@ -50,11 +50,6 @@ export default async function EntityEditPage(props: {
       <p>
         <Link href={`/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}?lang=${encodeURIComponent(locale)}`}>{t(locale, "back")}</Link>
       </p>
-      {entity === "notes" ? (
-        <p>
-          <Link href={`/notes/${encodeURIComponent(id)}?lang=${encodeURIComponent(locale)}`}>{t(locale, "notes.collab.open")}</Link>
-        </p>
-      ) : null}
       <h1>
         {t(locale, "entity.edit")} {title} / {id}
       </h1>

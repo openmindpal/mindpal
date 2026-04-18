@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { getDevicePolicy, upsertDevicePolicy } from "./modules/devicePolicyRepo";
 import { createDeviceRecord, getDeviceRecord, listDeviceRecords, revokeDeviceRecord } from "./modules/deviceRepo";
 import { createDevicePairing } from "./modules/pairingRepo";
@@ -33,7 +34,7 @@ function assertOwnerMatch(subject: { subjectId: string; spaceId?: string | null 
 export const deviceRoutes: FastifyPluginAsync = async (app) => {
   app.post("/devices", async (req) => {
     setAuditContext(req, { resourceType: "device", action: "create" });
-    const decision = await requirePermission({ req, resourceType: "device", action: "create" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_CREATE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -62,7 +63,7 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/devices", async (req) => {
     setAuditContext(req, { resourceType: "device", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "device", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -90,7 +91,7 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
   app.get("/devices/:deviceId", async (req, reply) => {
     const params = z.object({ deviceId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "device", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "device", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -105,7 +106,7 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
   app.post("/devices/:deviceId/pairing", async (req) => {
     const params = z.object({ deviceId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "device", action: "pairing.create" });
-    const decision = await requirePermission({ req, resourceType: "device", action: "pairing.create" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_PAIRING_CREATE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -123,7 +124,7 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
   app.post("/devices/:deviceId/revoke", async (req) => {
     const params = z.object({ deviceId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "device", action: "revoke" });
-    const decision = await requirePermission({ req, resourceType: "device", action: "revoke" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_REVOKE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -140,7 +141,7 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
   app.put("/devices/:deviceId/policy", async (req) => {
     const params = z.object({ deviceId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "device", action: "policy.update" });
-    const decision = await requirePermission({ req, resourceType: "device", action: "policy.update" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_POLICY_UPDATE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);

@@ -1,12 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { POLICY_EXPR_JSON_SCHEMA_V1, validatePolicyExpr } from "@openslin/shared";
+import { POLICY_EXPR_JSON_SCHEMA_V1, validatePolicyExpr, validateAbacPolicyRule, evaluateAbacPolicySet } from "@openslin/shared";
+import type { AbacEvaluationRequest, AbacPolicyRule, AbacPolicySet } from "@openslin/shared";
 import { Errors } from "../lib/errors";
 import { setAuditContext } from "../modules/audit/context";
 import { requirePermission } from "../modules/auth/guard";
+import { PERM } from "@openslin/shared";
+import { authorize } from "../modules/auth/authz";
 import { bumpPolicyCacheEpoch } from "../modules/auth/policyCacheEpochRepo";
-import { evaluateAbacPolicy, parseAbacConditions, type AbacContext } from "../modules/auth/abacEngine";
 
 function isSafeFieldName(name: string) {
   if (!name) return false;
@@ -85,10 +87,44 @@ function normalizeRowFilters(input: any): { normalized: any | null; usedPayloadP
   throw Errors.policyExprInvalid(`不支持的 rowFilters.kind：${kind || "unknown"}`);
 }
 
+function parseCsvText(input: unknown) {
+  if (Array.isArray(input)) return input.map(String).map((x) => x.trim()).filter(Boolean);
+  const text = String(input ?? "").trim();
+  if (!text) return [] as string[];
+  return text.split(",").map((x) => x.trim()).filter(Boolean);
+}
+
+function buildAbacCheckRequest(actor: { subjectId: string; tenantId: string; spaceId?: string }, input?: {
+  resourceType?: string;
+  action?: string;
+  clientIp?: string;
+  geoRegion?: string;
+  riskLevel?: string;
+  dataLabels?: string[] | string;
+  deviceType?: string;
+  attributes?: Record<string, unknown>;
+}): AbacEvaluationRequest {
+  return {
+    subject: { subjectId: actor.subjectId, tenantId: actor.tenantId, spaceId: actor.spaceId, attributes: {} },
+    resource: { resourceType: input?.resourceType ?? "*", attributes: input?.attributes ?? {} },
+    action: input?.action ?? "*",
+    environment: {
+      ip: input?.clientIp,
+      deviceType: input?.deviceType,
+      geoCountry: input?.geoRegion,
+      timestamp: new Date().toISOString(),
+      attributes: {
+        riskLevel: input?.riskLevel,
+        dataLabels: parseCsvText(input?.dataLabels),
+      },
+    },
+  };
+}
+
 export const rbacRoutes: FastifyPluginAsync = async (app) => {
   app.post("/rbac/policy/preflight", async (req) => {
     setAuditContext(req, { resourceType: "rbac", action: "policy.preflight" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const body = z.object({ rowFilters: z.any().optional(), fieldRules: z.any().optional() }).parse(req.body);
     const rf = normalizeRowFilters(body.rowFilters);
     req.ctx.audit!.outputDigest = { rowFilters: Boolean(rf.normalized), usedPayloadPathCount: rf.usedPayloadPaths.length };
@@ -97,7 +133,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/rbac/roles", async (req) => {
     setAuditContext(req, { resourceType: "rbac", action: "role.create" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
     const body = z.object({ id: z.string().min(1).optional(), name: z.string().min(1) }).parse(req.body);
     const id = body.id ?? `role_${crypto.randomUUID()}`;
@@ -113,7 +149,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/rbac/roles", async (req) => {
     setAuditContext(req, { resourceType: "rbac", action: "role.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
     const limit = z.coerce.number().int().positive().max(500).optional().parse((req.query as any)?.limit) ?? 100;
     const res = await app.db.query("SELECT id, tenant_id, name, created_at FROM roles WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2", [
@@ -127,20 +163,60 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   app.get("/rbac/roles/:roleId", async (req) => {
     const params = z.object({ roleId: z.string().min(1) }).parse(req.params);
     setAuditContext(req, { resourceType: "rbac", action: "role.get" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
     const res = await app.db.query("SELECT id, tenant_id, name, created_at FROM roles WHERE tenant_id = $1 AND id = $2 LIMIT 1", [
       subject.tenantId,
       params.roleId,
     ]);
     if (!res.rowCount) throw Errors.badRequest("Role 不存在");
-    req.ctx.audit!.outputDigest = { roleId: params.roleId };
-    return { role: res.rows[0] };
+    const permissionsRes = await app.db.query(
+      `
+        SELECT p.id, p.resource_type, p.action, rp.field_rules_read, rp.field_rules_write, rp.row_filters_read, rp.row_filters_write
+        FROM role_permissions rp
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE rp.role_id = $1
+        ORDER BY p.resource_type ASC, p.action ASC
+      `,
+      [params.roleId],
+    );
+    const bindingsRes = await app.db.query(
+      `
+        SELECT rb.id, rb.subject_id, rb.role_id, r.name AS role_name, rb.scope_type, rb.scope_id, rb.created_at
+        FROM role_bindings rb
+        JOIN roles r ON r.id = rb.role_id
+        JOIN subjects s ON s.id = rb.subject_id
+        WHERE rb.role_id = $1
+          AND r.tenant_id = $2
+          AND s.tenant_id = $2
+        ORDER BY rb.created_at DESC
+        LIMIT 200
+      `,
+      [params.roleId, subject.tenantId],
+    );
+    req.ctx.audit!.outputDigest = { roleId: params.roleId, permissionCount: permissionsRes.rows.length, bindingCount: bindingsRes.rows.length };
+    return { role: res.rows[0], permissions: permissionsRes.rows, bindings: bindingsRes.rows };
+  });
+
+  app.delete("/rbac/roles/:roleId", async (req) => {
+    const params = z.object({ roleId: z.string().min(1) }).parse(req.params);
+    setAuditContext(req, { resourceType: "rbac", action: "role.delete" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    const subject = req.ctx.subject!;
+    const role = await app.db.query("SELECT 1 FROM roles WHERE tenant_id = $1 AND id = $2 LIMIT 1", [subject.tenantId, params.roleId]);
+    if (!role.rowCount) throw Errors.badRequest("Role 不存在");
+    // 级联删除: role_permissions → role_bindings → roles
+    await app.db.query("DELETE FROM role_permissions WHERE role_id = $1", [params.roleId]);
+    await app.db.query("DELETE FROM role_bindings WHERE role_id = $1", [params.roleId]);
+    await app.db.query("DELETE FROM roles WHERE tenant_id = $1 AND id = $2", [subject.tenantId, params.roleId]);
+    const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    req.ctx.audit!.outputDigest = { roleId: params.roleId, policyCacheEpochBumped: true, ...epoch };
+    return { ok: true };
   });
 
   app.post("/rbac/permissions", async (req) => {
     setAuditContext(req, { resourceType: "rbac", action: "permission.register" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const body = z
       .object({
         resourceType: z.string().min(1),
@@ -173,7 +249,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/rbac/permissions", async (req) => {
     setAuditContext(req, { resourceType: "rbac", action: "permission.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const limit = z.coerce.number().int().positive().max(500).optional().parse((req.query as any)?.limit) ?? 200;
     const res = await app.db.query(
       "SELECT id, resource_type, action, field_rules_read, field_rules_write, row_filters_read, row_filters_write, created_at FROM permissions ORDER BY created_at DESC LIMIT $1",
@@ -186,7 +262,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   app.post("/rbac/roles/:roleId/permissions", async (req) => {
     const params = z.object({ roleId: z.string().min(1) }).parse(req.params);
     setAuditContext(req, { resourceType: "rbac", action: "role.grant" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
     const body = z
       .object({
@@ -248,7 +324,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   app.delete("/rbac/roles/:roleId/permissions", async (req) => {
     const params = z.object({ roleId: z.string().min(1) }).parse(req.params);
     setAuditContext(req, { resourceType: "rbac", action: "role.revoke" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
     const body = z.object({ resourceType: z.string().min(1), action: z.string().min(1) }).parse(req.body);
     const role = await app.db.query("SELECT 1 FROM roles WHERE tenant_id = $1 AND id = $2 LIMIT 1", [subject.tenantId, params.roleId]);
@@ -263,7 +339,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/rbac/bindings", async (req) => {
     setAuditContext(req, { resourceType: "rbac", action: "binding.create" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const actor = req.ctx.subject!;
     const body = z
       .object({
@@ -310,10 +386,48 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     return { bindingId: insert.rows[0].id };
   });
 
+  app.get("/rbac/bindings", async (req) => {
+    const q = z
+      .object({
+        limit: z.coerce.number().int().positive().max(500).optional(),
+        roleId: z.string().min(1).optional(),
+        subjectId: z.string().min(1).optional(),
+      })
+      .parse(req.query);
+    setAuditContext(req, { resourceType: "rbac", action: "binding.list" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    const actor = req.ctx.subject!;
+    const args: Array<string | number> = [actor.tenantId];
+    const where: string[] = ["r.tenant_id = $1", "s.tenant_id = $1"];
+    if (q.roleId) {
+      args.push(q.roleId);
+      where.push(`rb.role_id = $${args.length}`);
+    }
+    if (q.subjectId) {
+      args.push(q.subjectId);
+      where.push(`rb.subject_id = $${args.length}`);
+    }
+    args.push(q.limit ?? 200);
+    const res = await app.db.query(
+      `
+        SELECT rb.id, rb.subject_id, rb.role_id, r.name AS role_name, rb.scope_type, rb.scope_id, rb.created_at
+        FROM role_bindings rb
+        JOIN roles r ON r.id = rb.role_id
+        JOIN subjects s ON s.id = rb.subject_id
+        WHERE ${where.join(" AND ")}
+        ORDER BY rb.created_at DESC
+        LIMIT $${args.length}
+      `,
+      args,
+    );
+    req.ctx.audit!.outputDigest = { count: res.rows.length, roleId: q.roleId ?? null, subjectId: q.subjectId ?? null };
+    return { items: res.rows, bindings: res.rows };
+  });
+
   app.delete("/rbac/bindings/:bindingId", async (req) => {
     const params = z.object({ bindingId: z.string().min(3) }).parse(req.params);
     setAuditContext(req, { resourceType: "rbac", action: "binding.delete" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const actor = req.ctx.subject!;
 
     const existing = await app.db.query(
@@ -340,178 +454,360 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  /* ─── ABAC Policies CRUD ─── */
+  app.post("/rbac/check", async (req) => {
+    const body = z
+      .object({
+        scopeType: z.enum(["tenant", "space"]).optional(),
+        scopeId: z.string().min(1).optional(),
+        subjectId: z.string().min(1),
+        resourceType: z.string().min(1),
+        resourceId: z.string().optional(),
+        action: z.string().min(1),
+        context: z
+          .object({
+            clientIp: z.string().optional(),
+            geoRegion: z.string().optional(),
+            riskLevel: z.string().optional(),
+            dataLabels: z.union([z.array(z.string()), z.string()]).optional(),
+            deviceType: z.string().optional(),
+            attributes: z.record(z.string(), z.any()).optional(),
+          })
+          .optional(),
+      })
+      .parse(req.body);
+    const actor = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "rbac", action: "check" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
 
-  app.get("/rbac/abac/policies", async (req) => {
+    const scopeType = body.scopeType ?? (body.scopeId ? "space" : actor.spaceId ? "space" : "tenant");
+    const scopeId = body.scopeId ?? (scopeType === "tenant" ? actor.tenantId : actor.spaceId);
+    if (!scopeId) throw Errors.policyDebugInvalidInput("缺少 scopeId");
+    if (scopeType === "tenant" && scopeId !== actor.tenantId) throw Errors.policyDebugInvalidInput("scopeId 必须等于 tenantId");
+    if (scopeType === "space") {
+      const spaceRes = await app.db.query("SELECT 1 FROM spaces WHERE id = $1 AND tenant_id = $2 LIMIT 1", [scopeId, actor.tenantId]);
+      if (!spaceRes.rowCount) throw Errors.policyDebugInvalidInput("space 不存在或不属于当前 tenant");
+    }
+    const subjectRes = await app.db.query("SELECT tenant_id FROM subjects WHERE id = $1 LIMIT 1", [body.subjectId]);
+    if (!subjectRes.rowCount) throw Errors.policyDebugInvalidInput("subject 不存在");
+    if (String(subjectRes.rows[0].tenant_id) !== actor.tenantId) throw Errors.policyDebugInvalidInput("subject 不属于当前 tenant");
+
+    req.ctx.audit!.inputDigest = {
+      scopeType,
+      scopeId,
+      subjectId: body.subjectId,
+      resourceType: body.resourceType,
+      resourceId: body.resourceId ?? null,
+      action: body.action,
+      hasContext: body.context !== undefined,
+    };
+
+    const decision = await authorize({
+      pool: app.db,
+      tenantId: actor.tenantId,
+      spaceId: scopeType === "space" ? scopeId : undefined,
+      subjectId: body.subjectId,
+      resourceType: body.resourceType,
+      action: body.action,
+      abacRequest: buildAbacCheckRequest(actor, { ...body.context, resourceType: body.resourceType, action: body.action }),
+    });
+    const snapshotRef = String((decision as any).snapshotRef ?? "");
+    const policySnapshotId = snapshotRef.startsWith("policy_snapshot:") ? snapshotRef.slice("policy_snapshot:".length) : null;
+    const matchedRules: any = (decision as any).matchedRules ?? null;
+    const roleIds = Array.isArray(matchedRules?.roleIds) ? matchedRules.roleIds : [];
+    const permissions = Array.isArray(matchedRules?.permissions) ? matchedRules.permissions : [];
+
+    req.ctx.audit!.outputDigest = {
+      decision: decision.decision,
+      reason: typeof decision.reason === "string" ? decision.reason : null,
+      policySnapshotId,
+      roleCount: roleIds.length,
+      permissionCount: permissions.length,
+    };
+
+    return {
+      allowed: decision.decision === "allow",
+      decision: decision.decision,
+      reason: typeof decision.reason === "string" ? decision.reason : null,
+      scopeType,
+      scopeId,
+      subjectId: body.subjectId,
+      resourceType: body.resourceType,
+      resourceId: body.resourceId ?? null,
+      action: body.action,
+      policySnapshotId,
+      policySnapshotRef: snapshotRef || null,
+      matchedRules: permissions,
+      matchedRulesSummary: { roleCount: roleIds.length, permissionCount: permissions.length, roleIds },
+      rowFiltersEffective: (decision as any).rowFilters ?? null,
+      fieldRulesEffective: (decision as any).fieldRules ?? null,
+      explainV1: (decision as any).explainV1 ?? null,
+      abacResult: (decision as any).abacResult ?? null,
+    };
+  });
+
+  /* ─── ABAC 策略集 CRUD (新引擎) ─── */
+
+  app.get("/rbac/abac/policy-sets", async (req) => {
     setAuditContext(req, { resourceType: "rbac", action: "abac.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
     const limit = z.coerce.number().int().positive().max(500).optional().parse((req.query as any)?.limit) ?? 100;
     const res = await app.db.query(
-      "SELECT policy_id, tenant_id, policy_name, description, resource_type, action, priority, effect, conditions, enabled, created_by, created_at, updated_at FROM abac_policies WHERE tenant_id = $1 ORDER BY priority ASC, created_at DESC LIMIT $2",
+      `SELECT policy_set_id, tenant_id, name, version, resource_type, combining_algorithm, status, description, metadata, created_at, updated_at
+       FROM abac_policy_sets WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT $2`,
       [subject.tenantId, limit],
     );
     req.ctx.audit!.outputDigest = { count: res.rows.length };
     return { items: res.rows };
   });
 
-  app.post("/rbac/abac/policies", async (req) => {
+  app.post("/rbac/abac/policy-sets", async (req) => {
     setAuditContext(req, { resourceType: "rbac", action: "abac.create" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
-    const body = z
-      .object({
-        policyName: z.string().min(1).max(200),
-        description: z.any().optional(),
-        resourceType: z.string().min(1).optional(),
-        action: z.string().min(1).optional(),
-        priority: z.number().int().min(0).max(10000).optional(),
-        effect: z.enum(["deny", "allow"]).optional(),
-        conditions: z.array(z.any()).min(1),
-        enabled: z.boolean().optional(),
-      })
-      .parse(req.body);
-
-    // Validate conditions are parseable
-    const parsed = parseAbacConditions(body.conditions);
-    if (parsed.length === 0) throw Errors.badRequest("conditions 无效");
+    const body = z.object({
+      name: z.string().min(1).max(200),
+      resourceType: z.string().min(1),
+      combiningAlgorithm: z.enum(["deny_overrides", "permit_overrides", "first_applicable", "deny_unless_permit", "permit_unless_deny"]).optional(),
+      description: z.string().max(2000).optional(),
+      status: z.enum(["draft", "active", "deprecated"]).optional(),
+    }).parse(req.body);
 
     const res = await app.db.query(
-      `INSERT INTO abac_policies (tenant_id, policy_name, description, resource_type, action, priority, effect, conditions, enabled, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (tenant_id, policy_name) DO UPDATE
-       SET description = COALESCE(EXCLUDED.description, abac_policies.description),
-           resource_type = EXCLUDED.resource_type,
-           action = EXCLUDED.action,
-           priority = EXCLUDED.priority,
-           effect = EXCLUDED.effect,
-           conditions = EXCLUDED.conditions,
-           enabled = EXCLUDED.enabled,
-           updated_at = now()
-       RETURNING policy_id`,
-      [
-        subject.tenantId,
-        body.policyName,
-        body.description ? JSON.stringify(body.description) : null,
-        body.resourceType ?? "*",
-        body.action ?? "*",
-        body.priority ?? 100,
-        body.effect ?? "deny",
-        JSON.stringify(body.conditions),
-        body.enabled ?? true,
-        subject.subjectId ?? null,
-      ],
+      `INSERT INTO abac_policy_sets (tenant_id, name, resource_type, combining_algorithm, status, description)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (tenant_id, name, version) DO UPDATE
+       SET resource_type = EXCLUDED.resource_type, combining_algorithm = EXCLUDED.combining_algorithm, status = EXCLUDED.status, description = EXCLUDED.description, updated_at = now()
+       RETURNING policy_set_id`,
+      [subject.tenantId, body.name, body.resourceType, body.combiningAlgorithm ?? "deny_overrides", body.status ?? "draft", body.description ?? ""],
     );
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
-    req.ctx.audit!.outputDigest = { policyId: res.rows[0].policy_id, policyCacheEpochBumped: true, ...epoch };
-    return { policyId: res.rows[0].policy_id };
+    req.ctx.audit!.outputDigest = { policySetId: res.rows[0].policy_set_id, policyCacheEpochBumped: true, ...epoch };
+    return { policySetId: res.rows[0].policy_set_id };
   });
 
-  app.get("/rbac/abac/policies/:policyId", async (req) => {
-    const params = z.object({ policyId: z.string().uuid() }).parse(req.params);
+  app.get("/rbac/abac/policy-sets/:policySetId", async (req) => {
+    const params = z.object({ policySetId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "rbac", action: "abac.get" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
-    const res = await app.db.query(
-      "SELECT * FROM abac_policies WHERE tenant_id = $1 AND policy_id = $2 LIMIT 1",
-      [subject.tenantId, params.policyId],
+    const psRes = await app.db.query(
+      "SELECT * FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2 LIMIT 1",
+      [subject.tenantId, params.policySetId],
     );
-    if (!res.rowCount) throw Errors.badRequest("ABAC Policy 不存在");
-    req.ctx.audit!.outputDigest = { policyId: params.policyId };
-    return { policy: res.rows[0] };
+    if (!psRes.rowCount) throw Errors.badRequest("ABAC 策略集不存在");
+    const rulesRes = await app.db.query(
+      "SELECT * FROM abac_policy_rules WHERE policy_set_id = $1 AND tenant_id = $2 ORDER BY priority ASC",
+      [params.policySetId, subject.tenantId],
+    );
+    req.ctx.audit!.outputDigest = { policySetId: params.policySetId, ruleCount: rulesRes.rows.length };
+    return { policySet: psRes.rows[0], rules: rulesRes.rows };
   });
 
-  app.post("/rbac/abac/policies/:policyId/update", async (req) => {
-    const params = z.object({ policyId: z.string().uuid() }).parse(req.params);
+  app.post("/rbac/abac/policy-sets/:policySetId/update", async (req) => {
+    const params = z.object({ policySetId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "rbac", action: "abac.update" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
-    const body = z
-      .object({
-        description: z.any().optional(),
-        resourceType: z.string().min(1).optional(),
-        action: z.string().min(1).optional(),
-        priority: z.number().int().min(0).max(10000).optional(),
-        effect: z.enum(["deny", "allow"]).optional(),
-        conditions: z.array(z.any()).min(1).optional(),
-        enabled: z.boolean().optional(),
-      })
-      .parse(req.body);
+    const body = z.object({
+      combiningAlgorithm: z.enum(["deny_overrides", "permit_overrides", "first_applicable", "deny_unless_permit", "permit_unless_deny"]).optional(),
+      description: z.string().max(2000).optional(),
+      status: z.enum(["draft", "active", "deprecated"]).optional(),
+    }).parse(req.body);
 
-    if (body.conditions) {
-      const parsed = parseAbacConditions(body.conditions);
-      if (parsed.length === 0) throw Errors.badRequest("conditions 无效");
-    }
-
-    const existing = await app.db.query(
-      "SELECT 1 FROM abac_policies WHERE tenant_id = $1 AND policy_id = $2 LIMIT 1",
-      [subject.tenantId, params.policyId],
-    );
-    if (!existing.rowCount) throw Errors.badRequest("ABAC Policy 不存在");
+    const existing = await app.db.query("SELECT 1 FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2 LIMIT 1", [subject.tenantId, params.policySetId]);
+    if (!existing.rowCount) throw Errors.badRequest("ABAC 策略集不存在");
 
     const sets: string[] = ["updated_at = now()"];
-    const args: any[] = [subject.tenantId, params.policyId];
+    const args: any[] = [subject.tenantId, params.policySetId];
     let idx = 2;
-    if (body.description !== undefined) { args.push(JSON.stringify(body.description)); sets.push(`description = $${++idx}`); }
-    if (body.resourceType !== undefined) { args.push(body.resourceType); sets.push(`resource_type = $${++idx}`); }
-    if (body.action !== undefined) { args.push(body.action); sets.push(`action = $${++idx}`); }
+    if (body.combiningAlgorithm !== undefined) { args.push(body.combiningAlgorithm); sets.push(`combining_algorithm = $${++idx}`); }
+    if (body.description !== undefined) { args.push(body.description); sets.push(`description = $${++idx}`); }
+    if (body.status !== undefined) { args.push(body.status); sets.push(`status = $${++idx}`); }
+
+    await app.db.query(`UPDATE abac_policy_sets SET ${sets.join(", ")} WHERE tenant_id = $1 AND policy_set_id = $2`, args);
+    const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    req.ctx.audit!.outputDigest = { policySetId: params.policySetId, policyCacheEpochBumped: true, ...epoch };
+    return { ok: true };
+  });
+
+  app.delete("/rbac/abac/policy-sets/:policySetId", async (req) => {
+    const params = z.object({ policySetId: z.string().uuid() }).parse(req.params);
+    setAuditContext(req, { resourceType: "rbac", action: "abac.delete" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    const subject = req.ctx.subject!;
+    await app.db.query("DELETE FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2", [subject.tenantId, params.policySetId]);
+    const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    req.ctx.audit!.outputDigest = { policySetId: params.policySetId, policyCacheEpochBumped: true, ...epoch };
+    return { ok: true };
+  });
+
+  /* ─── ABAC 规则 CRUD ─── */
+
+  app.post("/rbac/abac/policy-sets/:policySetId/rules", async (req) => {
+    const params = z.object({ policySetId: z.string().uuid() }).parse(req.params);
+    setAuditContext(req, { resourceType: "rbac", action: "abac.rule.create" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    const subject = req.ctx.subject!;
+    const body = z.object({
+      name: z.string().min(1).max(200),
+      description: z.string().max(2000).optional(),
+      resourceType: z.string().min(1),
+      actions: z.array(z.string().min(1)).min(1),
+      priority: z.number().int().min(0).max(10000).optional(),
+      effect: z.enum(["allow", "deny"]),
+      conditionExpr: z.any(),
+      enabled: z.boolean().optional(),
+      spaceId: z.string().optional(),
+    }).parse(req.body);
+
+    // 验证 conditionExpr 是合法的 PolicyExpr
+    const exprValidation = validatePolicyExpr(body.conditionExpr);
+    if (!exprValidation.ok) throw Errors.badRequest(`条件表达式无效: ${(exprValidation as any).message}`);
+
+    const psCheck = await app.db.query("SELECT 1 FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2 LIMIT 1", [subject.tenantId, params.policySetId]);
+    if (!psCheck.rowCount) throw Errors.badRequest("ABAC 策略集不存在");
+
+    const res = await app.db.query(
+      `INSERT INTO abac_policy_rules (policy_set_id, tenant_id, name, description, resource_type, actions, priority, effect, condition_expr, enabled, space_id)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::jsonb,$10,$11)
+       RETURNING rule_id`,
+      [params.policySetId, subject.tenantId, body.name, body.description ?? "", body.resourceType, JSON.stringify(body.actions), body.priority ?? 100, body.effect, JSON.stringify(body.conditionExpr), body.enabled ?? true, body.spaceId ?? null],
+    );
+    const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    req.ctx.audit!.outputDigest = { ruleId: res.rows[0].rule_id, policyCacheEpochBumped: true, ...epoch };
+    return { ruleId: res.rows[0].rule_id };
+  });
+
+  app.post("/rbac/abac/rules/:ruleId/update", async (req) => {
+    const params = z.object({ ruleId: z.string().uuid() }).parse(req.params);
+    setAuditContext(req, { resourceType: "rbac", action: "abac.rule.update" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    const subject = req.ctx.subject!;
+    const body = z.object({
+      name: z.string().min(1).max(200).optional(),
+      description: z.string().max(2000).optional(),
+      actions: z.array(z.string().min(1)).min(1).optional(),
+      priority: z.number().int().min(0).max(10000).optional(),
+      effect: z.enum(["allow", "deny"]).optional(),
+      conditionExpr: z.any().optional(),
+      enabled: z.boolean().optional(),
+    }).parse(req.body);
+
+    if (body.conditionExpr !== undefined) {
+      const exprValidation = validatePolicyExpr(body.conditionExpr);
+      if (!exprValidation.ok) throw Errors.badRequest(`条件表达式无效: ${(exprValidation as any).message}`);
+    }
+
+    const existing = await app.db.query("SELECT 1 FROM abac_policy_rules WHERE tenant_id = $1 AND rule_id = $2 LIMIT 1", [subject.tenantId, params.ruleId]);
+    if (!existing.rowCount) throw Errors.badRequest("ABAC 规则不存在");
+
+    const sets: string[] = ["updated_at = now()"];
+    const args: any[] = [subject.tenantId, params.ruleId];
+    let idx = 2;
+    if (body.name !== undefined) { args.push(body.name); sets.push(`name = $${++idx}`); }
+    if (body.description !== undefined) { args.push(body.description); sets.push(`description = $${++idx}`); }
+    if (body.actions !== undefined) { args.push(JSON.stringify(body.actions)); sets.push(`actions = $${++idx}::jsonb`); }
     if (body.priority !== undefined) { args.push(body.priority); sets.push(`priority = $${++idx}`); }
     if (body.effect !== undefined) { args.push(body.effect); sets.push(`effect = $${++idx}`); }
-    if (body.conditions !== undefined) { args.push(JSON.stringify(body.conditions)); sets.push(`conditions = $${++idx}`); }
+    if (body.conditionExpr !== undefined) { args.push(JSON.stringify(body.conditionExpr)); sets.push(`condition_expr = $${++idx}::jsonb`); }
     if (body.enabled !== undefined) { args.push(body.enabled); sets.push(`enabled = $${++idx}`); }
 
-    await app.db.query(`UPDATE abac_policies SET ${sets.join(", ")} WHERE tenant_id = $1 AND policy_id = $2`, args);
+    await app.db.query(`UPDATE abac_policy_rules SET ${sets.join(", ")} WHERE tenant_id = $1 AND rule_id = $2`, args);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
-    req.ctx.audit!.outputDigest = { policyId: params.policyId, policyCacheEpochBumped: true, ...epoch };
+    req.ctx.audit!.outputDigest = { ruleId: params.ruleId, policyCacheEpochBumped: true, ...epoch };
     return { ok: true };
   });
 
-  app.delete("/rbac/abac/policies/:policyId", async (req) => {
-    const params = z.object({ policyId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "abac.delete" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
+  app.delete("/rbac/abac/rules/:ruleId", async (req) => {
+    const params = z.object({ ruleId: z.string().uuid() }).parse(req.params);
+    setAuditContext(req, { resourceType: "rbac", action: "abac.rule.delete" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
-    await app.db.query("DELETE FROM abac_policies WHERE tenant_id = $1 AND policy_id = $2", [subject.tenantId, params.policyId]);
+    await app.db.query("DELETE FROM abac_policy_rules WHERE tenant_id = $1 AND rule_id = $2", [subject.tenantId, params.ruleId]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
-    req.ctx.audit!.outputDigest = { policyId: params.policyId, policyCacheEpochBumped: true, ...epoch };
+    req.ctx.audit!.outputDigest = { ruleId: params.ruleId, policyCacheEpochBumped: true, ...epoch };
     return { ok: true };
   });
+
+  /* ─── ABAC 实时评估端点 ─── */
 
   app.post("/rbac/abac/evaluate", async (req) => {
     setAuditContext(req, { resourceType: "rbac", action: "abac.evaluate" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "rbac", action: "manage" });
-    const body = z
-      .object({
-        conditions: z.array(z.any()).min(1),
-        context: z
-          .object({
-            clientIp: z.string().optional(),
-            geoRegion: z.string().optional(),
-            riskLevel: z.string().optional(),
-            dataLabels: z.array(z.string()).optional(),
-            deviceType: z.string().optional(),
-            attributes: z.record(z.string(), z.any()).optional(),
-          })
-          .optional(),
-        mode: z.enum(["all", "any"]).optional(),
-      })
-      .parse(req.body);
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    const subject = req.ctx.subject!;
+    const body = z.object({
+      policySetId: z.string().uuid(),
+      request: z.object({
+        subject: z.object({
+          subjectId: z.string().min(1),
+          tenantId: z.string().min(1),
+          spaceId: z.string().optional(),
+          roles: z.array(z.string()).optional(),
+          groups: z.array(z.string()).optional(),
+          department: z.string().optional(),
+          clearanceLevel: z.number().optional(),
+          attributes: z.record(z.string(), z.any()).optional(),
+        }),
+        resource: z.object({
+          resourceType: z.string().min(1),
+          resourceId: z.string().optional(),
+          ownerSubjectId: z.string().optional(),
+          classification: z.string().optional(),
+          tags: z.array(z.string()).optional(),
+          hierarchy: z.string().optional(),
+          attributes: z.record(z.string(), z.any()).optional(),
+        }),
+        action: z.string().min(1),
+        environment: z.object({
+          ip: z.string().optional(),
+          userAgent: z.string().optional(),
+          deviceType: z.string().optional(),
+          geoCountry: z.string().optional(),
+          geoCity: z.string().optional(),
+          timestamp: z.string().optional(),
+          attributes: z.record(z.string(), z.any()).optional(),
+        }).optional(),
+      }),
+    }).parse(req.body);
 
-    const conditions = parseAbacConditions(body.conditions);
-    if (conditions.length === 0) throw Errors.badRequest("conditions 无效");
+    // 加载策略集 + 规则
+    const psRes = await app.db.query("SELECT * FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2 LIMIT 1", [subject.tenantId, body.policySetId]);
+    if (!psRes.rowCount) throw Errors.badRequest("ABAC 策略集不存在");
+    const psRow = psRes.rows[0] as any;
 
-    const ctx: AbacContext = {
-      now: new Date(),
-      clientIp: body.context?.clientIp,
-      geoRegion: body.context?.geoRegion,
-      riskLevel: body.context?.riskLevel,
-      dataLabels: body.context?.dataLabels,
-      deviceType: body.context?.deviceType,
-      attributes: body.context?.attributes,
+    const rulesRes = await app.db.query(
+      "SELECT * FROM abac_policy_rules WHERE policy_set_id = $1 AND tenant_id = $2 AND enabled = true ORDER BY priority ASC",
+      [body.policySetId, subject.tenantId],
+    );
+
+    const rules: AbacPolicyRule[] = rulesRes.rows.map((r: any) => ({
+      ruleId: r.rule_id,
+      name: r.name,
+      description: r.description ?? "",
+      resourceType: r.resource_type,
+      actions: Array.isArray(r.actions) ? r.actions : [],
+      priority: r.priority,
+      effect: r.effect,
+      condition: r.condition_expr,
+      enabled: r.enabled,
+      tenantId: subject.tenantId,
+      spaceId: r.space_id ?? undefined,
+      metadata: r.metadata ?? {},
+    }));
+
+    const policySet: AbacPolicySet = {
+      policySetId: psRow.policy_set_id,
+      name: psRow.name,
+      version: psRow.version,
+      rules,
+      combiningAlgorithm: psRow.combining_algorithm,
+      resourceType: psRow.resource_type,
+      status: psRow.status,
     };
 
-    const result = evaluateAbacPolicy({ conditions, ctx, mode: body.mode ?? "all" });
-    req.ctx.audit!.outputDigest = { allowed: result.allowed, evaluatedConditions: result.evaluatedConditions };
+    const result = evaluateAbacPolicySet(policySet, body.request);
+    req.ctx.audit!.outputDigest = { decision: result.decision, evaluationMs: result.evaluationMs, matchedRuleCount: result.matchedRules.length };
     return result;
   });
 };

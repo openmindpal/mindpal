@@ -1,0 +1,82 @@
+{
+  "identity": {
+    "name": "schema.create",
+    "version": "1.0.0",
+    "description": "通过自然语言描述自动创建 Schema 骨架"
+  },
+  "displayName": {
+    "zh-CN": "Schema 自动创建",
+    "en-US": "Schema Auto Creation"
+  },
+  "description": {
+    "zh-CN": "根据自然语言描述自动生成 Schema 骨架，包括实体定义、字段结构和关系映射，需要审批后生效",
+    "en-US": "Automatically generates Schema skeleton from natural language description, including entity definitions, field structures, and relationship mapping, requires approval before生效"
+  },
+  "category": "database",
+  "priority": 9,
+  "tags": ["schema", "database", "nl2schema", "auto-generation"],
+  "contract": {
+    "scope": "write",
+    "resourceType": "schema",
+    "action": "create",
+    "idempotencyRequired": true,
+    "riskLevel": "high",
+    "approvalRequired": true
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "description": {
+          "type": "string",
+          "required": true,
+          "description": "自然语言描述的 Schema 需求，如'客户管理系统，包含客户和订单'"
+        },
+        "schemaName": {
+          "type": "string",
+          "required": false,
+          "description": "可选的 Schema 名称，不提供则自动生成"
+        },
+        "entities": {
+          "type": "array",
+          "required": false,
+          "description": "可选的实体列表，不提供则由 AI 推断",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "displayName": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "changesetId": {
+          "type": "string",
+          "required": true,
+          "description": "创建的变更集 ID"
+        },
+        "schemaName": {
+          "type": "string",
+          "required": true,
+          "description": "Schema 名称"
+        },
+        "schemaDef": {
+          "type": "json",
+          "required": true,
+          "description": "生成的 Schema 定义"
+        },
+        "approvalUrl": {
+          "type": "string",
+          "required": true,
+          "description": "审批页面链接"
+        }
+      }
+    }
+  },
+  "entry": "dist/index.js",
+  "dependencies": {
+    "@openslin/shared": "^1.0.0"
+  }
+}

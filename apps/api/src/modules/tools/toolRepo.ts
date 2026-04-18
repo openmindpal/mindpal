@@ -16,6 +16,30 @@ export type ToolDefinition = {
   approvalRequired: boolean;
   /** Skill layer classification: kernel / builtin / extension. */
   sourceLayer: string;
+  /** P2-5: 工具前置条件 */
+  preconditions: string[];
+  /** P2-5: 工具执行效果 */
+  effects: string[];
+  /** P2-5: 估算成本 */
+  estimatedCost: number | null;
+  /** P2-5: 需要的模型能力 */
+  requiredCapabilities: string[];
+  /** P2-5: 平均延迟（毫秒） */
+  avgLatencyMs: number | null;
+  /** P2-5: 历史成功率 */
+  successRate: number | null;
+  /** P2: 工具分类（communication/file/database/ai/governance等） */
+  category: string;
+  /** P2: 工具优先级 1-10，数值越大越优先 */
+  priority: number;
+  /** P2: 工具标签数组 */
+  tags: string[];
+  /** P2: 调用次数统计 */
+  usageCount: number;
+  /** P2: 最后使用时间 */
+  lastUsedAt: string | null;
+  /** 额外权限声明：工具执行前需动态检查的附加权限 [{resourceType, action}] */
+  extraPermissions: Array<{ resourceType: string; action: string }>;
   createdAt: string;
   updatedAt: string;
 };
@@ -39,6 +63,15 @@ export type ToolVersion = {
   updatedAt: string;
 };
 
+export type ToolVisibility = "public" | "privileged" | "internal";
+
+export function deriveToolVisibility(params: Pick<ToolDefinition, "name" | "tags" | "approvalRequired" | "riskLevel">): ToolVisibility {
+  const tags = new Set((params.tags ?? []).map((tag) => String(tag).toLowerCase()));
+  if (params.name.startsWith("device.") || tags.has("internal-only")) return "internal";
+  if (tags.has("planner:hidden") || tags.has("primitive") || params.approvalRequired || params.riskLevel === "high") return "privileged";
+  return "public";
+}
+
 function toDef(r: any): ToolDefinition {
   return {
     tenantId: r.tenant_id,
@@ -52,6 +85,18 @@ function toDef(r: any): ToolDefinition {
     riskLevel: r.risk_level,
     approvalRequired: r.approval_required,
     sourceLayer: r.source_layer ?? "builtin",
+    preconditions: Array.isArray(r.preconditions) ? r.preconditions : [],
+    effects: Array.isArray(r.effects) ? r.effects : [],
+    estimatedCost: r.estimated_cost ?? null,
+    requiredCapabilities: Array.isArray(r.required_capabilities) ? r.required_capabilities : [],
+    avgLatencyMs: r.avg_latency_ms ?? null,
+    successRate: r.success_rate ?? null,
+    category: r.category ?? "uncategorized",
+    priority: r.priority ?? 5,
+    tags: Array.isArray(r.tags) ? r.tags : [],
+    usageCount: r.usage_count ?? 0,
+    lastUsedAt: r.last_used_at ?? null,
+    extraPermissions: Array.isArray(r.extra_permissions) ? r.extra_permissions : [],
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

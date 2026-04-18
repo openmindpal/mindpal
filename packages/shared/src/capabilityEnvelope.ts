@@ -1,22 +1,5 @@
-export type RuntimeLimitsV1 = {
-  timeoutMs: number;
-  maxConcurrency: number;
-  memoryMb: number | null;
-  cpuMs: number | null;
-  maxOutputBytes: number;
-  maxEgressRequests: number;
-};
-
-export type NetworkPolicyRuleV1 = {
-  host: string;
-  pathPrefix?: string;
-  methods?: string[];
-};
-
-export type NetworkPolicyV1 = {
-  allowedDomains: string[];
-  rules: NetworkPolicyRuleV1[];
-};
+import { isPlainObject, normalizeLimits, normalizeNetworkPolicy } from "./runtime";
+import type { RuntimeLimits, NetworkPolicy, NetworkPolicyRule } from "./runtime";
 
 export type CapabilityEnvelopeV1 = {
   format: "capabilityEnvelope.v1";
@@ -39,16 +22,12 @@ export type CapabilityEnvelopeV1 = {
     connectorInstanceIds: string[];
   };
   egressDomain: {
-    networkPolicy: NetworkPolicyV1;
+    networkPolicy: NetworkPolicy;
   };
   resourceDomain: {
-    limits: RuntimeLimitsV1;
+    limits: RuntimeLimits;
   };
 };
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
 
 function stableStringify(v: any): string {
   if (v === null || v === undefined) return "null";
@@ -64,46 +43,7 @@ function normalizeStringArray(input: unknown) {
   return arr.map((x) => (typeof x === "string" ? x.trim() : "")).filter(Boolean);
 }
 
-export function normalizeRuntimeLimitsV1(v: unknown): RuntimeLimitsV1 {
-  const obj = isPlainObject(v) ? v : {};
-  const timeoutMs = typeof obj.timeoutMs === "number" && Number.isFinite(obj.timeoutMs) && obj.timeoutMs > 0 ? obj.timeoutMs : 10_000;
-  const maxConcurrency =
-    typeof obj.maxConcurrency === "number" && Number.isFinite(obj.maxConcurrency) && obj.maxConcurrency > 0 ? obj.maxConcurrency : 10;
-  const memoryMbRaw = typeof obj.memoryMb === "number" && Number.isFinite(obj.memoryMb) ? obj.memoryMb : null;
-  const memoryMb = memoryMbRaw === null ? null : Math.max(32, Math.min(8192, Math.round(memoryMbRaw)));
-  const cpuMsRaw = typeof obj.cpuMs === "number" && Number.isFinite(obj.cpuMs) ? obj.cpuMs : null;
-  const cpuMs = cpuMsRaw === null ? null : Math.max(50, Math.min(10_000, Math.round(cpuMsRaw)));
-  const maxOutputBytesRaw = typeof obj.maxOutputBytes === "number" && Number.isFinite(obj.maxOutputBytes) ? obj.maxOutputBytes : null;
-  const maxOutputBytes = maxOutputBytesRaw === null ? 1_000_000 : Math.max(1_000, Math.min(20_000_000, Math.round(maxOutputBytesRaw)));
-  const maxEgressRequestsRaw = typeof obj.maxEgressRequests === "number" && Number.isFinite(obj.maxEgressRequests) ? obj.maxEgressRequests : null;
-  const maxEgressRequests = maxEgressRequestsRaw === null ? 50 : Math.max(0, Math.min(1000, Math.round(maxEgressRequestsRaw)));
-  return { timeoutMs, maxConcurrency, memoryMb, cpuMs, maxOutputBytes, maxEgressRequests };
-}
 
-export function normalizeNetworkPolicyV1(v: unknown): NetworkPolicyV1 {
-  const obj = isPlainObject(v) ? v : {};
-  const allowedDomains = Array.isArray(obj.allowedDomains)
-    ? obj.allowedDomains
-        .filter((x) => typeof x === "string" && x.trim())
-        .map((x: string) => x.trim().toLowerCase())
-        .filter((x: string) => Boolean(x) && !x.includes("://") && !x.includes("/") && !x.includes(":"))
-    : [];
-  const rulesRaw = Array.isArray((obj as any).rules) ? (obj as any).rules : [];
-  const rules = rulesRaw
-    .filter((x: any) => x && typeof x === "object" && !Array.isArray(x))
-    .map((x: any) => {
-      const host0 = typeof x.host === "string" ? x.host.trim().toLowerCase() : "";
-      const host = host0 && !host0.includes("://") && !host0.includes("/") && !host0.includes(":") ? host0 : "";
-      if (!host) return null;
-      const pathPrefix0 = typeof x.pathPrefix === "string" ? x.pathPrefix.trim() : "";
-      const pathPrefix = pathPrefix0 ? (pathPrefix0.startsWith("/") ? pathPrefix0 : `/${pathPrefix0}`) : undefined;
-      const methods0 = Array.isArray(x.methods) ? x.methods.filter((m: any) => typeof m === "string" && m.trim()) : undefined;
-      const methods = methods0?.length ? methods0.map((m: string) => m.trim().toUpperCase()) : undefined;
-      return { host, pathPrefix, methods };
-    })
-    .filter(Boolean) as NetworkPolicyRuleV1[];
-  return { allowedDomains, rules };
-}
 
 function normalizeFieldRuleSide(v: any) {
   const allow = normalizeStringArray(v?.allow);
@@ -189,8 +129,8 @@ function normalizeEnvelope(v: unknown): CapabilityEnvelopeV1 | null {
   if (!tenantId || !toolContract.scope || !toolContract.resourceType || !toolContract.action) return null;
 
   const connectorInstanceIds = Array.from(new Set(normalizeStringArray((secretDomainRaw as any).connectorInstanceIds)));
-  const networkPolicy = normalizeNetworkPolicyV1((egressDomainRaw as any).networkPolicy);
-  const limits = normalizeRuntimeLimitsV1((resourceDomainRaw as any).limits);
+  const networkPolicy = normalizeNetworkPolicy((egressDomainRaw as any).networkPolicy);
+  const limits = normalizeLimits((resourceDomainRaw as any).limits);
 
   return {
     format: "capabilityEnvelope.v1",
@@ -207,7 +147,7 @@ export function validateCapabilityEnvelopeV1(v: unknown): { ok: true; envelope: 
   return { ok: true, envelope: env };
 }
 
-function isAllowedByRule(params: { effRule: NetworkPolicyRuleV1; childRule: NetworkPolicyRuleV1 }) {
+function isAllowedByRule(params: { effRule: NetworkPolicyRule; childRule: NetworkPolicyRule }) {
   if (params.effRule.host.toLowerCase() !== params.childRule.host.toLowerCase()) return false;
   const ep = params.effRule.pathPrefix;
   const cp = params.childRule.pathPrefix;
@@ -225,7 +165,7 @@ function isAllowedByRule(params: { effRule: NetworkPolicyRuleV1; childRule: Netw
   return true;
 }
 
-function networkPolicyNotExceed(child: NetworkPolicyV1, eff: NetworkPolicyV1) {
+function networkPolicyNotExceed(child: NetworkPolicy, eff: NetworkPolicy) {
   const effAllowed = new Set(eff.allowedDomains.map((d) => d.toLowerCase()));
   for (const d of child.allowedDomains) {
     if (!effAllowed.has(d.toLowerCase())) return false;
@@ -238,7 +178,7 @@ function networkPolicyNotExceed(child: NetworkPolicyV1, eff: NetworkPolicyV1) {
   return true;
 }
 
-function limitsNotExceed(child: RuntimeLimitsV1, eff: RuntimeLimitsV1) {
+function limitsNotExceed(child: RuntimeLimits, eff: RuntimeLimits) {
   if (child.timeoutMs > eff.timeoutMs) return false;
   if (child.maxConcurrency > eff.maxConcurrency) return false;
   if (eff.memoryMb !== null) {

@@ -1,137 +1,117 @@
 #!/usr/bin/env node
-type Opts = Record<string, string | boolean>;
+/**
+ * openslin-admin CLI — 灵智 MindPal 智能体 OS 全量运维管理命令行工具
+ *
+ * 架构：Commander.js 框架 + 模块化命令注册
+ * 每个领域一个命令模块，通过 registerXxxCommands(program) 注册到根 Command
+ */
+import { Command } from "commander";
+import { addGlobalOptions } from "./lib/globalOptions";
 
-function parseCli(argv: string[]) {
-  const args = argv.slice(2);
-  const positionals: string[] = [];
-  const options: Opts = {};
-  let i = 0;
-  while (i < args.length) {
-    const a = args[i] ?? "";
-    if (!a.startsWith("--")) {
-      positionals.push(a);
-      i += 1;
-      continue;
-    }
-    const key = a.slice(2);
-    const next = args[i + 1];
-    if (!next || next.startsWith("--")) {
-      options[key] = true;
-      i += 1;
-      continue;
-    }
-    options[key] = next;
-    i += 2;
-  }
-  const command = positionals.join(" ");
-  return { command, options };
-}
+// ── 命令模块导入 ─────────────────────────────────────────────────
+import { registerHealthCommands } from "./commands/health";
+import { registerDiagnosticsCommands } from "./commands/diagnostics";
+import { registerAuthCommands } from "./commands/auth";
+import { registerRbacCommands } from "./commands/rbac";
+import { registerScimCommands } from "./commands/scim";
+import { registerSpacesCommands } from "./commands/spaces";
+import { registerSchemasCommands, registerEntitiesCommands, registerToolsCommands } from "./commands/modeling";
+import { registerChangesetsCommands, registerEvalsCommands, registerPolicyCommands, registerApprovalsCommands } from "./commands/governance";
+import { registerRunsCommands } from "./commands/runs";
+import { registerJobsCommands } from "./commands/jobs";
+import { registerSecretsCommands } from "./commands/secrets";
+import { registerKeyringCommands } from "./commands/keyring";
+import { registerAuditCommands } from "./commands/audit";
+import { registerSettingsCommands } from "./commands/settings";
+import { registerNotificationsCommands } from "./commands/notifications";
+import { registerSkillsCommands } from "./commands/skills";
+import { registerKnowledgeCommands } from "./commands/knowledge";
+import { registerFederationCommands } from "./commands/federation";
+import { registerUiCommands } from "./commands/ui";
+import { registerConfigCommands } from "./commands/config";
+import { registerArtifactPolicyCommands } from "./commands/artifactPolicy";
+import { registerIntegrationsCommands } from "./commands/integrations";
+import { registerCollabCommands } from "./commands/collab";
+import { registerObservabilityCommands } from "./commands/observability";
+import { registerBackupsCommands } from "./commands/backups";
+import { registerModelsCommands } from "./commands/models";
+import { registerMeCommands } from "./commands/me";
 
-function getStringOpt(opts: Opts, key: string) {
-  const v = opts[key];
-  return typeof v === "string" ? v : "";
-}
+// ── 主程序构建 ───────────────────────────────────────────────────
+const program = new Command();
+program
+  .name("openslin-admin")
+  .description("灵智 MindPal 智能体 OS — 运维管理 CLI (覆盖全量 250+ API 端点)")
+  .version("0.1.0");
 
-function apiBase(opts: Opts) {
-  return getStringOpt(opts, "apiBase") || process.env.API_BASE || "http://localhost:3001";
-}
+// 注册全局选项 (--api-base, --token, --tenant-id, --space-id, --format)
+addGlobalOptions(program);
 
-function apiToken(opts: Opts) {
-  return getStringOpt(opts, "token") || process.env.API_TOKEN || "";
-}
+// ── 注册全部命令模块 ─────────────────────────────────────────────
+// 基础运维
+registerHealthCommands(program);       // health live|ready|full|db-pool|system
+registerDiagnosticsCommands(program);  // diagnostics status|dump|metrics
+registerMeCommands(program);           // me info|prefs-get|prefs-set
 
-async function apiGetJson(params: { apiBase: string; path: string; token: string }) {
-  const res = await fetch(`${params.apiBase}${params.path}`, {
-    method: "GET",
-    headers: {
-      authorization: `Bearer ${params.token}`,
-    },
-  });
-  const text = await res.text();
-  const json = text ? JSON.parse(text) : null;
-  return { status: res.status, json };
-}
+// 认证与权限
+registerAuthCommands(program);         // auth tokens|mfa|sso
+registerRbacCommands(program);         // rbac roles|permissions|bindings|check|abac
+registerScimCommands(program);         // scim users|groups|config
 
-async function cmdAuditVerify(opts: Opts) {
-  const base = apiBase(opts);
-  const token = apiToken(opts);
-  if (!token) throw new Error("missing_token");
-  const tenantId = getStringOpt(opts, "tenantId");
-  const from = getStringOpt(opts, "from");
-  const to = getStringOpt(opts, "to");
-  const limit = getStringOpt(opts, "limit");
-  const qs = new URLSearchParams();
-  if (tenantId) qs.set("tenantId", tenantId);
-  if (from) qs.set("from", from);
-  if (to) qs.set("to", to);
-  if (limit) qs.set("limit", limit);
-  const path = `/audit/verify${qs.size ? `?${qs.toString()}` : ""}`;
-  const r = await apiGetJson({ apiBase: base, path, token });
-  console.log(JSON.stringify({ status: r.status, result: r.json }, null, 2));
-  if (r.status !== 200) process.exitCode = 1;
-}
+// 空间与组织
+registerSpacesCommands(program);       // spaces list|get|create|delete|members|org-units
 
-async function cmdModelsUsage(opts: Opts) {
-  const base = apiBase(opts);
-  const token = apiToken(opts);
-  if (!token) throw new Error("missing_token");
-  const scope = getStringOpt(opts, "scope");
-  const range = getStringOpt(opts, "range");
-  const purpose = getStringOpt(opts, "purpose");
-  const modelRef = getStringOpt(opts, "modelRef");
-  const qs = new URLSearchParams();
-  if (scope) qs.set("scope", scope);
-  if (range) qs.set("range", range);
-  if (purpose) qs.set("purpose", purpose);
-  if (modelRef) qs.set("modelRef", modelRef);
-  const path = `/governance/models/usage${qs.size ? `?${qs.toString()}` : ""}`;
-  const r = await apiGetJson({ apiBase: base, path, token });
-  console.log(JSON.stringify({ status: r.status, result: r.json }, null, 2));
-  if (r.status !== 200) process.exitCode = 1;
-}
+// 建模
+registerSchemasCommands(program);      // schemas list|get|publish|effective|...
+registerEntitiesCommands(program);     // entities list|get|query|create|update|delete|export|import
+registerToolsCommands(program);        // tools list|get|publish|execute|network-policies|...
 
-async function cmdQueueStatus(opts: Opts) {
-  const base = apiBase(opts);
-  const token = apiToken(opts);
-  if (!token) throw new Error("missing_token");
-  const scope = getStringOpt(opts, "scope");
-  const qs = new URLSearchParams();
-  if (scope) qs.set("scope", scope);
-  const path = `/diagnostics${qs.size ? `?${qs.toString()}` : ""}`;
-  const r = await apiGetJson({ apiBase: base, path, token });
-  console.log(JSON.stringify({ status: r.status, result: r.json }, null, 2));
-  if (r.status !== 200) process.exitCode = 1;
-}
+// 变更集 & 评估 & 策略 & 审批
+registerChangesetsCommands(program);   // changesets list|get|create|submit|approve|release|...
+registerEvalsCommands(program);        // evals suites|runs|dashboard
+registerPolicyCommands(program);       // policy snapshots|debug|cache|versions
+registerApprovalsCommands(program);    // approvals list|get|decide
+registerAuditCommands(program);        // audit list|verify|legal-holds|exports|siem
+registerSettingsCommands(program);     // settings locale|retention
+registerConfigCommands(program);       // config registry|overrides|resolve
+registerArtifactPolicyCommands(program); // artifact-policy get|set
+registerUiCommands(program);           // ui component-registry
 
-async function cmdChangesetStatus(opts: Opts) {
-  const base = apiBase(opts);
-  const token = apiToken(opts);
-  if (!token) throw new Error("missing_token");
-  const id = getStringOpt(opts, "id");
-  if (!id) throw new Error("missing_id");
-  const r = await apiGetJson({ apiBase: base, path: `/governance/changesets/${encodeURIComponent(id)}`, token });
-  console.log(JSON.stringify({ status: r.status, result: r.json }, null, 2));
-  if (r.status !== 200) process.exitCode = 1;
-}
+// 执行引擎
+registerRunsCommands(program);         // runs list|get|cancel|retry|pause|resume|skip|...
+registerJobsCommands(program);         // jobs create|get
 
-async function main() {
-  const { command, options } = parseCli(process.argv);
-  try {
-    if (command === "audit verify") await cmdAuditVerify(options);
-    else if (command === "models usage") await cmdModelsUsage(options);
-    else if (command === "queue status") await cmdQueueStatus(options);
-    else if (command === "changeset status") await cmdChangesetStatus(options);
-    else {
-      console.log("openslin-admin commands:");
-      console.log("  audit verify --token <token> [--apiBase <url>] [--tenantId <id>] [--from <iso>] [--to <iso>] [--limit <n>]");
-      console.log("  models usage --token <token> [--apiBase <url>] [--scope tenant|space] [--range 24h] [--purpose <p>] [--modelRef <ref>]");
-      console.log("  queue status --token <token> [--apiBase <url>] [--scope tenant|space]");
-      console.log("  changeset status --token <token> --id <changesetId> [--apiBase <url>]");
-    }
-  } catch (e: any) {
-    console.error(String(e?.message ?? "failed"));
-    process.exitCode = 1;
-  }
-}
+// 安全
+registerSecretsCommands(program);      // secrets list|get|create|revoke|rotate
+registerKeyringCommands(program);      // keyring init|rotate|disable|reencrypt
 
-void main();
+// 通知
+registerNotificationsCommands(program); // notifications prefs|inbox
+
+// Skill 运行时
+registerSkillsCommands(program);       // skills lifecycle|runners|trusted-keys
+
+// 模型网关
+registerModelsCommands(program);       // models catalog|bindings|onboard|chat|routing
+
+// 知识库
+registerKnowledgeCommands(program);    // knowledge documents|strategies|jobs|quality
+
+// 联邦
+registerFederationCommands(program);   // federation nodes|grants|content-policies
+
+// 集成与协作
+registerIntegrationsCommands(program); // integrations list|get
+registerCollabCommands(program);       // collab diagnostics
+
+// 可观测性
+registerObservabilityCommands(program); // observability summary|operations|vocab
+
+// 备份
+registerBackupsCommands(program);      // backups list|get|create|restore
+
+// ── 解析并执行 ──────────────────────────────────────────────────
+program.parseAsync(process.argv).catch((err: unknown) => {
+  console.error(String((err as Error)?.message ?? "unexpected error"));
+  process.exitCode = 1;
+});

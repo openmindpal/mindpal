@@ -1,0 +1,51 @@
+{
+  "identity": {
+    "name": "knowledge.video.extract",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "视频内容提取",
+    "en-US": "Video Content Extraction"
+  },
+  "description": {
+    "zh-CN": "从视频中提取文字内容：音轨转文字（通过Whisper/STT API）+ 关键帧OCR文字识别，合并为结构化知识文档。适用于会议录像、教学视频、演讲等知识入库场景。",
+    "en-US": "Extracts text from video: audio track transcription (via Whisper/STT API) + keyframe OCR, merged into structured knowledge document. Suitable for meetings, lectures, presentations."
+  },
+  "category": "knowledge",
+  "priority": 6,
+  "tags": ["video", "transcription", "ocr", "knowledge", "multimodal"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "media",
+    "action": "video_extract",
+    "idempotencyRequired": true,
+    "riskLevel": "low",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "videoUrl": { "type": "string", "description": "视频 URL（http/https）" },
+        "videoBase64": { "type": "string", "description": "视频 base64 编码数据（与 videoUrl 二选一）" },
+        "format": { "type": "string", "description": "视频格式: mp4 | mkv | avi | mov | webm，默认 mp4" },
+        "language": { "type": "string", "description": "期望语言 BCP-47 码（如 zh-CN），留空自动检测" },
+        "extractAudio": { "type": "boolean", "description": "是否提取音轨转文字，默认 true" },
+        "extractFrames": { "type": "boolean", "description": "是否提取关键帧OCR，默认 true" },
+        "frameIntervalSec": { "type": "number", "description": "关键帧采样间隔（秒），默认 30" },
+        "maxFrames": { "type": "number", "description": "最大关键帧数量，默认 20" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "text": { "type": "string", "required": true, "description": "合并后的完整文字内容" },
+        "audioTranscript": { "type": "string", "description": "音轨转录文字" },
+        "frameTexts": { "type": "json", "description": "关键帧OCR结果 [{timestamp, text, confidence}]" },
+        "language": { "type": "string", "description": "检测到的主要语言" },
+        "durationMs": { "type": "number", "description": "视频时长(ms)" },
+        "wordCount": { "type": "number", "description": "总字数" },
+        "confidence": { "type": "number", "required": true, "description": "综合置信度 0-1" }
+      }
+    }
+  },
+  "entry": "dist/index.js"
+}

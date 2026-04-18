@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
 import { type ApiError, errText, toApiError } from "@/lib/apiError";
 import { Card, PageHeader, Table, StatusBadge } from "@/components/ui";
 
@@ -157,7 +158,7 @@ export default function GovWorkbenchesClient(props: { locale: string; initial: a
                     <td>{String(p.status ?? "")}</td>
                     <td>{draftV || "-"}</td>
                     <td>{relV || "-"}</td>
-                    <td>{String(p.updatedAt ?? "")}</td>
+                    <td>{fmtDateTime(p.updatedAt, props.locale)}</td>
                     <td>
                       <Link href={`/gov/workbenches/${encodeURIComponent(key)}?lang=${encodeURIComponent(props.locale)}`}>
                         {t(props.locale, "action.view")}

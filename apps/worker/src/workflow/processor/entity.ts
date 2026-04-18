@@ -85,6 +85,73 @@ export async function loadLatestSchema(pool: Pool, schemaName: string) {
   return { name: res.rows[0].name as string, version: res.rows[0].version as number, schema: res.rows[0].schema_json as any };
 }
 
+async function resolveSchemaNameForEntity(params: {
+  pool: Pool;
+  tenantId: string;
+  spaceId: string;
+  entityName: string;
+  requestedSchemaName?: string | null;
+}) {
+  const requestedSchemaName = String(params.requestedSchemaName ?? "").trim();
+  if (requestedSchemaName) return requestedSchemaName;
+
+  const res = await params.pool.query(
+    `
+      SELECT DISTINCT schema_name
+      FROM entity_records
+      WHERE tenant_id = $1
+        AND space_id = $2
+        AND entity_name = $3
+        AND schema_name IS NOT NULL
+      ORDER BY schema_name ASC
+    `,
+    [params.tenantId, params.spaceId, params.entityName],
+  );
+  const schemaNames = Array.from(new Set(res.rows.map((row) => String(row.schema_name ?? "").trim()).filter(Boolean)));
+  if (schemaNames.length === 1) return schemaNames[0];
+  if (schemaNames.length > 1) throw new Error(`schema_name_ambiguous:${params.entityName}`);
+
+  const released = await params.pool.query(
+    `
+      SELECT DISTINCT name
+      FROM schemas
+      WHERE status = 'released'
+        AND COALESCE(schema_json->'entities', '{}'::jsonb) ? $1
+      ORDER BY name ASC
+    `,
+    [params.entityName],
+  );
+  const matched = released.rows.map((row) => String(row.name ?? "").trim()).filter(Boolean);
+  if (matched.length === 1) return matched[0];
+  if (matched.length > 1) throw new Error(`schema_name_ambiguous:${params.entityName}`);
+  throw new Error(`schema_name_required:${params.entityName}`);
+}
+
+async function resolveSchemaNameForEntities(params: {
+  pool: Pool;
+  tenantId: string;
+  spaceId: string;
+  entityNames: string[];
+  requestedSchemaName?: string | null;
+}) {
+  const requestedSchemaName = String(params.requestedSchemaName ?? "").trim();
+  if (requestedSchemaName) return requestedSchemaName;
+  const entityNames = Array.from(new Set(params.entityNames.map((name) => String(name ?? "").trim()).filter(Boolean)));
+  if (!entityNames.length) throw new Error("schema_name_required");
+  const schemaNames = new Set<string>();
+  for (const entityName of entityNames) {
+    schemaNames.add(await resolveSchemaNameForEntity({
+      pool: params.pool,
+      tenantId: params.tenantId,
+      spaceId: params.spaceId,
+      entityName,
+      requestedSchemaName: null,
+    }));
+  }
+  if (schemaNames.size === 1) return Array.from(schemaNames)[0];
+  throw new Error(`schema_name_ambiguous:${entityNames.join(",")}`);
+}
+
 export function validateEntityPayload(schema: any, entityName: string, payload: unknown, mode: "create" | "update") {
   const entity = schema?.entities?.[entityName];
   if (!entity) throw new Error(`未知实体：${entityName}`);
@@ -265,14 +332,20 @@ export async function executeEntityExport(params: {
   input: any;
 }) {
   const entityName = String(params.input?.entityName ?? "");
-  const schemaName = String(params.input?.schemaName ?? "core");
+  if (!entityName) throw new Error("policy_violation:missing_entity");
+  const schemaName = await resolveSchemaNameForEntity({
+    pool: params.pool,
+    tenantId: params.tenantId,
+    spaceId: params.spaceId,
+    entityName,
+    requestedSchemaName: params.input?.schemaName,
+  });
   const format = String(params.input?.format ?? "jsonl");
   const query = params.input?.query ?? {};
   const select = Array.isArray(params.input?.select) ? (params.input.select as string[]) : null;
   const fieldRules = params.input?.fieldRules ?? null;
   const rowFilters = params.input?.rowFilters ?? null;
 
-  if (!entityName) throw new Error("policy_violation:missing_entity");
   const schema = await loadLatestSchema(params.pool, schemaName);
   if (!schema) throw new Error(`schema_not_found:${schemaName}`);
   const entity = schema.schema?.entities?.[entityName];
@@ -375,11 +448,17 @@ export async function executeEntityImport(params: {
   input: any;
 }) {
   const entityName = String(params.input?.entityName ?? "");
-  const schemaName = String(params.input?.schemaName ?? "core");
+  if (!entityName) throw new Error("policy_violation:missing_entity");
+  const schemaName = await resolveSchemaNameForEntity({
+    pool: params.pool,
+    tenantId: params.tenantId,
+    spaceId: params.spaceId,
+    entityName,
+    requestedSchemaName: params.input?.schemaName,
+  });
   const format = String(params.input?.format ?? "jsonl");
   const records = Array.isArray(params.input?.records) ? (params.input.records as any[]) : [];
   const fieldRules = params.input?.fieldRules ?? null;
-  if (!entityName) throw new Error("policy_violation:missing_entity");
   if (!params.idempotencyKey) throw new Error("policy_violation:missing_idempotency_key");
   if (!params.subjectId) throw new Error("policy_violation:missing_subject_id");
 
@@ -458,11 +537,17 @@ export async function executeSpaceBackup(params: {
   traceId: string;
   input: any;
 }) {
-  const schemaName = String(params.input?.schemaName ?? "core");
   const format = String(params.input?.format ?? "jsonl");
   const entityNames = Array.isArray(params.input?.entityNames) ? (params.input.entityNames as string[]) : null;
   const fieldRules = params.input?.fieldRules ?? null;
   const rowFilters = params.input?.rowFilters ?? null;
+  const schemaName = await resolveSchemaNameForEntities({
+    pool: params.pool,
+    tenantId: params.tenantId,
+    spaceId: params.spaceId,
+    entityNames: entityNames ?? [],
+    requestedSchemaName: params.input?.schemaName,
+  });
 
   const schema = await loadLatestSchema(params.pool, schemaName);
   if (!schema) throw new Error(`schema_not_found:${schemaName}`);
@@ -552,15 +637,14 @@ export async function executeSpaceRestore(params: {
   traceId: string;
   input: any;
 }) {
-  const schemaName = String(params.input?.schemaName ?? "core");
   const backupArtifactId = String(params.input?.backupArtifactId ?? "");
   const conflictStrategy = String(params.input?.conflictStrategy ?? "fail");
   const fieldRules = params.input?.fieldRules ?? null;
+  const sourceSpaceId = String(params.input?.sourceSpaceId ?? params.spaceId ?? "");
+  const targetSpaceId = String(params.input?.targetSpaceId ?? params.spaceId ?? "");
   if (!backupArtifactId) throw new Error("policy_violation:missing_backup_artifact");
-
-  const schema = await loadLatestSchema(params.pool, schemaName);
-  if (!schema) throw new Error(`schema_not_found:${schemaName}`);
-  const art = await loadArtifactForRestore({ pool: params.pool, tenantId: params.tenantId, spaceId: params.spaceId, artifactId: backupArtifactId });
+  if (!sourceSpaceId || !targetSpaceId) throw new Error("policy_violation:missing_restore_space");
+  const art = await loadArtifactForRestore({ pool: params.pool, tenantId: params.tenantId, spaceId: sourceSpaceId, artifactId: backupArtifactId });
   if (!art) throw new Error("policy_violation:backup_artifact_not_found");
 
   const rows: any[] =
@@ -571,6 +655,15 @@ export async function executeSpaceRestore(params: {
           .map((x) => x.trim())
           .filter(Boolean)
           .map((x) => JSON.parse(x));
+  const schemaName = await resolveSchemaNameForEntities({
+    pool: params.pool,
+    tenantId: params.tenantId,
+    spaceId: sourceSpaceId,
+    entityNames: rows.map((row) => String(row?.entityName ?? "")),
+    requestedSchemaName: params.input?.schemaName,
+  });
+  const schema = await loadLatestSchema(params.pool, schemaName);
+  if (!schema) throw new Error(`schema_not_found:${schemaName}`);
 
   let accepted = 0;
   let rejected = 0;
@@ -591,7 +684,7 @@ export async function executeSpaceRestore(params: {
         const existing = await params.pool.query("SELECT tenant_id, space_id FROM entity_records WHERE id = $1 LIMIT 1", [id]);
         if (existing.rowCount) {
           const r = existing.rows[0] as any;
-          const sameScope = r.tenant_id === params.tenantId && r.space_id === params.spaceId;
+          const sameScope = r.tenant_id === params.tenantId && r.space_id === targetSpaceId;
           if (!sameScope) throw new Error("conflict_scope_mismatch");
           if (conflictStrategy === "fail") {
             conflicts += 1;
@@ -607,7 +700,7 @@ export async function executeSpaceRestore(params: {
                   updated_at = now()
               WHERE tenant_id = $1 AND space_id = $2 AND entity_name = $3 AND id = $7
             `,
-            [params.tenantId, params.spaceId, entityName, payload, schema.name, schema.version, id],
+            [params.tenantId, targetSpaceId, entityName, payload, schema.name, schema.version, id],
           );
           accepted += 1;
           continue;
@@ -620,7 +713,7 @@ export async function executeSpaceRestore(params: {
             INSERT INTO entity_records (id, tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
           `,
-          [id, params.tenantId, params.spaceId, entityName, schema.name, schema.version, payload, ownerSubjectId ?? null],
+          [id, params.tenantId, targetSpaceId, entityName, schema.name, schema.version, payload, ownerSubjectId ?? null],
         );
       } else {
         await params.pool.query(
@@ -628,7 +721,7 @@ export async function executeSpaceRestore(params: {
             INSERT INTO entity_records (tenant_id, space_id, entity_name, schema_name, schema_version, payload, owner_subject_id)
             VALUES ($1,$2,$3,$4,$5,$6,$7)
           `,
-          [params.tenantId, params.spaceId, entityName, schema.name, schema.version, payload, ownerSubjectId ?? null],
+          [params.tenantId, targetSpaceId, entityName, schema.name, schema.version, payload, ownerSubjectId ?? null],
         );
       }
       accepted += 1;
@@ -638,17 +731,17 @@ export async function executeSpaceRestore(params: {
     }
   }
 
-  const report = { spaceId: params.spaceId, schemaName, backupArtifactId, conflictStrategy, acceptedCount: accepted, rejectedCount: rejected, conflicts, sampleErrors };
+  const report = { sourceSpaceId, targetSpaceId, schemaName, backupArtifactId, conflictStrategy, acceptedCount: accepted, rejectedCount: rejected, conflicts, sampleErrors };
   const reportText = JSON.stringify(report);
   const created = await createArtifact({
     pool: params.pool,
     tenantId: params.tenantId,
-    spaceId: params.spaceId,
+    spaceId: targetSpaceId,
     type: "restore_report",
     format: "json",
     contentType: "application/json; charset=utf-8",
     contentText: reportText,
-    source: { spaceId: params.spaceId, schemaName, backupArtifactId, conflictStrategy },
+    source: { sourceSpaceId, targetSpaceId, schemaName, backupArtifactId, conflictStrategy },
     runId: params.runId,
     stepId: params.stepId,
     createdBySubjectId: params.subjectId,

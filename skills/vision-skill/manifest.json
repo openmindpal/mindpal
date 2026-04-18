@@ -1,0 +1,45 @@
+{
+  "identity": {
+    "name": "media.vision.analyze",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "图像视觉分析",
+    "en-US": "Image Vision Analysis"
+  },
+  "description": {
+    "zh-CN": "使用多模态模型分析图像内容，支持图像描述、问答、标签检测等功能",
+    "en-US": "Analyzes image content using multimodal models, supports image description, Q&A, tag detection"
+  },
+  "category": "ai",
+  "priority": 8,
+  "tags": ["vision", "image", "multimodal", "analysis"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "media",
+    "action": "vision_analyze",
+    "idempotencyRequired": false,
+    "riskLevel": "low",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "imageUrl": { "type": "string", "description": "图像 URL（http/https/data: base64 均可）" },
+        "imageBase64": { "type": "string", "description": "图像 base64 编码数据（与 imageUrl 二选一）" },
+        "mimeType": { "type": "string", "description": "图像 MIME 类型，默认 image/png" },
+        "question": { "type": "string", "description": "针对图像的提问（留空则做通用描述）" },
+        "detail": { "type": "string", "description": "分析精度: auto | low | high，默认 auto" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "description": { "type": "string", "required": true, "description": "图像内容描述" },
+        "answer": { "type": "string", "description": "针对 question 的回答（如果有提问）" },
+        "tags": { "type": "json", "description": "检测到的标签 [string]" },
+        "confidence": { "type": "number", "required": true, "description": "分析置信度 0-1" }
+      }
+    }
+  },
+  "entry": "dist/index.js"
+}

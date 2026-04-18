@@ -31,7 +31,8 @@ export type Nl2UiRequest = z.infer<typeof nl2uiRequestSchema>;
 
 export const nl2uiGeneratedBlockSchema = z.object({
   id: z.string(),
-  type: z.enum(["text", "heading", "heading2", "heading3", "code", "image", "divider", "list", "todo", "quote", "callout", "table", "embed", "toggle"]),
+  type: z.enum(["text", "heading", "heading2", "heading3", "code", "image", "divider", "list", "todo", "quote", "callout", "table", "embed", "toggle",
+    "flow_node", "flow_edge", "animated_section"]),
   content: z.string(),
   meta: z.record(z.string(), z.any()).optional(),
   children: z.array(z.any()).optional(),
@@ -52,7 +53,7 @@ export const nl2uiLayoutSchema = z.object({
   variant: z.enum(["single-column", "split-horizontal", "split-vertical", "grid"]).describe("布局类型"),
   areas: z.array(z.object({
     name: z.string(),
-    componentId: z.string(),
+    componentId: z.string().describe("支持: DataGrid, KanbanBoard, CardList, BiDashboard, Chart, Timeline, Calendar, StatsRow, BlockEditor, FlowRenderer, FlowDiagram, ProcessFlow, AnimatedList, AnimatedCards"),
     props: z.record(z.string(), z.any()).optional(),
     dataBindingIds: z.array(z.string()).optional(),
   })).describe("布局区域定义"),

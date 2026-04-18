@@ -13,6 +13,14 @@ export type CollabRunEventRow = {
   payloadDigest: any | null;
   policySnapshotRef: string | null;
   correlationId: string | null;
+  /** P2-5.1: 责任链追溯 - 提议者 */
+  proposedBy: string | null;
+  /** P2-5.1: 责任链追溯 - 执行者 */
+  executedBy: string | null;
+  /** P2-5.1: 责任链追溯 - 审核者 */
+  reviewedBy: string | null;
+  /** P2-5.1: 责任链追溯 - 批准者 */
+  approvedBy: string | null;
   createdAt: string;
 };
 
@@ -30,6 +38,10 @@ function toEvent(r: any): CollabRunEventRow {
     payloadDigest: r.payload_digest ?? null,
     policySnapshotRef: r.policy_snapshot_ref ? String(r.policy_snapshot_ref) : null,
     correlationId: r.correlation_id ? String(r.correlation_id) : null,
+    proposedBy: r.proposed_by ? String(r.proposed_by) : null,
+    executedBy: r.executed_by ? String(r.executed_by) : null,
+    reviewedBy: r.reviewed_by ? String(r.reviewed_by) : null,
+    approvedBy: r.approved_by ? String(r.approved_by) : null,
     createdAt: String(r.created_at),
   };
 }
@@ -47,15 +59,24 @@ export async function appendCollabRunEvent(params: {
   payloadDigest?: any | null;
   policySnapshotRef?: string | null;
   correlationId?: string | null;
+  /** P2-5.1: 提议者 */
+  proposedBy?: string | null;
+  /** P2-5.1: 执行者 */
+  executedBy?: string | null;
+  /** P2-5.1: 审核者 */
+  reviewedBy?: string | null;
+  /** P2-5.1: 批准者 */
+  approvedBy?: string | null;
 }) {
   const res = await params.pool.query(
     `
       INSERT INTO collab_run_events (
         tenant_id, space_id, collab_run_id, task_id,
         type, actor_role, run_id, step_id,
-        payload_digest, policy_snapshot_ref, correlation_id
+        payload_digest, policy_snapshot_ref, correlation_id,
+        proposed_by, executed_by, reviewed_by, approved_by
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
       RETURNING *
     `,
     [
@@ -70,6 +91,10 @@ export async function appendCollabRunEvent(params: {
       params.payloadDigest ?? null,
       params.policySnapshotRef ?? null,
       params.correlationId ?? null,
+      params.proposedBy ?? null,
+      params.executedBy ?? null,
+      params.reviewedBy ?? null,
+      params.approvedBy ?? null,
     ],
   );
   return toEvent(res.rows[0]);

@@ -25,7 +25,8 @@ type DocEntry = {
   updateBytes: number;
   tenantId: string;
   spaceId: string;
-  noteId: string;
+  entityName: string;
+  entityId: string;
 };
 
 const docs = new Map<DocKey, DocEntry>();
@@ -38,8 +39,8 @@ const syncStep1 = 0;
 const syncStep2 = 1;
 const syncUpdate = 2;
 
-function docKey(tenantId: string, spaceId: string, noteId: string) {
-  return `${tenantId}:${spaceId}:core.notes:${noteId}`;
+function docKey(tenantId: string, spaceId: string, entityName: string, entityId: string) {
+  return `${tenantId}:${spaceId}:${entityName}:${entityId}`;
 }
 
 function toB64(u8: Uint8Array) {
@@ -53,8 +54,8 @@ function send(ws: any, encoder: encoding.Encoder) {
   ws.send(encoding.toUint8Array(encoder));
 }
 
-function ensureDoc(params: { tenantId: string; spaceId: string; noteId: string }) {
-  const key = docKey(params.tenantId, params.spaceId, params.noteId);
+function ensureDoc(params: { tenantId: string; spaceId: string; entityName: string; entityId: string }) {
+  const key = docKey(params.tenantId, params.spaceId, params.entityName, params.entityId);
   const existing = docs.get(key);
   if (existing) return existing;
   const doc = new Y.Doc();
@@ -72,25 +73,30 @@ function ensureDoc(params: { tenantId: string; spaceId: string; noteId: string }
     updateBytes: 0,
     tenantId: params.tenantId,
     spaceId: params.spaceId,
-    noteId: params.noteId,
+    entityName: params.entityName,
+    entityId: params.entityId,
   };
   docs.set(key, entry);
   return entry;
 }
 
-async function loadInitialState(params: { pool: any; tenantId: string; spaceId: string; noteId: string; doc: Y.Doc }) {
+async function loadInitialState(params: { pool: any; tenantId: string; spaceId: string; entityName: string; entityId: string; doc: Y.Doc }) {
   const yres = await params.pool.query(
-    "SELECT state_b64 FROM yjs_documents WHERE tenant_id = $1 AND space_id = $2 AND entity_name = 'core.notes' AND entity_id = $3 LIMIT 1",
-    [params.tenantId, params.spaceId, params.noteId],
+    "SELECT state_b64 FROM yjs_documents WHERE tenant_id = $1 AND space_id = $2 AND entity_name = $3 AND entity_id = $4 LIMIT 1",
+    [params.tenantId, params.spaceId, params.entityName, params.entityId],
   );
   if (yres.rowCount) {
     const u8 = fromB64(String(yres.rows[0].state_b64));
     Y.applyUpdate(params.doc, u8);
     return;
   }
+  // Parse schemaName.entityName for entity_records lookup
+  const dotIdx = params.entityName.indexOf(".");
+  const schemaName = dotIdx > 0 ? params.entityName.slice(0, dotIdx) : "core";
+  const tableName = dotIdx > 0 ? params.entityName.slice(dotIdx + 1) : params.entityName;
   const rec = await params.pool.query(
-    "SELECT payload FROM entity_records WHERE tenant_id = $1 AND space_id = $2 AND schema_name = 'core' AND entity_name = 'notes' AND id = $3 LIMIT 1",
-    [params.tenantId, params.spaceId, params.noteId],
+    "SELECT payload FROM entity_records WHERE tenant_id = $1 AND space_id = $2 AND schema_name = $3 AND entity_name = $4 AND id = $5 LIMIT 1",
+    [params.tenantId, params.spaceId, schemaName, tableName, params.entityId],
   );
   const content = rec.rowCount ? String((rec.rows[0].payload ?? {})?.content ?? "") : "";
   const ytext = params.doc.getText("content");
@@ -106,42 +112,46 @@ async function persistState(params: { pool: any; entry: DocEntry }) {
   await params.pool.query(
     `
       INSERT INTO yjs_documents (tenant_id, space_id, entity_name, entity_id, state_b64)
-      VALUES ($1,$2,'core.notes',$3,$4)
+      VALUES ($1,$2,$3,$4,$5)
       ON CONFLICT (tenant_id, space_id, entity_name, entity_id)
       DO UPDATE SET state_b64 = EXCLUDED.state_b64, updated_at = now()
     `,
-    [params.entry.tenantId, params.entry.spaceId, params.entry.noteId, stateB64],
+    [params.entry.tenantId, params.entry.spaceId, params.entry.entityName, params.entry.entityId, stateB64],
   );
+  // Parse schemaName.entityName for entity_records lookup
+  const dotIdx = params.entry.entityName.indexOf(".");
+  const schemaName = dotIdx > 0 ? params.entry.entityName.slice(0, dotIdx) : "core";
+  const tableName = dotIdx > 0 ? params.entry.entityName.slice(dotIdx + 1) : params.entry.entityName;
   const text = params.entry.doc.getText("content").toString();
   await params.pool.query(
     `
       UPDATE entity_records
-      SET payload = jsonb_set(payload, '{content}', to_jsonb($4::text), true),
+      SET payload = jsonb_set(payload, '{content}', to_jsonb($5::text), true),
           revision = revision + 1,
           updated_at = now()
-      WHERE tenant_id = $1 AND space_id = $2 AND schema_name = 'core' AND entity_name = 'notes' AND id = $3
+      WHERE tenant_id = $1 AND space_id = $2 AND schema_name = $3 AND entity_name = $4 AND id = $5
     `,
-    [params.entry.tenantId, params.entry.spaceId, params.entry.noteId, text],
+    [params.entry.tenantId, params.entry.spaceId, schemaName, tableName, params.entry.entityId, text],
   );
 }
 
 export const yjsRoutes: FastifyPluginAsync = async (app) => {
-  app.get("/ws/yjs/notes/:noteId", { websocket: true }, (socket, req) => {
+  app.get("/ws/yjs/:entityName/:entityId", { websocket: true }, (socket, req) => {
     setAuditContext(req as any, { resourceType: "entity", action: "read" });
     const subject = requireSubject(req as any);
     if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
-    const params = z.object({ noteId: z.string().uuid() }).parse((req as any).params);
+    const params = z.object({ entityName: z.string().min(1), entityId: z.string().uuid() }).parse((req as any).params);
 
     const readDecisionP = authorize({ pool: app.db, subjectId: subject.subjectId, tenantId: subject.tenantId, spaceId: subject.spaceId, resourceType: "entity", action: "read" });
     const writeDecisionP = authorize({ pool: app.db, subjectId: subject.subjectId, tenantId: subject.tenantId, spaceId: subject.spaceId, resourceType: "entity", action: "update" });
 
-    const entry = ensureDoc({ tenantId: subject.tenantId, spaceId: subject.spaceId, noteId: params.noteId });
+    const entry = ensureDoc({ tenantId: subject.tenantId, spaceId: subject.spaceId, entityName: params.entityName, entityId: params.entityId });
     entry.conns.add(socket);
     entry.participantIds.add(subject.subjectId);
 
     const ready = (async () => {
       if ((entry.doc as any).__loaded) return;
-      await loadInitialState({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!, noteId: params.noteId, doc: entry.doc });
+      await loadInitialState({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!, entityName: params.entityName, entityId: params.entityId, doc: entry.doc });
       (entry.doc as any).__loaded = true;
       entry.initialLen = entry.doc.getText("content").length;
       entry.doc.on("update", (update: Uint8Array, origin: any) => {
@@ -182,11 +192,11 @@ export const yjsRoutes: FastifyPluginAsync = async (app) => {
             tenantId: entry.tenantId,
             spaceId: entry.spaceId,
             resourceType: "yjs",
-            action: "notes.collab_session",
-            inputDigest: { entity: "core.notes", noteId: entry.noteId },
+            action: "entity.collab_session",
+            inputDigest: { entity: entry.entityName, entityId: entry.entityId },
             outputDigest: {
-              entity: "core.notes",
-              noteId: entry.noteId,
+              entity: entry.entityName,
+              entityId: entry.entityId,
               participantCount: entry.participantIds.size,
               durationMs: Math.max(0, Date.now() - entry.startedAt),
               finalLen,
@@ -200,7 +210,7 @@ export const yjsRoutes: FastifyPluginAsync = async (app) => {
           });
         } catch {
         }
-        docs.delete(docKey(entry.tenantId, entry.spaceId, entry.noteId));
+        docs.delete(docKey(entry.tenantId, entry.spaceId, entry.entityName, entry.entityId));
       }
     });
 

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import Fastify from "fastify";
 import { z } from "zod";
 import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { normalizeNetworkPolicyV1, normalizeRuntimeLimitsV1, validateCapabilityEnvelopeV1 } from "@openslin/shared";
+import { normalizeLimits, normalizeNetworkPolicy, validateCapabilityEnvelopeV1, withConcurrency, withTimeout } from "@openslin/shared";
 import { jsonByteLength, sha256Hex, stableStringify } from "./common";
 import type { NetworkPolicy } from "./runtime";
 import { pushEgressAudit, setEgressAuditSink } from "./runtime";
@@ -37,12 +37,12 @@ function networkPolicyDigest8(policy: any) {
   return sha256Hex(stableStringify(policy)).slice(0, 8);
 }
 
-const concurrencyCounters = new Map<string, number>();
 const runnerMetrics = {
   executeTotal: 0,
   executeSucceeded: 0,
   executeFailed: 0,
   executeRejected: 0,
+  inFlight: 0,
   egressAllowed: 0,
   egressDenied: 0,
   failuresByErrorCode: new Map<string, number>(),
@@ -50,32 +50,6 @@ const runnerMetrics = {
 
 function incMap(m: Map<string, number>, k: string) {
   m.set(k, (m.get(k) ?? 0) + 1);
-}
-
-async function withConcurrency<T>(key: string, maxConcurrency: number, fn: () => Promise<T>) {
-  const cur = concurrencyCounters.get(key) ?? 0;
-  if (cur >= maxConcurrency) throw new Error("resource_exhausted:max_concurrency");
-  concurrencyCounters.set(key, cur + 1);
-  try {
-    return await fn();
-  } finally {
-    const after = (concurrencyCounters.get(key) ?? 1) - 1;
-    if (after <= 0) concurrencyCounters.delete(key);
-    else concurrencyCounters.set(key, after);
-  }
-}
-
-async function withTimeout<T>(timeoutMs: number, fn: (signal: AbortSignal) => Promise<T>) {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fn(controller.signal);
-  } catch (e) {
-    if (controller.signal.aborted) throw new Error("timeout");
-    throw e;
-  } finally {
-    clearTimeout(t);
-  }
 }
 
 function classifyError(rawMsg: string) {
@@ -95,7 +69,7 @@ export function buildServer() {
       uptime: Math.round(process.uptime()),
       memoryMB: Math.round(process.memoryUsage.rss() / 1048576),
       executeTotal: runnerMetrics.executeTotal,
-      activeConcurrency: Array.from(concurrencyCounters.values()).reduce((a, b) => a + b, 0),
+      activeConcurrency: runnerMetrics.inFlight,
     };
   });
 
@@ -196,8 +170,8 @@ export function buildServer() {
       }
     }
 
-    const limits = normalizeRuntimeLimitsV1((envelope as CapabilityEnvelopeV1).resourceDomain.limits);
-    const networkPolicy = normalizeNetworkPolicyV1((envelope as CapabilityEnvelopeV1).egressDomain.networkPolicy) as unknown as NetworkPolicy;
+    const limits = normalizeLimits((envelope as CapabilityEnvelopeV1).resourceDomain.limits);
+    const networkPolicy = normalizeNetworkPolicy((envelope as CapabilityEnvelopeV1).egressDomain.networkPolicy) as unknown as NetworkPolicy;
 
     const concurrencyKey = `${parsed.scope.tenantId}:${parsed.toolRef}`;
     const startedAt = Date.now();
@@ -212,6 +186,7 @@ export function buildServer() {
     let errorCode: any = null;
     let errorCategory: any = null;
 
+    runnerMetrics.inFlight += 1;
     try {
       if (!parsed.artifactRef) throw new Error("policy_violation:missing_artifact_ref");
       const res = await withConcurrency(concurrencyKey, limits.maxConcurrency, async () => {
@@ -266,6 +241,8 @@ export function buildServer() {
       errorCategory = cls.errorCategory;
       errorCode = cls.errorCode;
       output = null;
+    } finally {
+      runnerMetrics.inFlight = Math.max(0, runnerMetrics.inFlight - 1);
     }
 
     const latencyMs = Date.now() - startedAt;

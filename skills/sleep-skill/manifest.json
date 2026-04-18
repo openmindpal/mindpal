@@ -3,6 +3,17 @@
     "name": "sleep",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "延迟工具",
+    "en-US": "Sleep/Delay Tool"
+  },
+  "description": {
+    "zh-CN": "暂停执行指定毫秒数，用于测试超时和重试机制",
+    "en-US": "Pauses execution for specified milliseconds, used for testing timeout and retry mechanisms"
+  },
+  "category": "testing",
+  "priority": 2,
+  "tags": ["test", "delay", "timeout"],
   "contract": {
     "scope": "read",
     "resourceType": "tool",

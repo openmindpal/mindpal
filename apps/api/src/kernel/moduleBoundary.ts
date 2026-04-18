@@ -56,6 +56,12 @@ export const MODULE_BOUNDARY_RULES: BoundaryRule[] = [
     severity: "error",
   },
   {
+    name: "modules-no-import-skills",
+    source: "apps/api/src/modules/**",
+    forbidden: ["../skills/**", "../../skills/**"],
+    severity: "error",
+  },
+  {
     name: "shared-no-import-apps",
     source: "packages/shared/src/**",
     forbidden: ["../../../apps/**", "../../apps/**"],
@@ -66,6 +72,35 @@ export const MODULE_BOUNDARY_RULES: BoundaryRule[] = [
     source: "apps/api/src/skills/*/modules/**",
     forbidden: ["../../*/modules/**"],
     exceptions: ["../modules/**"], // 自身 modules 下可互相引用
+    severity: "warn",
+  },
+  // ── 新增：反向依赖防护 ──
+  {
+    name: "modules-no-import-routes",
+    source: "apps/api/src/modules/**",
+    forbidden: ["../routes/**", "../../routes/**"],
+    severity: "error",
+  },
+  {
+    name: "modules-no-import-kernel-internal",
+    source: "apps/api/src/modules/**",
+    forbidden: ["../kernel/**"],
+    exceptions: [
+      // modules 可以 import kernel 的公共 re-export（如类型），但不应直接引用内部实现
+      // 目前实际无 modules→kernel 导入，此规则作为守护
+    ],
+    severity: "warn",
+  },
+  {
+    name: "skills-no-import-routes",
+    source: "apps/api/src/skills/**",
+    forbidden: ["../routes/**", "../../routes/**"],
+    severity: "error",
+  },
+  {
+    name: "routes-no-import-skills",
+    source: "apps/api/src/routes/**",
+    forbidden: ["../skills/**", "../../skills/**"],
     severity: "warn",
   },
 ];

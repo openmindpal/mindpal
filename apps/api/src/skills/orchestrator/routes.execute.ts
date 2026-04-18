@@ -7,14 +7,14 @@ import { requirePermission } from "../../modules/auth/guard";
 import { getEffectiveSafetyPolicyVersion } from "../../lib/safetyContract";
 import { getOrchestratorTurn } from "./modules/turnRepo";
 import { safetyPreCheck } from "./modules/safetyPreCheck";
-import { resolvePromptInjectionPolicy } from "@openslin/shared";
+import { resolvePromptInjectionPolicy, PERM } from "@openslin/shared";
 import { extractTextForPromptInjectionScan, getPromptInjectionPolicyFromEnv, scanPromptInjection, shouldDenyPromptInjectionForTarget, summarizePromptInjection } from "../../lib/promptInjection";
 import { resolveAndValidateTool, admitAndBuildStepEnvelope, buildStepInputPayload, submitNewToolRun, generateIdempotencyKey } from "../../kernel/executionKernel";
 import { validateToolInput } from "../../modules/tools/validate";
 import { networkPolicyDigest } from "../../modules/tools/executionAdmission";
 
 export const orchestratorExecuteRoutes: FastifyPluginAsync = async (app) => {
-  app.post("/orchestrator/execute", async (req, reply) => {
+  const executeHandler = async (req: any, reply: any) => {
     const subject = req.ctx.subject!;
     if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
 
@@ -73,20 +73,30 @@ export const orchestratorExecuteRoutes: FastifyPluginAsync = async (app) => {
     });
 
     // Artifact-ref check for non-builtin tools
-    if (!["entity.create", "entity.update", "memory.read", "memory.write", "knowledge.search"].includes(resolved.toolName)) {
+    // 基于 tool_definitions.source_layer 元数据动态判定，不再硬编码工具名称
+    const sourceLayer = (resolved.definition as any)?.sourceLayer ?? "";
+    const isBuiltinTool = sourceLayer === "kernel" || sourceLayer === "builtin";
+    if (!isBuiltinTool) {
       if (!resolved.version.artifactRef) {
         req.ctx.audit!.errorCategory = "policy_violation";
         throw Errors.forbidden();
       }
     }
-    if (resolved.toolName === "memory.read") await requirePermission({ req, resourceType: "memory", action: "read" });
-    if (resolved.toolName === "memory.write") await requirePermission({ req, resourceType: "memory", action: "write" });
+    // ── Dynamic extra-permissions check (metadata-driven, replaces hardcoded memory.read/write) ──
+    const extraPerms = resolved.definition.extraPermissions ?? [];
+    for (const ep of extraPerms) {
+      await requirePermission({ req, resourceType: ep.resourceType, action: ep.action });
+    }
 
     const idempotencyKeyHeader = (req.headers["idempotency-key"] as string | undefined) ?? (req.headers["x-idempotency-key"] as string | undefined) ?? undefined;
 
     setAuditContext(req, { resourceType: "orchestrator", action: "execute", toolRef: resolved.toolRef, idempotencyKey: body.idempotencyKey ?? idempotencyKeyHeader });
-    const decision = await requirePermission({ req, resourceType: "orchestrator", action: "execute" });
+    const decision = await requirePermission({ req, ...PERM.ORCHESTRATOR_EXECUTE });
     req.ctx.audit!.policyDecision = decision;
+
+    const startedAt = Date.now();
+
+    try {
 
     // ── Prompt injection scan ────────────────────────────────────────
     const injEff = await getEffectiveSafetyPolicyVersion({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, policyType: "injection" });
@@ -136,6 +146,15 @@ export const orchestratorExecuteRoutes: FastifyPluginAsync = async (app) => {
       input: body.input,
     });
     if (!safetyResult.safe) {
+      const latencyMs = Date.now() - startedAt;
+      
+      // P3-1: 记录安全拒绝指标
+      app.metrics.observeOrchestratorExecution({
+        result: "denied",
+        latencyMs,
+        toolType: resolved.toolName,
+      });
+      
       req.ctx.audit!.errorCategory = "safety_denied";
       req.ctx.audit!.outputDigest = { safetyPreCheck: { decision: "denied", method: safetyResult.method, riskLevel: safetyResult.riskLevel, reason: safetyResult.reason, suggestion: safetyResult.suggestion, durationMs: safetyResult.durationMs } };
       return reply.status(403).send({
@@ -174,6 +193,15 @@ export const orchestratorExecuteRoutes: FastifyPluginAsync = async (app) => {
 
     const receipt = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId, runId: result.runId, stepId: result.stepId }, status: result.outcome };
 
+    const latencyMs = Date.now() - startedAt;
+    
+    // P3-1: 记录 Orchestrator 执行指标
+    app.metrics.observeOrchestratorExecution({
+      result: result.outcome === "needs_approval" ? "ok" : "ok",
+      latencyMs,
+      toolType: resolved.toolName,
+    });
+
     if (result.outcome === "needs_approval") {
       req.ctx.audit!.outputDigest = {
         status: "needs_approval",
@@ -200,5 +228,21 @@ export const orchestratorExecuteRoutes: FastifyPluginAsync = async (app) => {
       runtimePolicy: { networkPolicyDigest: effNetDigest },
     };
     return { jobId: result.jobId, runId: result.runId, stepId: result.stepId, idempotencyKey, turnId: bindTurnId ?? undefined, suggestionId: bindSuggestionId ?? undefined, receipt };
-  });
+
+    } catch (err: any) {
+      // P3-1: 兆底记录 error 指标，确保异常路径不会成为可观测性盲区
+      const latencyMs = Date.now() - startedAt;
+      const isKnownDenied = err?.errorCode === "SAFETY_PI_DENIED" || err?.errorCode === "ORCH_SAFETY_DENIED";
+      if (!isKnownDenied) {
+        app.metrics.observeOrchestratorExecution({
+          result: "error",
+          latencyMs,
+          toolType: resolved?.toolName ?? "unknown",
+        });
+      }
+      throw err;
+    }
+  };
+
+  app.post("/orchestrator/dispatch/execute", async (req, reply) => executeHandler(req, reply));
 };

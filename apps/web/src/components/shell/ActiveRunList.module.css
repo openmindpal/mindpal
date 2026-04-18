@@ -1,68 +1,27 @@
-/* ─── ActiveRunList Container ────────────────────────────────────────────────── */
+/* ─── Container ─── */
 
 .container {
   display: flex;
   flex-direction: column;
-  background: var(--sl-surface);
-  border-radius: 8px;
-  border: 1px solid var(--sl-border);
+  height: 100%;
   overflow: hidden;
 }
 
-/* ─── Header ─────────────────────────────────────────────────────────────────── */
-
-.header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--sl-header-bg);
-  border: none;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--sl-text);
-  transition: background var(--sl-transition-fast);
-}
-
-.header:hover {
-  background: var(--sl-hover);
-}
-
-.headerIcon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--sl-muted);
-}
-
-.headerTitle {
-  flex: 1;
-  text-align: left;
-}
-
-.headerCount {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  background: var(--sl-accent);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-/* ─── Content ────────────────────────────────────────────────────────────────── */
+/* ─── Scrollable content ─── */
 
 .content {
-  padding: 8px;
-  border-top: 1px solid var(--sl-border);
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sl-border) transparent;
 }
 
-/* ─── States ─────────────────────────────────────────────────────────────────── */
+.content::-webkit-scrollbar { width: 4px; }
+.content::-webkit-scrollbar-thumb { background: var(--sl-border); border-radius: 2px; }
+
+/* ─── States ─── */
 
 .loadingState,
 .errorState,
@@ -72,183 +31,215 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 16px;
+  padding: 24px 16px;
   color: var(--sl-muted);
   font-size: 12px;
-  text-align: center;
 }
 
 .spinner {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border: 2px solid var(--sl-border);
   border-top-color: var(--sl-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .retryBtn {
-  padding: 4px 12px;
+  padding: 3px 10px;
   border: 1px solid var(--sl-border);
   border-radius: 4px;
   background: var(--sl-surface);
   color: var(--sl-text);
   font-size: 12px;
   cursor: pointer;
-  transition: all var(--sl-transition-fast);
 }
 
 .retryBtn:hover {
   background: var(--sl-hover);
-  border-color: var(--sl-accent);
 }
 
-/* ─── Run List ───────────────────────────────────────────────────────────────── */
+/* ─── Run List ─── */
 
 .runList {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 1px;
 }
 
-/* ─── Run Item ───────────────────────────────────────────────────────────────── */
+/* ─── Run Item: plain row ─── */
 
 .runItem {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  background: var(--sl-bg);
-  border: 1px solid var(--sl-border);
-  border-radius: 6px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 4px;
   text-decoration: none;
   color: var(--sl-text);
-  transition: all var(--sl-transition-fast);
+  transition: background 0.15s;
 }
 
 .runItem:hover {
   background: var(--sl-hover);
-  border-color: var(--sl-accent-border);
 }
 
-/* ─── Run Header ─────────────────────────────────────────────────────────────── */
+/* ─── Left: status dot ─── */
 
-.runHeader {
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+  background: var(--sl-muted);
+}
+
+.statusDotRunning {
+  background: var(--sl-success, #22c55e);
+}
+
+.statusDotBlocked {
+  background: var(--sl-warning, #f59e0b);
+}
+
+/* ─── Middle: all text info ─── */
+
+.runInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.runRow1 {
   display: flex;
   align-items: center;
   gap: 6px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
-.phaseIndicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-}
-
-.phaseExecuting {
-  background: var(--sl-success-bg, rgba(34, 197, 94, 0.15));
-  color: var(--sl-success, #22c55e);
-}
-
-.phaseBlocked {
-  background: var(--sl-warning-bg, rgba(245, 158, 11, 0.15));
-  color: var(--sl-warning, #f59e0b);
-}
-
-.phaseReviewing {
-  background: var(--sl-info-bg, rgba(59, 130, 246, 0.15));
-  color: var(--sl-info, #3b82f6);
-}
-
-.phasePending {
-  background: var(--sl-muted-bg, rgba(156, 163, 175, 0.15));
+.runId {
   color: var(--sl-muted);
+  font-family: var(--sl-font-mono, monospace);
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 .runPhase {
-  font-size: 12px;
   font-weight: 500;
-  flex: 1;
+  white-space: nowrap;
 }
 
-.runTime {
-  font-size: 11px;
+.runStepCount {
   color: var(--sl-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-/* ─── Step Info ──────────────────────────────────────────────────────────────── */
-
-.stepInfo {
+.runRow2 {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding-left: 26px;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--sl-muted);
+  line-height: 14px;
 }
 
-.stepName {
-  font-size: 12px;
-  color: var(--sl-text-secondary, var(--sl-muted));
+.toolName {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
+  min-width: 0;
+  flex: 1;
 }
 
 .stepAttempt {
-  font-size: 10px;
   color: var(--sl-warning, #f59e0b);
-  font-weight: 500;
+  font-size: 10px;
+  flex-shrink: 0;
 }
 
-/* ─── Run Footer ─────────────────────────────────────────────────────────────── */
-
-.runFooter {
+.runRow3 {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-left: 26px;
+  gap: 6px;
+  margin-top: 1px;
 }
 
 .progressBar {
   flex: 1;
-  height: 4px;
+  height: 2px;
   background: var(--sl-border);
-  border-radius: 2px;
+  border-radius: 1px;
   overflow: hidden;
 }
 
 .progressFill {
   height: 100%;
   background: var(--sl-accent);
-  border-radius: 2px;
-  transition: width 0.3s ease;
+  border-radius: 1px;
+  transition: width 0.4s ease;
 }
 
 .progressText {
   font-size: 10px;
   color: var(--sl-muted);
   font-variant-numeric: tabular-nums;
-  min-width: 32px;
-  text-align: right;
+  flex-shrink: 0;
 }
 
-.runArrow {
+/* ─── Right: time + actions ─── */
+
+.runActions {
   display: flex;
-  align-items: center;
-  color: var(--sl-muted);
-  opacity: 0;
-  transition: opacity var(--sl-transition-fast);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
-.runItem:hover .runArrow {
-  opacity: 1;
+.runTime {
+  font-size: 10px;
+  color: var(--sl-muted);
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.cancelBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sl-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.cancelBtn:hover:not(:disabled) {
+  background: var(--sl-danger-bg, #fee2e2);
+  color: var(--sl-danger, #dc2626);
+}
+
+.cancelBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cancelDone {
+  font-size: 10px;
+  color: var(--sl-muted);
+  white-space: nowrap;
 }

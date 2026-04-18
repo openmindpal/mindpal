@@ -1,5 +1,63 @@
 export type Locale = "zh-CN" | "en-US" | (string & {});
 
+/* ------------------------------------------------------------------ */
+/*  Multimodal Content Types                                            */
+/* ------------------------------------------------------------------ */
+
+/** 文本内容片段 */
+export type TextContentPart = { type: "text"; text: string };
+
+/** 图像内容片段 */
+export type ImageContentPart = {
+  type: "image_url";
+  image_url: { url: string; detail?: "auto" | "low" | "high" };
+};
+
+/** 音频内容片段 */
+export type AudioContentPart = {
+  type: "input_audio";
+  input_audio: { data: string; format: "wav" | "mp3" | "ogg" | "webm" };
+};
+
+/** 视频内容片段 */
+export type VideoContentPart = {
+  type: "video_url";
+  video_url: { url: string };
+};
+
+/** 多模态内容片段（兼容主流多模态协议） */
+export type ContentPart = TextContentPart | ImageContentPart | AudioContentPart | VideoContentPart;
+
+/** 消息内容：纯文本或多模态内容片段数组 */
+export type MessageContent = string | ContentPart[];
+
+/** 提取纯文本（多模态消息取所有 text 片段拼接） */
+export function extractTextContent(content: MessageContent): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter((p): p is TextContentPart => p.type === "text")
+    .map((p) => p.text)
+    .join("\n");
+}
+
+/** 检测消息内容是否包含图像 */
+export function hasImageContent(content: MessageContent): boolean {
+  if (typeof content === "string") return false;
+  return content.some((p) => p.type === "image_url");
+}
+
+/** 检测消息内容是否包含音频 */
+export function hasAudioContent(content: MessageContent): boolean {
+  if (typeof content === "string") return false;
+  return content.some((p) => p.type === "input_audio");
+}
+
+/** 检测消息内容是否包含视频 */
+export function hasVideoContent(content: MessageContent): boolean {
+  if (typeof content === "string") return false;
+  return content.some((p) => p.type === "video_url");
+}
+
 export type I18nText = Record<string, string>;
 
 export type I18nContext = {
@@ -132,10 +190,83 @@ export type { EvidenceSourceRef, EvidenceRef, EvidencePolicy, AnswerEnvelope } f
 
 export type { VectorStoreModeV1, VectorStoreRefV1, VectorStoreCapabilitiesV1, VectorStoreChunkEmbeddingV1, VectorStoreQueryResultItemV1, VectorStoreQueryResponseV1 } from "./knowledgeVectorStore";
 
+// ── V2 向量存储类型 (专业向量数据库集成) ──
+export type {
+  VectorStoreProvider,
+  VectorStoreRefV2,
+  VectorStoreCapabilitiesV2,
+  VectorStoreV2,
+  VectorStoreConfigV2,
+  VectorStoreEmbeddingV2,
+  VectorMetadataPayload,
+  VectorStoreQueryV2,
+  VectorStoreQueryResponseV2,
+  VectorStoreBatchResult,
+  VectorStoreCollectionInfo,
+  VectorStoreFilter,
+  VectorStoreFilterCondition,
+  VectorStoreQueryResultV2,
+  VectorStoreDegradeEvent,
+} from "./knowledgeVectorStore";
+
+
 export type { SyncConflictClass, SyncConflictView, SyncMergeTranscript, SyncMergeSummary, SyncConflictTicketStatus, SyncConflictTicketSummary } from "./sync";
+
+// ─── 记忆系统共享核心 ─────────────────────────────────────────────────
+export {
+  // Minhash 语义向量
+  MINHASH_K, MINHASH_MODEL_REF,
+  tokenize, hash32, computeMinhash, minhashOverlapScore,
+  // 风险分级
+  MEMORY_TYPE_RISK_LEVELS, DEFAULT_RISK_LEVEL, APPROVAL_REQUIRED_RISK_LEVELS,
+  evaluateMemoryRisk,
+  // SHA-256
+  sha256 as memorySha256,
+  // 统一 Rerank
+  computeMemoryRerankScore,
+  // ILIKE 转义
+  escapeIlikePat,
+  // Cosine Similarity
+  cosineSimilarity,
+} from "./memoryCore";
+export type {
+  MemoryRiskEvaluation, WriteProof, WriteIntent, MemoryRerankInput,
+} from "./memoryCore";
+
+// ─── 列级加密（AES-256-GCM，API / Worker 共享） ────────────────────────────
+export {
+  isColumnEncrypted, isColumnEncryptedString,
+  encryptColumn, encryptColumns,
+  decryptColumnPayload, decryptColumn, decryptColumns,
+  reencryptColumn,
+  needsEncryptionMigration,
+} from "./columnEncryption";
+export type {
+  ColumnEncryptedV1, ColumnKeyMaterial, ColumnDecryptOptions,
+} from "./columnEncryption";
 
 export type { PolicyExpr, PolicyLiteral, PolicyOperand, PolicyExprValidationResult, CompiledWhere } from "./policyExpr";
 export { POLICY_EXPR_JSON_SCHEMA_V1, validatePolicyExpr, compilePolicyExprWhere } from "./policyExpr";
+
+// ── ABAC 策略引擎 ──────────────────────────────────────────
+export {
+  evaluateAbacCondition,
+  evaluateAbacPolicySet,
+  validateAbacPolicyRule,
+  isInHierarchy,
+  getHierarchyAncestors,
+  buildPolicySetIndex,
+} from "./policyEngine";
+export type {
+  AttributeCategory,
+  AttributeDefinition,
+  AbacPolicyRule,
+  AbacPolicySet,
+  PolicyCombiningAlgorithm,
+  AbacEvaluationRequest,
+  AbacEvaluationResult,
+  PolicySetIndex,
+} from "./policyEngine";
 
 export { detectPromptInjection, resolvePromptInjectionPolicy, resolvePromptInjectionPolicyFromEnv, shouldDenyPromptInjection } from "./promptInjection";
 export type { PromptInjectionHit, PromptInjectionHitSeverity, PromptInjectionMode, PromptInjectionPolicy, PromptInjectionScanResult } from "./promptInjection";
@@ -146,11 +277,19 @@ export type { DlpHitType, DlpMode, DlpPolicy, DlpSummary } from "./dlp";
 export { SUPPORTED_SCHEMA_MIGRATION_KINDS, isSupportedSchemaMigrationKind } from "./schemaMigration";
 export type { SchemaMigrationKind } from "./schemaMigration";
 
-export type { CapabilityEnvelopeV1, NetworkPolicyRuleV1, NetworkPolicyV1, RuntimeLimitsV1 } from "./capabilityEnvelope";
-export { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicyV1, normalizeRuntimeLimitsV1, validateCapabilityEnvelopeV1 } from "./capabilityEnvelope";
+export type { CapabilityEnvelopeV1 } from "./capabilityEnvelope";
+export { checkCapabilityEnvelopeNotExceedV1, validateCapabilityEnvelopeV1 } from "./capabilityEnvelope";
 
 export { AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory } from "./audit";
 export type { AuditErrorCategory } from "./audit";
+
+export { PERM } from "./permissionActions";
+export type { PermissionAction } from "./permissionActions";
+
+export {
+  isToolAllowedForPolicy,
+  toolNameFromRef,
+} from "./collabProtocol";
 
 export {
   STEP_STATUSES, STEP_TERMINAL, STEP_BLOCKING, STEP_TRANSITIONS,
@@ -172,6 +311,8 @@ export {
   parseConfigValue, validateConfigValue,
 } from "./configRegistry";
 export type { ConfigLevel, ConfigScope, ConfigValueType, ConfigEntry } from "./configRegistry";
+export { validateEnvironment, formatValidationResult } from "./validateEnv";
+export type { EnvValidationIssue, EnvValidationResult } from "./validateEnv";
 
 export {
   resolveRuntimeConfig, resolveAllRuntimeConfigs,
@@ -202,6 +343,7 @@ export type {
 // ─── 统一运行时模块 (P0-01) ───────────────────────────────────────────────────
 export {
   isPlainObject,
+  normalizeStringSet,
   normalizeLimits,
   normalizeNetworkPolicy,
   isAllowedHost,
@@ -209,6 +351,9 @@ export {
   runtimeFetch,
   withConcurrency,
   withTimeout,
+  setConcurrencyBackend,
+  getConcurrencyBackend,
+  createRedisConcurrencyBackend,
 } from "./runtime";
 export type {
   RuntimeLimits,
@@ -216,6 +361,7 @@ export type {
   NetworkPolicy,
   EgressEvent,
   EgressCheck,
+  ConcurrencyBackend,
 } from "./runtime";
 
 // ─── Skill 沙箱基线模块 (P0-03) ───────────────────────────────────────────
@@ -235,3 +381,176 @@ export type {
   SandboxMode,
   DynamicCodeLockState,
 } from "./skillSandbox";
+
+// ─── P2-4: 统一协作协议 + P2-03: 通用 DAG 工具函数 ──────────────────────
+export {
+  validateDAG, detectCycleNodes, topologicalSortGeneric,
+  wouldCreateCycle, getAncestors, getDescendants,
+} from "./dagUtils";
+export type { DagNode, DagValidationResult } from "./dagUtils";
+
+// ─── P0-2: GoalGraph + WorldState (结构化目标图 + 世界状态) ──────────────────
+export {
+  createGoalGraph, getExecutableSubGoals, computeGoalProgress,
+  isGoalGraphComplete, validateGoalGraphDAG, topologicalSort,
+} from "./goalGraph";
+export type {
+  GoalCondition, SuccessCriterion, CompletionEvidence,
+  SubGoalStatus, SubGoal, GoalGraphStatus, GoalGraph,
+} from "./goalGraph";
+
+export {
+  createWorldState, upsertEntity, addRelation, upsertFact,
+  getValidFacts, getEntityRelations, getEntitiesByCategory,
+  worldStateToPromptText,
+} from "./worldState";
+export type {
+  EntityCategory, WorldEntity, RelationType, WorldRelation,
+  FactCategory, WorldFact, WorldState,
+} from "./worldState";
+
+// ─── OTel 初始化工具 ─────────────────────────────────────────────────
+export { bootstrapOtel, parseOtelHeaders, isOtelEnabled, getOtlpEndpoint } from "./otelBootstrap";
+
+// ─── P0-02: 通用熔断器 ─────────────────────────────────────────────────
+export {
+  CircuitBreaker, CircuitOpenError,
+  getOrCreateBreaker, getAllBreakerMetrics, clearBreakerRegistry,
+} from "./circuitBreaker";
+export type {
+  CircuitBreakerState, CircuitBreakerOptions,
+  CircuitBreakerStateChangeEvent, CircuitBreakerMetrics,
+} from "./circuitBreaker";
+
+// ─── P1-01: 统一事件总线核心类型 ────────────────────────────────────
+export {
+  SystemEventType,
+  EventChannels,
+  EVENT_BUS_CHANNEL_PREFIX,
+  eventBusRedisChannel,
+  stepDoneRedisChannel,
+} from "./eventBus";
+export type {
+  SystemEventTypeValue,
+  EventEnvelope,
+  EventHandler,
+  EventBusSubscription,
+  EventChannelValue,
+  EventBus,
+} from "./eventBus";
+
+export {
+  collabStreamRedisChannel,
+  createCollabStreamSignal,
+} from "./collabStream";
+export type { CollabStreamSignal, CollabStreamSignalKind } from "./collabStream";
+
+// ─── 公共基础配置 ─────────────────────────────────────────────────
+export { loadDbConfig, loadRedisConfig, loadMasterKey } from "./configBase";
+export type { DbConfig, RedisConfig } from "./configBase";
+export {
+  isConsensusReached,
+  validateCollabMessage,
+  validateConsensusProposal,
+  createDebateSession,
+  isDebateConverged,
+  createDebateSessionV2,
+  isDebateConvergedV2,
+  computeDebateConsensusScore,
+} from "./collabProtocol";
+export type {
+  CollabMessageType,
+  CollabMessage,
+  ConsensusProposal,
+  ConsensusVote,
+  ConsensusQuorumType,
+  RoleCapabilityDeclaration,
+  DiscoveryQuery,
+  DiscoveryReply,
+  CollabStateSnapshot,
+  SyncAck,
+  DebatePosition,
+  DebateRound,
+  DebateVerdict,
+  DebateSession,
+  DebateParty,
+  DebateCorrection,
+  ConsensusEvolutionEntry,
+} from "./collabProtocol";
+
+// ── Skill RPC Protocol ──
+export {
+  SKILL_RPC_VERSION, SKILL_RPC_JSONRPC, SKILL_RPC_ERRORS, SKILL_RPC_METHODS,
+  createRpcRequest, createRpcSuccess, createRpcError, createRpcNotification,
+  serializeRpcMessage, parseRpcMessage,
+  isRpcRequest, isRpcNotification, isRpcResponse, isRpcError,
+} from "./skillRpcProtocol";
+export type {
+  SkillRpcRequest, SkillRpcSuccess, SkillRpcError, SkillRpcNotification,
+  SkillRpcResponse, SkillRpcMessage,
+  SkillInitializeParams, SkillInitializeResult,
+  SkillExecuteParams, SkillExecuteResult,
+  SkillHeartbeatParams, SkillHeartbeatResult,
+  SkillProgressNotification, SkillLogNotification,
+} from "./skillRpcProtocol";
+
+// ── P3-01: 结构化日志 ──────────────────────────────────────────
+export {
+  StructuredLogger,
+  initRootLogger,
+  getRootLogger,
+  createModuleLogger,
+  createRequestLogContext,
+  redactSensitiveFields,
+  shouldSample,
+  safeStringify,
+  DEFAULT_SAMPLING_RULES,
+} from "./structuredLogger";
+export type {
+  LogLevel,
+  StructuredLogEntry,
+  LogContext,
+  SamplingRule,
+  StructuredLoggerConfig,
+} from "./structuredLogger";
+
+// ── 工具别名解析器（共享） ──
+export {
+  DEFAULT_TOOL_ALIASES,
+  DEFAULT_PREFIX_RULES,
+  createToolAliasResolver,
+  resolveToolAlias,
+  isDeviceToolName,
+} from "./toolAliasResolver";
+
+// ── 统一文档解析引擎 ──
+export {
+  parseDocument,
+  registerDocumentParser,
+  registerBuiltinDocumentParsers,
+  getDocumentParser,
+  listDocumentParsers,
+  findParserByMimeType,
+  findParserByFileName,
+  listSupportedMimeTypes,
+  listSupportedFormats,
+  detectFormat,
+  mimeToFormat,
+  extensionToFormat,
+  dataUrlToBuffer,
+  defaultParseConfig,
+  DEFAULT_PARSE_CONFIG,
+  resolveParseConfigFromEnv,
+} from "./documentParser";
+export type {
+  DocumentFormatName,
+  DocumentElementType,
+  DocumentElement,
+  DocumentParseResult,
+  DocumentMetadata,
+  DocumentParseStats,
+  DocumentParseConfig,
+  DocumentParser,
+  DocumentParseInput,
+} from "./documentParser";
+

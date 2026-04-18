@@ -7,7 +7,8 @@ export const mediaPipelineWorker: WorkerSkillContribution = {
     {
       kind: "media.process",
       process: async ({ pool, data }) => {
-        await processMediaJob({ pool, tenantId: data.tenantId, jobId: data.jobId, fsRootDir: data.fsRootDir });
+        const fsRootDir = String(process.env.MEDIA_FS_ROOT_DIR ?? "").trim() || "var/media";
+        await processMediaJob({ pool, tenantId: String(data.tenantId), jobId: String(data.jobId), fsRootDir });
       },
     },
   ],

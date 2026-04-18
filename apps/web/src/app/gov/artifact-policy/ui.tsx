@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader } from "@/components/ui";
+import { Card, PageHeader, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { numberField, stringField, toRecord } from "@/lib/viewData";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type ArtifactPolicy = ApiError & {
   tenantId?: string;
   scopeType?: "tenant" | "space";
@@ -16,29 +17,35 @@ type ArtifactPolicy = ApiError & {
   updatedAt?: string;
 };
 
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
+function normalizeArtifactPolicy(value: unknown): ArtifactPolicy | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  const scopeType = stringField(record, "scopeType");
+  return {
+    errorCode: stringField(record, "errorCode"),
+    message: record.message,
+    traceId: stringField(record, "traceId"),
+    dimension: stringField(record, "dimension"),
+    retryAfterSec: numberField(record, "retryAfterSec"),
+    tenantId: stringField(record, "tenantId"),
+    scopeType: scopeType === "tenant" ? "tenant" : scopeType === "space" ? "space" : undefined,
+    scopeId: stringField(record, "scopeId"),
+    downloadTokenExpiresInSec: numberField(record, "downloadTokenExpiresInSec"),
+    downloadTokenMaxUses: numberField(record, "downloadTokenMaxUses"),
+    watermarkHeadersEnabled: typeof record.watermarkHeadersEnabled === "boolean" ? record.watermarkHeadersEnabled : undefined,
+    updatedAt: stringField(record, "updatedAt"),
+  };
 }
 
 export default function GovArtifactPolicyClient(props: { locale: string; initial: unknown; initialStatus: number; initialScopeType: "space" | "tenant" }) {
   const [scopeType, setScopeType] = useState<"space" | "tenant">(props.initialScopeType);
   const [status, setStatus] = useState<number>(props.initialStatus);
-  const [data, setData] = useState<ArtifactPolicy | null>((props.initial as ArtifactPolicy) ?? null);
+  const [data, setData] = useState<ArtifactPolicy | null>(normalizeArtifactPolicy(props.initial));
 
-  const initialExpiresInSec = props.initialStatus === 404 ? 300 : Number((props.initial as ArtifactPolicy | null)?.downloadTokenExpiresInSec ?? 300);
-  const initialMaxUses = props.initialStatus === 404 ? 1 : Number((props.initial as ArtifactPolicy | null)?.downloadTokenMaxUses ?? 1);
-  const initialWatermarkEnabled = props.initialStatus === 404 ? true : Boolean((props.initial as ArtifactPolicy | null)?.watermarkHeadersEnabled ?? true);
+  const initialPolicy = normalizeArtifactPolicy(props.initial);
+  const initialExpiresInSec = props.initialStatus === 404 ? 300 : Number(initialPolicy?.downloadTokenExpiresInSec ?? 300);
+  const initialMaxUses = props.initialStatus === 404 ? 1 : Number(initialPolicy?.downloadTokenMaxUses ?? 1);
+  const initialWatermarkEnabled = props.initialStatus === 404 ? true : Boolean(initialPolicy?.watermarkHeadersEnabled ?? true);
   const [expiresInSec, setExpiresInSec] = useState<string>(String(Number.isFinite(initialExpiresInSec) && initialExpiresInSec > 0 ? initialExpiresInSec : 300));
   const [maxUses, setMaxUses] = useState<string>(String(Number.isFinite(initialMaxUses) && initialMaxUses > 0 ? initialMaxUses : 1));
   const [watermarkHeadersEnabled, setWatermarkHeadersEnabled] = useState<boolean>(initialWatermarkEnabled);
@@ -75,17 +82,18 @@ export default function GovArtifactPolicyClient(props: { locale: string; initial
       const res = await apiFetch(`/governance/artifact-policy?${q.toString()}`, { locale: props.locale, cache: "no-store" });
       setStatus(res.status);
       const json: unknown = await res.json().catch(() => null);
+      const normalized = normalizeArtifactPolicy(json);
       if (res.status === 404) {
-        setData((json as ArtifactPolicy) ?? null);
+        setData(normalized);
         loadFormFrom(null, false);
         return;
       }
-      setData((json as ArtifactPolicy) ?? null);
+      setData(normalized);
       if (!res.ok) {
         setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
         return;
       }
-      loadFormFrom((json as ArtifactPolicy) ?? null, true);
+      loadFormFrom(normalized, true);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -121,7 +129,7 @@ export default function GovArtifactPolicyClient(props: { locale: string; initial
         title={t(props.locale, "gov.artifactPolicy.title")}
         actions={
           <>
-            <Badge>{status}</Badge>
+            <StatusBadge locale={props.locale} status={status} />
             <button onClick={() => load()} disabled={busy}>
               {t(props.locale, "gov.artifactPolicy.load")}
             </button>

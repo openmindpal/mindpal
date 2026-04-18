@@ -3,9 +3,14 @@
 import Link from "next/link";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { t, statusLabel } from "@/lib/i18n";
 import { type ApiError, toApiError, errText } from "@/lib/apiError";
 import { Badge, Card, PageHeader, Table } from "@/components/ui";
+
+function shortId(v: string) {
+  if (v.length <= 16) return v;
+  return `${v.slice(0, 8)}…${v.slice(-4)}`;
+}
 
 type LongTaskItem = {
   task: { taskId: string; title: string | null; status: string; createdAt: string; updatedAt: string };
@@ -70,6 +75,7 @@ export default function TasksClient(props: { locale: string; initial: unknown; i
   }
 
   async function cancelRun(runId: string) {
+    if (!confirm(t(props.locale, "tasks.confirmCancel"))) return;
     await runAction(async () => {
       const res = await apiFetch(`/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST", locale: props.locale });
       const json: unknown = await res.json().catch(() => null);
@@ -122,14 +128,14 @@ export default function TasksClient(props: { locale: string; initial: unknown; i
               {items.map((it) => (
                 <tr key={it.task.taskId}>
                   <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-                    <Link href={`/tasks/${encodeURIComponent(it.task.taskId)}?lang=${encodeURIComponent(props.locale)}`}>{it.task.taskId}</Link>
+                    <Link href={`/tasks/${encodeURIComponent(it.task.taskId)}?lang=${encodeURIComponent(props.locale)}`} title={it.task.taskId}>{shortId(it.task.taskId)}</Link>
                   </td>
                   <td>{it.task.title ?? "-"}</td>
                   <td>{it.progress.phase ?? "-"}</td>
                   <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-                    {it.run?.runId ? <Link href={`/runs/${encodeURIComponent(it.run.runId)}?lang=${encodeURIComponent(props.locale)}`}>{it.run.runId}</Link> : "-"}
+                    {it.run?.runId ? <Link href={`/runs/${encodeURIComponent(it.run.runId)}?lang=${encodeURIComponent(props.locale)}`} title={it.run.runId}>{shortId(it.run.runId)}</Link> : "-"}
                   </td>
-                  <td>{it.run ? <Badge>{it.run.status}</Badge> : "-"}</td>
+                  <td>{it.run ? <Badge>{statusLabel(it.run.status, props.locale)}</Badge> : "-"}</td>
                   <td>{it.run?.jobType ?? "-"}</td>
                   <td>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -139,6 +145,7 @@ export default function TasksClient(props: { locale: string; initial: unknown; i
                       <button
                         onClick={() => it.run?.runId && continueAgentRun(it.task.taskId, it.run.runId)}
                         disabled={busy || !it.controls.canContinue || !it.run?.runId}
+                        title={it.run?.status === "needs_approval" ? t(props.locale, "tasks.tooltip.continueBlocked") : undefined}
                       >
                         {t(props.locale, "action.continue")}
                       </button>

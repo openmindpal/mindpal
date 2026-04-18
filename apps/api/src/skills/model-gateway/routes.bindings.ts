@@ -2,19 +2,20 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors } from "../../lib/errors";
 import { requirePermission } from "../../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { setAuditContext } from "../../modules/audit/context";
 import { decryptSecretPayload } from "../../modules/secrets/envelope";
 import { getSecretRecord, getSecretRecordEncryptedPayload } from "../../modules/secrets/secretRepo";
 import { getConnectorInstance } from "../connector-manager/modules/connectorRepo";
 import { createBinding, deleteBinding, getBindingById, listBindings } from "./modules/bindingRepo";
-import { findCatalogByRef } from "./modules/catalog";
-import { openAiChatWithSecretRotation } from "./modules/openaiChat";
+import { findCatalogByRef, isNativeProtocolProvider } from "./modules/catalog";
+import { invokeProviderChatWithSecretRotation } from "./modules/providerAdapterRegistry";
 import {
   getHostFromBaseUrl,
   isOpenAiCompatibleProvider,
   normalizeBaseUrl,
   normalizeChatCompletionsPath,
-  normalizeOpenAiCompatibleBaseUrl,
+  normalizeProviderBaseUrl,
   parseProviderModelRef,
   resolveScope,
 } from "./modules/helpers";
@@ -22,7 +23,7 @@ import {
 export const modelBindingRoutes: FastifyPluginAsync = async (app) => {
   app.get("/models/bindings", async (req) => {
     setAuditContext(req, { resourceType: "model", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "model", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.MODEL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -33,7 +34,7 @@ export const modelBindingRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/models/bindings", async (req) => {
     setAuditContext(req, { resourceType: "model", action: "bind" });
-    const decision = await requirePermission({ req, resourceType: "model", action: "bind" });
+    const decision = await requirePermission({ req, ...PERM.MODEL_BIND });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -59,7 +60,7 @@ export const modelBindingRoutes: FastifyPluginAsync = async (app) => {
     const model = (cat?.model ?? parsed?.model ?? "").trim();
     const modelRef = provider && model ? `${provider}:${model}` : "";
     if (!provider || !model || !modelRef) throw Errors.badRequest("modelRef 非法");
-    if (!(provider === "openai" || provider === "mock" || isOpenAiCompatibleProvider(provider))) {
+    if (!(provider === "openai" || provider === "mock" || isOpenAiCompatibleProvider(provider) || isNativeProtocolProvider(provider))) {
       throw Errors.modelProviderUnsupported(provider);
     }
     const inst = await getConnectorInstance(app.db, subject.tenantId, body.connectorInstanceId);
@@ -67,7 +68,7 @@ export const modelBindingRoutes: FastifyPluginAsync = async (app) => {
     if (inst.status !== "enabled") throw Errors.badRequest("ConnectorInstance 未启用");
     if (inst.scopeType !== scope.scopeType || inst.scopeId !== scope.scopeId) throw Errors.forbidden();
 
-    const baseUrl = provider === "mock" ? normalizeBaseUrl(body.baseUrl, "http") : normalizeOpenAiCompatibleBaseUrl(body.baseUrl);
+    const baseUrl = provider === "mock" ? normalizeBaseUrl(body.baseUrl, "http") : normalizeProviderBaseUrl(provider, body.baseUrl);
     if (!baseUrl) throw Errors.badRequest("缺少 baseUrl");
     const chatCompletionsPath = provider === "mock" ? null : normalizeChatCompletionsPath(body.chatCompletionsPath);
     try {
@@ -114,10 +115,11 @@ export const modelBindingRoutes: FastifyPluginAsync = async (app) => {
         testApiKeys.push(apiKey);
       }
       try {
-        await openAiChatWithSecretRotation({
+        await invokeProviderChatWithSecretRotation({
+          provider,
           fetchFn: fetch,
           baseUrl,
-          chatCompletionsPath: chatCompletionsPath ?? "/chat/completions",
+          requestPath: chatCompletionsPath,
           model,
           messages: [{ role: "user", content: "ping" }],
           apiKeys: testApiKeys,
@@ -150,7 +152,7 @@ export const modelBindingRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete("/models/bindings/:id", async (req) => {
     setAuditContext(req, { resourceType: "model", action: "unbind" });
-    const decision = await requirePermission({ req, resourceType: "model", action: "bind" });
+    const decision = await requirePermission({ req, ...PERM.MODEL_BIND });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;

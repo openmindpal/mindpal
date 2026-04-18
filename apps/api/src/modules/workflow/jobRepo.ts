@@ -1,10 +1,7 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { digestInputV1 } from "../../lib/digest";
 import { encryptSecretEnvelope } from "../secrets/envelope";
-
-function isPlainObject(v: any): v is Record<string, any> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
+import { isPlainObject } from "@openslin/shared";
 
 function buildStepInputMeta(input: any) {
   if (!isPlainObject(input)) return input ?? null;
@@ -29,6 +26,26 @@ function buildStepInputMeta(input: any) {
   if (typeof input.idempotencyKey === "string") out.idempotencyKey = input.idempotencyKey;
   if (typeof input.kind === "string") out.kind = input.kind;
   return out;
+}
+
+type Queryable = Pool | PoolClient;
+
+async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export type JobRow = {
@@ -221,10 +238,9 @@ export async function createJobRunStep(params: {
       stepInput = buildStepInputMeta(params.input);
     }
   }
-  await params.pool.query("BEGIN");
-  try {
+  return withTransaction(params.pool, async (client) => {
     if (params.idempotencyKey) {
-      const runUpsert = await params.pool.query(
+      const runUpsert = await client.query(
         `
           INSERT INTO runs (tenant_id, status, policy_snapshot_ref, tool_ref, input_digest, idempotency_key, created_by_subject_id, trigger)
           VALUES ($1, 'created', $2, $3, $4, $5, $6, $7)
@@ -243,7 +259,7 @@ export async function createJobRunStep(params: {
         ],
       );
       const run = toRun(runUpsert.rows[0]);
-      const existing = await params.pool.query(
+      const existing = await client.query(
         `
           SELECT j.*, s.step_id AS first_step_id
           FROM jobs j
@@ -257,16 +273,15 @@ export async function createJobRunStep(params: {
       if (existing.rowCount) {
         const row = existing.rows[0] as any;
         const job = toJob(row);
-        const steps = await params.pool.query("SELECT * FROM steps WHERE step_id = $1 LIMIT 1", [row.first_step_id]);
-        await params.pool.query("COMMIT");
+        const steps = await client.query("SELECT * FROM steps WHERE step_id = $1 LIMIT 1", [row.first_step_id]);
         return { job, run, step: toStep(steps.rows[0]) };
       }
 
-      const jobRes = await params.pool.query(
+      const jobRes = await client.query(
         "INSERT INTO jobs (tenant_id, job_type, status, run_id) VALUES ($1, $2, 'queued', $3) RETURNING *",
         [params.tenantId, params.jobType, run.runId],
       );
-      const stepRes = await params.pool.query(
+      const stepRes = await client.query(
         `
           INSERT INTO steps (run_id, seq, status, tool_ref, input, input_digest, input_enc_format, input_key_version, input_encrypted_payload, policy_snapshot_ref)
           VALUES ($1, 1, 'pending', $2, $3, $4, $5, $6, $7, $8)
@@ -275,15 +290,14 @@ export async function createJobRunStep(params: {
         [run.runId, params.toolRef, stepInput, inputDigest, inputEncFormat, inputKeyVersion, inputEncryptedPayload, params.policySnapshotRef ?? null],
       );
       if (params.policySnapshotRef) stepRes.rows[0].policy_snapshot_ref = params.policySnapshotRef;
-      await params.pool.query("COMMIT");
       return { job: toJob(jobRes.rows[0]), run, step: toStep(stepRes.rows[0]) };
     }
 
-    const jobRes = await params.pool.query(
+    const jobRes = await client.query(
       "INSERT INTO jobs (tenant_id, job_type, status) VALUES ($1, $2, 'queued') RETURNING *",
       [params.tenantId, params.jobType],
     );
-    const runRes = await params.pool.query(
+    const runRes = await client.query(
       `
         INSERT INTO runs (tenant_id, status, policy_snapshot_ref, tool_ref, input_digest, idempotency_key, created_by_subject_id, trigger)
         VALUES ($1, 'created', $2, $3, $4, $5, $6, $7)
@@ -299,7 +313,7 @@ export async function createJobRunStep(params: {
         params.trigger ?? null,
       ],
     );
-    const stepRes = await params.pool.query(
+    const stepRes = await client.query(
       `
         INSERT INTO steps (run_id, seq, status, tool_ref, input, input_digest, input_enc_format, input_key_version, input_encrypted_payload, policy_snapshot_ref)
         VALUES ($1, 1, 'pending', $2, $3, $4, $5, $6, $7, $8)
@@ -308,17 +322,13 @@ export async function createJobRunStep(params: {
       [runRes.rows[0].run_id, params.toolRef, stepInput, inputDigest, inputEncFormat, inputKeyVersion, inputEncryptedPayload, params.policySnapshotRef ?? null],
     );
 
-    await params.pool.query("UPDATE jobs SET run_id = $1, updated_at = now() WHERE job_id = $2", [
+    await client.query("UPDATE jobs SET run_id = $1, updated_at = now() WHERE job_id = $2", [
       runRes.rows[0].run_id,
       jobRes.rows[0].job_id,
     ]);
 
-    await params.pool.query("COMMIT");
     return { job: toJob(jobRes.rows[0]), run: toRun(runRes.rows[0]), step: toStep(stepRes.rows[0]) };
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 export async function createJobRun(params: {
@@ -332,13 +342,12 @@ export async function createJobRun(params: {
   createdBySubjectId?: string;
   trigger?: string;
 }) {
-  await params.pool.query("BEGIN");
-  try {
-    const jobRes = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const jobRes = await client.query(
       "INSERT INTO jobs (tenant_id, job_type, status) VALUES ($1, $2, 'queued') RETURNING *",
       [params.tenantId, params.jobType],
     );
-    const runRes = await params.pool.query(
+    const runRes = await client.query(
       `
         INSERT INTO runs (tenant_id, status, policy_snapshot_ref, tool_ref, input_digest, idempotency_key, created_by_subject_id, trigger)
         VALUES ($1, 'created', $2, $3, $4, $5, $6, $7)
@@ -354,16 +363,12 @@ export async function createJobRun(params: {
         params.trigger ?? null,
       ],
     );
-    await params.pool.query("UPDATE jobs SET run_id = $1, updated_at = now() WHERE job_id = $2", [
+    await client.query("UPDATE jobs SET run_id = $1, updated_at = now() WHERE job_id = $2", [
       runRes.rows[0].run_id,
       jobRes.rows[0].job_id,
     ]);
-    await params.pool.query("COMMIT");
     return { job: toJob(jobRes.rows[0]), run: toRun(runRes.rows[0]) };
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 export async function appendStepToRun(params: {
@@ -436,10 +441,9 @@ export async function createJobRunStepWithoutToolRef(params: {
   createdBySubjectId?: string;
   trigger?: string;
 }) {
-  await params.pool.query("BEGIN");
-  try {
+  return withTransaction(params.pool, async (client) => {
     if (params.idempotencyKey) {
-      const runUpsert = await params.pool.query(
+      const runUpsert = await client.query(
         `
           INSERT INTO runs (tenant_id, status, policy_snapshot_ref, tool_ref, input_digest, idempotency_key, created_by_subject_id, trigger)
           VALUES ($1, 'created', $2, $3, $4, $5, $6, $7)
@@ -458,7 +462,7 @@ export async function createJobRunStepWithoutToolRef(params: {
         ],
       );
       const run = toRun(runUpsert.rows[0]);
-      const existing = await params.pool.query(
+      const existing = await client.query(
         `
           SELECT j.*, s.step_id AS first_step_id
           FROM jobs j
@@ -472,16 +476,15 @@ export async function createJobRunStepWithoutToolRef(params: {
       if (existing.rowCount) {
         const row = existing.rows[0] as any;
         const job = toJob(row);
-        const steps = await params.pool.query("SELECT * FROM steps WHERE step_id = $1 LIMIT 1", [row.first_step_id]);
-        await params.pool.query("COMMIT");
+        const steps = await client.query("SELECT * FROM steps WHERE step_id = $1 LIMIT 1", [row.first_step_id]);
         return { job, run, step: toStep(steps.rows[0]) };
       }
 
-      const jobRes = await params.pool.query(
+      const jobRes = await client.query(
         "INSERT INTO jobs (tenant_id, job_type, status, run_id) VALUES ($1, $2, 'queued', $3) RETURNING *",
         [params.tenantId, params.jobType, run.runId],
       );
-      const stepRes = await params.pool.query(
+      const stepRes = await client.query(
         `
           INSERT INTO steps (run_id, seq, status, tool_ref, input, input_digest)
           VALUES ($1, 1, 'pending', NULL, $2, $3)
@@ -489,15 +492,14 @@ export async function createJobRunStepWithoutToolRef(params: {
         `,
         [run.runId, params.input ?? null, params.input ?? null],
       );
-      await params.pool.query("COMMIT");
       return { job: toJob(jobRes.rows[0]), run, step: toStep(stepRes.rows[0]) };
     }
 
-    const jobRes = await params.pool.query(
+    const jobRes = await client.query(
       "INSERT INTO jobs (tenant_id, job_type, status) VALUES ($1, $2, 'queued') RETURNING *",
       [params.tenantId, params.jobType],
     );
-    const runRes = await params.pool.query(
+    const runRes = await client.query(
       `
         INSERT INTO runs (tenant_id, status, policy_snapshot_ref, tool_ref, input_digest, idempotency_key, created_by_subject_id, trigger)
         VALUES ($1, 'created', $2, $3, $4, $5, $6, $7)
@@ -513,7 +515,7 @@ export async function createJobRunStepWithoutToolRef(params: {
         params.trigger ?? null,
       ],
     );
-    const stepRes = await params.pool.query(
+    const stepRes = await client.query(
       `
         INSERT INTO steps (run_id, seq, status, tool_ref, input, input_digest)
         VALUES ($1, 1, 'pending', NULL, $2, $3)
@@ -522,20 +524,16 @@ export async function createJobRunStepWithoutToolRef(params: {
       [runRes.rows[0].run_id, params.input ?? null, params.input ?? null],
     );
 
-    await params.pool.query("UPDATE jobs SET run_id = $1, updated_at = now() WHERE job_id = $2", [
+    await client.query("UPDATE jobs SET run_id = $1, updated_at = now() WHERE job_id = $2", [
       runRes.rows[0].run_id,
       jobRes.rows[0].job_id,
     ]);
 
-    await params.pool.query("COMMIT");
     return { job: toJob(jobRes.rows[0]), run: toRun(runRes.rows[0]), step: toStep(stepRes.rows[0]) };
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
-export async function getJob(pool: Pool, tenantId: string, jobId: string) {
+export async function getJob(pool: Queryable, tenantId: string, jobId: string) {
   const res = await pool.query("SELECT * FROM jobs WHERE tenant_id = $1 AND job_id = $2 LIMIT 1", [
     tenantId,
     jobId,
@@ -544,13 +542,14 @@ export async function getJob(pool: Pool, tenantId: string, jobId: string) {
   return toJob(res.rows[0]);
 }
 
-export async function getRun(pool: Pool, tenantId: string, runId: string) {
+export async function getRun(pool: Queryable, tenantId: string, runId: string) {
   const res = await pool.query("SELECT * FROM runs WHERE tenant_id = $1 AND run_id = $2 LIMIT 1", [tenantId, runId]);
   if (res.rowCount === 0) return null;
   return toRun(res.rows[0]);
 }
 
-export async function getRunForSpace(pool: Pool, tenantId: string, spaceId: string, runId: string) {
+export async function getRunForSpace(pool: Queryable, tenantId: string, spaceId: string, runId: string) {
+  // 方式 1：经典路径 — step.input 中含 spaceId（旧式 run）
   const res = await pool.query(
     `
       SELECT
@@ -564,11 +563,27 @@ export async function getRunForSpace(pool: Pool, tenantId: string, spaceId: stri
     `,
     [tenantId, runId, spaceId],
   );
-  if (res.rowCount === 0) return null;
-  return toRun(res.rows[0]);
+  if (res.rowCount !== 0) return toRun(res.rows[0]);
+
+  // 方式 2：dispatch 创建的 run — step.input 不含 spaceId，通过 memory_task_states 关联 space
+  const res2 = await pool.query(
+    `
+      SELECT r.*
+      FROM runs r
+      WHERE r.tenant_id = $1 AND r.run_id = $2
+        AND EXISTS (
+          SELECT 1 FROM memory_task_states m
+          WHERE m.run_id = r.run_id AND m.space_id = $3 AND m.deleted_at IS NULL
+        )
+      LIMIT 1
+    `,
+    [tenantId, runId, spaceId],
+  );
+  if (res2.rowCount === 0) return null;
+  return toRun(res2.rows[0]);
 }
 
-export async function listRuns(pool: Pool, tenantId: string, params: { limit: number; offset?: number; status?: string; spaceId: string; updatedFrom?: string; updatedTo?: string }) {
+export async function listRuns(pool: Queryable, tenantId: string, params: { limit: number; offset?: number; status?: string; spaceId: string; updatedFrom?: string; updatedTo?: string }) {
   const where: string[] = ["r.tenant_id = $1", "(s.input->>'spaceId') = $2"];
   const args: any[] = [tenantId, params.spaceId];
   let idx = 3;
@@ -601,7 +616,7 @@ export async function listRuns(pool: Pool, tenantId: string, params: { limit: nu
   return res.rows.map(toRun);
 }
 
-export async function listSteps(pool: Pool, runId: string) {
+export async function listSteps(pool: Queryable, runId: string) {
   const res = await pool.query("SELECT * FROM steps WHERE run_id = $1 ORDER BY seq ASC", [runId]);
   return res.rows.map(toStep);
 }
@@ -663,9 +678,8 @@ export async function markStepDeadlettered(params: {
   errorCategory?: string | null;
   lastErrorDigest?: any;
 }) {
-  await params.pool.query("BEGIN");
-  try {
-    const stepRes = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const stepRes = await client.query(
       `
         UPDATE steps s
         SET status = 'deadletter',
@@ -682,12 +696,11 @@ export async function markStepDeadlettered(params: {
       [params.tenantId, params.stepId, params.queueJobId ?? null, params.errorCategory ?? null, params.lastErrorDigest ?? null],
     );
     if (!stepRes.rowCount) {
-      await params.pool.query("ROLLBACK");
       return null;
     }
     const step = toStep(stepRes.rows[0]);
 
-    await params.pool.query(
+    await client.query(
       `
         UPDATE runs
         SET status = CASE WHEN status IN ('succeeded','canceled','compensated') THEN status ELSE 'failed' END,
@@ -697,7 +710,7 @@ export async function markStepDeadlettered(params: {
       `,
       [params.tenantId, step.runId],
     );
-    await params.pool.query(
+    await client.query(
       `
         UPDATE jobs
         SET status = CASE WHEN status IN ('succeeded','canceled','compensated') THEN status ELSE 'failed' END,
@@ -707,19 +720,13 @@ export async function markStepDeadlettered(params: {
       `,
       [params.tenantId, step.runId],
     );
-
-    await params.pool.query("COMMIT");
     return step;
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 export async function retryDeadletterStep(params: { pool: Pool; tenantId: string; stepId: string }) {
-  await params.pool.query("BEGIN");
-  try {
-    const stepRes = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const stepRes = await client.query(
       `
         UPDATE steps s
         SET status = 'pending',
@@ -736,32 +743,25 @@ export async function retryDeadletterStep(params: { pool: Pool; tenantId: string
       [params.tenantId, params.stepId],
     );
     if (!stepRes.rowCount) {
-      await params.pool.query("ROLLBACK");
       return null;
     }
     const step = toStep(stepRes.rows[0]);
 
-    await params.pool.query("UPDATE runs SET status = 'queued', updated_at = now(), finished_at = NULL WHERE tenant_id = $1 AND run_id = $2", [
+    await client.query("UPDATE runs SET status = 'queued', updated_at = now(), finished_at = NULL WHERE tenant_id = $1 AND run_id = $2", [
       params.tenantId,
       step.runId,
     ]);
-    await params.pool.query("UPDATE jobs SET status = 'queued', updated_at = now(), deadlettered_at = NULL WHERE tenant_id = $1 AND run_id = $2", [
+    await client.query("UPDATE jobs SET status = 'queued', updated_at = now(), deadlettered_at = NULL WHERE tenant_id = $1 AND run_id = $2", [
       params.tenantId,
       step.runId,
     ]);
-
-    await params.pool.query("COMMIT");
     return step;
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 export async function retryFailedStep(params: { pool: Pool; tenantId: string; stepId: string }) {
-  await params.pool.query("BEGIN");
-  try {
-    const stepRes = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const stepRes = await client.query(
       `
         UPDATE steps s
         SET status = 'pending',
@@ -781,32 +781,25 @@ export async function retryFailedStep(params: { pool: Pool; tenantId: string; st
       [params.tenantId, params.stepId],
     );
     if (!stepRes.rowCount) {
-      await params.pool.query("ROLLBACK");
       return null;
     }
     const step = toStep(stepRes.rows[0]);
 
-    await params.pool.query(
+    await client.query(
       "UPDATE runs SET status = CASE WHEN status IN ('succeeded','canceled','compensated') THEN status ELSE 'queued' END, updated_at = now(), finished_at = NULL WHERE tenant_id = $1 AND run_id = $2",
       [params.tenantId, step.runId],
     );
-    await params.pool.query(
+    await client.query(
       "UPDATE jobs SET status = CASE WHEN status IN ('succeeded','canceled','compensated') THEN status ELSE 'queued' END, updated_at = now() WHERE tenant_id = $1 AND run_id = $2",
       [params.tenantId, step.runId],
     );
-
-    await params.pool.query("COMMIT");
     return step;
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 export async function cancelDeadletterStep(params: { pool: Pool; tenantId: string; stepId: string }) {
-  await params.pool.query("BEGIN");
-  try {
-    const stepRes = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const stepRes = await client.query(
       `
         UPDATE steps s
         SET status = 'canceled',
@@ -823,42 +816,34 @@ export async function cancelDeadletterStep(params: { pool: Pool; tenantId: strin
       [params.tenantId, params.stepId],
     );
     if (!stepRes.rowCount) {
-      await params.pool.query("ROLLBACK");
       return null;
     }
     const step = toStep(stepRes.rows[0]);
 
-    await params.pool.query("UPDATE runs SET status = 'canceled', updated_at = now(), finished_at = COALESCE(finished_at, now()) WHERE tenant_id = $1 AND run_id = $2", [
+    await client.query("UPDATE runs SET status = 'canceled', updated_at = now(), finished_at = COALESCE(finished_at, now()) WHERE tenant_id = $1 AND run_id = $2", [
       params.tenantId,
       step.runId,
     ]);
-    await params.pool.query("UPDATE jobs SET status = 'canceled', deadlettered_at = NULL, updated_at = now() WHERE tenant_id = $1 AND run_id = $2", [
+    await client.query("UPDATE jobs SET status = 'canceled', deadlettered_at = NULL, updated_at = now() WHERE tenant_id = $1 AND run_id = $2", [
       params.tenantId,
       step.runId,
     ]);
-
-    await params.pool.query("COMMIT");
     return step;
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 export async function cancelRun(params: { pool: Pool; tenantId: string; runId: string }) {
-  await params.pool.query("BEGIN");
-  try {
-    const before = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const before = await client.query(
       "SELECT status FROM runs WHERE tenant_id = $1 AND run_id = $2 LIMIT 1",
       [params.tenantId, params.runId],
     );
     if (!before.rowCount) {
-      await params.pool.query("ROLLBACK");
       return null;
     }
     const prevStatus = before.rows[0].status as string;
 
-    const runRes = await params.pool.query(
+    const runRes = await client.query(
       `
         UPDATE runs
         SET status = CASE WHEN status IN ('succeeded','failed','canceled','compensated') THEN status ELSE 'canceled' END,
@@ -872,14 +857,9 @@ export async function cancelRun(params: { pool: Pool; tenantId: string; runId: s
     const run = toRun(runRes.rows[0]);
 
     if (!["succeeded", "failed", "canceled", "compensated"].includes(prevStatus)) {
-      await params.pool.query("UPDATE steps SET status = 'canceled', updated_at = now(), finished_at = now() WHERE run_id = $1 AND status IN ('pending','running','compensating')", [params.runId]);
-      await params.pool.query("UPDATE jobs SET status = 'canceled', updated_at = now() WHERE tenant_id = $1 AND run_id = $2", [params.tenantId, params.runId]);
+      await client.query("UPDATE steps SET status = 'canceled', updated_at = now(), finished_at = now() WHERE run_id = $1 AND status IN ('pending','running','compensating')", [params.runId]);
+      await client.query("UPDATE jobs SET status = 'canceled', updated_at = now() WHERE tenant_id = $1 AND run_id = $2", [params.tenantId, params.runId]);
     }
-
-    await params.pool.query("COMMIT");
     return run;
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }

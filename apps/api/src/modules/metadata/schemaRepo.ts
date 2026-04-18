@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import type { SchemaDef } from "./schemaModel";
+import { isPlainObject } from "@openslin/shared";
 
 type Q = Pool | PoolClient;
 type EffectiveScope = { tenantId: string; spaceId?: string; name: string };
@@ -103,10 +104,6 @@ function namespaceAllowed(namespaceKey: string, allowList: string[]) {
     }
     return namespaceKey === rule;
   });
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
 }
 
 export function validateSchemaExtensionNamespaces(schemaLike: unknown): { ok: true } | { ok: false; reason: string } {
@@ -290,6 +287,106 @@ export async function getEffectiveSchema(params: { pool: Pool; tenantId: string;
   const out = v ? await getByNameVersion(params.pool, params.name, v) : await getLatestReleased(params.pool, params.name);
   effectiveSchemaCache.set(cacheKey, out);
   return out;
+}
+
+export async function resolveSchemaNameForEntity(params: {
+  pool: Pool;
+  tenantId: string;
+  spaceId?: string;
+  entityName: string;
+  requestedSchemaName?: string | null;
+}) {
+  const requestedSchemaName = String(params.requestedSchemaName ?? "").trim();
+  if (requestedSchemaName) {
+    return { ok: true as const, schemaName: requestedSchemaName, resolution: "explicit" as const };
+  }
+
+  const res = await params.pool.query(
+    `
+      SELECT DISTINCT name
+      FROM schemas
+      WHERE status = 'released'
+        AND COALESCE(schema_json->'entities', '{}'::jsonb) ? $1
+      ORDER BY name ASC
+    `,
+    [params.entityName],
+  );
+
+  const matchedNames: string[] = [];
+  for (const row of res.rows) {
+    const name = String(row.name ?? "");
+    if (!name) continue;
+    const schema = await getEffectiveSchema({
+      pool: params.pool,
+      tenantId: params.tenantId,
+      spaceId: params.spaceId,
+      name,
+    });
+    if (schema?.schema?.entities?.[params.entityName]) matchedNames.push(name);
+  }
+
+  if (matchedNames.length === 1) {
+    return { ok: true as const, schemaName: matchedNames[0], resolution: "inferred" as const };
+  }
+
+  if (matchedNames.length === 0) {
+    return {
+      ok: false as const,
+      code: "SCHEMA_NAME_REQUIRED",
+      reason: `未找到包含实体 ${params.entityName} 的 Schema，请显式指定 schemaName`,
+    };
+  }
+
+  return {
+    ok: false as const,
+    code: "SCHEMA_NAME_AMBIGUOUS",
+    reason: `实体 ${params.entityName} 同时存在于多个 Schema（${matchedNames.join(", ")}），请显式指定 schemaName`,
+  };
+}
+
+export async function resolveSchemaNameForEntities(params: {
+  pool: Pool;
+  tenantId: string;
+  spaceId?: string;
+  entityNames: string[];
+  requestedSchemaName?: string | null;
+}) {
+  const requestedSchemaName = String(params.requestedSchemaName ?? "").trim();
+  if (requestedSchemaName) {
+    return { ok: true as const, schemaName: requestedSchemaName, resolution: "explicit" as const };
+  }
+
+  const entityNames = Array.from(new Set(params.entityNames.map((name) => String(name ?? "").trim()).filter(Boolean)));
+  if (!entityNames.length) {
+    return {
+      ok: false as const,
+      code: "SCHEMA_NAME_REQUIRED",
+      reason: "未提供可推断 Schema 的实体，请显式指定 schemaName",
+    };
+  }
+
+  const resolvedNames = new Set<string>();
+  for (const entityName of entityNames) {
+    const resolved = await resolveSchemaNameForEntity({
+      pool: params.pool,
+      tenantId: params.tenantId,
+      spaceId: params.spaceId,
+      entityName,
+      requestedSchemaName: null,
+    });
+    if (!resolved.ok) return resolved;
+    resolvedNames.add(resolved.schemaName);
+  }
+
+  if (resolvedNames.size === 1) {
+    return { ok: true as const, schemaName: Array.from(resolvedNames)[0], resolution: "inferred" as const };
+  }
+
+  return {
+    ok: false as const,
+    code: "SCHEMA_NAME_AMBIGUOUS",
+    reason: `实体集合命中了多个 Schema（${Array.from(resolvedNames).join(", ")}），请显式指定 schemaName`,
+  };
 }
 
 export async function getPreviousReleasedSchemaVersion(params: { pool: Pool; name: string; beforeVersion: number }) {

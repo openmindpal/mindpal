@@ -3,6 +3,17 @@
     "name": "exchange.poll",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "Exchange 邮件轮询",
+    "en-US": "Exchange Email Poll"
+  },
+  "description": {
+    "zh-CN": "通过 Microsoft Graph API 轮询 Exchange 邮箱，获取新邮件列表和增量同步链接",
+    "en-US": "Polls Exchange mailbox via Microsoft Graph API to fetch new emails and delta sync links"
+  },
+  "category": "communication",
+  "priority": 6,
+  "tags": ["email", "exchange", "microsoft", "poll", "inbound"],
   "contract": {
     "scope": "read",
     "resourceType": "channel",

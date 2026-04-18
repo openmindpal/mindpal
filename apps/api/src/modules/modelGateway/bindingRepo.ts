@@ -27,12 +27,12 @@ function toBinding(r: any): ProviderBinding {
     try {
       const j = JSON.parse(rawIds);
       if (Array.isArray(j)) parsedIds = j;
-    } catch {}
+    } catch (err) { console.warn(`[bindingRepo] JSON.parse rawIds string failed: ${(err as Error)?.message}`); }
   } else if (rawIds && typeof rawIds === "object" && typeof (rawIds as any).toString === "function") {
     try {
       const j = JSON.parse(String((rawIds as any).toString("utf8")));
       if (Array.isArray(j)) parsedIds = j;
-    } catch {}
+    } catch (err) { console.warn(`[bindingRepo] JSON.parse rawIds buffer failed: ${(err as Error)?.message}`); }
   }
   const secretIds = parsedIds.map((x: any) => String(x)).filter(Boolean);
   const secretId = String(r.secret_id ?? "");

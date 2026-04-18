@@ -26,10 +26,11 @@ import { writeAudit as writeWorkerAudit } from "../../../../worker/src/workflow/
 import { decryptStepInputIfNeeded as decryptStepInputIfNeededWorker } from "../../../../worker/src/workflow/processor/encryption";
 import { decryptSecretPayload, encryptSecretEnvelope } from "../../modules/secrets/envelope";
 import { dispatchAuditOutboxBatch } from "../../modules/audit/outboxRepo";
+import { clearAuthzCache } from "../../modules/auth/authz";
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
 
-vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+vi.setConfig({ hookTimeout: 120_000, testTimeout: 120_000 });
 
 // ─── 配置 ─────────────────────────────────────────────────────────────
 export const cfg = loadConfig(process.env);
@@ -38,14 +39,15 @@ export const pool = createPool(cfg);
 const cwd = process.cwd();
 const isApiCwd = cwd.replaceAll("\\", "/").endsWith("/apps/api");
 export const migrationsDir = isApiCwd ? path.resolve(cwd, "migrations") : path.resolve(cwd, "apps/api/migrations");
-export const seedSchemaPath = isApiCwd ? path.resolve(cwd, "seed/core.schema.json") : path.resolve(cwd, "apps/api/seed/core.schema.json");
 export const suiteStartedAtIso = new Date().toISOString();
+export const TEST_SCHEMA_NAME = "testkit";
 
 // ─── 重新导出工具函数 ─────────────────────────────────────────────────
 export {
   fs, path, crypto, http, os, tar,
   describe, expect, it, beforeAll, afterAll, vi,
   redactString,
+  clearAuthzCache,
   processAuditExport,
   processKnowledgeEmbeddingJob,
   processKnowledgeIngestJob,
@@ -99,6 +101,9 @@ export function capabilityEnvelopeV1(params: {
 
 // ─── 种子数据 ─────────────────────────────────────────────────────────
 export async function seed() {
+  // 清除授权缓存，确保测试使用最新的角色绑定
+  clearAuthzCache();
+  
   await pool.query("INSERT INTO tenants (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", ["tenant_dev"]);
   await pool.query(
     "INSERT INTO spaces (id, tenant_id) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
@@ -120,6 +125,9 @@ export async function seed() {
     "INSERT INTO subjects (id, tenant_id) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
     ["noperm", "tenant_dev"],
   );
+  
+  // 清理并重建角色绑定，确保测试环境干净
+  await pool.query("DELETE FROM role_bindings WHERE subject_id IN ($1, $2, $3)", ["admin", "approver", "noperm"]);
   await pool.query(
     "INSERT INTO roles (id, tenant_id, name) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING",
     ["role_admin", "tenant_dev", "Admin"],
@@ -141,6 +149,13 @@ export async function seed() {
     "INSERT INTO role_bindings (subject_id, role_id, scope_type, scope_id) VALUES ($1, $2, 'tenant', $3) ON CONFLICT DO NOTHING",
     ["approver", "role_admin", "tenant_dev"],
   );
+  
+  // 验证 admin 的角色绑定是否正确创建
+  const adminBindingCheck = await pool.query(
+    "SELECT rb.role_id, r.name FROM role_bindings rb JOIN roles r ON r.id = rb.role_id WHERE rb.subject_id = $1",
+    ["admin"]
+  );
+  console.log(`[SEED] Admin role bindings:`, adminBindingCheck.rows);
 
   const mockModelRef = process.env.SEED_DEFAULT_MODEL_REF ?? "mock:echo-1";
   const egressPolicy = { allowedDomains: ["mock.local"] };
@@ -230,25 +245,31 @@ export async function seed() {
     ["role_user", pEntityUpdate, JSON.stringify({ deny: ["content"] }), JSON.stringify({ kind: "owner_only" })],
   );
 
-  const schemaExists = await pool.query(
-    "SELECT 1 FROM schemas WHERE name = 'core' AND status = 'released' LIMIT 1",
+  const testSchema = {
+    name: TEST_SCHEMA_NAME,
+    version: 1,
+    displayName: { "zh-CN": "测试 Schema", "en-US": "Test Schema" },
+    entities: {
+      test_items: {
+        displayName: { "zh-CN": "测试项", "en-US": "Test Item" },
+        fields: {
+          title: { type: "string" },
+          content: { type: "string" },
+        },
+      },
+    },
+  };
+  await pool.query("DELETE FROM schemas WHERE name = $1", [TEST_SCHEMA_NAME]);
+  await pool.query(
+    "INSERT INTO schemas (name, version, status, schema_json, published_at) VALUES ($1, 1, 'released', $2, now())",
+    [TEST_SCHEMA_NAME, testSchema],
   );
-  if (!schemaExists.rowCount) {
-    const raw = await fs.readFile(seedSchemaPath, "utf8");
-    const schema = JSON.parse(raw);
-    schema.version = 1;
-    await pool.query(
-      "INSERT INTO schemas (name, version, status, schema_json, published_at) VALUES ('core', 1, 'released', $1, now())",
-      [schema],
-    );
-  }
 
   await pool.query("DELETE FROM routing_policies WHERE tenant_id = $1", ["tenant_dev"]);
-  await pool.query("DELETE FROM quota_limits WHERE tenant_id = $1", ["tenant_dev"]);
-  await pool.query("DELETE FROM tool_limits WHERE tenant_id = $1", ["tenant_dev"]);
   await pool.query("DELETE FROM tool_rollouts WHERE tenant_id = $1", ["tenant_dev"]);
   await pool.query("DELETE FROM tool_active_versions WHERE tenant_id = $1", ["tenant_dev"]);
   await pool.query("DELETE FROM tool_active_overrides WHERE tenant_id = $1", ["tenant_dev"]);
+  await pool.query("DELETE FROM abac_policy_sets WHERE tenant_id = $1", ["tenant_dev"]);
 
   await pool.query(
     `

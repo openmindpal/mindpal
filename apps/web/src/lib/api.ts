@@ -1,4 +1,4 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:3001";
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4001";
 
 export const AUTH_TOKEN_KEY = "openslin_token";
 
@@ -19,10 +19,20 @@ function readCookieValue(name: string) {
 }
 
 export function getClientAuthToken() {
-  if (typeof window === "undefined") return "";
+  if (typeof window === "undefined") {
+    // SSR: use dev default token if available
+    return process.env.NEXT_PUBLIC_DEV_DEFAULT_TOKEN ?? "";
+  }
   // Read exclusively from cookie (not localStorage) to reduce XSS token exposure.
   const c = readCookieValue(AUTH_TOKEN_KEY);
-  return c && c.trim() ? c.trim() : "";
+  if (c && c.trim()) return c.trim();
+  // Dev mode fallback: auto-set default token if configured
+  const devDefault = process.env.NEXT_PUBLIC_DEV_DEFAULT_TOKEN ?? "";
+  if (devDefault) {
+    setClientAuthToken(devDefault);
+    return devDefault;
+  }
+  return "";
 }
 
 export function setClientAuthToken(token: string) {
@@ -47,7 +57,6 @@ export function apiHeaders(locale: string, opts?: { token?: string | null; tenan
   const rawToken = (opts?.token ?? (typeof window !== "undefined" ? getClientAuthToken() : "") ?? "").trim();
   const headers: Record<string, string> = {
     "x-user-locale": locale,
-    "x-schema-name": "core",
   };
   const tenantId = (opts?.tenantId ?? "").trim();
   if (tenantId) headers["x-tenant-id"] = tenantId;
@@ -124,10 +133,18 @@ export async function apiFetch(
 
   const res = await fetch(url, { ...init, headers: hdrs });
 
-  /* 401 → clear token & redirect to root (§05) */
+  /* 401 → clear token & redirect to root (§05)
+   * 防止无限重定向：如果已经在首页则不跳转，且 500ms 内只触发一次 */
   if (res.status === 401 && typeof window !== "undefined") {
     setClientAuthToken("");
-    window.location.href = `/?lang=${encodeURIComponent(locale)}`;
+    const isAlreadyOnHome = window.location.pathname === "/" || window.location.pathname === "";
+    const lastRedirectKey = "__openslin_401_redirect_ts";
+    const lastRedirect = Number(sessionStorage.getItem(lastRedirectKey) || "0");
+    const now = Date.now();
+    if (!isAlreadyOnHome && now - lastRedirect > 500) {
+      sessionStorage.setItem(lastRedirectKey, String(now));
+      window.location.href = `/?lang=${encodeURIComponent(locale)}`;
+    }
   }
 
   return res;

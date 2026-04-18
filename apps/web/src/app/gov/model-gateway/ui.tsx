@@ -1,26 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { API_BASE, apiHeaders, text } from "@/lib/api";
+import { API_BASE, apiHeaders } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader } from "@/components/ui";
+import { Card, PageHeader, StatusBadge } from "@/components/ui";
+import { toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
 
 export default function ModelGatewayClient(props: { locale: string }) {
   const [purpose, setPurpose] = useState<string>("test");
@@ -68,7 +53,7 @@ export default function ModelGatewayClient(props: { locale: string }) {
         title={t(props.locale, "gov.modelGateway.title")}
         actions={
           <>
-            <Badge>{status || "-"}</Badge>
+            <StatusBadge locale={props.locale} status={status || 0} />
             <button onClick={invoke} disabled={busy}>
               {t(props.locale, "gov.modelGateway.invoke")}
             </button>

@@ -1,6 +1,5 @@
 import { API_BASE, apiHeaders, pickLocale } from "@/lib/api";
 import type { SearchParams } from "@/lib/types";
-import { ConsoleShell } from "@/components/shell/ConsoleShell";
 import RoutingClient from "./ui";
 import { cookies } from "next/headers";
 
@@ -15,9 +14,5 @@ export default async function GovRoutingPage(props: { searchParams: SearchParams
   const searchParams = await Promise.resolve(props.searchParams);
   const locale = pickLocale(searchParams);
   const listRes = await loadPolicies(locale);
-  return (
-    <ConsoleShell locale={locale}>
-      <RoutingClient locale={locale} initial={listRes.json} initialStatus={listRes.status} />
-    </ConsoleShell>
-  );
+  return <RoutingClient locale={locale} initial={listRes.json} initialStatus={listRes.status} />;
 }

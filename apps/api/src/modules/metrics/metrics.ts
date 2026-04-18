@@ -33,6 +33,7 @@ export function createMetricsRegistry() {
   const gauges = new Map<GaugeKey, { labels: Record<string, string>; value: number }>();
 
   const durationBucketsMs = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+    const confidenceBuckets = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0];
 
   function incCounter(name: string, labels: Record<string, string>, by = 1) {
     const k = `${name}|${keyOf(labels)}`;
@@ -201,6 +202,256 @@ export function createMetricsRegistry() {
     observeHistogram("openslin_sync_pull_ops_returned", { result: params.result }, params.opsReturned, [0, 1, 2, 5, 10, 20, 50, 100, 200, 500]);
   }
 
+  /* ─── SSO/SCIM Metrics (Phase 3) ─── */
+
+  function incSsoLogin(params: { provider_type: "oidc" | "saml"; result: "success" | "error"; tenant_id?: string }) {
+    incCounter("openslin_sso_login_total", { provider_type: params.provider_type, result: params.result }, 1);
+  }
+
+  function observeSsoLoginLatency(params: { provider_type: "oidc" | "saml"; latencyMs: number }) {
+    observeHistogram("openslin_sso_login_duration_ms", { provider_type: params.provider_type }, params.latencyMs, durationBucketsMs);
+  }
+
+  function incScimOperation(params: { operation: string; result: "success" | "error"; tenant_id?: string }) {
+    incCounter("openslin_scim_operation_total", { operation: params.operation, result: params.result }, 1);
+  }
+
+  function setScimProvisionedUsers(params: { tenant_id: string; active: number; total: number }) {
+    setGauge("openslin_scim_provisioned_users_active", { tenant_id: params.tenant_id }, params.active);
+    setGauge("openslin_scim_provisioned_users_total", { tenant_id: params.tenant_id }, params.total);
+  }
+
+  function incDataIsolationViolation(params: { reason: string; tenant_id?: string }) {
+    incCounter("openslin_data_isolation_violation_total", { reason: params.reason }, 1);
+  }
+
+  /* ─── Health Check Metrics ─── */
+
+  function setHealthStatus(params: { component: string; healthy: boolean }) {
+    setGauge("openslin_health_status", { component: params.component }, params.healthy ? 1 : 0);
+  }
+
+  function setDatabasePoolStats(params: { idle: number; total: number; waiting: number }) {
+    setGauge("openslin_db_pool_idle", {}, params.idle);
+    setGauge("openslin_db_pool_total", {}, params.total);
+    setGauge("openslin_db_pool_waiting", {}, params.waiting);
+  }
+
+  /* ─── P3-1: Intent Analyzer Metrics ─── */
+
+  function observeIntentAnalysis(params: { result: "ok" | "denied" | "error" | "llm_fallback"; latencyMs: number; usedLLM: boolean }) {
+    incCounter("openslin_intent_analysis_total", { result: params.result, used_llm: String(params.usedLLM) }, 1);
+    observeHistogram("openslin_intent_analysis_duration_ms", { result: params.result, used_llm: String(params.usedLLM) }, params.latencyMs, durationBucketsMs);
+  }
+
+  function incIntentRuleMatch(params: { ruleId: string; confidence: "high" | "medium" | "low" }) {
+    incCounter("openslin_intent_rule_matches_total", { rule_id: params.ruleId, confidence: params.confidence }, 1);
+  }
+
+  /* ─── P0-1: Unified Intent Route Metrics (orchestrator 主入口统一口径) ─── */
+
+  function observeIntentRoute(params: {
+    source: "dispatch" | "dispatch.stream" | "dispatch.classify" | "dispatch_shadow";
+    classifier: "fast" | "llm" | "two_level" | "parallel_fast" | "reviewer";
+    mode: string;
+    confidence: number;
+    result: "ok" | "error" | "fallback" | "shadow_agree" | "shadow_disagree";
+    latencyMs: number;
+    selectedMode?: string;
+    autoDowngraded?: boolean;
+  }) {
+    incCounter("openslin_orchestrator_intent_route_total", {
+      source: params.source,
+      classifier: params.classifier,
+      mode: params.mode,
+      result: params.result,
+      selected_mode: params.selectedMode ?? params.mode,
+      auto_downgraded: String(params.autoDowngraded ?? false),
+    }, 1);
+    observeHistogram("openslin_orchestrator_intent_route_duration_ms", {
+      source: params.source,
+      classifier: params.classifier,
+      result: params.result,
+    }, params.latencyMs, durationBucketsMs);
+    observeHistogram("openslin_orchestrator_intent_confidence", {
+      source: params.source,
+      classifier: params.classifier,
+      mode: params.mode,
+    }, params.confidence, confidenceBuckets);
+  }
+
+  /* ─── P0-2: Goal Decompose Metrics ─── */
+
+  function observeGoalDecompose(params: {
+    result: "ok" | "fallback" | "error" | "disabled";
+    latencyMs: number;
+    subGoalCount: number;
+    strategy?: "early_exit" | "template" | "fast_model" | "standard_model" | "single_node" | "disabled";
+  }) {
+    incCounter("openslin_goal_decompose_total", {
+      result: params.result,
+      strategy: params.strategy ?? "standard_model",
+    }, 1);
+    observeHistogram("openslin_goal_decompose_duration_ms", {
+      result: params.result,
+    }, params.latencyMs, durationBucketsMs);
+    if (params.result === "fallback" || params.result === "error") {
+      incCounter("openslin_goal_decompose_fallback_total", { result: params.result }, 1);
+    }
+  }
+
+  /* ─── P0-2: Planning Pipeline Metrics ─── */
+
+  function observePlanningPipeline(params: {
+    result: "ok" | "error" | "no_tools" | "no_enabled_suggestion" | "empty";
+    latencyMs: number;
+    stepCount: number;
+    droppedCount: number;
+    semanticRouteUsed: boolean;
+  }) {
+    incCounter("openslin_planning_pipeline_total", {
+      result: params.result,
+      semantic_route: String(params.semanticRouteUsed),
+    }, 1);
+    observeHistogram("openslin_planning_pipeline_duration_ms", {
+      result: params.result,
+    }, params.latencyMs, durationBucketsMs);
+  }
+
+  /* ─── P0-2: Agent Decision (think/decide) Metrics ─── */
+
+  function observeAgentDecision(params: {
+    result: "ok" | "error" | "timeout";
+    decision: "tool_call" | "done" | "yield" | "replan" | "error";
+    latencyMs: number;
+    iterationSeq: number;
+  }) {
+    incCounter("openslin_agent_decision_total", {
+      result: params.result,
+      decision: params.decision,
+    }, 1);
+    observeHistogram("openslin_agent_decision_duration_ms", {
+      result: params.result,
+      decision: params.decision,
+    }, params.latencyMs, durationBucketsMs);
+  }
+
+  /* ─── P0-2: Parallel Tool Calls Metrics ─── */
+
+  function observeParallelToolCalls(params: {
+    result: "ok" | "partial" | "error";
+    latencyMs: number;
+    parallelCount: number;
+    successCount: number;
+    failedCount: number;
+  }) {
+    incCounter("openslin_parallel_tool_calls_total", {
+      result: params.result,
+    }, 1);
+    observeHistogram("openslin_parallel_tool_calls_duration_ms", {
+      result: params.result,
+    }, params.latencyMs, durationBucketsMs);
+  }
+
+  /* ─── P2-9 / P4-2: Plan Quality Metrics ─── */
+
+  function observePlanQualityScore(params: {
+    score: number;
+    dagValid: boolean;
+    repairApplied: boolean;
+  }) {
+    observeHistogram("openslin_plan_quality_score", {
+      dag_valid: String(params.dagValid),
+      repair_applied: String(params.repairApplied),
+    }, params.score, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
+    if (params.repairApplied) {
+      incCounter("openslin_plan_semantic_repair_total", {}, 1);
+    }
+  }
+
+  /* ─── P3-1: Orchestrator Metrics ─── */
+
+  function observeOrchestratorExecution(params: { result: "ok" | "denied" | "error" | "timeout"; latencyMs: number; toolType?: string }) {
+    incCounter("openslin_orchestrator_execution_total", { result: params.result, tool_type: params.toolType ?? "unknown" }, 1);
+    observeHistogram("openslin_orchestrator_execution_duration_ms", { result: params.result, tool_type: params.toolType ?? "unknown" }, params.latencyMs, durationBucketsMs);
+  }
+
+  function incOrchestratorToolCall(params: { toolRef: string; result: "success" | "failed" | "timeout" }) {
+    incCounter("openslin_orchestrator_tool_calls_total", { tool_ref: params.toolRef, result: params.result }, 1);
+  }
+
+  function setOrchestratorActiveRuns(params: { count: number }) {
+    setGauge("openslin_orchestrator_active_runs", {}, params.count);
+  }
+
+  /* ─── P3-1: Device Runtime Metrics ─── */
+
+  function observeDeviceExecution(params: { result: "ok" | "denied" | "error" | "timeout"; latencyMs: number; deviceType?: string }) {
+    incCounter("openslin_device_execution_total", { result: params.result, device_type: params.deviceType ?? "unknown" }, 1);
+    observeHistogram("openslin_device_execution_duration_ms", { result: params.result, device_type: params.deviceType ?? "unknown" }, params.latencyMs, durationBucketsMs);
+  }
+
+  function incDeviceMessage(params: { category: string; result: "delivered" | "failed" | "dropped" }) {
+    incCounter("openslin_device_messages_total", { category: params.category, result: params.result }, 1);
+  }
+
+  function setDeviceConnectedClients(params: { count: number }) {
+    setGauge("openslin_device_connected_clients", {}, params.count);
+  }
+
+  function incDevicePushNotification(params: { method: "cross_device_bus" | "local_ws"; result: "ok" | "failed" }) {
+    incCounter("openslin_device_push_notifications_total", { method: params.method, result: params.result }, 1);
+  }
+
+  /* ─── P3-13: Eval Gate Metrics ─── */
+
+  function incEvalGateBlocked(params: { reason: "missing" | "stale" | "failed" | "running" | "threshold_not_met" | "category_threshold_not_met" }) {
+    incCounter("openslin_eval_gate_blocked_total", { reason: params.reason }, 1);
+  }
+
+  function observeEvalGateCheck(params: { result: "passed" | "blocked"; suiteCount: number; latencyMs: number }) {
+    incCounter("openslin_eval_gate_check_total", { result: params.result }, 1);
+    observeHistogram("openslin_eval_gate_check_duration_ms", { result: params.result }, params.latencyMs, durationBucketsMs);
+    setGauge("openslin_eval_gate_suite_count", {}, params.suiteCount);
+  }
+
+  /* ─── P3-13: Debate Session Metrics ─── */
+
+  function incDebateSession(params: { result: "consensus" | "deadlock" | "timeout" | "arbitrated" }) {
+    incCounter("openslin_debate_sessions_total", { result: params.result }, 1);
+  }
+
+  function observeDebateDuration(params: { result: string; latencyMs: number }) {
+    observeHistogram("openslin_debate_duration_ms", { result: params.result }, params.latencyMs, durationBucketsMs);
+  }
+
+  function incDebateRound(params: { sessionId?: string }) {
+    incCounter("openslin_debate_rounds_total", {}, 1);
+  }
+
+  /* ─── P3-13: Conflict Resolution Metrics ─── */
+
+  function incConflictResolution(params: { strategy: string }) {
+    incCounter("openslin_conflict_resolution_total", { strategy: params.strategy }, 1);
+  }
+
+  function incConflictManualRequired() {
+    incCounter("openslin_conflict_manual_required_total", {}, 1);
+  }
+
+  function observeConflictBatch(params: { totalFields: number; conflictedFields: number; autoResolved: number }) {
+    setGauge("openslin_conflict_batch_fields_total", {}, params.totalFields);
+    setGauge("openslin_conflict_batch_conflicted", {}, params.conflictedFields);
+    setGauge("openslin_conflict_batch_auto_resolved", {}, params.autoResolved);
+  }
+
+  /* ─── P3-13: Output Quality Eval Metrics ─── */
+
+  function observeOutputQuality(params: { dimension: "schema" | "confidence" | "hallucination"; passed: boolean; score: number }) {
+    incCounter("openslin_output_quality_check_total", { dimension: params.dimension, passed: String(params.passed) }, 1);
+    observeHistogram("openslin_output_quality_score", { dimension: params.dimension }, params.score, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
+  }
+
   function renderPrometheus() {
     const lines: string[] = [];
 
@@ -314,6 +565,149 @@ export function createMetricsRegistry() {
     lines.push("# HELP openslin_sync_pull_ops_returned Ops returned by sync pull.");
     lines.push("# TYPE openslin_sync_pull_ops_returned histogram");
 
+    lines.push("# HELP openslin_sso_login_total Total SSO login attempts by provider type and result.");
+    lines.push("# TYPE openslin_sso_login_total counter");
+
+    lines.push("# HELP openslin_sso_login_duration_ms SSO login duration in milliseconds.");
+    lines.push("# TYPE openslin_sso_login_duration_ms histogram");
+
+    lines.push("# HELP openslin_scim_operation_total Total SCIM operations by type and result.");
+    lines.push("# TYPE openslin_scim_operation_total counter");
+
+    lines.push("# HELP openslin_scim_provisioned_users_active Number of active SCIM provisioned users.");
+    lines.push("# TYPE openslin_scim_provisioned_users_active gauge");
+
+    lines.push("# HELP openslin_scim_provisioned_users_total Total number of SCIM provisioned users.");
+    lines.push("# TYPE openslin_scim_provisioned_users_total gauge");
+
+    lines.push("# HELP openslin_data_isolation_violation_total Total data isolation violations.");
+    lines.push("# TYPE openslin_data_isolation_violation_total counter");
+
+    lines.push("# HELP openslin_health_status Component health status (1=healthy, 0=unhealthy).");
+    lines.push("# TYPE openslin_health_status gauge");
+
+    lines.push("# HELP openslin_db_pool_idle Number of idle database pool connections.");
+    lines.push("# TYPE openslin_db_pool_idle gauge");
+
+    lines.push("# HELP openslin_db_pool_total Total database pool connections.");
+    lines.push("# TYPE openslin_db_pool_total gauge");
+
+    lines.push("# HELP openslin_db_pool_waiting Number of waiting database pool requests.");
+    lines.push("# TYPE openslin_db_pool_waiting gauge");
+
+    // P3-1: Intent Analyzer Metrics HELP
+    lines.push("# HELP openslin_intent_analysis_total Total intent analysis operations.");
+    lines.push("# TYPE openslin_intent_analysis_total counter");
+
+    lines.push("# HELP openslin_intent_analysis_duration_ms Intent analysis duration in milliseconds.");
+    lines.push("# TYPE openslin_intent_analysis_duration_ms histogram");
+
+    lines.push("# HELP openslin_intent_rule_matches_total Total intent rule matches by confidence.");
+    lines.push("# TYPE openslin_intent_rule_matches_total counter");
+
+    // P0-1: Unified Intent Route Metrics HELP
+    lines.push("# HELP openslin_orchestrator_intent_route_total Unified intent route total (covers dispatch + stream + classify).");
+    lines.push("# TYPE openslin_orchestrator_intent_route_total counter");
+    lines.push("# HELP openslin_orchestrator_intent_route_duration_ms Intent route classification duration in ms.");
+    lines.push("# TYPE openslin_orchestrator_intent_route_duration_ms histogram");
+
+    // P0-2: Goal Decompose Metrics HELP
+    lines.push("# HELP openslin_goal_decompose_total Total goal decomposition operations.");
+    lines.push("# TYPE openslin_goal_decompose_total counter");
+    lines.push("# HELP openslin_goal_decompose_duration_ms Goal decomposition duration in ms.");
+    lines.push("# TYPE openslin_goal_decompose_duration_ms histogram");
+    lines.push("# HELP openslin_goal_decompose_fallback_total Total goal decomposition fallbacks.");
+    lines.push("# TYPE openslin_goal_decompose_fallback_total counter");
+
+    // P0-2: Planning Pipeline Metrics HELP
+    lines.push("# HELP openslin_planning_pipeline_total Total planning pipeline executions.");
+    lines.push("# TYPE openslin_planning_pipeline_total counter");
+    lines.push("# HELP openslin_planning_pipeline_duration_ms Planning pipeline duration in ms.");
+    lines.push("# TYPE openslin_planning_pipeline_duration_ms histogram");
+
+    // P0-2: Agent Decision Metrics HELP
+    lines.push("# HELP openslin_agent_decision_total Total agent think-decide iterations.");
+    lines.push("# TYPE openslin_agent_decision_total counter");
+    lines.push("# HELP openslin_agent_decision_duration_ms Agent decision duration in ms.");
+    lines.push("# TYPE openslin_agent_decision_duration_ms histogram");
+
+    // P0-2: Parallel Tool Calls Metrics HELP
+    lines.push("# HELP openslin_parallel_tool_calls_total Total parallel tool call batches.");
+    lines.push("# TYPE openslin_parallel_tool_calls_total counter");
+    lines.push("# HELP openslin_parallel_tool_calls_duration_ms Parallel tool calls batch duration in ms.");
+    lines.push("# TYPE openslin_parallel_tool_calls_duration_ms histogram");
+
+    // P2-9 / P4-2: Plan Quality Metrics HELP
+    lines.push("# HELP openslin_plan_quality_score Plan quality score distribution.");
+    lines.push("# TYPE openslin_plan_quality_score histogram");
+    lines.push("# HELP openslin_plan_semantic_repair_total Total plan semantic repairs.");
+    lines.push("# TYPE openslin_plan_semantic_repair_total counter");
+
+    // P3-1: Orchestrator Metrics HELP
+    lines.push("# HELP openslin_orchestrator_execution_total Total orchestrator executions.");
+    lines.push("# TYPE openslin_orchestrator_execution_total counter");
+
+    lines.push("# HELP openslin_orchestrator_execution_duration_ms Orchestrator execution duration in milliseconds.");
+    lines.push("# TYPE openslin_orchestrator_execution_duration_ms histogram");
+
+    lines.push("# HELP openslin_orchestrator_tool_calls_total Total orchestrator tool calls.");
+    lines.push("# TYPE openslin_orchestrator_tool_calls_total counter");
+
+    lines.push("# HELP openslin_orchestrator_active_runs Current number of active orchestrator runs.");
+    lines.push("# TYPE openslin_orchestrator_active_runs gauge");
+
+    // P3-1: Device Runtime Metrics HELP
+    lines.push("# HELP openslin_device_execution_total Total device executions.");
+    lines.push("# TYPE openslin_device_execution_total counter");
+
+    lines.push("# HELP openslin_device_execution_duration_ms Device execution duration in milliseconds.");
+    lines.push("# TYPE openslin_device_execution_duration_ms histogram");
+
+    lines.push("# HELP openslin_device_messages_total Total device messages by category.");
+    lines.push("# TYPE openslin_device_messages_total counter");
+
+    lines.push("# HELP openslin_device_connected_clients Number of connected device clients.");
+    lines.push("# TYPE openslin_device_connected_clients gauge");
+
+    lines.push("# HELP openslin_device_push_notifications_total Total device push notifications.");
+    lines.push("# TYPE openslin_device_push_notifications_total counter");
+
+    // P3-13: Eval Gate Metrics
+    lines.push("# HELP openslin_eval_gate_blocked_total Total eval gate blocks by reason.");
+    lines.push("# TYPE openslin_eval_gate_blocked_total counter");
+    lines.push("# HELP openslin_eval_gate_check_total Total eval gate checks.");
+    lines.push("# TYPE openslin_eval_gate_check_total counter");
+    lines.push("# HELP openslin_eval_gate_check_duration_ms Eval gate check duration in ms.");
+    lines.push("# TYPE openslin_eval_gate_check_duration_ms histogram");
+    lines.push("# HELP openslin_eval_gate_suite_count Number of suites in last eval gate check.");
+    lines.push("# TYPE openslin_eval_gate_suite_count gauge");
+
+    // P3-13: Debate Metrics
+    lines.push("# HELP openslin_debate_sessions_total Total debate sessions by result.");
+    lines.push("# TYPE openslin_debate_sessions_total counter");
+    lines.push("# HELP openslin_debate_duration_ms Debate session duration in ms.");
+    lines.push("# TYPE openslin_debate_duration_ms histogram");
+    lines.push("# HELP openslin_debate_rounds_total Total debate rounds.");
+    lines.push("# TYPE openslin_debate_rounds_total counter");
+
+    // P3-13: Conflict Resolution Metrics
+    lines.push("# HELP openslin_conflict_resolution_total Total conflict resolutions by strategy.");
+    lines.push("# TYPE openslin_conflict_resolution_total counter");
+    lines.push("# HELP openslin_conflict_manual_required_total Total conflicts requiring manual resolution.");
+    lines.push("# TYPE openslin_conflict_manual_required_total counter");
+    lines.push("# HELP openslin_conflict_batch_fields_total Fields processed in last conflict batch.");
+    lines.push("# TYPE openslin_conflict_batch_fields_total gauge");
+    lines.push("# HELP openslin_conflict_batch_conflicted Conflicted fields in last batch.");
+    lines.push("# TYPE openslin_conflict_batch_conflicted gauge");
+    lines.push("# HELP openslin_conflict_batch_auto_resolved Auto-resolved fields in last batch.");
+    lines.push("# TYPE openslin_conflict_batch_auto_resolved gauge");
+
+    // P3-13: Output Quality Metrics
+    lines.push("# HELP openslin_output_quality_check_total Total output quality checks.");
+    lines.push("# TYPE openslin_output_quality_check_total counter");
+    lines.push("# HELP openslin_output_quality_score Output quality score distribution.");
+    lines.push("# TYPE openslin_output_quality_score histogram");
+
     for (const v of counters.values()) {
       const { __name__, ...labels } = v.labels as any;
       lines.push(`${__name__}${renderLabels(labels)} ${v.value}`);
@@ -370,6 +764,47 @@ export function createMetricsRegistry() {
     observeSyncPush,
     observeSyncPull,
     incAlertFired,
+    incSsoLogin,
+    observeSsoLoginLatency,
+    incScimOperation,
+    setScimProvisionedUsers,
+    incDataIsolationViolation,
+    setHealthStatus,
+    setDatabasePoolStats,
+    // P3-1: Intent Analyzer Metrics
+    observeIntentAnalysis,
+    incIntentRuleMatch,
+    // P0-1: Unified Intent Route Metrics
+    observeIntentRoute,
+    // P0-2: Goal Decompose / Planning / Agent Decision / Parallel Tool Calls
+    observeGoalDecompose,
+    observePlanningPipeline,
+    observeAgentDecision,
+    observeParallelToolCalls,
+    // P2-9 / P4-2: Plan Quality
+    observePlanQualityScore,
+    // P3-1: Orchestrator Metrics
+    observeOrchestratorExecution,
+    incOrchestratorToolCall,
+    setOrchestratorActiveRuns,
+    // P3-1: Device Runtime Metrics
+    observeDeviceExecution,
+    incDeviceMessage,
+    setDeviceConnectedClients,
+    incDevicePushNotification,
+    // P3-13: Eval Gate Metrics
+    incEvalGateBlocked,
+    observeEvalGateCheck,
+    // P3-13: Debate Metrics
+    incDebateSession,
+    observeDebateDuration,
+    incDebateRound,
+    // P3-13: Conflict Resolution Metrics
+    incConflictResolution,
+    incConflictManualRequired,
+    observeConflictBatch,
+    // P3-13: Output Quality Metrics
+    observeOutputQuality,
     renderPrometheus,
   };
 }

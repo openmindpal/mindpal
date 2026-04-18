@@ -1,30 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table, StatusBadge } from "@/components/ui";
+import { apiFetch } from "@/lib/api";
+import { t, statusLabel } from "@/lib/i18n";
+import { Badge, Card, PageHeader, Table, StatusBadge, StructuredData, JsonFormEditor } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
 
 export default function GovTriggersClient(props: { locale: string; initial: { status: number; json: any } }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
+  const [info, setInfo] = useState<any>(null);
   const [data, setData] = useState(props.initial);
 
   const items = useMemo(() => (Array.isArray(data?.json?.items) ? data.json.items : []), [data]);
@@ -83,7 +69,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
-      setInfo(JSON.stringify(json ?? {}, null, 2));
+      setInfo(json ?? {});
     });
   }
 
@@ -95,7 +81,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
-      setInfo(JSON.stringify(json ?? {}, null, 2));
+      setInfo(json ?? {});
     });
   }
 
@@ -109,7 +95,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
-      setInfo(JSON.stringify(json ?? {}, null, 2));
+      setInfo(json ?? {});
     });
   }
 
@@ -117,7 +103,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
     <div style={{ padding: 24, display: "grid", gap: 16 }}>
       <PageHeader title={t(props.locale, "gov.triggers.title")} description={t(props.locale, "gov.triggers.desc")} actions={<StatusBadge locale={props.locale} status={data.status} />} />
       {error ? <pre style={{ color: "crimson", whiteSpace: "pre-wrap" }}>{error}</pre> : null}
-      {info ? <pre style={{ background: "rgba(15,23,42,0.03)", padding: 12, whiteSpace: "pre-wrap" }}>{info}</pre> : null}
+      {info ? <StructuredData data={info} /> : null}
 
       <Card title={t(props.locale, "gov.triggers.createTitle")}>
         <div style={{ display: "grid", gap: 8, maxWidth: 720 }}>
@@ -144,7 +130,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
               </label>
               <label style={{ display: "grid", gap: 6 }}>
                 <div>{t(props.locale, "gov.triggers.label.eventFilter")}</div>
-                <textarea value={eventFilterJson} onChange={(e) => setEventFilterJson(e.target.value)} rows={5} style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }} />
+                <JsonFormEditor value={eventFilterJson} onChange={setEventFilterJson} locale={props.locale} disabled={busy} rows={5} />
               </label>
             </>
           )}
@@ -165,7 +151,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
           </label>
           <label style={{ display: "grid", gap: 6 }}>
             <div>{t(props.locale, "gov.triggers.label.inputMapping")}</div>
-            <textarea value={inputMappingJson} onChange={(e) => setInputMappingJson(e.target.value)} rows={6} style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }} />
+            <JsonFormEditor value={inputMappingJson} onChange={setInputMappingJson} locale={props.locale} disabled={busy} rows={6} />
           </label>
           <button onClick={createOne} disabled={busy}>
             {t(props.locale, "action.create")}
@@ -184,12 +170,14 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
           </tr>
         </thead>
         <tbody>
-          {items.map((it: any) => (
+          {items.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                ) : items.map((it: any) => (
             <tr key={String(it.triggerId ?? it.trigger_id)}>
               <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{String(it.triggerId ?? it.trigger_id)}</td>
               <td>{String(it.type ?? "-")}</td>
               <td>
-                <Badge>{String(it.status ?? "-")}</Badge>
+                <Badge>{statusLabel(String(it.status ?? "-"), props.locale)}</Badge>
               </td>
               <td>{String(it.targetRef ?? it.target_ref ?? "-")}</td>
               <td>

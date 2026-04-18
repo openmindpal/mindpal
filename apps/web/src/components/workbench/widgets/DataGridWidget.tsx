@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
+import { t } from "@/lib/i18n";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -68,10 +69,10 @@ const GRID_CSS = `
 // ─── Cell Renderer ──────────────────────────────────────────────────────────
 
 function CellEditor(props: {
-  col: GridColumn; value: any; readOnly: boolean;
+  col: GridColumn; value: any; readOnly: boolean; locale: string;
   onChange: (val: any) => void;
 }) {
-  const { col, value, readOnly, onChange } = props;
+  const { col, value, readOnly, locale, onChange } = props;
 
   const cellStyle: React.CSSProperties = {
     width: "100%", border: "none", background: "transparent",
@@ -109,7 +110,7 @@ function CellEditor(props: {
       );
     case "url":
     case "email":
-      return <input type={col.type === "email" ? "email" : "url"} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} style={cellStyle} placeholder={col.type === "url" ? "https://..." : "email@..."} />;
+      return <input type={col.type === "email" ? "email" : "url"} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} style={cellStyle} placeholder={t(locale, col.type === "url" ? "widget.dataGrid.urlPlaceholder" : "widget.dataGrid.emailPlaceholder")} />;
     default:
       return <input type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)} style={cellStyle} />;
   }
@@ -119,6 +120,7 @@ function CellEditor(props: {
 
 export function DataGridWidget(props: DataGridProps) {
   const { columns, rows, onColumnsChange, onRowsChange, readOnly = false, pageSize = 25 } = props;
+  const locale = props.locale ?? "zh-CN";
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -179,9 +181,9 @@ export function DataGridWidget(props: DataGridProps) {
 
   const handleAddColumn = useCallback(() => {
     if (!onColumnsChange) return;
-    const newCol: GridColumn = { id: gId("col"), label: `Column ${columns.length + 1}`, type: "text" };
+    const newCol: GridColumn = { id: gId("col"), label: t(locale, "widget.dataGrid.newColumn").replace("{index}", String(columns.length + 1)), type: "text" };
     onColumnsChange([...columns, newCol]);
-  }, [columns, onColumnsChange]);
+  }, [columns, locale, onColumnsChange]);
 
   const handleRemoveColumn = useCallback((colId: string) => {
     if (!onColumnsChange) return;
@@ -212,27 +214,27 @@ export function DataGridWidget(props: DataGridProps) {
       {/* Toolbar */}
       <div style={{ display: "flex", gap: 8, padding: "8px 14px", borderBottom: "1px solid var(--sl-border, #e5e7eb)", background: "var(--sl-surface, #fff)", alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: "var(--sl-fg, #1e293b)" }}>
-          {sorted.length} rows
+          {t(locale, "widget.dataGrid.rows").replace("{count}", String(sorted.length))}
         </span>
         {Object.values(filters).some(Boolean) && (
           <button onClick={() => setFilters({})} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, border: "1px solid var(--sl-border)", background: "var(--sl-surface)", color: "var(--sl-fg)", cursor: "pointer" }}>
-            Clear filters
+            {t(locale, "widget.dataGrid.clearFilters")}
           </button>
         )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 4, alignItems: "center" }}>
           {!readOnly && (
             <>
               <button onClick={handleAddRow} className="__dg_btn" style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, border: "1px solid var(--sl-border, #e5e7eb)", background: "var(--sl-surface, #fff)", color: "var(--sl-fg)", cursor: "pointer", fontWeight: 500 }}>
-                + Row
+                + {t(locale, "widget.dataGrid.addRow")}
               </button>
               {onColumnsChange && (
                 <button onClick={handleAddColumn} className="__dg_btn" style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, border: "1px solid var(--sl-border, #e5e7eb)", background: "var(--sl-surface, #fff)", color: "var(--sl-fg)", cursor: "pointer", fontWeight: 500 }}>
-                  + Column
+                  + {t(locale, "widget.dataGrid.addColumn")}
                 </button>
               )}
               {selectedRow && (
                 <button onClick={() => handleRemoveRow(selectedRow)} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 7, border: "1px solid var(--sl-border)", background: "var(--sl-surface)", color: "var(--sl-danger, #ef4444)", cursor: "pointer", fontWeight: 500 }}>
-                  🗑️ Row
+                  🗑️ {t(locale, "widget.dataGrid.row")}
                 </button>
               )}
             </>
@@ -268,7 +270,7 @@ export function DataGridWidget(props: DataGridProps) {
                   <input
                     value={filters[col.id] ?? ""}
                     onChange={(e) => { setFilters({ ...filters, [col.id]: e.target.value }); setPage(0); }}
-                    placeholder="Filter..."
+                    placeholder={t(locale, "widget.dataGrid.filter")}
                     className="__dg_filter"
                     style={{ width: "100%", fontSize: 10, padding: "3px 6px", borderRadius: 5, border: "1px solid var(--sl-border, #e5e7eb)", background: "var(--sl-bg, #f8fafc)", color: "var(--sl-fg)", outline: "none", transition: "border-color .15s,box-shadow .15s" }}
                   />
@@ -288,7 +290,7 @@ export function DataGridWidget(props: DataGridProps) {
                   {columns.map((col) => (
                     <td key={col.id} style={tdStyle}
                       onDoubleClick={() => !readOnly && setEditingCell({ rowId: row.id, colId: col.id })}>
-                      <CellEditor col={col} value={row.cells[col.id]} readOnly={readOnly && !(editingCell?.rowId === row.id && editingCell?.colId === col.id)}
+                      <CellEditor col={col} value={row.cells[col.id]} locale={locale} readOnly={readOnly && !(editingCell?.rowId === row.id && editingCell?.colId === col.id)}
                         onChange={(val) => handleCellChange(row.id, col.id, val)} />
                     </td>
                   ))}
@@ -305,15 +307,15 @@ export function DataGridWidget(props: DataGridProps) {
           <button onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0}
             className="__dg_pgbtn"
             style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, border: "1px solid var(--sl-border)", background: "var(--sl-surface)", color: "var(--sl-fg)", cursor: page === 0 ? "default" : "pointer", opacity: page === 0 ? 0.4 : 1 }}>
-            ← Prev
+            ← {t(locale, "widget.dataGrid.prev")}
           </button>
           <span style={{ fontSize: 11, color: "var(--sl-muted)" }}>
-            Page {page + 1} of {totalPages}
+            {t(locale, "widget.dataGrid.page").replace("{page}", String(page + 1)).replace("{total}", String(totalPages))}
           </span>
           <button onClick={() => setPage(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1}
             className="__dg_pgbtn"
             style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, border: "1px solid var(--sl-border)", background: "var(--sl-surface)", color: "var(--sl-fg)", cursor: page >= totalPages - 1 ? "default" : "pointer", opacity: page >= totalPages - 1 ? 0.4 : 1 }}>
-            Next →
+            {t(locale, "widget.dataGrid.next")} →
           </button>
         </div>
       )}
@@ -325,7 +327,7 @@ export function DataGridWidget(props: DataGridProps) {
         }}>
           <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: "var(--sl-fg, #475569)" }}>
-            {readOnly ? "No data" : "Click '+ Row' to add data"}
+            {readOnly ? t(locale, "widget.noData") : t(locale, "widget.dataGrid.emptyHint")}
           </div>
         </div>
       )}

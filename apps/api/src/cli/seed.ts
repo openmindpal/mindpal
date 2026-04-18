@@ -282,79 +282,10 @@ async function main() {
     [tenantId, mockModelRef],
   );
 
-  const schemaExists = await pool.query(
-    "SELECT 1 FROM schemas WHERE name = 'core' AND status = 'released' LIMIT 1",
-  );
-  if (!schemaExists.rowCount) {
-    const seedCandidates = [
-      path.resolve(process.cwd(), "apps/api/seed/core.schema.json"),
-      path.resolve(process.cwd(), "seed/core.schema.json"),
-    ];
-    let seedPath: string | null = null;
-    for (const p of seedCandidates) {
-      try {
-        const stat = await fs.stat(p);
-        if (stat.isFile()) {
-          seedPath = p;
-          break;
-        }
-      } catch {
-        continue;
-      }
-    }
-    if (seedPath) {
-      const raw = await fs.readFile(seedPath, "utf8");
-      const schema = JSON.parse(raw);
-      const latest = await pool.query(
-        "SELECT version FROM schemas WHERE name = 'core' AND status = 'released' ORDER BY version DESC LIMIT 1",
-      );
-      const nextVersion = (latest.rowCount ? (latest.rows[0].version as number) : 0) + 1;
-      schema.version = nextVersion;
-      await pool.query(
-        "INSERT INTO schemas (name, version, status, schema_json, published_at) VALUES ('core', $1, 'released', $2, now())",
-        [nextVersion, schema],
-      );
-    }
-  }
+  console.log("[seed] 零默认 Schema 模式已启用：不再预置 core schema");
 
-  const uiExists = await pool.query(
-    "SELECT 1 FROM page_template_versions WHERE tenant_id = $1 AND status = 'released' LIMIT 1",
-    [tenantId],
-  );
-  if (!uiExists.rowCount) {
-    await pool.query(
-      `
-        INSERT INTO page_templates (tenant_id, scope_type, scope_id, name)
-        VALUES
-          ($1, 'tenant', $1, 'notes.list'),
-          ($1, 'tenant', $1, 'notes.new')
-        ON CONFLICT (tenant_id, scope_type, scope_id, name) DO UPDATE SET updated_at = now()
-      `,
-      [tenantId],
-    );
-    await pool.query(
-      `
-        INSERT INTO page_template_versions (
-          tenant_id, scope_type, scope_id, name, version, status, page_type, title, params, data_bindings, action_bindings
-        )
-        VALUES
-          ($1, 'tenant', $1, 'notes.list', 1, 'released', 'entity.list', $2, $3, $4, $5),
-          ($1, 'tenant', $1, 'notes.new', 1, 'released', 'entity.new', $6, $7, $8, $9)
-        ON CONFLICT DO NOTHING
-      `,
-      [
-        tenantId,
-        JSON.stringify({ "zh-CN": "笔记", "en-US": "Notes" }),
-        JSON.stringify({ entityName: "notes" }),
-        JSON.stringify([{ target: "entities.list", entityName: "notes" }]),
-        JSON.stringify([{ action: "create", toolRef: "entity.create@1" }]),
-        JSON.stringify({ "zh-CN": "新建笔记", "en-US": "New note" }),
-        JSON.stringify({ entityName: "notes" }),
-        JSON.stringify([{ target: "schema.effective", entityName: "notes", schemaName: "core" }]),
-        JSON.stringify([{ action: "create", toolRef: "entity.create@1" }]),
-      ],
-    );
-  }
+  // Notes page templates removed — notes functionality is now provided by Skill extensions,
+  // not built into the OS core. Page templates can be dynamically created via Skill manifests.
 
   // Auto-discover and register all tools (built-in + skill manifests)
   try {

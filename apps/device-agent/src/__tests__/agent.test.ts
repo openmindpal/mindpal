@@ -198,4 +198,28 @@ describe("device-agent", () => {
     expect(resultHit.body.status).toBe("failed");
     expect(resultHit.body.errorCategory).toBe("policy_violation");
   });
+
+  it("desktop.launch accepts appPath payload from tool schema", async () => {
+    hits = [];
+    pendingOnce = true;
+    requireUserPresence = false;
+    pendingToolRef = "desktop.launch@1";
+    pendingInput = { appPath: "剪映" };
+    pendingPolicy = { allowedTools: ["desktop.launch"], filePolicy: null, networkPolicy: null, uiPolicy: { allowedApps: ["剪映"] }, evidencePolicy: null, limits: null };
+
+    const cfg: DeviceAgentConfig = {
+      apiBase: base,
+      deviceId: "d1",
+      deviceToken: "tok",
+      enrolledAt: new Date().toISOString(),
+      deviceType: "desktop",
+      os: "windows",
+      agentVersion: "1.0.0",
+    };
+    const r = await runOnce({ cfg, confirmFn: async () => true, now: () => new Date() });
+    expect(r.ok).toBe(true);
+    const resultHit = hits.find((h) => h.url === "/device-agent/executions/e1/result");
+    expect(resultHit.body.status).toBe("succeeded");
+    expect(resultHit.body.outputDigest?.app).toBe("剪映");
+  });
 });

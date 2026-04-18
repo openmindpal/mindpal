@@ -6,8 +6,10 @@ import { setAuditContext } from "../modules/audit/context";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
 import { enqueueAuditOutboxForRequest } from "../modules/audit/requestOutbox";
 import { requirePermission } from "../modules/auth/guard";
+import { upsertTaskState } from "../modules/memory/repo";
 import { getRunForSpace, listSteps } from "../modules/workflow/jobRepo";
 import { addDecision, getApproval, listApprovals } from "../modules/workflow/approvalRepo";
+import { enqueueWorkflowStep } from "../modules/workflow/queue";
 
 async function resolveApprovalStep(pool: Pool, runId: string, stepId: string | null) {
   if (stepId) {
@@ -130,6 +132,9 @@ export const approvalRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const client = await app.db.connect();
+    let committed = false;
+    let deferredEnqueue: { jobId: string; runId: string; stepId: string } | null = null;
+    let deferredResponse: { approval: any; decision: any; receipt: any } | null = null;
     try {
       await client.query("BEGIN");
       const decided = await addDecision({
@@ -143,10 +148,36 @@ export const approvalRoutes: FastifyPluginAsync = async (app) => {
       if (!decided) throw Errors.badRequest("Approval 不存在");
       if (!decided.ok) {
         req.ctx.audit!.errorCategory = "policy_violation";
+        if ("reason" in decided && decided.reason === "duplicate_approver") {
+          throw Errors.badRequest("双人审批需要不同审批人");
+        }
         throw Errors.badRequest("Approval 不在 pending 状态");
       }
 
       if (body.decision === "approve") {
+        if (!decided.finalized) {
+          await upsertTaskState({
+            pool: client as any,
+            tenantId: subject.tenantId,
+            spaceId: subject.spaceId,
+            runId: existing.runId,
+            phase: "needs_approval",
+            approvalStatus: "pending",
+          });
+          const receipt = {
+            correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId, approvalId: decided.approval.approvalId, runId: existing.runId },
+            status: "awaiting_additional_approval" as const,
+            approvalsCollected: decided.approvalsCollected,
+            approvalsRemaining: decided.approvalsRemaining,
+            requiredApprovals: decided.requiredApprovals,
+          };
+          req.ctx.audit!.outputDigest = { decision: "approve", receipt };
+          await enqueueAuditOutboxForRequest({ client, req, deferSkip: true });
+          await client.query("COMMIT");
+          req.ctx.audit!.skipAuditWrite = true;
+          return { approval: decided.approval, decision: decided.decision, receipt };
+        }
+
         const run = await getRunForSpace(client as any, subject.tenantId, subject.spaceId, existing.runId);
         if (!run) throw Errors.badRequest("Run 不存在");
 
@@ -159,6 +190,10 @@ export const approvalRoutes: FastifyPluginAsync = async (app) => {
 
         await client.query("UPDATE runs SET status = 'queued', updated_at = now() WHERE tenant_id = $1 AND run_id = $2", [subject.tenantId, run.runId]);
         await client.query("UPDATE jobs SET status = 'queued', updated_at = now() WHERE tenant_id = $1 AND job_id = $2", [subject.tenantId, jobId]);
+        await client.query(
+          "UPDATE steps SET status = 'pending', updated_at = now(), finished_at = NULL, deadlettered_at = NULL, queue_job_id = NULL WHERE step_id = $1",
+          [stepId],
+        );
         const stepInput2 = step.input as any;
         if (stepInput2?.collabRunId) {
           await client.query("UPDATE collab_runs SET status = 'executing', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2", [
@@ -170,54 +205,145 @@ export const approvalRoutes: FastifyPluginAsync = async (app) => {
         const receipt = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId, approvalId: decided.approval.approvalId, runId: run.runId, stepId }, status: "queued" as const };
         req.ctx.audit!.outputDigest = { decision: "approve", receipt };
         await enqueueAuditOutboxForRequest({ client, req, deferSkip: true });
-        await app.queue.add("step", { jobId, runId: run.runId, stepId }, { attempts: 3, backoff: { type: "exponential", delay: 500 } });
+        await upsertTaskState({
+          pool: client as any,
+          tenantId: subject.tenantId,
+          spaceId: subject.spaceId,
+          runId: run.runId,
+          stepId,
+          phase: "queued",
+          approvalStatus: "approved",
+          clearBlockReason: true,
+          clearNextAction: true,
+        });
         await client.query("COMMIT");
+        committed = true;
+        deferredEnqueue = { jobId, runId: run.runId, stepId };
+        deferredResponse = { approval: decided.approval, decision: decided.decision, receipt };
+      }
 
+      if (!deferredResponse) {
+        await client.query("UPDATE runs SET status = 'canceled', updated_at = now(), finished_at = COALESCE(finished_at, now()) WHERE tenant_id = $1 AND run_id = $2", [
+        subject.tenantId,
+        existing.runId,
+        ]);
+        await client.query("UPDATE steps SET status = 'canceled', updated_at = now(), finished_at = COALESCE(finished_at, now()) WHERE run_id = $1 AND status IN ('pending','running')", [
+        existing.runId,
+        ]);
+        await client.query("UPDATE jobs SET status = 'canceled', updated_at = now() WHERE tenant_id = $1 AND run_id = $2", [subject.tenantId, existing.runId]);
+
+        const receipt = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId, approvalId: decided.approval.approvalId, runId: existing.runId }, status: "canceled" as const };
+        req.ctx.audit!.outputDigest = { decision: "reject", receipt };
+        await enqueueAuditOutboxForRequest({ client, req, deferSkip: true });
+        await upsertTaskState({
+          pool: client as any,
+          tenantId: subject.tenantId,
+          spaceId: subject.spaceId,
+          runId: existing.runId,
+          phase: "canceled",
+          approvalStatus: "rejected",
+          clearBlockReason: true,
+          clearNextAction: true,
+        });
+        await client.query("COMMIT");
+        committed = true;
+        req.ctx.audit!.skipAuditWrite = true;
+        return { approval: decided.approval, decision: decided.decision, receipt };
+      }
+    } catch (e) {
+      if (!committed) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+        }
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    if (deferredEnqueue && deferredResponse) {
+      try {
+        await enqueueWorkflowStep({
+          queue: app.queue,
+          pool: app.db,
+          jobId: deferredEnqueue.jobId,
+          runId: deferredEnqueue.runId,
+          stepId: deferredEnqueue.stepId,
+          tenantId: subject.tenantId,
+        });
+      } catch (enqueueErr) {
+        await app.db.query(
+          "UPDATE runs SET status = 'failed', updated_at = now() WHERE tenant_id = $1 AND run_id = $2 AND status = 'queued'",
+          [subject.tenantId, deferredEnqueue.runId],
+        ).catch(() => undefined);
+        await app.db.query(
+          "UPDATE jobs SET status = 'failed', updated_at = now() WHERE tenant_id = $1 AND job_id = $2 AND status = 'queued'",
+          [subject.tenantId, deferredEnqueue.jobId],
+        ).catch(() => undefined);
+        await app.db.query(
+          `UPDATE steps
+           SET status = 'failed',
+               updated_at = now(),
+               finished_at = now(),
+               error_category = 'queue_error',
+               last_error = $2,
+               queue_job_id = NULL
+           WHERE step_id = $1 AND status = 'pending'`,
+          [deferredEnqueue.stepId, enqueueErr instanceof Error ? enqueueErr.message : "workflow_enqueue_failed"],
+        ).catch(() => undefined);
+        await upsertTaskState({
+          pool: app.db,
+          tenantId: subject.tenantId,
+          spaceId: subject.spaceId,
+          runId: deferredEnqueue.runId,
+          stepId: deferredEnqueue.stepId,
+          phase: "failed",
+          blockReason: "workflow_enqueue_failed_after_approval",
+          nextAction: "retry_run",
+          approvalStatus: "approved",
+        }).catch(() => undefined);
         try {
           await insertAuditEvent(app.db, {
             subjectId: subject.subjectId,
             tenantId: subject.tenantId,
             spaceId: subject.spaceId,
             resourceType: "workflow",
-            action: "run.enqueued",
-            inputDigest: { approvalId: decided.approval.approvalId, runId: run.runId, stepId },
-            outputDigest: { jobId, status: "queued" },
-            result: "success",
+            action: "run.enqueue_failed",
+            inputDigest: { approvalId: deferredResponse.approval.approvalId, runId: deferredEnqueue.runId, stepId: deferredEnqueue.stepId },
+            outputDigest: { jobId: deferredEnqueue.jobId, status: "failed", reason: "queue_enqueue_failed" },
+            result: "error",
             traceId: req.ctx.traceId,
             requestId: req.ctx.requestId,
-            runId: run.runId,
-            stepId,
+            runId: deferredEnqueue.runId,
+            stepId: deferredEnqueue.stepId,
           });
         } catch {
         }
-
-        req.ctx.audit!.skipAuditWrite = true;
-        return { approval: decided.approval, decision: decided.decision, receipt };
+        req.ctx.audit!.errorCategory = "infra";
+        throw Errors.serviceNotReady("工作流队列暂不可用");
       }
 
-      await client.query("UPDATE runs SET status = 'canceled', updated_at = now(), finished_at = COALESCE(finished_at, now()) WHERE tenant_id = $1 AND run_id = $2", [
-        subject.tenantId,
-        existing.runId,
-      ]);
-      await client.query("UPDATE steps SET status = 'canceled', updated_at = now(), finished_at = COALESCE(finished_at, now()) WHERE run_id = $1 AND status IN ('pending','running')", [
-        existing.runId,
-      ]);
-      await client.query("UPDATE jobs SET status = 'canceled', updated_at = now() WHERE tenant_id = $1 AND run_id = $2", [subject.tenantId, existing.runId]);
-
-      const receipt = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId, approvalId: decided.approval.approvalId, runId: existing.runId }, status: "canceled" as const };
-      req.ctx.audit!.outputDigest = { decision: "reject", receipt };
-      await enqueueAuditOutboxForRequest({ client, req, deferSkip: true });
-      await client.query("COMMIT");
-      req.ctx.audit!.skipAuditWrite = true;
-      return { approval: decided.approval, decision: decided.decision, receipt };
-    } catch (e) {
       try {
-        await client.query("ROLLBACK");
+        await insertAuditEvent(app.db, {
+          subjectId: subject.subjectId,
+          tenantId: subject.tenantId,
+          spaceId: subject.spaceId,
+          resourceType: "workflow",
+          action: "run.enqueued",
+          inputDigest: { approvalId: deferredResponse.approval.approvalId, runId: deferredEnqueue.runId, stepId: deferredEnqueue.stepId },
+          outputDigest: { jobId: deferredEnqueue.jobId, status: "queued" },
+          result: "success",
+          traceId: req.ctx.traceId,
+          requestId: req.ctx.requestId,
+          runId: deferredEnqueue.runId,
+          stepId: deferredEnqueue.stepId,
+        });
       } catch {
       }
-      throw e;
-    } finally {
-      client.release();
+
+      req.ctx.audit!.skipAuditWrite = true;
+      return deferredResponse;
     }
   });
 };

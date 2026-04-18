@@ -34,7 +34,7 @@ function errMsg(e: unknown) {
 export default function AdminUiClient(props: { locale: string; initialPages: UiPagesResponse | null }) {
   const [pages, setPages] = useState<UiPagesResponse | null>(props.initialPages);
   const [schemaName, setSchemaName] = useState("core");
-  const [entityName, setEntityName] = useState("notes");
+  const [entityName, setEntityName] = useState("");
   const [selectedName, setSelectedName] = useState<string>("");
   const [selected, setSelected] = useState<UiPageDetail | null>(null);
   const [uiText, setUiText] = useState<string>("");
@@ -141,12 +141,12 @@ export default function AdminUiClient(props: { locale: string; initialPages: UiP
       <table cellPadding={6} style={{ borderCollapse: "collapse", width: "100%" }}>
         <thead>
           <tr>
-            <th align="left">name</th>
-            <th align="left">pageType</th>
-            <th align="left">title</th>
-            <th align="left">draft</th>
-            <th align="left">released</th>
-            <th align="left">actions</th>
+            <th align="left">{t(props.locale, "admin.ui.col.name")}</th>
+            <th align="left">{t(props.locale, "admin.ui.col.pageType")}</th>
+            <th align="left">{t(props.locale, "admin.ui.col.title")}</th>
+            <th align="left">{t(props.locale, "admin.ui.col.draft")}</th>
+            <th align="left">{t(props.locale, "admin.ui.col.released")}</th>
+            <th align="left">{t(props.locale, "admin.ui.col.actions")}</th>
           </tr>
         </thead>
         <tbody>

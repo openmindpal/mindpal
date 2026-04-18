@@ -1,23 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
-import { attachDlpSummary, redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget } from "@openslin/shared";
+import { attachDlpSummary, redactValue, shouldDenyDlpForTarget } from "@openslin/shared";
 import { Errors } from "../lib/errors";
 import { digestBody, digestPayload } from "./digests";
-import { getEffectiveSafetyPolicyVersion } from "../lib/safetyContract";
-
-function hasDlpEnvOverride(env: NodeJS.ProcessEnv = process.env) {
-  const mode = String(env.DLP_MODE ?? "").trim();
-  const targets = String(env.DLP_DENY_TARGETS ?? "").trim();
-  const hitTypes = String(env.DLP_DENY_HIT_TYPES ?? "").trim();
-  return Boolean(mode || targets || hitTypes);
-}
+import { resolveRequestDlpPolicyContext } from "../lib/dlpPolicy";
 
 export const dlpPlugin: FastifyPluginAsync = async (app) => {
   app.addHook("preSerialization", async (req, reply, payload) => {
     const subject = req.ctx.subject;
-    let eff: any | null = null;
-    const envDlpOverride = hasDlpEnvOverride(process.env);
-    if (subject && !envDlpOverride) eff = await getEffectiveSafetyPolicyVersion({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, policyType: "content" });
-    const dlpPolicy = envDlpOverride ? resolveDlpPolicyFromEnv(process.env) : eff?.policyJson ? resolveDlpPolicy(eff.policyJson as any) : resolveDlpPolicyFromEnv(process.env);
+    const dlpContext = await resolveRequestDlpPolicyContext({ db: app.db, subject });
+    const dlpPolicy = dlpContext.policy;
     const target = req.ctx.audit?.resourceType && req.ctx.audit?.action ? `${req.ctx.audit.resourceType}:${req.ctx.audit.action}` : "";
     const scanned = redactValue(payload);
     const denied = shouldDenyDlpForTarget({ summary: scanned.summary, target, policy: dlpPolicy });
@@ -54,19 +45,20 @@ export const dlpPlugin: FastifyPluginAsync = async (app) => {
         ? { ...scanned.summary, disposition: "redact" as const, mode: dlpPolicy.mode, policyVersion: dlpPolicy.version }
         : { ...redactedOut.summary, mode: dlpPolicy.mode, policyVersion: dlpPolicy.version };
     const outWithDlp = attachDlpSummary(redactedOut.value, dlpSummary);
-    if (outWithDlp && typeof outWithDlp === "object" && !Array.isArray(outWithDlp) && !Buffer.isBuffer(outWithDlp)) {
-      const obj: any = outWithDlp as any;
+    const payloadWithDlp = attachDlpSummary(payload, dlpSummary);
+    if (payloadWithDlp && typeof payloadWithDlp === "object" && !Array.isArray(payloadWithDlp) && !Buffer.isBuffer(payloadWithDlp)) {
+      const obj: any = payloadWithDlp as any;
       if (obj.safetySummary && typeof obj.safetySummary === "object" && !Array.isArray(obj.safetySummary)) {
         const ss: any = obj.safetySummary;
         if (!ss.dlpSummary) ss.dlpSummary = dlpSummary;
         if (!ss.decision) ss.decision = denied ? "denied" : "allowed";
-        if (!envDlpOverride && eff?.policyDigest && !ss.policyRefsDigest) ss.policyRefsDigest = { contentPolicyDigest: String(eff.policyDigest) };
+        if (!dlpContext.configOverride && dlpContext.policyDigest && !ss.policyRefsDigest) ss.policyRefsDigest = { contentPolicyDigest: dlpContext.policyDigest };
       } else if (obj.safetySummary === undefined) {
-        obj.safetySummary = { decision: denied ? "denied" : "allowed", dlpSummary, ...(!envDlpOverride && eff?.policyDigest ? { policyRefsDigest: { contentPolicyDigest: String(eff.policyDigest) } } : {}) };
+        obj.safetySummary = { decision: denied ? "denied" : "allowed", dlpSummary, ...(!dlpContext.configOverride && dlpContext.policyDigest ? { policyRefsDigest: { contentPolicyDigest: dlpContext.policyDigest } } : {}) };
       }
     }
     audit.outputDigest = outWithDlp;
 
-    return payload;
+    return payloadWithDlp ?? payload;
   });
 };

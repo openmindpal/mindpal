@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { t } from "@/lib/i18n";
 
 // ─── Block Types ────────────────────────────────────────────────────────────
 
@@ -29,36 +30,46 @@ function createBlock(type: BlockType, content = ""): Block { return { id: genera
 
 interface BlockMeta {
   icon: string;
-  label: string;
-  desc: string;
-  group: string;
+  labelKey: string;
+  descKey: string;
+  groupKey: string;
 }
 
 const BLOCK_META: Record<BlockType, BlockMeta> = {
-  text:     { icon: "📝", label: "Text",      desc: "Paragraph",        group: "Basic" },
-  heading:  { icon: "H1",  label: "Heading 1", desc: "Large heading",    group: "Basic" },
-  heading2: { icon: "H2",  label: "Heading 2", desc: "Medium heading",   group: "Basic" },
-  heading3: { icon: "H3",  label: "Heading 3", desc: "Small heading",    group: "Basic" },
-  list:     { icon: "📋", label: "List",      desc: "Bullet list",       group: "Basic" },
-  todo:     { icon: "☑️",  label: "Todo",      desc: "Checklist item",   group: "Basic" },
-  quote:    { icon: "\u201c",   label: "Quote",     desc: "Quote block",      group: "Basic" },
-  callout:  { icon: "💡", label: "Callout",   desc: "Highlighted note",  group: "Basic" },
-  divider:  { icon: "─",   label: "Divider",  desc: "Horizontal rule",   group: "Basic" },
-  toggle:   { icon: "▶",   label: "Toggle",   desc: "Collapsible block", group: "Advanced" },
-  code:     { icon: "💻", label: "Code",     desc: "Code block",        group: "Advanced" },
-  image:    { icon: "🖼️", label: "Image",    desc: "Image embed",       group: "Media" },
-  embed:    { icon: "🔗", label: "Embed",    desc: "External embed",    group: "Media" },
-  table:    { icon: "📊", label: "Table",    desc: "Simple table",      group: "Advanced" },
+  text:     { icon: "📝", labelKey: "widget.blockEditor.type.text.label", descKey: "widget.blockEditor.type.text.desc", groupKey: "widget.blockEditor.group.basic" },
+  heading:  { icon: "H1", labelKey: "widget.blockEditor.type.heading.label", descKey: "widget.blockEditor.type.heading.desc", groupKey: "widget.blockEditor.group.basic" },
+  heading2: { icon: "H2", labelKey: "widget.blockEditor.type.heading2.label", descKey: "widget.blockEditor.type.heading2.desc", groupKey: "widget.blockEditor.group.basic" },
+  heading3: { icon: "H3", labelKey: "widget.blockEditor.type.heading3.label", descKey: "widget.blockEditor.type.heading3.desc", groupKey: "widget.blockEditor.group.basic" },
+  list:     { icon: "📋", labelKey: "widget.blockEditor.type.list.label", descKey: "widget.blockEditor.type.list.desc", groupKey: "widget.blockEditor.group.basic" },
+  todo:     { icon: "☑️", labelKey: "widget.blockEditor.type.todo.label", descKey: "widget.blockEditor.type.todo.desc", groupKey: "widget.blockEditor.group.basic" },
+  quote:    { icon: "\u201c", labelKey: "widget.blockEditor.type.quote.label", descKey: "widget.blockEditor.type.quote.desc", groupKey: "widget.blockEditor.group.basic" },
+  callout:  { icon: "💡", labelKey: "widget.blockEditor.type.callout.label", descKey: "widget.blockEditor.type.callout.desc", groupKey: "widget.blockEditor.group.basic" },
+  divider:  { icon: "─", labelKey: "widget.blockEditor.type.divider.label", descKey: "widget.blockEditor.type.divider.desc", groupKey: "widget.blockEditor.group.basic" },
+  toggle:   { icon: "▶", labelKey: "widget.blockEditor.type.toggle.label", descKey: "widget.blockEditor.type.toggle.desc", groupKey: "widget.blockEditor.group.advanced" },
+  code:     { icon: "💻", labelKey: "widget.blockEditor.type.code.label", descKey: "widget.blockEditor.type.code.desc", groupKey: "widget.blockEditor.group.advanced" },
+  image:    { icon: "🖼️", labelKey: "widget.blockEditor.type.image.label", descKey: "widget.blockEditor.type.image.desc", groupKey: "widget.blockEditor.group.media" },
+  embed:    { icon: "🔗", labelKey: "widget.blockEditor.type.embed.label", descKey: "widget.blockEditor.type.embed.desc", groupKey: "widget.blockEditor.group.media" },
+  table:    { icon: "📊", labelKey: "widget.blockEditor.type.table.label", descKey: "widget.blockEditor.type.table.desc", groupKey: "widget.blockEditor.group.advanced" },
 };
+
+function getBlockMeta(type: BlockType, locale: string) {
+  const meta = BLOCK_META[type] ?? BLOCK_META.text;
+  return {
+    icon: meta.icon,
+    label: t(locale, meta.labelKey),
+    desc: t(locale, meta.descKey),
+    group: t(locale, meta.groupKey),
+  };
+}
 
 // ─── Slash Command Menu ────────────────────────────────────────────────────
 
-function SlashMenu(props: { filter: string; onSelect: (type: BlockType) => void; onClose: () => void }) {
-  const { filter, onSelect, onClose } = props;
+function SlashMenu(props: { filter: string; locale: string; onSelect: (type: BlockType) => void; onClose: () => void }) {
+  const { filter, locale, onSelect, onClose } = props;
   const [activeIdx, setActiveIdx] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const allTypes = Object.entries(BLOCK_META) as [BlockType, BlockMeta][];
+  const allTypes = (Object.keys(BLOCK_META) as BlockType[]).map((type) => [type, getBlockMeta(type, locale)] as const);
   const filtered = allTypes.filter(([, m]) =>
     m.label.toLowerCase().includes(filter.toLowerCase()) || m.desc.toLowerCase().includes(filter.toLowerCase()),
   );
@@ -143,14 +154,15 @@ function RichText({ text, style }: { text: string; style?: React.CSSProperties }
 
 function BlockRenderer(props: {
   block: Block; readOnly: boolean; focused: boolean;
+  locale: string;
   onUpdate: (id: string, content: string) => void;
   onRemove: (id: string) => void;
   onFocus: (id: string) => void;
   onSlash: (id: string) => void;
   onMetaUpdate: (id: string, meta: Record<string, any>) => void;
 }) {
-  const { block, readOnly, onUpdate, onFocus, onSlash, onMetaUpdate } = props;
-  const meta = BLOCK_META[block.type] ?? BLOCK_META.text;
+  const { block, readOnly, locale, onUpdate, onFocus, onSlash, onMetaUpdate } = props;
+  const meta = getBlockMeta(block.type, locale);
   const [hovered, setHovered] = useState(false);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) => {
@@ -217,7 +229,7 @@ function BlockRenderer(props: {
         ) : (
           <input style={{ ...inputBase, textDecoration: checked ? "line-through" : "none", color: checked ? "var(--sl-muted, #94a3b8)" : "var(--sl-fg, #1e293b)", fontSize: 14 }}
             value={block.content} onChange={handleChange} onFocus={() => onFocus(block.id)} onKeyDown={handleKeyDown}
-            placeholder="Todo item..." />
+            placeholder={t(locale, "widget.blockEditor.placeholder.todo")} />
         )}
       </div>
     );
@@ -240,7 +252,7 @@ function BlockRenderer(props: {
           ) : (
             <textarea style={{ ...inputBase, fontSize: 14, paddingLeft: 16 }}
               value={block.content} onChange={handleChange} onFocus={() => onFocus(block.id)} onKeyDown={handleKeyDown}
-              rows={Math.max(lines.length, 1)} placeholder="List items (one per line)..." />
+              rows={Math.max(lines.length, 1)} placeholder={t(locale, "widget.blockEditor.placeholder.list")} />
           )}
         </div>
       </div>
@@ -259,7 +271,7 @@ function BlockRenderer(props: {
             <div style={{ ...inputBase, fontSize: 14, color: "var(--sl-fg, #334155)", lineHeight: 1.7 }}><RichText text={block.content} /></div>
           ) : (
             <textarea style={{ ...inputBase, fontSize: 14 }} value={block.content} onChange={handleChange}
-              onFocus={() => onFocus(block.id)} onKeyDown={handleKeyDown} rows={1} placeholder="Callout..." />
+              onFocus={() => onFocus(block.id)} onKeyDown={handleKeyDown} rows={1} placeholder={t(locale, "widget.blockEditor.placeholder.callout")} />
           )}
         </div>
       </div>
@@ -283,7 +295,7 @@ function BlockRenderer(props: {
               <span style={{ flex: 1, fontWeight: 600, fontSize: 14, color: "var(--sl-fg, #1e293b)" }}>{block.content}</span>
             ) : (
               <input style={{ ...inputBase, fontWeight: 600, fontSize: 14, flex: 1 }} value={block.content} onChange={handleChange}
-                onFocus={() => onFocus(block.id)} onKeyDown={handleKeyDown} placeholder="Toggle title..."
+                onFocus={() => onFocus(block.id)} onKeyDown={handleKeyDown} placeholder={t(locale, "widget.blockEditor.placeholder.toggleTitle")}
                 onClick={(e) => e.stopPropagation()} />
             )}
           </div>
@@ -299,7 +311,7 @@ function BlockRenderer(props: {
                   value={childContent}
                   onChange={(e) => onMetaUpdate(block.id, { childContent: e.target.value })}
                   rows={2}
-                  placeholder="Toggle content..."
+                  placeholder={t(locale, "widget.blockEditor.placeholder.toggleContent")}
                 />
               )}
             </div>
@@ -317,11 +329,11 @@ function BlockRenderer(props: {
         {!readOnly && <span style={gripStyle}>⋮⋮</span>}
         <div style={{ flex: 1, padding: "12px 16px", borderRadius: 6, background: "#1e293b", overflowX: "auto" }}>
           {readOnly ? (
-            <pre style={{ margin: 0 }}><code style={{ fontFamily: codeFont, fontSize: 13, color: "#e2e8f0", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{block.content || <span style={{ color: "#64748b" }}>Code</span>}</code></pre>
+            <pre style={{ margin: 0 }}><code style={{ fontFamily: codeFont, fontSize: 13, color: "#e2e8f0", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{block.content || <span style={{ color: "#64748b" }}>{t(locale, "widget.blockEditor.codeLabel")}</span>}</code></pre>
           ) : (
             <textarea style={{ ...inputBase, fontSize: 13, fontFamily: codeFont, color: "#e2e8f0", lineHeight: 1.6, background: "transparent" }}
               value={block.content} onChange={handleChange} onFocus={() => onFocus(block.id)} onKeyDown={handleKeyDown}
-              rows={4} placeholder="Code..." />
+              rows={4} placeholder={t(locale, "widget.blockEditor.placeholder.code")} />
           )}
         </div>
       </div>
@@ -339,7 +351,7 @@ function BlockRenderer(props: {
           ) : (
             <textarea style={{ ...inputBase, fontSize: 14, fontStyle: "italic", color: "var(--sl-fg, #64748b)" }}
               value={block.content} onChange={handleChange} onFocus={() => onFocus(block.id)} onKeyDown={handleKeyDown}
-              rows={1} placeholder="Quote..." />
+              rows={1} placeholder={t(locale, "widget.blockEditor.placeholder.quote")} />
           )}
         </div>
       </div>
@@ -376,6 +388,7 @@ function BlockRenderer(props: {
 
 export function BlockEditorWidget(props: BlockEditorProps) {
   const { blocks, onChange, readOnly = false } = props;
+  const locale = props.locale ?? "zh-CN";
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [slashBlockId, setSlashBlockId] = useState<string | null>(null);
   const [slashFilter, setSlashFilter] = useState("");
@@ -426,9 +439,9 @@ export function BlockEditorWidget(props: BlockEditorProps) {
         {blocks.map((block) => (
           <div key={block.id} style={{ position: "relative" }}>
             <BlockRenderer block={block} readOnly={readOnly} focused={focusedId === block.id}
-              onUpdate={handleUpdate} onRemove={handleRemove} onFocus={setFocusedId} onSlash={handleSlash} onMetaUpdate={handleMetaUpdate} />
+              locale={locale} onUpdate={handleUpdate} onRemove={handleRemove} onFocus={setFocusedId} onSlash={handleSlash} onMetaUpdate={handleMetaUpdate} />
             {slashBlockId === block.id && (
-              <SlashMenu filter={slashFilter} onSelect={(type) => handleAdd(type, block.id)} onClose={() => { setSlashBlockId(null); setSlashFilter(""); }} />
+              <SlashMenu filter={slashFilter} locale={locale} onSelect={(type) => handleAdd(type, block.id)} onClose={() => { setSlashBlockId(null); setSlashFilter(""); }} />
             )}
           </div>
         ))}
@@ -438,7 +451,7 @@ export function BlockEditorWidget(props: BlockEditorProps) {
       {blocks.length === 0 && (
         <div style={{ padding: readOnly ? "20px 8px" : "32px 8px", textAlign: "center", color: "var(--sl-muted, #94a3b8)" }}>
           <div style={{ fontSize: 14, color: "var(--sl-muted, #cbd5e1)" }}>
-            {readOnly ? "" : "Type / insert content"}
+            {readOnly ? "" : t(locale, "widget.blockEditor.empty")}
           </div>
         </div>
       )}
@@ -451,7 +464,7 @@ export function BlockEditorWidget(props: BlockEditorProps) {
           onMouseEnter={(e) => (e.currentTarget.style.color = "var(--sl-muted, #94a3b8)")}
           onMouseLeave={(e) => (e.currentTarget.style.color = "var(--sl-muted, #cbd5e1)")}
         >
-          Type / insert content...
+          {t(locale, "widget.blockEditor.emptyHint")}
         </div>
       )}
     </div>

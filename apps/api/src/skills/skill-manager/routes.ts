@@ -14,8 +14,10 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { getBuiltinSkills, type BuiltinSkillPlugin } from "../../lib/skillPlugin";
 import { Errors } from "../../lib/errors";
+import { invalidateToolDiscoveryCache } from "../../modules/tools/toolAutoDiscovery";
 
 // ─── Type Definitions ─────────────────────────────────────────────────
 interface SkillInfo {
@@ -73,7 +75,7 @@ import {
 import {
   checkBeforeCreate,
   formatDuplicatePrompt,
-} from "../../modules/skills/skillRouter";
+} from "../../modules/semanticRouting/skillIntentRouter";
 
 // ─── Scope Helper ─────────────────────────────────────────────────────
 function resolveScope(subject: { tenantId: string; spaceId?: string | null; subjectId: string }, requestedScope?: string): { scopeType: SkillScopeType; scopeId: string } {
@@ -97,7 +99,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
   // ─── List all skills ─────────────────────────────────────────────────
   const listSkills = async (req: any) => {
     setAuditContext(req, { resourceType: "skill", action: "list" });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -151,7 +153,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
   app.get("/skill-manager/:name/status", async (req) => {
     const params = z.object({ name: z.string().min(1) }).parse(req.params);
     setAuditContext(req, { resourceType: "skill", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -206,7 +208,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
   app.get("/skills/:name", async (req, reply) => {
     const params = z.object({ name: z.string().min(1) }).parse(req.params);
     setAuditContext(req, { resourceType: "skill", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_READ });
     req.ctx.audit!.policyDecision = decision;
     const plugin = getBuiltinSkills().get(params.name) as BuiltinSkillPlugin | undefined;
     if (!plugin) throw Errors.notFound("skill");
@@ -222,7 +224,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     }).parse(req.body ?? {});
 
     setAuditContext(req, { resourceType: "skill", action: "enable", requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "write" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -241,6 +243,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     });
 
     req.ctx.audit!.outputDigest = { skillName: params.name, eventId: event.eventId, toStatus };
+    invalidateToolDiscoveryCache();
     return { success: true, event };
   });
 
@@ -252,7 +255,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     }).parse(req.body ?? {});
 
     setAuditContext(req, { resourceType: "skill", action: "disable", requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "write" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -270,6 +273,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     });
 
     req.ctx.audit!.outputDigest = { skillName: params.name, eventId: event.eventId, toStatus: "disabled" };
+    invalidateToolDiscoveryCache();
     return { success: true, event };
   });
 
@@ -277,7 +281,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
   app.get("/skill-manager/:name/config", async (req) => {
     const params = z.object({ name: z.string().min(1) }).parse(req.params);
     setAuditContext(req, { resourceType: "skill", action: "config.read" });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -310,7 +314,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     }).parse(req.body);
 
     setAuditContext(req, { resourceType: "skill", action: "config.write", requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "write" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -378,7 +382,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     }).parse(req.body);
 
     setAuditContext(req, { resourceType: "skill", action: "generate" });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "write" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -469,7 +473,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
   // ─── List drafts ──────────────────────────────────────────────────────
   app.get("/skill-manager/drafts", async (req) => {
     setAuditContext(req, { resourceType: "skill_draft", action: "list" });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -494,7 +498,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
   app.get("/skill-manager/drafts/:draftId", async (req, reply) => {
     const params = z.object({ draftId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "skill_draft", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -525,7 +529,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     }).parse(req.body);
 
     setAuditContext(req, { resourceType: "skill_draft", action: "update", requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "write" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -554,7 +558,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ draftId: z.string().uuid() }).parse(req.params);
 
     setAuditContext(req, { resourceType: "skill_draft", action: "submit", requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "write" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -611,7 +615,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ draftId: z.string().uuid() }).parse(req.params);
 
     setAuditContext(req, { resourceType: "skill_draft", action: "delete", requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "write" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -638,7 +642,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ draftId: z.string().uuid() }).parse(req.params);
 
     setAuditContext(req, { resourceType: "skill_draft", action: "publish", requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "write" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -685,7 +689,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
   // ─── List published custom skills (前端可见) ──────────────────────
   app.get("/skill-manager/custom-skills", async (req) => {
     setAuditContext(req, { resourceType: "skill", action: "list" });
-    const decision = await requirePermission({ req, resourceType: "skill", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.SKILL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);

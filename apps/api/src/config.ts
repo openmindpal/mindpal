@@ -1,16 +1,9 @@
+import { loadDbConfig, loadRedisConfig, loadMasterKey, type DbConfig, type RedisConfig } from "@openslin/shared";
+
 export type ApiConfig = {
   port: number;
-  db: {
-    host: string;
-    port: number;
-    database: string;
-    user: string;
-    password: string;
-  };
-  redis: {
-    host: string;
-    port: number;
-  };
+  db: DbConfig;
+  redis: RedisConfig;
   platformLocale: string;
   cors: {
     allowedOrigins: string[];
@@ -29,40 +22,20 @@ export type ApiConfig = {
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
-  const isProd = env.NODE_ENV === "production";
   const allowedOrigins =
-    (env.API_CORS_ORIGINS ?? "http://localhost:3000")
+    (env.API_CORS_ORIGINS ?? "http://localhost:4000,http://127.0.0.1:4000")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-  const fsRootDir = env.MEDIA_FS_ROOT_DIR ?? "var/media";
-  const masterKeyRaw = (env.API_MASTER_KEY ?? "").trim();
-  const masterKey = masterKeyRaw || (!isProd ? "dev-master-key-change-me" : "");
-  if (isProd && (!masterKey || masterKey === "dev-master-key-change-me")) {
-    throw new Error("API_MASTER_KEY is required in production");
-  }
   return {
     port: Number(env.API_PORT ?? 3001),
-    db: {
-      host: env.POSTGRES_HOST ?? "127.0.0.1",
-      port: Number(env.POSTGRES_PORT ?? 5432),
-      database: env.POSTGRES_DB ?? "openslin",
-      user: env.POSTGRES_USER ?? "openslin",
-      password: env.POSTGRES_PASSWORD ?? "openslin",
-    },
-    redis: {
-      host: env.REDIS_HOST ?? "127.0.0.1",
-      port: Number(env.REDIS_PORT ?? 6379),
-    },
+    db: loadDbConfig(env),
+    redis: loadRedisConfig(env),
     platformLocale: env.PLATFORM_LOCALE ?? "zh-CN",
-    cors: {
-      allowedOrigins,
-    },
-    secrets: {
-      masterKey,
-    },
+    cors: { allowedOrigins },
+    secrets: { masterKey: loadMasterKey(env) },
     media: {
-      fsRootDir,
+      fsRootDir: env.MEDIA_FS_ROOT_DIR ?? "var/media",
       upload: {
         maxPartBytes: Number(env.MEDIA_UPLOAD_MAX_PART_BYTES ?? 5 * 1024 * 1024),
         maxTotalBytes: Number(env.MEDIA_UPLOAD_MAX_TOTAL_BYTES ?? 50 * 1024 * 1024),

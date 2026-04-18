@@ -23,6 +23,7 @@ export async function generateMetadata(): Promise<Metadata> {
       template: `%s · ${t(locale, "meta.console.title")}`,
     },
     description: t(locale, "meta.console.description"),
+    icons: { icon: "/favicon.ico" },
   };
 }
 

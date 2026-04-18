@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { apiFetch, pickLocale, text } from "../../../lib/api";
+import { fmtDateTime } from "../../../lib/fmtDateTime";
 import { EntityForm } from "../../entities/[entity]/new/ui";
 import { t } from "../../../lib/i18n";
 import type { EffectiveSchema, FieldDef, SearchParams, UiActionBinding, UiDataBinding, UiPageVersion } from "../../../lib/types";
@@ -33,9 +34,10 @@ async function loadViewPrefs(locale: string, name: string) {
   return json?.prefs ?? null;
 }
 
-async function loadEffectiveSchemaBy(locale: string, entity: string, schemaName: string) {
+async function loadEffectiveSchemaBy(locale: string, entity: string, schemaName?: string) {
   const token = (await cookies()).get("openslin_token")?.value ?? "";
-  const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective?schemaName=${encodeURIComponent(schemaName)}`, {
+  const query = schemaName ? `?schemaName=${encodeURIComponent(schemaName)}` : "";
+  const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective${query}`, {
     token,
     locale,
     cache: "no-store",
@@ -71,7 +73,7 @@ async function loadEntityQuery(locale: string, entity: string, body: unknown) {
 
 function getSchemaNameFromBindings(binds: UiDataBinding[]) {
   const b = binds.find((x): x is Extract<UiDataBinding, { target: "schema.effective" }> => x.target === "schema.effective");
-  return String(b?.schemaName ?? "core");
+  return typeof b?.schemaName === "string" && b.schemaName.trim() ? b.schemaName.trim() : undefined;
 }
 
 function getIdParamFromBindings(binds: UiDataBinding[]) {
@@ -187,9 +189,7 @@ function formatValue(def: FieldDef | undefined, v: unknown, locale: string, reso
     return resolvedLabel || String(v);
   }
   if (type === "datetime") {
-    const d = new Date(String(v));
-    if (!Number.isNaN(d.getTime())) return d.toLocaleString(locale);
-    return String(v);
+    return fmtDateTime(v, locale);
   }
   if (type === "json") {
     try {

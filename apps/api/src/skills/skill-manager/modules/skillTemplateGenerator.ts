@@ -199,15 +199,18 @@ export const ${camelCase(config.skillName)}Routes: FastifyPluginAsync = async (a
     const subject = requireSubject(req);
     const input = inputSchema.parse(req.body) as ${inputTypeName};
 
-    // ─── TODO: 实现业务逻辑 ─────────────────────────────────────────
-    console.log("[${config.skillName}] Execute called with input:", input);
+    // ─── 业务逻辑实现 ─────────────────────────────────────────────
+    // 此处实现核心业务逻辑，以下为可运行的骨架代码：
+    try {
 ${config.needsExternalApi ? `
-    // 调用外部API示例
-    // const apiResult = await callExternalApi("/your-endpoint", input);
+      // 调用外部 API（按需启用）
+      // const apiResult = await callExternalApi("/your-endpoint", input);
 ` : ""}
-    const output: ${outputTypeName} = {
+      // 构建输出结果
+      const output: ${outputTypeName} = {
 ${config.outputFields.map((f) => {
     let defaultVal = "null";
+    let comment = f.description || "根据业务逻辑填充";
     switch (f.type) {
       case "string": defaultVal = '""'; break;
       case "number": defaultVal = "0"; break;
@@ -215,12 +218,17 @@ ${config.outputFields.map((f) => {
       case "object": defaultVal = "{}"; break;
       case "array": defaultVal = "[]"; break;
     }
-    return `      ${f.name}: ${defaultVal}, // TODO: 填充实际值`;
+    return `        ${f.name}: ${defaultVal}, // ${comment}`;
   }).join("\n")}
-    };
+      };
 
-    req.ctx.audit!.outputDigest = { success: true };
-    return { success: true, data: output };
+      req.ctx.audit!.outputDigest = { success: true };
+      return { success: true, data: output };
+    } catch (err: any) {
+      console.error(\`[${config.skillName}] Execute failed:\`, err);
+      req.ctx.audit!.outputDigest = { success: false, error: err?.message };
+      throw err;
+    }
   });
 };
 `;
@@ -248,7 +256,7 @@ function camelCase(str: string): string {
  * 生成AI代码生成的Prompt
  */
 export function buildSkillGenerationPrompt(description: string, config?: Partial<SkillTemplateConfig>): string {
-  return `你是一个专业的TypeScript开发者，需要根据以下需求生成一个灵智智能体系统的Skill技能代码。
+  return `你是一个专业的TypeScript开发者，需要根据以下需求生成一个灵智Mindpal智能体系统的Skill技能代码。
 
 ## 需求描述
 ${description}

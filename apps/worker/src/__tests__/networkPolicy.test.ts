@@ -2,7 +2,7 @@ import child_process from "node:child_process";
 import http from "node:http";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { isAllowedEgress, normalizeNetworkPolicy } from "../workflow/processor/runtime";
+import { isAllowedEgress, normalizeNetworkPolicy } from "@openslin/shared";
 
 function listen(server: http.Server): Promise<{ port: number }> {
   return new Promise((resolve, reject) => {

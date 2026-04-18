@@ -1,26 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { apiFetch } from "@/lib/api";
+import { t, statusLabel } from "@/lib/i18n";
 import { Badge, Card, PageHeader, Table } from "@/components/ui";
 import { decryptOp, enqueueOp, listStoredOps, syncPull, syncPush, updateStoredOp, type SyncOp } from "@/lib/offline/syncClient";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
@@ -41,7 +27,6 @@ export default function SyncDebugClient(props: { locale: string }) {
     JSON.stringify(
       {
         opId: crypto.randomUUID(),
-        schemaName: "core",
         entityName: "entities",
         recordId: crypto.randomUUID(),
         baseVersion: null,
@@ -164,7 +149,7 @@ export default function SyncDebugClient(props: { locale: string }) {
       const meta = asRecord(op?.meta);
       const newOp: SyncOp = {
         opId: crypto.randomUUID(),
-        schemaName: String(meta?.schemaName ?? parsed.schemaName ?? "core"),
+        schemaName: String(meta?.schemaName ?? parsed.schemaName ?? ""),
         schemaVersion: parsed.schemaVersion,
         entityName: String(meta?.entityName ?? parsed.entityName ?? ""),
         recordId: String(meta?.recordId ?? parsed.recordId ?? ""),
@@ -274,14 +259,16 @@ export default function SyncDebugClient(props: { locale: string }) {
             </tr>
           </thead>
           <tbody>
-            {ops.map((o) => {
+            {ops.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                ) : ops.map((o) => {
               const id = String(o.opId ?? "");
               const meta = asRecord(o.meta);
               return (
                 <tr key={id}>
                   <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{id}</td>
                   <td>
-                    <Badge>{String(o.status ?? "-")}</Badge>
+                    <Badge>{statusLabel(String(o.status ?? "-"), props.locale)}</Badge>
                   </td>
                   <td>{o.cursor == null ? "-" : String(o.cursor)}</td>
                   <td>

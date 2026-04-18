@@ -1,8 +1,5 @@
 import { Errors } from "../../lib/errors";
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
+import { isPlainObject } from "@openslin/shared";
 
 function checkType(type: string, value: unknown): boolean {
   if (value === null || value === undefined) return true;
@@ -19,6 +16,10 @@ function checkType(type: string, value: unknown): boolean {
       return true;
     case "reference":
       return typeof value === "string";
+    case "array":
+      return Array.isArray(value);
+    case "object":
+      return typeof value === "object" && !Array.isArray(value);
     default:
       return false;
   }

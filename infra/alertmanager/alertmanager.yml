@@ -1,0 +1,89 @@
+# P3-16: Alertmanager 配置
+# 适用于 docker-compose 开发环境
+
+global:
+  resolve_timeout: 5m
+  # 生产环境取消注释配置 SMTP
+  # smtp_smarthost: 'smtp.example.com:587'
+  # smtp_from: 'alertmanager@openslin.local'
+  # smtp_auth_username: 'alertmanager@openslin.local'
+  # smtp_auth_password: '<password>'
+
+# 路由树
+route:
+  # 默认接收者
+  receiver: "default-webhook"
+  # 分组策略
+  group_by: ["alertname", "component", "severity"]
+  # 分组等待时间（收到第一条告警后等待多久发送通知）
+  group_wait: 30s
+  # 同组告警再次发送间隔
+  group_interval: 5m
+  # 重复告警间隔
+  repeat_interval: 4h
+
+  routes:
+    # ── Critical 告警：立即通知 ──
+    - match:
+        severity: critical
+      receiver: "critical-webhook"
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 1h
+      continue: true
+
+    # ── 安全相关告警：单独通道 ──
+    - match:
+        team: security
+      receiver: "security-webhook"
+      group_wait: 10s
+      repeat_interval: 30m
+
+    # ── Warning 告警：正常通知 ──
+    - match:
+        severity: warning
+      receiver: "default-webhook"
+      group_wait: 1m
+      repeat_interval: 4h
+
+# 抑制规则（避免告警风暴）
+inhibit_rules:
+  # 如果有 critical 的同组件告警，抑制同组件的 warning
+  - source_match:
+      severity: "critical"
+    target_match:
+      severity: "warning"
+    equal: ["component"]
+
+# 接收者定义
+receivers:
+  # 默认 Webhook（开发环境）
+  - name: "default-webhook"
+    webhook_configs:
+      - url: "http://host.docker.internal:3001/internal/alertmanager-webhook"
+        send_resolved: true
+        max_alerts: 20
+
+  # Critical Webhook
+  - name: "critical-webhook"
+    webhook_configs:
+      - url: "http://host.docker.internal:3001/internal/alertmanager-webhook"
+        send_resolved: true
+        max_alerts: 50
+    # 生产环境取消注释启用邮件
+    # email_configs:
+    #   - to: 'oncall@openslin.local'
+    #     send_resolved: true
+
+  # 安全告警 Webhook
+  - name: "security-webhook"
+    webhook_configs:
+      - url: "http://host.docker.internal:3001/internal/alertmanager-webhook"
+        send_resolved: true
+    # 生产环境取消注释启用邮件
+    # email_configs:
+    #   - to: 'security@openslin.local'
+    #     send_resolved: true
+
+# 模板（可选）
+templates: []

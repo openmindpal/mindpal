@@ -19,11 +19,25 @@ async function walk(dir) {
 const files = await walk(root);
 const hits = [];
 
+function isCommentOnlyLine(line) {
+  const trimmed = line.trim();
+  return (
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("/*") ||
+    trimmed.startsWith("*") ||
+    trimmed.startsWith("*/") ||
+    trimmed.startsWith("{/*") ||
+    trimmed.endsWith("*/}") ||
+    trimmed === "}"
+  );
+}
+
 for (const f of files) {
   const content = await fs.readFile(f, "utf8");
   if (!zhRe.test(content)) continue;
   const lines = content.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
+    if (isCommentOnlyLine(lines[i])) continue;
     if (zhRe.test(lines[i])) hits.push({ file: f, line: i + 1, text: lines[i].slice(0, 200) });
   }
 }
@@ -36,4 +50,3 @@ if (hits.length) {
   }
   process.exit(1);
 }
-

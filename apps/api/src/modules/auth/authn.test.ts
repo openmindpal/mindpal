@@ -77,4 +77,24 @@ describe("authn", () => {
       else process.env.AUTHN_HMAC_SECRET = prevSecret;
     }
   });
+
+  it("生产环境未配置 AUTHN_MODE 时默认按 hmac 校验", async () => {
+    const prevMode = process.env.AUTHN_MODE;
+    const prevEnv = process.env.NODE_ENV;
+    const prevSecret = process.env.AUTHN_HMAC_SECRET;
+    delete process.env.AUTHN_MODE;
+    process.env.NODE_ENV = "production";
+    process.env.AUTHN_HMAC_SECRET = "s";
+    try {
+      const s = await authenticate({ authorization: "Bearer u1@space_other" });
+      expect(s).toBeNull();
+    } finally {
+      if (prevMode === undefined) delete process.env.AUTHN_MODE;
+      else process.env.AUTHN_MODE = prevMode;
+      if (prevEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevEnv;
+      if (prevSecret === undefined) delete process.env.AUTHN_HMAC_SECRET;
+      else process.env.AUTHN_HMAC_SECRET = prevSecret;
+    }
+  });
 });

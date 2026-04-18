@@ -2,6 +2,22 @@ import crypto from "node:crypto";
 import type { Pool } from "pg";
 import { getSsoProvider, getSsoProviderByIssuer, type SsoProviderConfigRow } from "./ssoScimRepo";
 
+/* ─── PKCE (RFC 7636) ─── */
+
+/**
+ * Generate a PKCE code_verifier (43-128 chars, base64url-safe).
+ */
+export function generateCodeVerifier(): string {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+/**
+ * Derive the code_challenge from a code_verifier using S256.
+ */
+export function deriveCodeChallenge(codeVerifier: string): string {
+  return crypto.createHash("sha256").update(codeVerifier, "utf8").digest("base64url");
+}
+
 /* ─── OIDC Discovery / JWKS cache ─── */
 
 type JwksCache = { keys: any[]; fetchedAt: number };
@@ -93,16 +109,17 @@ export async function createSsoLoginState(params: {
   state: string;
   nonce: string;
   redirectUri: string;
+  codeVerifier?: string;
   ttlSeconds?: number;
 }) {
   const id = crypto.randomUUID();
   const ttl = params.ttlSeconds ?? 600;
   await params.pool.query(
-    `INSERT INTO sso_login_states (id, tenant_id, provider_id, state, nonce, redirect_uri, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, now() + ($7 || ' seconds')::interval)`,
-    [id, params.tenantId, params.providerId, params.state, params.nonce, params.redirectUri, String(ttl)],
+    `INSERT INTO sso_login_states (id, tenant_id, provider_id, state, nonce, redirect_uri, code_verifier, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, now() + ($8 || ' seconds')::interval)`,
+    [id, params.tenantId, params.providerId, params.state, params.nonce, params.redirectUri, params.codeVerifier ?? null, String(ttl)],
   );
-  return { id, state: params.state, nonce: params.nonce };
+  return { id, state: params.state, nonce: params.nonce, codeVerifier: params.codeVerifier ?? null };
 }
 
 export async function consumeSsoLoginState(params: { pool: Pool; state: string }) {
@@ -121,6 +138,7 @@ export async function consumeSsoLoginState(params: { pool: Pool; state: string }
     state: String(r.state),
     nonce: String(r.nonce),
     redirectUri: String(r.redirect_uri),
+    codeVerifier: r.code_verifier ? String(r.code_verifier) : null,
   };
 }
 
@@ -132,14 +150,20 @@ export async function exchangeCodeForTokens(params: {
   redirectUri: string;
   clientId: string;
   clientSecret: string;
+  codeVerifier?: string | null;
 }) {
-  const body = new URLSearchParams({
+  const bodyParams: Record<string, string> = {
     grant_type: "authorization_code",
     code: params.code,
     redirect_uri: params.redirectUri,
     client_id: params.clientId,
     client_secret: params.clientSecret,
-  });
+  };
+  /* P1-04a: include PKCE code_verifier if present */
+  if (params.codeVerifier) {
+    bodyParams.code_verifier = params.codeVerifier;
+  }
+  const body = new URLSearchParams(bodyParams);
   const res = await fetch(params.tokenEndpoint, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -165,6 +189,7 @@ export function buildSsoAuthorizeUrl(params: {
   state: string;
   nonce: string;
   scopes: string;
+  codeChallenge?: string | null;
 }) {
   const u = new URL(params.authorizationEndpoint);
   u.searchParams.set("response_type", "code");
@@ -173,5 +198,10 @@ export function buildSsoAuthorizeUrl(params: {
   u.searchParams.set("state", params.state);
   u.searchParams.set("nonce", params.nonce);
   u.searchParams.set("scope", params.scopes || "openid profile email");
+  /* P1-04a: PKCE S256 challenge */
+  if (params.codeChallenge) {
+    u.searchParams.set("code_challenge", params.codeChallenge);
+    u.searchParams.set("code_challenge_method", "S256");
+  }
   return u.toString();
 }

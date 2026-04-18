@@ -1,5 +1,7 @@
 "use client";
 
+import { t } from "@/lib/i18n";
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface StatItem {
@@ -39,11 +41,12 @@ const STAT_CSS = `
 
 export function StatsRowWidget(props: StatsRowWidgetProps) {
   const { stats, title } = props;
+  const locale = props.locale ?? "zh-CN";
 
   if (!stats.length) {
     return (
       <div style={{ padding: 24, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
-        No stats
+        {t(locale, "widget.stats.empty")}
       </div>
     );
   }

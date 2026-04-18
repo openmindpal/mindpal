@@ -59,17 +59,26 @@ export async function getCollabRun(params: { pool: Pool; tenantId: string; colla
   return toCollabRun(res.rows[0]);
 }
 
-export async function listCollabRunsByTask(params: { pool: Pool; tenantId: string; taskId: string; limit: number }) {
+export async function listCollabRunsByTask(params: {
+  pool: Pool;
+  tenantId: string;
+  taskId: string;
+  status?: string | null;
+  before?: string | null;
+  limit: number;
+}) {
   const limit = Math.max(1, Math.min(200, params.limit));
   const res = await params.pool.query(
     `
       SELECT *
       FROM collab_runs
       WHERE tenant_id = $1 AND task_id = $2
+        AND ($3::TEXT IS NULL OR status = $3)
+        AND ($4::TIMESTAMPTZ IS NULL OR created_at < $4::TIMESTAMPTZ)
       ORDER BY created_at DESC
-      LIMIT $3
+      LIMIT $5
     `,
-    [params.tenantId, params.taskId, limit],
+    [params.tenantId, params.taskId, params.status ?? null, params.before ?? null, limit],
   );
   return res.rows.map(toCollabRun);
 }

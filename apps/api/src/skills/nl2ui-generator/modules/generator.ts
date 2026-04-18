@@ -4,19 +4,12 @@ import type { FastifyInstance } from "fastify";
 import { nl2uiRequestSchema, nl2uiGeneratedConfigSchema, type Nl2UiGeneratedConfig } from "./types";
 import { listUiComponentRegistryComponentIds, isComponentAllowed } from "../../ui-page-config/modules/componentRegistry";
 
-// ─── T11: NL2UI 组件白名单 ─────────────────────────────────────────────────
-// DynamicBlockRenderer 可渲染的 componentId 集合
-const NL2UI_ALLOWED_COMPONENTS = new Set([
-  "DataGrid",
-  "KanbanBoard",
-  "BlockEditor",
-  "BiDashboard",
-  "CardList",
-  "ChartWidget",
-  "TimelineWidget",
-  "CalendarWidget",
-  "StatsRow",
-]);
+// ─── T11: NL2UI 组件白名单（动态加载，零硬编码） ──────────────────────────
+// 从 componentRegistry 动态获取可用组件列表，支持 DB 扩展
+function getNl2UiAllowedComponents(): Set<string> {
+  const ids = listUiComponentRegistryComponentIds();
+  return new Set(ids.length > 0 ? ids : ["DataGrid"]); // 空注册表时保留最小降级
+}
 
 const NL2UI_DEFAULT_COMPONENT = "DataGrid";
 
@@ -25,9 +18,10 @@ const NL2UI_DEFAULT_COMPONENT = "DataGrid";
  * 未知组件一律降级为 DataGrid (architecture-01 §D2)
  */
 function enforceComponentWhitelistOnConfig(config: Nl2UiGeneratedConfig): Nl2UiGeneratedConfig {
+  const allowed = getNl2UiAllowedComponents();
   let patched = false;
   const areas = config.ui.layout.areas.map((area) => {
-    if (NL2UI_ALLOWED_COMPONENTS.has(area.componentId)) return area;
+    if (allowed.has(area.componentId) || isComponentAllowed(area.componentId)) return area;
     console.warn(`[NL2UI] componentId "${area.componentId}" not in whitelist, downgrading to ${NL2UI_DEFAULT_COMPONENT}`);
     patched = true;
     return { ...area, componentId: NL2UI_DEFAULT_COMPONENT };
@@ -55,7 +49,7 @@ async function discoverEntityFields(
       try {
         const res = await app.inject({
           method: "GET",
-          url: `/schemas/${encodeURIComponent(entity)}/effective?schemaName=core`,
+          url: `/schemas/${encodeURIComponent(entity)}/effective`,
           headers: { authorization, "content-type": "application/json" },
         });
         if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -160,7 +154,7 @@ function buildNl2UiSystemPrompt(params: {
   entityFieldMap?: Record<string, string[]>;
   stylePrefs?: any;
 }): string {
-  const components = Array.from(NL2UI_ALLOWED_COMPONENTS).join(", ");
+  const components = listUiComponentRegistryComponentIds().join(", ") || "DataGrid";
   const layouts = ["single-column", "split-horizontal", "split-vertical", "grid"];
 
   let entitySection = "";
@@ -202,6 +196,110 @@ function buildNl2UiSystemPrompt(params: {
 规则: intent=chat 只返回 {intent,confidence,replyText}。无可用实体时 dataBindings=[]，props 提供 3-6 条中文 mockItems。componentId 必须在组件列表中。只返回纯 JSON，禁止 markdown 包裹。`;
 }
 
+function inferFallbackEntities(userInput: string, availableEntities: string[]): string[] {
+  const lower = userInput.toLowerCase();
+  const normalizedAvailable = availableEntities.map((entity) => ({ raw: entity, lower: entity.toLowerCase() }));
+  const matchedFromAvailable = normalizedAvailable
+    .filter((entity) => lower.includes(entity.lower))
+    .map((entity) => entity.raw);
+  if (matchedFromAvailable.length > 0) {
+    return Array.from(new Set(matchedFromAvailable)).slice(0, 3);
+  }
+
+  const aliasMap: Array<{ entityName: string; aliases: string[] }> = [
+    { entityName: "notes", aliases: ["笔记", "note", "notes"] },
+    { entityName: "tasks", aliases: ["任务", "待办", "task", "tasks", "工单"] },
+    { entityName: "orders", aliases: ["订单", "order", "orders"] },
+    { entityName: "customers", aliases: ["客户", "crm", "customer", "customers"] },
+    { entityName: "products", aliases: ["产品", "库存", "product", "products"] },
+    { entityName: "employees", aliases: ["员工", "入职", "employee", "employees"] },
+    { entityName: "approvals", aliases: ["审批", "报销", "采购", "approval", "approvals"] },
+  ];
+  return aliasMap
+    .filter((item) => item.aliases.some((alias) => lower.includes(alias)))
+    .map((item) => item.entityName)
+    .slice(0, 3);
+}
+
+function inferFallbackLayout(userInput: string): "single-column" | "split-horizontal" | "split-vertical" | "grid" {
+  if (/左边|右边|左右|left|right/i.test(userInput)) return "split-horizontal";
+  if (/上面|下面|上下|top|bottom/i.test(userInput)) return "split-vertical";
+  if (/三栏|四个|仪表盘|dashboard|grid|kpi|卡片/i.test(userInput)) return "grid";
+  return "single-column";
+}
+
+function inferFallbackComponents(userInput: string, layout: "single-column" | "split-horizontal" | "split-vertical" | "grid") {
+  const lower = userInput.toLowerCase();
+  if (/表单|姓名|邮箱|录入|入职/i.test(lower)) {
+    return layout === "grid" ? ["EntityForm.Single", "EntityList.Table"] : ["EntityForm.Single"];
+  }
+  if (/趋势|图表|折线|柱状|饼图|仪表盘|dashboard|kpi/i.test(lower)) {
+    return layout === "grid" ? ["Widget.Summary", "Chart.Line"] : ["Chart.Line"];
+  }
+  if (/看板|trello|卡片/i.test(lower)) {
+    return layout === "grid" ? ["AnimatedCards", "EntityList.Table"] : ["AnimatedCards"];
+  }
+  return layout === "grid" ? ["Widget.Summary", "EntityList.Table"] : ["EntityList.Table"];
+}
+
+function buildFallbackMockItems(userInput: string) {
+  const topic = userInput.trim() || "数据";
+  return Array.from({ length: 3 }, (_, index) => ({
+    id: `mock-${index + 1}`,
+    title: `${topic.slice(0, 12)} ${index + 1}`,
+    description: `根据“${topic.slice(0, 24)}”生成的示例项`,
+    value: (index + 1) * 10,
+    status: index === 2 ? "warning" : "ok",
+    createdAt: new Date(Date.now() - index * 86_400_000).toISOString(),
+  }));
+}
+
+function buildHeuristicUiFallback(params: {
+  userInput: string;
+  availableEntities: string[];
+  stylePrefs?: any;
+  defaultModelRef?: string;
+}): Nl2UiGeneratedConfig {
+  const entities = inferFallbackEntities(params.userInput, params.availableEntities);
+  const layout = inferFallbackLayout(params.userInput);
+  const components = inferFallbackComponents(params.userInput, layout);
+  const mockItems = buildFallbackMockItems(params.userInput);
+  const dataBindings = entities.map((entityName, index) => ({
+    id: `binding-${index + 1}`,
+    target: "entities.list" as const,
+    params: { entityName },
+  }));
+  const areas = components.map((componentId, index) => ({
+    name: index === 0 ? "primary" : `secondary-${index}`,
+    componentId,
+    props: {
+      title: params.userInput.slice(0, 40) || "生成界面",
+      ...(dataBindings[index] ? {} : { mockItems }),
+    },
+    dataBindingIds: dataBindings[index] ? [dataBindings[index].id] : [],
+  }));
+
+  return {
+    pageType: entities.some((entity) => ["orders", "customers", "products", "employees", "approvals"].includes(entity)) ? "business" : "local",
+    ui: {
+      layout: {
+        variant: layout,
+        areas,
+      },
+      blocks: [],
+    },
+    dataBindings,
+    appliedStylePrefs: params.stylePrefs,
+    replyText: "已根据你的描述生成一个可编辑的界面草稿。",
+    suggestions: ["继续细化字段", "调整布局", "补充筛选条件"],
+    metadata: {
+      generatedAt: new Date().toISOString(),
+      modelUsed: params.defaultModelRef ?? "nl2ui-heuristic-fallback",
+      confidence: entities.length > 0 || /表单|图表|面板|列表|表格|dashboard|仪表盘/i.test(params.userInput) ? 0.62 : 0.48,
+    },
+  };
+}
+
 /** P1c: 从缓存中读取之前的生成结果 */
 async function readCachedGeneration(
   pool: Pool,
@@ -236,11 +334,19 @@ async function callLlmForUiGeneration(params: {
   entityFieldMap?: Record<string, string[]>;
   stylePrefs?: any;
   timeoutMs?: number;
+  defaultModelRef?: string;
 }): Promise<Nl2UiGeneratedConfig | null> {
   const systemPrompt = buildNl2UiSystemPrompt({
     availableEntities: params.availableEntities,
     entityFieldMap: params.entityFieldMap,
     stylePrefs: params.stylePrefs,
+  });
+  const heuristicFallbackEnabled = (process.env.NL2UI_HEURISTIC_FALLBACK ?? "1") === "1";
+  const heuristicFallback = () => buildHeuristicUiFallback({
+    userInput: params.userInput,
+    availableEntities: params.availableEntities,
+    stylePrefs: params.stylePrefs,
+    defaultModelRef: params.defaultModelRef,
   });
 
   const messages: { role: string; content: string }[] = [
@@ -266,6 +372,7 @@ async function callLlmForUiGeneration(params: {
         timeoutMs,
         temperature: 0,
         maxTokens: 4096,
+        ...(params.defaultModelRef ? { modelRef: params.defaultModelRef } : {}),
       },
     });
 
@@ -318,11 +425,17 @@ async function callLlmForUiGeneration(params: {
     const firstBrace = jsonStr.indexOf("{");
     const lastBrace = jsonStr.lastIndexOf("}");
     if (firstBrace >= 0 && lastBrace > firstBrace) jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
+    // 清理尾逗号（LLM 最常见的 JSON 格式问题）
+    jsonStr = jsonStr.replace(/,\s*([}\]])/g, "$1");
 
     let parsed: any;
     try {
       parsed = JSON.parse(jsonStr);
     } catch {
+      console.error(`[NL2UI] JSON parse failed, raw output: ${outputText.slice(0, 1000)}`);
+      if (heuristicFallbackEnabled) {
+        return heuristicFallback();
+      }
       const err: any = new Error("NL2UI_PARSE_ERROR");
       err.statusCode = 502;
       err.payload = { errorCode: "NL2UI_PARSE_ERROR", message: { "zh-CN": "界面生成失败：模型返回格式无法解析", "en-US": "UI generation failed: could not parse model output" }, traceId: String(params.traceId ?? "") };
@@ -373,6 +486,9 @@ async function callLlmForUiGeneration(params: {
     const result = nl2uiGeneratedConfigSchema.safeParse(parsed);
     if (!result.success) {
       console.error("[NL2UI] Schema validation failed:", JSON.stringify(result.error.issues, null, 2));
+      if (heuristicFallbackEnabled) {
+        return heuristicFallback();
+      }
       const err: any = new Error("NL2UI_SCHEMA_INVALID");
       err.statusCode = 502;
       err.payload = { errorCode: "NL2UI_SCHEMA_INVALID", message: { "zh-CN": "界面生成失败：生成结果不符合配置规范", "en-US": "UI generation failed: invalid config schema" }, traceId: String(params.traceId ?? "") };
@@ -380,7 +496,12 @@ async function callLlmForUiGeneration(params: {
     }
     return result.data;
   } catch (err: any) {
-    if (err && typeof err === "object" && ((err as any).statusCode === 429 || (err as any).payload)) throw err;
+    if (err && typeof err === "object" && (err as any).statusCode === 429) throw err;
+    if (heuristicFallbackEnabled) {
+      console.warn("[NL2UI] Falling back to heuristic UI synthesis:", err?.message ?? err);
+      return heuristicFallback();
+    }
+    if (err && typeof err === "object" && (err as any).payload) throw err;
     console.error("[NL2UI] LLM generation failed:", err?.message ?? err);
     const e: any = new Error("NL2UI_ERROR");
     e.statusCode = 502;
@@ -448,6 +569,7 @@ export async function generateUiFromNaturalLanguage(
     app?: FastifyInstance;
     authorization?: string;
     traceId?: string;
+    defaultModelRef?: string;
   },
   /** 预取的上下文（来自 prefetchNl2UiContext），跳过重复的预处理 */
   prefetched?: Nl2UiPrefetchedContext | null,
@@ -525,6 +647,7 @@ export async function generateUiFromNaturalLanguage(
         entityFieldMap,
         stylePrefs,
         timeoutMs,
+        defaultModelRef: options.defaultModelRef,
       });
       lastErr = null;
       break;

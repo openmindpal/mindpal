@@ -3,6 +3,17 @@
     "name": "collab.review",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "协作结果审核",
+    "en-US": "Collaboration Result Review"
+  },
+  "description": {
+    "zh-CN": "审核多智能体协作任务的最终结果，生成最终答案并建议下一步动作",
+    "en-US": "Reviews final results of multi-agent collaboration tasks, generates final answer and suggests next actions"
+  },
+  "category": "governance",
+  "priority": 8,
+  "tags": ["review", "collaboration", "validation", "quality"],
   "contract": {
     "scope": "write",
     "resourceType": "agent_runtime",

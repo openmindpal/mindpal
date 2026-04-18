@@ -1,8 +1,6 @@
 import crypto from "node:crypto";
-
-export function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
+export { isPlainObject } from "@openslin/shared";
+import { isPlainObject } from "@openslin/shared";
 
 export function digestObject(body: unknown) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;

@@ -189,3 +189,39 @@
   min-height: 0;
 }
 
+/* ── Structured Data ── */
+.structuredTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.structuredTable .structuredTable {
+  font-size: 12.5px;
+}
+
+.structuredKey {
+  padding: 6px 12px 6px 0;
+  vertical-align: top;
+  white-space: nowrap;
+  color: var(--sl-muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: capitalize;
+  width: 1%;
+  border-bottom: 1px solid color-mix(in srgb, var(--sl-border) 50%, transparent);
+}
+
+.structuredVal {
+  padding: 6px 0;
+  vertical-align: top;
+  color: var(--sl-fg);
+  border-bottom: 1px solid color-mix(in srgb, var(--sl-border) 50%, transparent);
+  word-break: break-word;
+}
+
+.structuredTable tr:last-child .structuredKey,
+.structuredTable tr:last-child .structuredVal {
+  border-bottom: none;
+}
+

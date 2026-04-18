@@ -1,0 +1,41 @@
+{
+  "identity": {
+    "name": "tool.discover",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "工具智能推荐",
+    "en-US": "Tool Intelligent Discovery"
+  },
+  "description": {
+    "zh-CN": "根据用户目标和可用工具列表，智能推荐最相关的工具并生成执行计划",
+    "en-US": "Intelligently recommends most relevant tools based on user goals and available tools, generates execution plan"
+  },
+  "category": "ai",
+  "priority": 8,
+  "tags": ["discovery", "recommendation", "planning", "ai"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "tool",
+    "action": "discover",
+    "idempotencyRequired": false,
+    "riskLevel": "low",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "goal": { "type": "string", "required": true, "description": "用户想要达成的目标描述" },
+        "availableTools": { "type": "json", "required": true, "description": "可用工具列表 [{name, description, scope, resourceType, action}]" },
+        "maxRecommendations": { "type": "number", "description": "最大推荐数量，默认5" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "recommended": { "type": "json", "required": true, "description": "[{name, relevance, reason, scope}]" },
+        "suggestedPlan": { "type": "json", "description": "[{step, toolName, description}] 建议执行计划" }
+      }
+    }
+  },
+  "entry": "dist/index.js"
+}

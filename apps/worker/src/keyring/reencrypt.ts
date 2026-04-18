@@ -34,7 +34,7 @@ export async function reencryptSecrets(params: { pool: Pool; tenantId: string; m
         scopeType: String(r.scope_type),
         scopeId: String(r.scope_id),
         keyVersion: Number(r.key_version),
-        encFormat: String(r.enc_format ?? "legacy.a256gcm"),
+        encFormat: String(r.enc_format ?? "a256gcm"),
         encryptedPayload: r.encrypted_payload,
       });
       const env = await encryptSecretEnvelopeWithKeyVersion({

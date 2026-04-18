@@ -81,13 +81,13 @@ describe("yjs websocket", () => {
   });
 
   it("只读连接不可提交 update", async () => {
-    const noteId = crypto.randomUUID();
+    const entityId = crypto.randomUUID();
     const writerDoc = new Y.Doc();
     const observerDoc = new Y.Doc();
     const WS: any = (globalThis as any).WebSocket;
-    const writerWs: any = new WS(`${base}/ws/yjs/notes/${encodeURIComponent(noteId)}?as=writer`);
-    const observerWs: any = new WS(`${base}/ws/yjs/notes/${encodeURIComponent(noteId)}?as=observer`);
-    const readerWs: any = new WS(`${base}/ws/yjs/notes/${encodeURIComponent(noteId)}?as=reader`);
+    const writerWs: any = new WS(`${base}/ws/yjs/test_items/${encodeURIComponent(entityId)}?as=writer`);
+    const observerWs: any = new WS(`${base}/ws/yjs/test_items/${encodeURIComponent(entityId)}?as=observer`);
+    const readerWs: any = new WS(`${base}/ws/yjs/test_items/${encodeURIComponent(entityId)}?as=reader`);
     writerWs.binaryType = "arraybuffer";
     observerWs.binaryType = "arraybuffer";
     readerWs.binaryType = "arraybuffer";

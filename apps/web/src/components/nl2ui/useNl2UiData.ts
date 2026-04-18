@@ -193,16 +193,19 @@ async function fetchEntityQuery(
   timeoutMs: number,
 ): Promise<Omit<BindingResult, "loading">> {
   try {
+    const schemaName = typeof binding.params?.schemaName === "string" && binding.params.schemaName.trim()
+      ? binding.params.schemaName.trim()
+      : undefined;
     // First fetch schema for field metadata
-    const schemaResult = await fetchEffectiveSchema(entityName, locale, timeoutMs);
+    const schemaResult = await fetchEffectiveSchema(entityName, locale, timeoutMs, schemaName);
     const schema = schemaResult.schema;
     const fieldKeys = schema ? Object.keys(schema.fields ?? {}) : [];
 
     // Build query body
     const queryBody: Record<string, unknown> = {
-      schemaName: "core",
       limit: 50,
     };
+    if (schemaName) queryBody.schemaName = schemaName;
 
     // Select fields (max 8)
     if (fieldKeys.length > 0) {
@@ -292,9 +295,11 @@ async function fetchEffectiveSchema(
   entityName: string,
   locale: string,
   timeoutMs: number,
+  schemaName?: string,
 ): Promise<Omit<BindingResult, "loading">> {
   try {
-    const res = await apiFetchWithTimeout(`/schemas/${encodeURIComponent(entityName)}/effective?schemaName=core`, {
+    const query = schemaName ? `?schemaName=${encodeURIComponent(schemaName)}` : "";
+    const res = await apiFetchWithTimeout(`/schemas/${encodeURIComponent(entityName)}/effective${query}`, {
       method: "GET",
       locale,
       cache: "no-store",

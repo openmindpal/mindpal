@@ -2,34 +2,21 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { Badge, Card, PageHeader, Table, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type RetrievalLogRow = {
   id: string;
-  createdAt: string;
+  createdAt: unknown;
   candidateCount: number;
   returnedCount: number | null;
   degraded: boolean;
   rankPolicy: string | null;
 };
 type RetrievalLogsResp = ApiError & { logs?: RetrievalLogRow[] };
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
 
 type InitialData = { status: number; json: unknown };
 
@@ -72,12 +59,12 @@ export default function RetrievalLogsClient(props: { locale: string; initial?: I
   return (
     <div style={{ padding: 24, display: "grid", gap: 16 }}>
       <PageHeader
-        title={t(props.locale, "gov.nav.knowledgeLogs")}
+        title={String(t(props.locale, "gov.nav.knowledgeLogs"))}
         actions={
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <Badge>{status || "-"}</Badge>
+            <StatusBadge locale={props.locale} status={status || 0} />
             <button disabled={busy} onClick={refresh}>
-              {busy ? t(props.locale, "action.loading") : t(props.locale, "action.refresh")}
+              {busy ? String(t(props.locale, "action.loading")) : String(t(props.locale, "action.refresh"))}
             </button>
           </div>
         }
@@ -85,14 +72,14 @@ export default function RetrievalLogsClient(props: { locale: string; initial?: I
 
       {error ? <pre style={{ color: "crimson", whiteSpace: "pre-wrap", margin: 0 }}>{error}</pre> : null}
 
-      <Card title={t(props.locale, "gov.changesets.filterTitle")}>
+      <Card title={String(t(props.locale, "gov.changesets.filterTitle"))}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span>{t(props.locale, "gov.retrievalLogs.rankPolicy")}</span>
+            <span>{String(t(props.locale, "gov.retrievalLogs.rankPolicy"))}</span>
             <input value={rankPolicy} onChange={(e) => setRankPolicy(e.target.value)} style={{ width: 260 }} />
           </label>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span>{t(props.locale, "gov.retrievalLogs.degraded")}</span>
+            <span>{String(t(props.locale, "gov.retrievalLogs.degraded"))}</span>
             <select value={degraded} onChange={(e) => setDegraded(e.target.value === "true" ? "true" : e.target.value === "false" ? "false" : "")}>
               <option value="">all</option>
               <option value="false">false</option>
@@ -100,15 +87,15 @@ export default function RetrievalLogsClient(props: { locale: string; initial?: I
             </select>
           </label>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span>{t(props.locale, "gov.retrievalLogs.limit")}</span>
+            <span>{String(t(props.locale, "gov.retrievalLogs.limit"))}</span>
             <input value={limit} onChange={(e) => setLimit(e.target.value)} style={{ width: 90 }} />
           </label>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span>{t(props.locale, "gov.retrievalLogs.offset")}</span>
+            <span>{String(t(props.locale, "gov.retrievalLogs.offset"))}</span>
             <input value={offset} onChange={(e) => setOffset(e.target.value)} style={{ width: 90 }} />
           </label>
           <button disabled={busy} onClick={refresh}>
-            {t(props.locale, "action.apply")}
+            {String(t(props.locale, "action.apply"))}
           </button>
         </div>
       </Card>
@@ -116,26 +103,28 @@ export default function RetrievalLogsClient(props: { locale: string; initial?: I
       <Table header={<span>{rows.length ? `${rows.length}` : "-"}</span>}>
         <thead>
           <tr>
-            <th align="left">{t(props.locale, "gov.retrievalLogs.col.id")}</th>
-            <th align="left">{t(props.locale, "gov.retrievalLogs.col.createdAt")}</th>
-            <th align="left">{t(props.locale, "gov.retrievalLogs.col.candidateCount")}</th>
-            <th align="left">{t(props.locale, "gov.retrievalLogs.col.returnedCount")}</th>
-            <th align="left">{t(props.locale, "gov.retrievalLogs.col.degraded")}</th>
-            <th align="left">{t(props.locale, "gov.retrievalLogs.col.rankPolicy")}</th>
-            <th align="left">{t(props.locale, "gov.changesets.actions")}</th>
+            <th align="left">{String(t(props.locale, "gov.retrievalLogs.col.id"))}</th>
+            <th align="left">{String(t(props.locale, "gov.retrievalLogs.col.createdAt"))}</th>
+            <th align="left">{String(t(props.locale, "gov.retrievalLogs.col.candidateCount"))}</th>
+            <th align="left">{String(t(props.locale, "gov.retrievalLogs.col.returnedCount"))}</th>
+            <th align="left">{String(t(props.locale, "gov.retrievalLogs.col.degraded"))}</th>
+            <th align="left">{String(t(props.locale, "gov.retrievalLogs.col.rankPolicy"))}</th>
+            <th align="left">{String(t(props.locale, "gov.changesets.actions"))}</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {rows.length === 0 ? (
+                  <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{String(t(props.locale, "widget.noData"))}</td></tr>
+                ) : rows.map((r) => (
             <tr key={r.id}>
-              <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{r.id}</td>
-              <td>{r.createdAt}</td>
+              <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{typeof r.id === 'object' ? JSON.stringify(r.id) : r.id}</td>
+              <td>{fmtDateTime(r.createdAt, props.locale)}</td>
               <td>{String(r.candidateCount)}</td>
               <td>{r.returnedCount == null ? "-" : String(r.returnedCount)}</td>
               <td>{r.degraded ? <Badge>true</Badge> : <Badge>false</Badge>}</td>
-              <td>{r.rankPolicy ?? "-"}</td>
+              <td>{typeof r.rankPolicy === 'object' ? JSON.stringify(r.rankPolicy) : (r.rankPolicy ?? "-")}</td>
               <td>
-                <Link href={`/gov/knowledge/retrieval-logs/${encodeURIComponent(r.id)}?lang=${encodeURIComponent(props.locale)}`}>{t(props.locale, "action.open")}</Link>
+                <Link href={`/gov/knowledge/retrieval-logs/${encodeURIComponent(String(r.id))}?lang=${encodeURIComponent(props.locale)}`}>{String(t(props.locale, "action.open"))}</Link>
               </td>
             </tr>
           ))}
@@ -144,4 +133,3 @@ export default function RetrievalLogsClient(props: { locale: string; initial?: I
     </div>
   );
 }
-

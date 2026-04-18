@@ -1,21 +1,64 @@
+# ── 依赖 ──
 node_modules/
+
+# ── 构建产物 ──
 dist/
 !skills/*/dist/
 *.tsbuildinfo
 **/*.tsbuildinfo
-.env
-.env.example
 .next/
+out/
 .turbo/
-.DS_Store
-coverage/
-.trae/
-specs/
-社会价值治理机制-透明底线与市场自发调节.md
-**/var/media/
+skills/*/src/*.js
+skills/*/src/*.d.ts
+
+# ── 环境变量（含敏感凭据，禁止提交） ──
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ── 运行时 / 临时 / 缓存 ──
+var/
 .data/
 .tmp/
-docs/
-日志-不要推送.md
-preview-nl2ui.html
+.runtime-home/
+coverage/
+.eslintcache
 
+# ── 日志 ──
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ── 操作系统 ──
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── IDE / 编辑器 ──
+.trae/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── 安全敏感文件 ──
+*.pem
+*.key
+*.cert
+*.p12
+
+# ── 项目特定忽略 ──
+specs/
+社会价值治理机制-透明底线与市场自发调节.md
+docs/
+原始架构设计/
+skills/personal-twin/
+preview-nl2ui.html
+tmp-*.json
+*-report*.json
+*.pptx

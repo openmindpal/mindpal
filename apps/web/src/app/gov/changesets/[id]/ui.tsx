@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { apiFetch } from "@/lib/api";
+import { t, statusLabel, boolLabel } from "@/lib/i18n";
+import { Badge, Card, PageHeader, Table, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type ChangeSetDetail = {
   changeset?: { id: string; title?: string; status?: string; scope_type?: "tenant" | "space"; scope_id?: string };
   items?: Array<{ id: string; kind: string; payload?: unknown; created_at?: string }>;
@@ -30,8 +30,6 @@ type ItemKind =
   | "tool.set_active"
   | "model_routing.upsert"
   | "model_routing.disable"
-  | "model_limits.set"
-  | "tool_limits.set"
   | "artifact_policy.upsert";
 
 function parseItemKind(v: string): ItemKind {
@@ -41,28 +39,11 @@ function parseItemKind(v: string): ItemKind {
     case "tool.set_active":
     case "model_routing.upsert":
     case "model_routing.disable":
-    case "model_limits.set":
-    case "tool_limits.set":
     case "artifact_policy.upsert":
       return v;
     default:
       return "tool.enable";
   }
-}
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -87,10 +68,7 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
   const [primaryModelRef, setPrimaryModelRef] = useState<string>("");
   const [fallbackModelRefs, setFallbackModelRefs] = useState<string>("");
   const [routingEnabled, setRoutingEnabled] = useState<boolean>(true);
-  const [limitsScopeType, setLimitsScopeType] = useState<"tenant" | "space">("space");
-  const [limitsScopeId, setLimitsScopeId] = useState<string>("");
-  const [modelChatRpm, setModelChatRpm] = useState<string>("");
-  const [defaultMaxConcurrency, setDefaultMaxConcurrency] = useState<string>("");
+
   const [artifactPolicyScopeType, setArtifactPolicyScopeType] = useState<"tenant" | "space">("space");
   const [artifactPolicyScopeId, setArtifactPolicyScopeId] = useState<string>("");
   const [downloadTokenExpiresInSec, setDownloadTokenExpiresInSec] = useState<string>("");
@@ -102,9 +80,6 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
 
   const cs = data?.changeset ?? null;
   const items = useMemo(() => (Array.isArray(data?.items) ? data!.items! : []), [data]);
-  const effectiveScopeType = cs?.scope_type;
-  const effectiveScopeId = cs?.scope_id ?? "";
-
   async function refreshPipeline(nextMode?: "full" | "canary") {
     const useMode = nextMode ?? mode;
     const res = await apiFetch(`/governance/changesets/${encodeURIComponent(props.changesetId)}/pipeline?mode=${encodeURIComponent(useMode)}`, {
@@ -167,16 +142,7 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
               }
             : itemKind === "model_routing.disable"
               ? { kind: itemKind, purpose: purpose.trim() }
-              : itemKind === "model_limits.set"
-                ? {
-                    kind: itemKind,
-                    scopeType: limitsScopeType ?? effectiveScopeType ?? "space",
-                    scopeId: (limitsScopeId || effectiveScopeId).trim(),
-                    modelChatRpm: Number(modelChatRpm),
-                  }
-                : itemKind === "tool_limits.set"
-                  ? { kind: itemKind, toolRef: toolRef.trim(), defaultMaxConcurrency: Number(defaultMaxConcurrency) }
-                  : {
+              : {
                       kind: itemKind,
                       scopeType: artifactPolicyScopeType,
                       scopeId: artifactPolicyScopeId.trim(),
@@ -302,7 +268,7 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
         }
         actions={
           <>
-            <Badge>{status}</Badge>
+            <StatusBadge locale={props.locale} status={status} />
             <button onClick={refresh} disabled={busy}>
               {t(props.locale, "action.refresh")}
             </button>
@@ -343,9 +309,9 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
                     {(pipeline.gates ?? []).map((g) => (
                       <tr key={g.gateType}>
                         <td>{g.gateType}</td>
-                        <td>{g.required ? "yes" : "no"}</td>
+                        <td>{boolLabel(g.required, props.locale)}</td>
                         <td>
-                          <Badge>{g.status}</Badge>
+                          <Badge>{statusLabel(g.status, props.locale)}</Badge>
                         </td>
                         <td>
                           <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(g.detailsDigest ?? null, null, 2)}</pre>
@@ -474,8 +440,6 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
                 <option value="tool.set_active">tool.set_active</option>
                 <option value="model_routing.upsert">model_routing.upsert</option>
                 <option value="model_routing.disable">model_routing.disable</option>
-                <option value="model_limits.set">model_limits.set</option>
-                <option value="tool_limits.set">tool_limits.set</option>
                 <option value="artifact_policy.upsert">artifact_policy.upsert</option>
               </select>
             </label>
@@ -485,17 +449,10 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
                 <input value={toolName} onChange={(e) => setToolName(e.target.value)} disabled={busy} />
               </label>
             ) : null}
-            {itemKind === "tool.enable" || itemKind === "tool.disable" || itemKind === "tool.set_active" || itemKind === "tool_limits.set" ? (
+            {itemKind === "tool.enable" || itemKind === "tool.disable" || itemKind === "tool.set_active" ? (
               <label style={{ display: "grid", gap: 6 }}>
                 <div>{t(props.locale, "gov.changesetDetail.toolRef")}</div>
                 <input value={toolRef} onChange={(e) => setToolRef(e.target.value)} disabled={busy} />
-              </label>
-            ) : null}
-
-            {itemKind === "tool_limits.set" ? (
-              <label style={{ display: "grid", gap: 6 }}>
-                <div>{t(props.locale, "gov.changesetDetail.defaultMaxConcurrency")}</div>
-                <input value={defaultMaxConcurrency} onChange={(e) => setDefaultMaxConcurrency(e.target.value)} disabled={busy} />
               </label>
             ) : null}
 
@@ -519,26 +476,6 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
                 <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <input type="checkbox" checked={routingEnabled} onChange={(e) => setRoutingEnabled(e.target.checked)} disabled={busy} />
                   <span>{t(props.locale, "gov.changesetDetail.enabled")}</span>
-                </label>
-              </>
-            ) : null}
-
-            {itemKind === "model_limits.set" ? (
-              <>
-                <label style={{ display: "grid", gap: 6 }}>
-                  <div>{t(props.locale, "gov.changesetDetail.scopeType")}</div>
-                  <select value={limitsScopeType} onChange={(e) => setLimitsScopeType(e.target.value === "tenant" ? "tenant" : "space")} disabled={busy}>
-                    <option value="space">space</option>
-                    <option value="tenant">tenant</option>
-                  </select>
-                </label>
-                <label style={{ display: "grid", gap: 6 }}>
-                  <div>{t(props.locale, "gov.changesetDetail.scopeId")}</div>
-                  <input value={limitsScopeId} onChange={(e) => setLimitsScopeId(e.target.value)} disabled={busy} placeholder={effectiveScopeId || ""} />
-                </label>
-                <label style={{ display: "grid", gap: 6 }}>
-                  <div>{t(props.locale, "gov.changesetDetail.modelChatRpm")}</div>
-                  <input value={modelChatRpm} onChange={(e) => setModelChatRpm(e.target.value)} disabled={busy} />
                 </label>
               </>
             ) : null}
@@ -580,12 +517,9 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
                 disabled={
                   busy ||
                   (itemKind === "tool.set_active" && (!toolRef.trim() || !toolName.trim())) ||
-                  ((itemKind === "tool.enable" || itemKind === "tool.disable" || itemKind === "tool_limits.set") && !toolRef.trim()) ||
-                  (itemKind === "tool_limits.set" && !defaultMaxConcurrency.trim()) ||
+                  ((itemKind === "tool.enable" || itemKind === "tool.disable") && !toolRef.trim()) ||
                   ((itemKind === "model_routing.upsert" || itemKind === "model_routing.disable") && !purpose.trim()) ||
                   (itemKind === "model_routing.upsert" && !primaryModelRef.trim()) ||
-                  (itemKind === "model_limits.set" && !(limitsScopeId || effectiveScopeId).trim()) ||
-                  (itemKind === "model_limits.set" && !modelChatRpm.trim()) ||
                   (itemKind === "artifact_policy.upsert" && !artifactPolicyScopeId.trim()) ||
                   (itemKind === "artifact_policy.upsert" && !downloadTokenExpiresInSec.trim()) ||
                   (itemKind === "artifact_policy.upsert" && !downloadTokenMaxUses.trim())

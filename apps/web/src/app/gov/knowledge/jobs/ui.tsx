@@ -1,28 +1,43 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { Badge, Card, PageHeader, Table, StructuredData } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { numberField, stringField, toDisplayText, toRecord } from "@/lib/viewData";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
-type JobsResp = ApiError & { jobs?: unknown[] };
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
+type JobRow = { id: string; status: string; attempt: string; updatedAt: unknown; raw: unknown };
+type JobsResp = ApiError & { jobs?: JobRow[] };
 
 type InitialData = { status: number; json: unknown };
+
+function normalizeJobsResp(value: unknown): JobsResp | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  const jobs = Array.isArray(record.jobs)
+    ? record.jobs.reduce<JobRow[]>((acc, item, index) => {
+        const row = toRecord(item);
+        acc.push({
+          id: row ? toDisplayText(row.id ?? index) : String(index),
+          status: row ? toDisplayText(row.status ?? "-") : "-",
+          attempt: row ? toDisplayText(row.attempt ?? "-") : "-",
+          updatedAt: row?.updatedAt ?? null,
+          raw: item,
+        });
+        return acc;
+      }, [])
+    : undefined;
+  return {
+    errorCode: stringField(record, "errorCode"),
+    message: record.message,
+    traceId: stringField(record, "traceId"),
+    dimension: stringField(record, "dimension"),
+    retryAfterSec: numberField(record, "retryAfterSec"),
+    jobs,
+  };
+}
 
 export default function KnowledgeJobsClient(props: { locale: string; initial?: InitialData }) {
   const [kind, setKind] = useState<"index" | "embedding" | "ingest">("index");
@@ -32,7 +47,7 @@ export default function KnowledgeJobsClient(props: { locale: string; initial?: I
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [httpStatus, setHttpStatus] = useState<number>(props.initial?.status ?? 0);
-  const [data, setData] = useState<JobsResp | null>((props.initial?.json as JobsResp) ?? null);
+  const [data, setData] = useState<JobsResp | null>(normalizeJobsResp(props.initial?.json));
 
   const rows = useMemo(() => (Array.isArray(data?.jobs) ? data!.jobs! : []), [data]);
 
@@ -57,7 +72,7 @@ export default function KnowledgeJobsClient(props: { locale: string; initial?: I
       setHttpStatus(res.status);
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
-      setData((json as JobsResp) ?? null);
+      setData(normalizeJobsResp(json));
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -121,19 +136,19 @@ export default function KnowledgeJobsClient(props: { locale: string; initial?: I
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, idx) => {
-              const rec = r && typeof r === "object" ? (r as Record<string, unknown>) : null;
-              const id = rec ? String(rec.id ?? idx) : String(idx);
+            {rows.length === 0 ? (
+                  <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                ) : rows.map((r) => {
               return (
-                <tr key={id}>
-                  <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{id}</td>
-                  <td>{rec ? String(rec.status ?? "-") : "-"}</td>
-                  <td>{rec ? String(rec.attempt ?? "-") : "-"}</td>
-                  <td>{rec ? String(rec.updatedAt ?? "-") : "-"}</td>
+                <tr key={r.id}>
+                  <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{r.id}</td>
+                  <td>{r.status}</td>
+                  <td>{r.attempt}</td>
+                  <td>{fmtDateTime(r.updatedAt, props.locale)}</td>
                   <td>
                     <details>
                       <summary>{t(props.locale, "gov.knowledgeJobs.json")}</summary>
-                      <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(r, null, 2)}</pre>
+                      <StructuredData data={r.raw} />
                     </details>
                   </td>
                 </tr>

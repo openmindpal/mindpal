@@ -12,6 +12,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Pool } from "pg";
 import { createArtifact } from "../../../modules/artifacts/artifactRepo";
+import { invalidateToolDiscoveryCache } from "../../../modules/tools/toolAutoDiscovery";
 import { publishToolVersion } from "../../../modules/tools/toolRepo";
 import { getSkillDraft, updateSkillDraftStatus } from "./skillDraftRepo";
 
@@ -237,6 +238,8 @@ export async function publishSkillDraft(options: PublishOptions): Promise<Publis
       approvedBy: publishedBy,
     });
 
+    invalidateToolDiscoveryCache();
+
     return {
       success: true,
       artifactId,
@@ -248,6 +251,7 @@ export async function publishSkillDraft(options: PublishOptions): Promise<Publis
   } catch (error: any) {
     // 回滚：删除已创建的目录
     await fs.rm(artifactDir, { recursive: true, force: true }).catch(() => {});
+    invalidateToolDiscoveryCache();
     throw new Error(`发布失败: ${error?.message ?? error}`);
   }
 }

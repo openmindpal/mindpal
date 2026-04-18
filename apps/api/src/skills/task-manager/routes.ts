@@ -52,7 +52,7 @@ export const taskRoutes: FastifyPluginAsync = async (app) => {
       const latest = it.latest;
       const needsApproval = latest?.status === "needs_approval";
       const canCancel = Boolean(latest?.runId && (latest.status === "created" || latest.status === "queued" || latest.status === "running" || latest.status === "needs_approval"));
-      const canContinue = Boolean(latest?.runId && latest.jobType === "agent.run" && latest.status === "needs_approval");
+      const canContinue = Boolean(latest?.runId && latest.jobType === "agent.run" && latest.status === "paused");
       return {
         task: it.task,
         run: latest

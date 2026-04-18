@@ -17,6 +17,8 @@ import { text as i18nText } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { ReferencePicker } from "./ReferencePicker";
 import { useLayoutEditor, EditableArea, computeContainerHeight, type AreaLayoutItem } from "./LayoutEditor";
+import { FlowRenderer, type FlowConfig } from "./FlowRenderer";
+import { AnimatedBlock, AnimatedList, type AnimationConfig } from "./AnimatedBlock";
 
 // ─── Style prefs → CSS token mapping ─────────────────────────────────────
 
@@ -858,6 +860,93 @@ function RealAreaRenderer({
     }
 
     default: {
+      if (componentId === "FlowRenderer" || componentId === "FlowDiagram" || componentId === "ProcessFlow") {
+        const flowConfig: FlowConfig = props.flowConfig ?? {
+          nodes: (props.nodes ?? []).map((n: any, i: number) => ({
+            id: n.id ?? `n${i}`,
+            type: n.type ?? "step",
+            label: n.label ?? n.title ?? `${t(locale, "widget.flow.node.single")} ${i + 1}`,
+            description: n.description,
+            status: n.status,
+            color: n.color,
+          })),
+          edges: (props.edges ?? []).map((e: any, i: number) => ({
+            id: e.id ?? `e${i}`,
+            source: e.source ?? e.from,
+            target: e.target ?? e.to,
+            label: e.label,
+            animated: e.animated,
+          })),
+          direction: props.direction ?? "TB",
+          interactive: props.interactive !== false,
+          showMiniMap: props.showMiniMap ?? false,
+        };
+        return (
+          <AnimatedBlock key={area.name} animation={{ preset: "fade-in", duration: 0.4 }}>
+            {props.title && (
+              <div style={{ fontSize: "var(--n2u-font-heading, 14px)", fontWeight: 700, padding: "8px 0 4px", color: "var(--sl-fg, #1e293b)" }}>
+                {props.title}
+              </div>
+            )}
+            <FlowRenderer
+              config={flowConfig}
+              height={props.height ?? 400}
+              onNodeClick={(nodeId) => onCardClick?.({ title: nodeId, id: nodeId })}
+            />
+          </AnimatedBlock>
+        );
+      }
+
+      if (componentId === "AnimatedList" || componentId === "AnimatedCards") {
+        const animConfig: AnimationConfig = {
+          preset: props.animationPreset ?? "slide-up",
+          staggerDelay: props.staggerDelay ?? 0.06,
+          hoverEffect: props.hoverEffect ?? "lift",
+        };
+        return (
+          <div key={area.name}>
+            {props.title && (
+              <div style={{ fontSize: "var(--n2u-font-heading, 14px)", fontWeight: 700, padding: "8px 0 4px", color: "var(--sl-fg, #1e293b)" }}>
+                {props.title}
+              </div>
+            )}
+            <AnimatedList
+              preset={animConfig.preset}
+              staggerDelay={animConfig.staggerDelay}
+              hoverEffect={animConfig.hoverEffect}
+              style={{ display: "flex", flexDirection: "column", gap: "var(--n2u-gap, 12px)" }}
+            >
+              {items.map((item, idx) => {
+                const payload = item.payload ?? {};
+                const title = String(payload.title ?? payload.name ?? `${t(locale, "common.item")} ${idx + 1}`);
+                const desc = String(payload.description ?? payload.content ?? "");
+                return (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding: "var(--n2u-pad, 14px)",
+                      border: "var(--n2u-card-border, 1px) solid var(--sl-border, #e2e8f0)",
+                      borderRadius: "var(--n2u-card-radius, 10px)",
+                      background: "var(--sl-surface, white)",
+                      cursor: "pointer",
+                    }}
+                    onClick={() => onCardClick?.({ title, id: item.id })}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: "var(--n2u-font-base, 13px)" }}>{title}</div>
+                    {desc && <div style={{ fontSize: "var(--n2u-font-sm, 11px)", color: "var(--sl-muted, #64748b)", marginTop: 4 }}>{desc.slice(0, 200)}</div>}
+                  </div>
+                );
+              })}
+            </AnimatedList>
+            {!hasData && !bindingResult?.loading && (
+              <div style={{ textAlign: "center", padding: "var(--n2u-pad, 16px)", color: "var(--sl-muted, #94a3b8)", fontSize: "var(--n2u-font-base, 13px)" }}>
+                {t(locale, "nl2ui.noData")}
+              </div>
+            )}
+          </div>
+        );
+      }
+
       // T11: Unknown components fallback to DataGrid
       console.warn(`[NL2UI] Unknown componentId "${componentId}", falling back to DataGrid`);
       const { columns: fbCols, rows: fbRows } = hasData

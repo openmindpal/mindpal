@@ -3,9 +3,9 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { t, statusLabel, boolLabel } from "@/lib/i18n";
 import { type ApiError, errText, isPlainObject, safeJsonString } from "@/lib/apiError";
-import { type TurnResponse, type ExecuteResponse } from "@/lib/types";
+import { type DispatchResponse, type ExecuteResponse } from "@/lib/types";
 import { Badge, Card, PageHeader, Table } from "@/components/ui";
 
 function pageNameFromUiDirective(d: unknown): string | null {
@@ -21,7 +21,7 @@ function pageNameFromUiDirective(d: unknown): string | null {
 export default function OrchestratorPlaygroundClient(props: { locale: string }) {
   const [message, setMessage] = useState<string>("");
   const [conversationId, setConversationId] = useState<string>("");
-  const [turn, setTurn] = useState<TurnResponse | null>(null);
+  const [turn, setTurn] = useState<DispatchResponse | null>(null);
   const [turnError, setTurnError] = useState<string>("");
   const [busyTurn, setBusyTurn] = useState<boolean>(false);
 
@@ -50,14 +50,19 @@ export default function OrchestratorPlaygroundClient(props: { locale: string }) 
     setActiveIdx(null);
     setBusyTurn(true);
     try {
-      const res = await apiFetch(`/orchestrator/turn`, {
+      const res = await apiFetch(`/orchestrator/dispatch`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         locale: props.locale,
-        body: JSON.stringify({ message, ...(conversationId.trim() ? { conversationId: conversationId.trim() } : {}) }),
+        body: JSON.stringify({
+          message,
+          locale: props.locale,
+          mode: "answer",
+          ...(conversationId.trim() ? { conversationId: conversationId.trim() } : {}),
+        }),
       });
       const json: unknown = await res.json().catch(() => null);
-      const turnData = (json as TurnResponse) ?? null;
+      const turnData = (json as DispatchResponse) ?? null;
       setTurn(turnData);
       if (turnData?.conversationId) setConversationId(turnData.conversationId);
       if (!res.ok) setTurnError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
@@ -93,21 +98,20 @@ export default function OrchestratorPlaygroundClient(props: { locale: string }) 
       }
       const turnId = turn?.turnId ?? "";
       const suggestionId = (activeSuggestionId || s?.suggestionId || "").trim();
-      const payload:
-        | { toolRef: string; input: unknown; idempotencyKey?: string }
-        | { turnId: string; suggestionId: string; input: unknown; idempotencyKey?: string } =
-        turnId && suggestionId ? { turnId, suggestionId, input } : { toolRef, input };
-      if (idempotencyKey.trim()) {
-        const k = idempotencyKey.trim();
-        if ("toolRef" in payload) payload.idempotencyKey = k;
-        else payload.idempotencyKey = k;
-      }
-      const res = await apiFetch(`/orchestrator/execute`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        locale: props.locale,
-        body: JSON.stringify(payload),
-      });
+      const k = idempotencyKey.trim();
+      const res = turnId && suggestionId
+        ? await apiFetch(`/orchestrator/dispatch/execute`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            locale: props.locale,
+            body: JSON.stringify({ turnId, suggestionId, input, ...(k ? { idempotencyKey: k } : {}) }),
+          })
+        : await apiFetch(`/tools/${encodeURIComponent(toolRef)}/execute`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...(k ? { "idempotency-key": k } : {}) },
+            locale: props.locale,
+            body: JSON.stringify(input),
+          });
       const json: unknown = await res.json().catch(() => null);
       setExec((json as ExecuteResponse) ?? null);
       if (!res.ok) setExecError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
@@ -139,7 +143,7 @@ export default function OrchestratorPlaygroundClient(props: { locale: string }) 
             <input
               value={conversationId}
               onChange={(e) => setConversationId(e.target.value)}
-              placeholder="conversationId"
+              placeholder={t(props.locale, "orchestrator.playground.conversationIdPlaceholder")}
               style={{ width: 300, maxWidth: "100%" }}
             />
             <button onClick={sendTurn} disabled={busyTurn || !message.trim()}>
@@ -206,7 +210,7 @@ export default function OrchestratorPlaygroundClient(props: { locale: string }) 
                   <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{s.suggestionId ?? "-"}</td>
                   <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{toolRef || "-"}</td>
                   <td>{s.riskLevel ?? "-"}</td>
-                  <td>{String(Boolean(s.approvalRequired))}</td>
+                  <td>{boolLabel(Boolean(s.approvalRequired), props.locale)}</td>
                   <td>
                     {toolRef ? (
                       <button onClick={() => (isActive ? setActiveIdx(null) : openSuggestion(idx))}>
@@ -249,7 +253,7 @@ export default function OrchestratorPlaygroundClient(props: { locale: string }) 
           <Card title={t(props.locale, "orchestrator.playground.resultTitle")}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span>{t(props.locale, "orchestrator.playground.status")}</span>
-              <Badge>{exec.receipt?.status ?? "-"}</Badge>
+              <Badge>{statusLabel(String(exec.receipt?.status ?? "-"), props.locale)}</Badge>
               {exec.runId ? (
                 <Link href={runHref}>
                   {t(props.locale, "orchestrator.playground.openRun")}

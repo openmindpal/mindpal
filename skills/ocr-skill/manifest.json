@@ -1,0 +1,46 @@
+{
+  "identity": {
+    "name": "knowledge.ocr.extract",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "图像OCR文字提取",
+    "en-US": "Image OCR Text Extraction"
+  },
+  "description": {
+    "zh-CN": "从图像中提取文字内容，支持多语言OCR识别，可用于知识入库、文档数字化等场景。支持外部OCR API和本地Tesseract两种模式。",
+    "en-US": "Extracts text from images using OCR, supports multi-language recognition for knowledge ingestion and document digitization. Supports external OCR API and local Tesseract modes."
+  },
+  "category": "knowledge",
+  "priority": 7,
+  "tags": ["ocr", "image", "text-extraction", "knowledge", "document"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "media",
+    "action": "ocr_extract",
+    "idempotencyRequired": true,
+    "riskLevel": "low",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "imageUrl": { "type": "string", "description": "图像 URL（http/https/data: base64 均可）" },
+        "imageBase64": { "type": "string", "description": "图像 base64 编码数据（与 imageUrl 二选一）" },
+        "mimeType": { "type": "string", "description": "图像 MIME 类型，默认 image/png" },
+        "language": { "type": "string", "description": "OCR识别语言: chi_sim | eng | jpn | kor 等，默认自动检测" },
+        "mode": { "type": "string", "description": "识别模式: text（纯文字） | structured（保留布局），默认 text" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "text": { "type": "string", "required": true, "description": "提取的文字内容" },
+        "language": { "type": "string", "description": "检测到的主要语言" },
+        "wordCount": { "type": "number", "description": "提取的字数" },
+        "confidence": { "type": "number", "required": true, "description": "识别置信度 0-1" },
+        "regions": { "type": "json", "description": "文字区域信息 [{text, bbox, confidence}]（structured模式）" }
+      }
+    }
+  },
+  "entry": "dist/index.js"
+}

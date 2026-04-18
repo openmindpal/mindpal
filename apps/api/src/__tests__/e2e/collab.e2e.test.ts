@@ -44,7 +44,7 @@ describe.sequential("e2e:collab", { timeout: 60_000 }, () => {
       url: `/tasks/${encodeURIComponent(taskId)}/collab-runs`,
       headers: { ...h, "idempotency-key": `idem-collab-${crypto.randomUUID()}`, "x-trace-id": `t-collab-create-${crypto.randomUUID()}` },
       payload: JSON.stringify({
-        message: "新建一条笔记",
+        message: "新建一条记录",
         limits: { maxSteps: 3, maxWallTimeMs: 30_000 },
       }),
     });
@@ -85,7 +85,7 @@ describe.sequential("e2e:collab", { timeout: 60_000 }, () => {
       url: `/tasks/${encodeURIComponent(taskId)}/collab-runs`,
       headers: { ...h, "idempotency-key": `idem-collab-iso-${crypto.randomUUID()}`, "x-trace-id": `t-collab-iso-${crypto.randomUUID()}` },
       payload: JSON.stringify({
-        message: "新建一条笔记",
+        message: "新建一条记录",
         limits: { maxSteps: 3, maxWallTimeMs: 30_000 },
       }),
     });

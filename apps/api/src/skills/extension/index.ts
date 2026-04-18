@@ -11,6 +11,9 @@
  * - identity.link: Identity linking
  * - user.view.prefs: User view preferences
  * - ai.event.reasoning: AI-powered event reasoning
+ * - embedding.provider: External embedding API integration
+ * - browser.automation: Browser automation capabilities
+ * - desktop.automation: Desktop automation capabilities
  */
 
 export { default as mediaPipeline } from "../media-pipeline";
@@ -21,3 +24,6 @@ export { default as analyticsEngine } from "../analytics-engine";
 export { default as identityLink } from "../identity-link";
 export { default as userViewPrefs } from "../user-view-prefs";
 export { default as aiEventReasoning } from "../ai-event-reasoning";
+export { default as embeddingProvider } from "../embedding-provider";
+export { default as browserAutomation } from "../browser-automation";
+export { default as desktopAutomation } from "../desktop-automation";

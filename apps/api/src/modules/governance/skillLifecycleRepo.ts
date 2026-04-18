@@ -49,12 +49,23 @@ function toEvent(r: any): SkillLifecycleEventRow {
 // ─── Valid Transitions ──────────────────────────────────────────────────────
 
 const VALID_TRANSITIONS: Record<string, SkillLifecycleStatus[]> = {
-  "": ["draft"],
-  draft: ["enabled_user_scope", "disabled", "revoked"],
-  enabled_user_scope: ["enabled_space", "disabled", "revoked"],
-  enabled_space: ["enabled_tenant", "disabled", "revoked"],
-  enabled_tenant: ["disabled", "revoked"],
+  "": ["draft", "enabled_user_scope", "enabled_space", "enabled_tenant"],
+  draft: ["enabled_user_scope", "enabled_space", "enabled_tenant", "disabled", "revoked"],
+  enabled_user_scope: ["enabled_space", "enabled_tenant", "disabled", "revoked"],
+  enabled_space: ["enabled_user_scope", "enabled_tenant", "disabled", "revoked"],
+  enabled_tenant: ["enabled_user_scope", "enabled_space", "disabled", "revoked"],
   disabled: ["enabled_user_scope", "enabled_space", "enabled_tenant", "revoked"],
+};
+
+/** Human-readable labels for lifecycle statuses (used in error messages). */
+const STATUS_LABELS: Record<string, string> = {
+  "": "未初始化 (new)",
+  draft: "草稿 (draft)",
+  enabled_user_scope: "用户级启用 (user scope)",
+  enabled_space: "空间级启用 (space scope)",
+  enabled_tenant: "租户级启用 (tenant scope)",
+  disabled: "已禁用 (disabled)",
+  revoked: "已撤回 (revoked)",
 };
 
 export function isValidTransition(from: string | null, to: SkillLifecycleStatus): boolean {
@@ -99,7 +110,14 @@ export async function recordLifecycleEvent(params: {
   reason?: string;
 }): Promise<SkillLifecycleEventRow> {
   if (!isValidTransition(params.fromStatus, params.toStatus)) {
-    throw new Error(`skill_lifecycle:invalid_transition:${params.fromStatus ?? "null"}->${params.toStatus}`);
+    const fromLabel = STATUS_LABELS[params.fromStatus ?? ""] ?? params.fromStatus ?? "未知";
+    const toLabel = STATUS_LABELS[params.toStatus] ?? params.toStatus;
+    const allowed = VALID_TRANSITIONS[params.fromStatus ?? ""] ?? [];
+    const allowedLabels = allowed.map((s) => STATUS_LABELS[s] ?? s).join("、");
+    throw new Error(
+      `技能「${params.skillName}」无法从「${fromLabel}」转换到「${toLabel}」。` +
+      (allowed.length ? `当前状态允许的操作：${allowedLabels}` : "当前状态不允许任何转换")
+    );
   }
 
   const res = await params.pool.query(
@@ -248,7 +266,9 @@ export async function getSkillStatusSummary(params: {
 }
 
 /**
- * Transition a skill to a new status with validation
+ * Transition a skill to a new status with validation.
+ * When transitioning to 'disabled' or 'revoked', automatically cascade-disables
+ * all tool rollouts owned by the skill (matched by name prefix).
  */
 export async function transitionSkillStatus(params: {
   pool: Q;
@@ -271,7 +291,7 @@ export async function transitionSkillStatus(params: {
   });
   const fromStatus = latest?.toStatus ?? null;
 
-  return recordLifecycleEvent({
+  const event = await recordLifecycleEvent({
     pool: params.pool,
     tenantId: params.tenantId,
     skillName: params.skillName,
@@ -284,4 +304,65 @@ export async function transitionSkillStatus(params: {
     approvalId: params.approvalId,
     reason: params.reason,
   });
+
+  // Cascade: when skill is disabled/revoked, auto-disable its owned tools
+  if (params.toStatus === "disabled" || params.toStatus === "revoked") {
+    await cascadeDisableSkillTools({
+      pool: params.pool,
+      tenantId: params.tenantId,
+      skillName: params.skillName,
+      scopeType: params.scopeType === "user" ? "space" : (params.scopeType === "tenant" ? "tenant" : "space"),
+      scopeId: params.scopeType === "tenant" ? params.tenantId : params.scopeId,
+    });
+  }
+
+  return event;
+}
+
+/**
+ * Cascade-disable all tool_rollouts belonging to a skill.
+ * Uses the first segment of the skill_key (before '.') as the tool name prefix.
+ * e.g. skill "entity.kernel" → disables tools like "entity.create", "entity.update"
+ *      skill "memory.manager" → disables tools like "memory.read", "memory.write"
+ *      skill "browser.automation" → disables tools like "browser.launch"
+ */
+async function cascadeDisableSkillTools(params: {
+  pool: Q;
+  tenantId: string;
+  skillName: string;
+  scopeType: "tenant" | "space";
+  scopeId: string;
+}): Promise<number> {
+  const { pool, tenantId, skillName, scopeType, scopeId } = params;
+  // Extract tool name prefix: first segment before '.'
+  const toolPrefix = skillName.split(".")[0];
+  try {
+    // Find all tools owned by this skill (name starts with prefix + '.' OR equals the skill name exactly)
+    const toolRes = await pool.query(
+      `SELECT name FROM tool_definitions
+       WHERE tenant_id = $1 AND (name LIKE $2 OR name = $3)`,
+      [tenantId, `${toolPrefix}.%`, skillName],
+    );
+    if (!toolRes.rowCount) return 0;
+
+    let disabled = 0;
+    for (const row of toolRes.rows) {
+      const toolRef = `${row.name}@1`;
+      const res = await pool.query(
+        `UPDATE tool_rollouts SET enabled = false, updated_at = now()
+         WHERE tenant_id = $1 AND scope_type = $2 AND scope_id = $3 AND tool_ref = $4 AND enabled = true`,
+        [tenantId, scopeType, scopeId, toolRef],
+      );
+      disabled += res.rowCount ?? 0;
+    }
+    if (disabled > 0) {
+      console.info(
+        `[skill-lifecycle] cascade disabled ${disabled} tool rollout(s) for skill=${skillName} prefix=${toolPrefix} tenant=${tenantId} scope=${scopeType}:${scopeId}`,
+      );
+    }
+    return disabled;
+  } catch (err: any) {
+    console.warn(`[skill-lifecycle] cascadeDisableSkillTools failed: skill=${skillName} err=${err?.message}`);
+    return 0;
+  }
 }

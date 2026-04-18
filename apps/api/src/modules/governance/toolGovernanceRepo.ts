@@ -10,6 +10,8 @@ export type ToolRolloutRow = {
   scopeId: string;
   toolRef: string;
   enabled: boolean;
+  disableMode: "immediate" | "graceful";
+  graceDeadline: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -31,23 +33,6 @@ export type ToolActiveOverrideRow = {
   updatedAt: string;
 };
 
-let toolActiveHasScopeCols: boolean | null = null;
-
-async function detectToolActiveScopeCols(pool: Pool) {
-  if (toolActiveHasScopeCols !== null) return toolActiveHasScopeCols;
-  const res = await pool.query(
-    `
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = 'tool_active_versions'
-        AND column_name IN ('scope_type', 'scope_id')
-    `,
-  );
-  toolActiveHasScopeCols = (res.rowCount ?? 0) >= 2;
-  return toolActiveHasScopeCols;
-}
-
 function toRollout(r: any): ToolRolloutRow {
   return {
     tenantId: r.tenant_id,
@@ -55,6 +40,8 @@ function toRollout(r: any): ToolRolloutRow {
     scopeId: r.scope_id,
     toolRef: r.tool_ref,
     enabled: r.enabled,
+    disableMode: r.disable_mode ?? "immediate",
+    graceDeadline: r.grace_deadline ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -88,16 +75,20 @@ export async function setToolRollout(params: {
   scopeId: string;
   toolRef: string;
   enabled: boolean;
+  disableMode?: "immediate" | "graceful";
+  graceDeadline?: Date | null;
 }) {
+  const mode = params.disableMode ?? "immediate";
+  const deadline = params.graceDeadline ?? null;
   const res = await params.pool.query(
     `
-      INSERT INTO tool_rollouts (tenant_id, scope_type, scope_id, tool_ref, enabled)
-      VALUES ($1,$2,$3,$4,$5)
+      INSERT INTO tool_rollouts (tenant_id, scope_type, scope_id, tool_ref, enabled, disable_mode, grace_deadline)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
       ON CONFLICT (tenant_id, scope_type, scope_id, tool_ref)
-      DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()
+      DO UPDATE SET enabled = EXCLUDED.enabled, disable_mode = EXCLUDED.disable_mode, grace_deadline = EXCLUDED.grace_deadline, updated_at = now()
       RETURNING *
     `,
-    [params.tenantId, params.scopeType, params.scopeId, params.toolRef, params.enabled],
+    [params.tenantId, params.scopeType, params.scopeId, params.toolRef, params.enabled, mode, deadline],
   );
   return toRollout(res.rows[0]);
 }
@@ -119,28 +110,61 @@ export async function deleteToolRollout(params: {
   return res.rowCount ?? 0;
 }
 
-export async function isToolEnabled(params: { pool: Pool; tenantId: string; spaceId: string; toolRef: string }) {
+/**
+ * Check if a tool is enabled for a given tenant+space.
+ *
+ * Graceful-disable support:
+ *   When `runCreatedAt` is provided and the rollout is in graceful-disable mode
+ *   with a grace_deadline still in the future AND the run was created before
+ *   the graceful disable was initiated, the tool is considered "still enabled"
+ *   for that existing run.
+ */
+export async function isToolEnabled(params: {
+  pool: Pool;
+  tenantId: string;
+  spaceId: string;
+  toolRef: string;
+  /** Optional: creation time of the current run, used for graceful-disable grace period. */
+  runCreatedAt?: Date;
+}) {
+  // Helper: evaluate a single rollout row
+  function evaluateRow(row: any): boolean {
+    if (Boolean(row.enabled)) return true;
+    // Tool is disabled — check for graceful grace period
+    if (
+      row.disable_mode === "graceful" &&
+      row.grace_deadline &&
+      params.runCreatedAt
+    ) {
+      const deadline = new Date(row.grace_deadline);
+      if (deadline > new Date() && params.runCreatedAt < deadline) {
+        return true; // grace period still active for this run
+      }
+    }
+    return false;
+  }
+
   const space = await params.pool.query(
     `
-      SELECT enabled
+      SELECT enabled, disable_mode, grace_deadline
       FROM tool_rollouts
       WHERE tenant_id = $1 AND scope_type = 'space' AND scope_id = $2 AND tool_ref = $3
       LIMIT 1
     `,
     [params.tenantId, params.spaceId, params.toolRef],
   );
-  if (space.rowCount) return Boolean(space.rows[0].enabled);
+  if (space.rowCount) return evaluateRow(space.rows[0]);
 
   const tenant = await params.pool.query(
     `
-      SELECT enabled
+      SELECT enabled, disable_mode, grace_deadline
       FROM tool_rollouts
       WHERE tenant_id = $1 AND scope_type = 'tenant' AND scope_id = $1 AND tool_ref = $2
       LIMIT 1
     `,
     [params.tenantId, params.toolRef],
   );
-  if (tenant.rowCount) return Boolean(tenant.rows[0].enabled);
+  if (tenant.rowCount) return evaluateRow(tenant.rows[0]);
 
   return false;
 }
@@ -166,41 +190,11 @@ export async function getToolRolloutEnabled(params: {
 }
 
 export async function setActiveToolRef(params: { pool: Pool; tenantId: string; name: string; toolRef: string }) {
-  const hasScope = await detectToolActiveScopeCols(params.pool);
-  if (!hasScope) {
-    const res = await params.pool.query(
-      `
-        INSERT INTO tool_active_versions (tenant_id, name, active_tool_ref)
-        VALUES ($1,$2,$3)
-        ON CONFLICT (tenant_id, name)
-        DO UPDATE SET active_tool_ref = EXCLUDED.active_tool_ref, updated_at = now()
-        RETURNING *
-      `,
-      [params.tenantId, params.name, params.toolRef],
-    );
-    return toActive(res.rows[0]);
-  }
-  try {
-    const res = await params.pool.query(
-      `
-        INSERT INTO tool_active_versions (tenant_id, scope_type, scope_id, name, active_tool_ref)
-        VALUES ($1,'tenant',$1,$2,$3)
-        ON CONFLICT (tenant_id, name)
-        DO UPDATE SET scope_type = EXCLUDED.scope_type, scope_id = EXCLUDED.scope_id, active_tool_ref = EXCLUDED.active_tool_ref, updated_at = now()
-        RETURNING *
-      `,
-      [params.tenantId, params.name, params.toolRef],
-    );
-    return toActive(res.rows[0]);
-  } catch (e: any) {
-    const msg = String(e?.message ?? e);
-    if (!msg.includes("no unique or exclusion constraint")) throw e;
-  }
   const res = await params.pool.query(
     `
-      INSERT INTO tool_active_versions (tenant_id, scope_type, scope_id, name, active_tool_ref)
-      VALUES ($1,'tenant',$1,$2,$3)
-      ON CONFLICT (tenant_id, scope_type, scope_id, name)
+      INSERT INTO tool_active_versions (tenant_id, name, active_tool_ref)
+      VALUES ($1,$2,$3)
+      ON CONFLICT (tenant_id, name)
       DO UPDATE SET active_tool_ref = EXCLUDED.active_tool_ref, updated_at = now()
       RETURNING *
     `,
@@ -210,17 +204,11 @@ export async function setActiveToolRef(params: { pool: Pool; tenantId: string; n
 }
 
 export async function clearActiveToolRef(params: { pool: Pool; tenantId: string; name: string }) {
-  const hasScope = await detectToolActiveScopeCols(params.pool);
   const res = await params.pool.query(
-    hasScope
-      ? `
-        DELETE FROM tool_active_versions
-        WHERE tenant_id = $1 AND name = $2 AND scope_type = 'tenant' AND scope_id = $1
-      `
-      : `
-        DELETE FROM tool_active_versions
-        WHERE tenant_id = $1 AND name = $2
-      `,
+    `
+      DELETE FROM tool_active_versions
+      WHERE tenant_id = $1 AND name = $2
+    `,
     [params.tenantId, params.name],
   );
   return res.rowCount ?? 0;
@@ -279,21 +267,13 @@ export async function listActiveToolOverrides(params: { pool: Pool; tenantId: st
 }
 
 export async function getActiveToolRef(params: { pool: Pool; tenantId: string; name: string }) {
-  const hasScope = await detectToolActiveScopeCols(params.pool);
   const res = await params.pool.query(
-    hasScope
-      ? `
-        SELECT *
-        FROM tool_active_versions
-        WHERE tenant_id = $1 AND name = $2 AND scope_type = 'tenant' AND scope_id = $1
-        LIMIT 1
-      `
-      : `
-        SELECT *
-        FROM tool_active_versions
-        WHERE tenant_id = $1 AND name = $2
-        LIMIT 1
-      `,
+    `
+      SELECT *
+      FROM tool_active_versions
+      WHERE tenant_id = $1 AND name = $2
+      LIMIT 1
+    `,
     [params.tenantId, params.name],
   );
   if (!res.rowCount) return null;
@@ -301,21 +281,13 @@ export async function getActiveToolRef(params: { pool: Pool; tenantId: string; n
 }
 
 export async function listActiveToolRefs(params: { pool: Pool; tenantId: string }) {
-  const hasScope = await detectToolActiveScopeCols(params.pool);
   const res = await params.pool.query(
-    hasScope
-      ? `
-        SELECT *
-        FROM tool_active_versions
-        WHERE tenant_id = $1 AND scope_type = 'tenant' AND scope_id = $1
-        ORDER BY name ASC
-      `
-      : `
-        SELECT *
-        FROM tool_active_versions
-        WHERE tenant_id = $1
-        ORDER BY name ASC
-      `,
+    `
+      SELECT *
+      FROM tool_active_versions
+      WHERE tenant_id = $1
+      ORDER BY name ASC
+    `,
     [params.tenantId],
   );
   return res.rows.map(toActive);
@@ -383,8 +355,11 @@ export async function enableToolForScope(params: EnableToolParams): Promise<Enab
 
   // Validate version exists and is released
   const ver = await getToolVersionByRef(pool, tenantId, toolRef);
-  if (!ver || ver.status !== "released") {
-    throw Errors.badRequest("工具版本不存在或未发布");
+  if (!ver) {
+    throw Errors.badRequest(`工具「${toolRef}」不存在，请检查工具名称和版本号是否正确 (Tool "${toolRef}" not found)`);
+  }
+  if (ver.status !== "released") {
+    throw Errors.badRequest(`工具「${toolRef}」尚未发布（当前状态: ${ver.status}），无法启用 (Tool not released, current: ${ver.status})`);
   }
 
   // Supply chain gate for artifact-based tools
@@ -426,14 +401,29 @@ export async function enableToolForScope(params: EnableToolParams): Promise<Enab
  *
  * Writes the rollout and an audit event.
  */
-export async function disableToolForScope(params: EnableToolParams): Promise<EnableToolResult> {
+export interface DisableToolParams extends EnableToolParams {
+  /** Disable mode: 'immediate' (default) or 'graceful' (allows existing runs to finish). */
+  disableMode?: "immediate" | "graceful";
+  /** Grace period in minutes for graceful mode (default: 5). */
+  graceMinutes?: number;
+}
+
+export async function disableToolForScope(params: DisableToolParams): Promise<EnableToolResult> {
   const { pool, tenantId, scopeType, scopeId, toolRef } = params;
+  const disableMode = params.disableMode ?? "immediate";
+  const graceMinutes = params.graceMinutes ?? 5;
 
   // Check previous state
   const previousEnabled = await getToolRolloutEnabled({ pool, tenantId, scopeType, scopeId, toolRef });
 
+  // Compute grace deadline for graceful mode
+  let graceDeadline: Date | null = null;
+  if (disableMode === "graceful") {
+    graceDeadline = new Date(Date.now() + graceMinutes * 60_000);
+  }
+
   // Write rollout
-  const rollout = await setToolRollout({ pool, tenantId, scopeType, scopeId, toolRef, enabled: false });
+  const rollout = await setToolRollout({ pool, tenantId, scopeType, scopeId, toolRef, enabled: false, disableMode, graceDeadline });
 
   // Write audit event if state changed
   if (previousEnabled !== false) {
@@ -444,11 +434,17 @@ export async function disableToolForScope(params: EnableToolParams): Promise<Ena
       resourceType: "governance",
       action: "tool.disable",
       policyDecision: params.policyDecision,
-      inputDigest: { scopeType, scopeId, toolRef },
-      outputDigest: { enabled: false, previousEnabled },
+      inputDigest: { scopeType, scopeId, toolRef, disableMode, graceMinutes: disableMode === "graceful" ? graceMinutes : undefined },
+      outputDigest: { enabled: false, previousEnabled, disableMode, graceDeadline: graceDeadline?.toISOString() ?? null },
       result: "success",
       traceId: params.traceId ?? "",
     });
+  }
+
+  if (disableMode === "graceful") {
+    console.info(
+      `[governance] disableToolForScope: graceful disable for tool=${toolRef} tenant=${tenantId} scope=${scopeType}:${scopeId} graceDeadline=${graceDeadline?.toISOString()}`
+    );
   }
 
   return { rollout, previousEnabled };

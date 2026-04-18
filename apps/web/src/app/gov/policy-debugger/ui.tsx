@@ -1,30 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader } from "@/components/ui";
+import { Badge, Card, PageHeader, getHelpHref } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type EpochResponse = ApiError & { scopeType?: "tenant" | "space"; scopeId?: string; epoch?: number };
 type EvalResponse =
   | (ApiError & { decision?: "allow" | "deny"; reason?: string | null; policySnapshotId?: string; matchedRulesSummary?: any; fieldRulesEffective?: any; rowFiltersEffective?: any; warnings?: string[] })
   | null;
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
 
 export default function GovPolicyDebuggerClient(props: { locale: string; initial: unknown; initialStatus: number }) {
   const [epochData, setEpochData] = useState<EpochResponse | null>((props.initial as EpochResponse) ?? null);
@@ -125,6 +110,7 @@ export default function GovPolicyDebuggerClient(props: { locale: string; initial
     <div>
       <PageHeader
         title={t(props.locale, "gov.policyDebugger.title")}
+        helpHref={getHelpHref("/gov/policy-debugger", props.locale) ?? undefined}
         actions={
           <>
             <Badge>{epochStatus}</Badge>

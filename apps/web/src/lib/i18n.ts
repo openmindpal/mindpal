@@ -18,3 +18,21 @@ export function t(locale: string | undefined, key: string) {
   return dicts[l][key] ?? dicts["en-US"][key] ?? dicts["zh-CN"][key] ?? key;
 }
 
+/**
+ * Translate a raw status string (e.g. "running", "failed") into the user's locale.
+ * Falls back to the raw value when no translation key `status.<value>` exists.
+ */
+export function statusLabel(value: string, locale?: string): string {
+  if (!value) return value;
+  const key = `status.${value}`;
+  const translated = t(locale, key);
+  return translated !== key ? translated : value;
+}
+
+/**
+ * Translate a boolean into 是/否 (or Yes/No) based on locale.
+ */
+export function boolLabel(value: boolean, locale?: string): string {
+  return t(locale, value ? "bool.yes" : "bool.no");
+}
+

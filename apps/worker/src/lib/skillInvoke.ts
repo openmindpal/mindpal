@@ -4,7 +4,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { executeDynamicSkillSandboxed } from "../workflow/processor/dynamicSkillSandbox";
-import type { RuntimeLimits, NetworkPolicy } from "../workflow/processor/runtime";
+import type { RuntimeLimits, NetworkPolicy } from "@openslin/shared";
 
 /**
  * 获取 skill 包的搜索根目录列表。
@@ -31,8 +31,14 @@ const FIRST_PARTY_LIMITS: RuntimeLimits = {
   maxEgressRequests: 20,
 };
 
+/**
+ * 默认网络策略：生产环境默认 deny-all。
+ * 需要访问外部服务的 skill 必须通过 networkPolicy 参数显式配置白名单。
+ *
+ * 设置环境变量 SKILL_NETWORK_ALLOW_ALL=1 可恢复开发模式（仅用于本地调试）。
+ */
 const FIRST_PARTY_NETWORK_POLICY: NetworkPolicy = {
-  allowedDomains: ["*"],
+  allowedDomains: process.env.SKILL_NETWORK_ALLOW_ALL === "1" ? ["*"] : [],
   rules: [],
 };
 

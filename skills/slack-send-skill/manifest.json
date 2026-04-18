@@ -3,6 +3,17 @@
     "name": "slack.send",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "Slack 消息发送",
+    "en-US": "Slack Message Send"
+  },
+  "description": {
+    "zh-CN": "向指定的 Slack 频道或用户发送消息",
+    "en-US": "Sends messages to specified Slack channel or user"
+  },
+  "category": "communication",
+  "priority": 7,
+  "tags": ["slack", "messaging", "notification", "outbound"],
   "contract": {
     "scope": "write",
     "resourceType": "channel",

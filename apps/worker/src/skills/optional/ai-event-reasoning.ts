@@ -10,8 +10,23 @@
  * calls the API's /governance/event-reasoning/reason endpoint,
  * and if the decision is "execute", enqueues the resulting action.
  */
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { Queue } from "bullmq";
+
+async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 /* ────────────────── Ticker: Scan and Submit Events ────────────────── */
 
@@ -140,6 +155,10 @@ export async function processEventReasoningJob(params: {
     const matched = matchRuleSimple(rule, eventType, provider, payload);
     if (matched) {
       const latencyMs = Date.now() - startMs;
+      const actionResult =
+        String(rule.decision ?? "") === "execute" && rule.action_ref
+          ? await enqueueAction(params, tenantId, spaceId, eventSourceId, rule)
+          : null;
       await insertLog(params.pool, {
         tenantId, spaceId, eventSourceId, eventType, provider, workspaceId,
         payload, tier: "rule", decision: String(rule.decision ?? "execute"),
@@ -147,13 +166,10 @@ export async function processEventReasoningJob(params: {
         matchDigest: { ruleName: String(rule.name) },
         actionKind: rule.action_kind, actionRef: rule.action_ref,
         actionInput: rule.action_input_template,
+        runId: actionResult?.runId ?? null,
+        stepId: actionResult?.stepId ?? null,
         latencyMs,
       });
-
-      // If decision is execute, enqueue the action
-      if (String(rule.decision ?? "") === "execute" && rule.action_ref) {
-        await enqueueAction(params, tenantId, spaceId, rule);
-      }
       return;
     }
   }
@@ -170,6 +186,10 @@ export async function processEventReasoningJob(params: {
     const matched = matchRuleSimple(pattern, eventType, provider, payload);
     if (matched) {
       const latencyMs = Date.now() - startMs;
+      const actionResult =
+        String(pattern.decision ?? "") === "execute" && pattern.action_ref
+          ? await enqueueAction(params, tenantId, spaceId, eventSourceId, pattern)
+          : null;
       await insertLog(params.pool, {
         tenantId, spaceId, eventSourceId, eventType, provider, workspaceId,
         payload, tier: "pattern", decision: String(pattern.decision ?? "execute"),
@@ -177,12 +197,10 @@ export async function processEventReasoningJob(params: {
         matchDigest: { patternName: String(pattern.name) },
         actionKind: pattern.action_kind, actionRef: pattern.action_ref,
         actionInput: pattern.action_input_template,
+        runId: actionResult?.runId ?? null,
+        stepId: actionResult?.stepId ?? null,
         latencyMs,
       });
-
-      if (String(pattern.decision ?? "") === "execute" && pattern.action_ref) {
-        await enqueueAction(params, tenantId, spaceId, pattern);
-      }
       return;
     }
   }
@@ -253,23 +271,29 @@ async function insertLog(pool: Pool, p: {
   payload: any; tier: string; decision: string;
   confidence: number | null; matchedRuleId: string | null;
   matchDigest: any; actionKind: string | null;
-  actionRef: string | null; actionInput: any; latencyMs: number;
+  actionRef: string | null; actionInput: any;
+  runId?: string | null; stepId?: string | null;
+  errorCategory?: string | null; errorDigest?: any;
+  latencyMs: number;
 }) {
   await pool.query(
     `INSERT INTO event_reasoning_logs (
        tenant_id, space_id, event_source_id, event_type, provider, workspace_id,
        event_payload, tier, decision, confidence,
-       action_kind, action_ref, action_input,
-       matched_rule_id, match_digest, latency_ms
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13::jsonb,$14,$15::jsonb,$16)`,
+       action_kind, action_ref, action_input, run_id, step_id,
+       matched_rule_id, match_digest, latency_ms, error_category, error_digest
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17::jsonb,$18,$19,$20::jsonb)`,
     [
       p.tenantId, p.spaceId, p.eventSourceId, p.eventType, p.provider, p.workspaceId,
       p.payload ? JSON.stringify(p.payload) : null,
       p.tier, p.decision, p.confidence,
       p.actionKind, p.actionRef,
       p.actionInput ? JSON.stringify(p.actionInput) : null,
+      p.runId ?? null, p.stepId ?? null,
       p.matchedRuleId, p.matchDigest ? JSON.stringify(p.matchDigest) : null,
       p.latencyMs,
+      p.errorCategory ?? null,
+      p.errorDigest ? JSON.stringify(p.errorDigest) : null,
     ],
   );
 }
@@ -278,45 +302,59 @@ async function enqueueAction(
   params: { pool: Pool; queue: Queue },
   tenantId: string,
   spaceId: string | null,
+  eventSourceId: string,
   rule: any,
 ) {
   const actionKind = String(rule.action_kind ?? "");
   const actionRef = String(rule.action_ref ?? "");
+  const ruleId = String(rule.rule_id ?? "");
+  const queueJobId = `event-reasoning-action:${tenantId}:${eventSourceId}:${ruleId || actionRef || actionKind}`;
+  const idempotencyKey = `event-reasoning:${eventSourceId}:${ruleId || actionRef || actionKind}`;
 
   if (actionKind === "workflow" || actionKind === "tool") {
-    // Create a job/run/step via SQL (similar to trigger runner)
     const jobType = actionKind === "workflow" ? "tool.execute" : actionRef;
     const input = rule.action_input_template ?? {};
-
-    const jobRes = await params.pool.query(
-      `INSERT INTO jobs (tenant_id, type, status) VALUES ($1, $2, 'pending') RETURNING job_id`,
-      [tenantId, jobType],
-    );
-    const jobId = String(jobRes.rows[0].job_id);
-
-    const runRes = await params.pool.query(
-      `INSERT INTO runs (job_id, tenant_id, status) VALUES ($1, $2, 'pending') RETURNING run_id`,
-      [jobId, tenantId],
-    );
-    const runId = String(runRes.rows[0].run_id);
-
-    const stepRes = await params.pool.query(
-      `INSERT INTO steps (run_id, tenant_id, seq, tool_ref, status, input)
-       VALUES ($1, $2, 1, $3, 'pending', $4::jsonb) RETURNING step_id`,
-      [runId, tenantId, actionRef, JSON.stringify({
+    let created = await createJobRunStepForReasoning({
+      pool: params.pool,
+      tenantId,
+      jobType,
+      toolRef: actionRef,
+      trigger: `ai-event-reasoning:${ruleId || "rule"}`,
+      idempotencyKey,
+      input: {
         ...input,
         tenantId,
         spaceId,
         toolRef: actionRef,
-        trigger: `ai-event-reasoning:${String(rule.rule_id)}`,
-      })],
-    );
-    const stepId = String(stepRes.rows[0].step_id);
-
-    await params.queue.add("step", { jobId, runId, stepId }, {
-      attempts: 3,
-      backoff: { type: "exponential", delay: 500 },
+        trigger: `ai-event-reasoning:${ruleId || "rule"}`,
+      },
     });
+    if (created.alreadyQueued) {
+      return created;
+    }
+    try {
+      const job = await params.queue.add("step", { jobId: created.jobId, runId: created.runId, stepId: created.stepId }, {
+        attempts: 3,
+        backoff: { type: "exponential", delay: 500 },
+        jobId: queueJobId,
+      });
+      await params.pool.query(
+        "UPDATE steps SET queue_job_id = $2, updated_at = now() WHERE step_id = $1",
+        [created.stepId, String((job as any).id ?? queueJobId)],
+      );
+      created = { ...created, queueJobId: String((job as any).id ?? queueJobId) };
+      return created;
+    } catch (err: any) {
+      await markCreatedActionFailed({
+        pool: params.pool,
+        tenantId,
+        runId: created.runId,
+        jobId: created.jobId,
+        stepId: created.stepId,
+        errorMessage: String(err?.message ?? err).slice(0, 1000),
+      });
+      throw err;
+    }
   }
 
   if (actionKind === "notify") {
@@ -327,5 +365,127 @@ async function enqueueAction(
        ON CONFLICT DO NOTHING`,
       [tenantId, actionRef, JSON.stringify(rule.action_input_template ?? {})],
     );
+    return null;
   }
+
+  return null;
+}
+
+async function createJobRunStepForReasoning(params: {
+  pool: Pool;
+  tenantId: string;
+  jobType: string;
+  toolRef: string;
+  trigger: string;
+  idempotencyKey: string;
+  input: any;
+}) {
+  return withTransaction(params.pool, async (client) => {
+    const runRes = await client.query(
+      `
+        INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key, trigger)
+        VALUES ($1, 'created', $2, $3, $4, $5)
+        ON CONFLICT (tenant_id, idempotency_key, tool_ref) WHERE idempotency_key IS NOT NULL AND tool_ref IS NOT NULL
+        DO UPDATE SET updated_at = now()
+        RETURNING run_id
+      `,
+      [params.tenantId, params.toolRef, params.input ?? null, params.idempotencyKey, params.trigger],
+    );
+    const runId = String(runRes.rows[0].run_id);
+    const existing = await client.query(
+      `
+        SELECT j.job_id, s.step_id, s.status AS step_status, s.queue_job_id
+        FROM jobs j
+        JOIN steps s ON s.run_id = j.run_id AND s.seq = 1
+        WHERE j.tenant_id = $1 AND j.run_id = $2
+        ORDER BY j.created_at DESC
+        LIMIT 1
+      `,
+      [params.tenantId, runId],
+    );
+    if (existing.rowCount) {
+      const row = existing.rows[0] as any;
+      const jobId = String(row.job_id);
+      const stepId = String(row.step_id);
+      const stepStatus = String(row.step_status ?? "");
+      const existingQueueJobId = row.queue_job_id ? String(row.queue_job_id) : null;
+      const retryQueueError = stepStatus === "failed" && !existingQueueJobId;
+      if (retryQueueError) {
+        await client.query(
+          "UPDATE runs SET status = 'created', updated_at = now(), finished_at = NULL WHERE tenant_id = $1 AND run_id = $2",
+          [params.tenantId, runId],
+        );
+        await client.query(
+          "UPDATE jobs SET status = 'queued', updated_at = now(), result_summary = NULL WHERE tenant_id = $1 AND job_id = $2",
+          [params.tenantId, jobId],
+        );
+        await client.query(
+          `UPDATE steps
+           SET status = 'pending',
+               updated_at = now(),
+               finished_at = NULL,
+               deadlettered_at = NULL,
+               error_category = NULL,
+               last_error = NULL,
+               queue_job_id = NULL
+           WHERE step_id = $1`,
+          [stepId],
+        );
+      }
+      return {
+        jobId,
+        runId,
+        stepId,
+        queueJobId: existingQueueJobId,
+        alreadyQueued: Boolean(existingQueueJobId && !retryQueueError),
+      };
+    }
+
+    const jobRes = await client.query(
+      "INSERT INTO jobs (tenant_id, job_type, status, run_id) VALUES ($1, $2, 'queued', $3) RETURNING job_id",
+      [params.tenantId, params.jobType, runId],
+    );
+    const jobId = String(jobRes.rows[0].job_id);
+    const stepRes = await client.query(
+      `INSERT INTO steps (run_id, seq, tool_ref, status, input, input_digest)
+       VALUES ($1, 1, $2, 'pending', $3::jsonb, $4::jsonb) RETURNING step_id`,
+      [runId, params.toolRef, JSON.stringify(params.input), JSON.stringify(params.input)],
+    );
+    return {
+      jobId,
+      runId,
+      stepId: String(stepRes.rows[0].step_id),
+      queueJobId: null,
+      alreadyQueued: false,
+    };
+  });
+}
+
+async function markCreatedActionFailed(params: {
+  pool: Pool;
+  tenantId: string;
+  runId: string;
+  jobId: string;
+  stepId: string;
+  errorMessage: string;
+}) {
+  await params.pool.query(
+    "UPDATE runs SET status = 'failed', updated_at = now(), finished_at = COALESCE(finished_at, now()) WHERE tenant_id = $1 AND run_id = $2",
+    [params.tenantId, params.runId],
+  ).catch(() => undefined);
+  await params.pool.query(
+    "UPDATE jobs SET status = 'failed', updated_at = now(), result_summary = $3::jsonb WHERE tenant_id = $1 AND job_id = $2",
+    [params.tenantId, params.jobId, JSON.stringify({ error: params.errorMessage })],
+  ).catch(() => undefined);
+  await params.pool.query(
+    `UPDATE steps
+     SET status = 'failed',
+         updated_at = now(),
+         finished_at = COALESCE(finished_at, now()),
+         error_category = 'queue_error',
+         last_error = $2,
+         queue_job_id = NULL
+     WHERE step_id = $1`,
+    [params.stepId, params.errorMessage],
+  ).catch(() => undefined);
 }

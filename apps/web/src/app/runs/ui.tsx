@@ -3,9 +3,12 @@
 import Link from "next/link";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { t, statusLabel } from "@/lib/i18n";
 import { type ApiError, toApiError, errText } from "@/lib/apiError";
 import { Badge, Card, PageHeader, Table } from "@/components/ui";
+
+const STATUS_OPTIONS = ["running", "succeeded", "failed", "canceled", "queued", "pending", "created", "compensating", "needs_approval", "paused"] as const;
 
 type RunRow = Record<string, unknown>;
 type RunsListResponse = ApiError & { runs?: RunRow[] };
@@ -27,14 +30,11 @@ function statusTone(s: string): "neutral" | "success" | "warning" | "danger" {
   return "neutral";
 }
 
-function formatTime(v: unknown) {
+function formatTime(v: unknown, locale: string) {
+  const formatted = fmtDateTime(v, locale);
+  if (formatted !== "—") return formatted;
   const s = pickStr(v);
-  if (!s) return "-";
-  try {
-    const d = new Date(s);
-    if (Number.isNaN(d.getTime())) return s;
-    return d.toLocaleString();
-  } catch { return s; }
+  return s || "—";
 }
 
 export default function RunsClient(props: {
@@ -106,15 +106,18 @@ export default function RunsClient(props: {
         <div style={{ display: "grid", gap: 12 }}>
           <label>
             {t(props.locale, "runs.filters.status")}
-            <input value={status} onChange={(e) => setStatus(e.target.value)} placeholder={t(props.locale, "runs.filters.statusPlaceholder")} />
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="">{t(props.locale, "runs.filters.statusAll")}</option>
+              {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{statusLabel(s, props.locale)}</option>)}
+            </select>
           </label>
           <label>
             {t(props.locale, "runs.filters.updatedFrom")}
-            <input value={updatedFrom} onChange={(e) => setUpdatedFrom(e.target.value)} placeholder="2026-01-01T00:00:00Z" />
+            <input type="datetime-local" value={updatedFrom} onChange={(e) => setUpdatedFrom(e.target.value)} />
           </label>
           <label>
             {t(props.locale, "runs.filters.updatedTo")}
-            <input value={updatedTo} onChange={(e) => setUpdatedTo(e.target.value)} placeholder="2026-01-31T23:59:59Z" />
+            <input type="datetime-local" value={updatedTo} onChange={(e) => setUpdatedTo(e.target.value)} />
           </label>
           <label>
             {t(props.locale, "runs.filters.limit")}
@@ -152,10 +155,10 @@ export default function RunsClient(props: {
                   <td style={{ fontFamily: "monospace", fontSize: 12 }}>{pickStr(r.toolRef) || "-"}</td>
                   <td>{pickStr(r.trigger) || "-"}</td>
                   <td>
-                    <Badge tone={statusTone(pickStr(r.status))}>{pickStr(r.status) || "-"}</Badge>
+                    <Badge tone={statusTone(pickStr(r.status))}>{statusLabel(pickStr(r.status), props.locale) || "-"}</Badge>
                   </td>
-                  <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{formatTime(r.createdAt)}</td>
-                  <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{formatTime(r.updatedAt)}</td>
+                  <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{formatTime(r.createdAt, props.locale)}</td>
+                  <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{formatTime(r.updatedAt, props.locale)}</td>
                 </tr>
               );
             })}

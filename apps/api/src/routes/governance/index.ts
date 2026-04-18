@@ -4,15 +4,14 @@ import { governanceSchemasRoutes } from "./schemas";
 import { governanceArtifactPolicyRoutes } from "./artifactPolicy";
 import { governanceToolsRoutes } from "./tools";
 import { governancePolicyRoutes } from "./policy";
-import { governanceObservabilityRoutes } from "./observability";
+// observability routes moved to skills/observability-dashboard (optional-builtin Skill)
 import { governanceSkillRuntimeRoutes } from "./skillRuntime";
-import { governanceToolLimitsRoutes } from "./toolLimits";
 import { governanceChangesetsAndEvalsRoutes } from "./changesetsAndEvals";
 import { governanceKnowledgeRoutes } from "./knowledge";
 import { governanceIntegrationsRoutes } from "./integrations";
 import { governanceCollabRoutes } from "./collab";
 import { governanceConfigRoutes } from "./config";
-import { governanceFederationRoutes } from "./federation";
+// federation routes moved to skills/federation-gateway (optional-builtin Skill)
 
 export const governanceIndexRoutes: FastifyPluginAsync = async (app) => {
   await app.register(governanceUiRoutes);
@@ -20,14 +19,13 @@ export const governanceIndexRoutes: FastifyPluginAsync = async (app) => {
   await app.register(governanceArtifactPolicyRoutes);
   await app.register(governanceToolsRoutes);
   await app.register(governancePolicyRoutes);
-  await app.register(governanceObservabilityRoutes);
+  // governanceObservabilityRoutes → now registered via skills/observability-dashboard
   await app.register(governanceSkillRuntimeRoutes);
-  await app.register(governanceToolLimitsRoutes);
   await app.register(governanceChangesetsAndEvalsRoutes);
   await app.register(governanceKnowledgeRoutes);
   await app.register(governanceIntegrationsRoutes);
   await app.register(governanceCollabRoutes);
   await app.register(governanceConfigRoutes);
-  await app.register(governanceFederationRoutes);
+  // governanceFederationRoutes → now registered via skills/federation-gateway
 };
 

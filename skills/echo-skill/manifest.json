@@ -3,6 +3,17 @@
     "name": "echo.tool",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "回显工具",
+    "en-US": "Echo Tool"
+  },
+  "description": {
+    "zh-CN": "将输入的文本原样返回，用于测试和调试工具调用链路",
+    "en-US": "Echoes back the input text, used for testing and debugging tool invocation pipeline"
+  },
+  "category": "testing",
+  "priority": 3,
+  "tags": ["test", "debug", "utility"],
   "contract": {
     "scope": "read",
     "resourceType": "tool",

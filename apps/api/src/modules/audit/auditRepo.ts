@@ -54,7 +54,7 @@ function sha256Hex(s: string) {
   return crypto.createHash("sha256").update(s, "utf8").digest("hex");
 }
 
-function computeEventHash(params: { prevHash: string | null; normalized: any }) {
+export function computeEventHash(params: { prevHash: string | null; normalized: any }) {
   const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
   return sha256Hex(input);
 }
@@ -81,7 +81,33 @@ export type AuditEventInput = {
   latencyMs?: number;
   outboxId?: string;
   timestamp?: string;
+  /** P3-3: 人类可读的自然语言摘要 */
+  humanSummary?: string;
 };
+
+/**
+ * P3-3: 自动生成 humanSummary
+ * 当调用方未提供时，根据审计事件属性自动生成可读摘要
+ */
+function generateHumanSummary(e: AuditEventInput): string {
+  const parts: string[] = [];
+  const subject = e.subjectId ? `用户 ${e.subjectId.slice(0, 8)}` : "系统";
+  const resultText = e.result === "success" ? "成功" : e.result === "denied" ? "被拒绝" : "失败";
+
+  // 基本描述
+  parts.push(`${subject}对 ${e.resourceType} 执行 ${e.action} 操作，结果: ${resultText}`);
+
+  // 工具信息
+  if (e.toolRef) parts.push(`工具: ${e.toolRef}`);
+
+  // 延迟信息
+  if (e.latencyMs) parts.push(`耗时: ${e.latencyMs}ms`);
+
+  // 错误信息
+  if (e.errorCategory) parts.push(`错误类型: ${e.errorCategory}`);
+
+  return parts.join(" | ");
+}
 
 function withPolicySnapshotRef(policyDecision: unknown, policySnapshotRef: string | null) {
   if (!policySnapshotRef) return policyDecision ?? null;
@@ -116,6 +142,16 @@ export async function insertAuditEvent(pool: Pool, e: AuditEventInput) {
   }
   const policyDecision = withPolicySnapshotRef(e.policyDecision, policySnapshotRef);
   const errorCategory = normalizeAuditErrorCategory(e.errorCategory);
+
+  // P3-3: 自动生成或使用调用方提供的 humanSummary
+  const humanSummary = e.humanSummary ?? generateHumanSummary(e);
+  // 将 humanSummary 注入 outputDigest（兼容现有 schema）
+  const enrichedOutputDigest = e.outputDigest && typeof e.outputDigest === "object" && !Array.isArray(e.outputDigest)
+    ? { ...(e.outputDigest as Record<string, unknown>), humanSummary }
+    : e.outputDigest
+      ? { _original: e.outputDigest, humanSummary }
+      : { humanSummary };
+
   if (!e.tenantId) {
     await pool.query(
       `
@@ -139,7 +175,7 @@ export async function insertAuditEvent(pool: Pool, e: AuditEventInput) {
         e.workflowRef ?? null,
         policyDecision,
         e.inputDigest ?? null,
-        e.outputDigest ?? null,
+        enrichedOutputDigest,
         e.idempotencyKey ?? null,
         e.result,
         e.traceId,
@@ -173,7 +209,7 @@ export async function insertAuditEvent(pool: Pool, e: AuditEventInput) {
     latencyMs: e.latencyMs ?? null,
     policyDecision,
     inputDigest: e.inputDigest ?? null,
-    outputDigest: e.outputDigest ?? null,
+    outputDigest: enrichedOutputDigest,
     outboxId: e.outboxId ?? null,
   };
 
@@ -220,7 +256,7 @@ export async function insertAuditEvent(pool: Pool, e: AuditEventInput) {
         e.workflowRef ?? null,
         policyDecision,
         e.inputDigest ?? null,
-        e.outputDigest ?? null,
+        enrichedOutputDigest,
         e.idempotencyKey ?? null,
         e.result,
         e.traceId,

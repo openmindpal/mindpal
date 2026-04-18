@@ -137,8 +137,8 @@ export function EntityForm(props: Props) {
           locale: props.locale,
           body: JSON.stringify(
             props.mode === "update"
-              ? { schemaName: "core", entityName: props.entity, id: props.recordId, patch: payload }
-              : { schemaName: "core", entityName: props.entity, payload },
+              ? { entityName: props.entity, id: props.recordId, patch: payload }
+              : { entityName: props.entity, payload },
           ),
         });
         const data = await res.json();

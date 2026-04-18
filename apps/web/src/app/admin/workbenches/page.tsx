@@ -11,8 +11,8 @@ async function loadWorkbenches(locale: string) {
   return { status: res.status, json };
 }
 
-export default async function AdminWorkbenchesPage(props: { searchParams: SearchParams | Promise<SearchParams> }) {
-  const searchParams = await Promise.resolve(props.searchParams);
+export default async function AdminWorkbenchesPage(props: { searchParams: Promise<SearchParams> }) {
+  const searchParams = await props.searchParams;
   const locale = pickLocale(searchParams);
   const initial = await loadWorkbenches(locale);
   return (

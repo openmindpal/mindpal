@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { insertAuditEvent } from "../audit/auditRepo";
 
 /* ================================================================== */
 /*  Tool Historical Success Rate (P1-7.3)                               */
@@ -315,21 +316,20 @@ export async function recordRuntimeDegradation(params: {
   pool: Pool;
   event: RuntimeDegradationEvent;
 }): Promise<void> {
-  await params.pool.query(
-    `INSERT INTO audit_events (tenant_id, resource_type, action, actor_type, actor_id, metadata, trace_id)
-     VALUES ($1, 'skill.runtime', 'degraded', 'system', 'supply_chain_policy',
-             $2::jsonb, $3)`,
-    [
-      params.event.tenantId,
-      JSON.stringify({
-        toolRef: params.event.toolRef,
-        fromLevel: params.event.fromLevel,
-        toLevel: params.event.toLevel,
-        reason: params.event.reason,
-      }),
-      params.event.traceId ?? null,
-    ],
-  );
+  await insertAuditEvent(params.pool, {
+    subjectId: "supply_chain_policy",
+    tenantId: params.event.tenantId,
+    resourceType: "skill.runtime",
+    action: "degraded",
+    outputDigest: {
+      toolRef: params.event.toolRef,
+      fromLevel: params.event.fromLevel,
+      toLevel: params.event.toLevel,
+      reason: params.event.reason,
+    },
+    result: "success",
+    traceId: params.event.traceId ?? `runtime.degraded:${params.event.tenantId}:${params.event.toolRef}:${Date.now()}`,
+  });
 }
 
 /**
@@ -343,14 +343,14 @@ export async function getRuntimeDegradationStats(params: {
   const interval = params.window === "7d" ? "7 days" : params.window === "24h" ? "24 hours" : "1 hour";
   const res = await params.pool.query(
     `SELECT
-       metadata->>'toolRef' AS tool_ref,
+       output_digest->>'toolRef' AS tool_ref,
        COUNT(*)::int AS cnt
      FROM audit_events
      WHERE tenant_id = $1
        AND resource_type = 'skill.runtime'
        AND action = 'degraded'
-       AND created_at >= NOW() - $2::interval
-     GROUP BY metadata->>'toolRef'
+       AND timestamp >= NOW() - $2::interval
+     GROUP BY output_digest->>'toolRef'
      ORDER BY cnt DESC
      LIMIT 50`,
     [params.tenantId, interval],
@@ -459,7 +459,7 @@ export async function getAgentOSOperationsMetrics(params: {
      FROM audit_events
      WHERE tenant_id = $1
        AND action = 'tool_execution_denied'
-       AND created_at >= NOW() - $2::interval`,
+       AND timestamp >= NOW() - $2::interval`,
     [params.tenantId, interval],
   );
   const denyCount = Number(denyRes.rows[0]?.deny_count ?? 0);
@@ -556,7 +556,7 @@ export async function checkArchitectureQualityAlerts(params: {
      FROM audit_events
      WHERE tenant_id = $1
        AND action = 'tool_not_registered'
-       AND created_at >= NOW() - $2::interval`,
+       AND timestamp >= NOW() - $2::interval`,
     [params.tenantId, interval],
   );
   const unregCount = Number(unregRes.rows[0]?.unreg_count ?? 0);
@@ -585,4 +585,130 @@ export async function checkArchitectureQualityAlerts(params: {
   });
 
   return alerts;
+}
+
+/* ================================================================== */
+/*  Core Run Metrics (P3-2)                                             */
+/* ================================================================== */
+
+export interface CoreRunMetrics {
+  window: string;
+  timestamp: string;
+  /** 总计 */
+  totalRuns: number;
+  activeRuns: number;
+  blockedRuns: number;
+  succeededRuns: number;
+  failedRuns: number;
+  canceledRuns: number;
+  /** 各阶段分布 */
+  phaseDistribution: Record<string, number>;
+  /** 平均步骤耗时 (ms) */
+  avgStepDurationMs: number | null;
+  /** 审批转化率 = approved / total_approval_requested */
+  approvalConversionRate: number | null;
+  /** 最近 blocked 的 run 列表 (最多10条) */
+  recentBlockedRuns: Array<{
+    runId: string;
+    status: string;
+    blockReason: string | null;
+    updatedAt: string;
+  }>;
+}
+
+/**
+ * 核心运行指标查询 — 用于治理仪表盘。
+ * 提供 run-level 执行统计，包含阶段分布、阻塞列表、审批转化率等。
+ */
+export async function getCoreRunMetrics(params: {
+  pool: Pool;
+  tenantId: string;
+  window?: "1h" | "24h" | "7d";
+}): Promise<CoreRunMetrics> {
+  const interval = params.window === "7d" ? "7 days" : params.window === "24h" ? "24 hours" : "1 hour";
+
+  // 1. 各状态分布
+  const phaseRes = await params.pool.query(
+    `SELECT status, COUNT(*)::int AS cnt
+     FROM runs
+     WHERE tenant_id = $1 AND created_at >= NOW() - $2::interval
+     GROUP BY status`,
+    [params.tenantId, interval],
+  );
+  const phaseDistribution: Record<string, number> = {};
+  let totalRuns = 0;
+  let activeRuns = 0;
+  let blockedRuns = 0;
+  let succeededRuns = 0;
+  let failedRuns = 0;
+  let canceledRuns = 0;
+  const activePhases = new Set(["queued", "retrieving", "planning", "executing", "reviewing", "running", "compensating"]);
+  const blockedPhases = new Set(["needs_approval", "needs_device", "needs_arbiter", "paused"]);
+  for (const row of phaseRes.rows) {
+    const s = String(row.status);
+    const c = Number(row.cnt ?? 0);
+    phaseDistribution[s] = c;
+    totalRuns += c;
+    if (s === "succeeded") succeededRuns = c;
+    else if (s === "failed") failedRuns = c;
+    else if (s === "canceled") canceledRuns = c;
+    else if (activePhases.has(s)) activeRuns += c;
+    else if (blockedPhases.has(s)) blockedRuns += c;
+  }
+
+  // 2. 平均步骤耗时
+  const durRes = await params.pool.query(
+    `SELECT AVG(EXTRACT(EPOCH FROM (s.updated_at - s.created_at)) * 1000)::float AS avg_ms
+     FROM steps s JOIN runs r ON s.run_id = r.run_id
+     WHERE r.tenant_id = $1
+       AND s.created_at >= NOW() - $2::interval
+       AND s.status IN ('succeeded','failed')`,
+    [params.tenantId, interval],
+  );
+  const avgStepDurationMs = durRes.rows[0]?.avg_ms != null ? Math.round(Number(durRes.rows[0].avg_ms)) : null;
+
+  // 3. 审批转化率
+  const apprRes = await params.pool.query(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE status = 'approved')::int AS approved
+     FROM approvals
+     WHERE tenant_id = $1 AND created_at >= NOW() - $2::interval`,
+    [params.tenantId, interval],
+  );
+  const apprTotal = Number(apprRes.rows[0]?.total ?? 0);
+  const apprApproved = Number(apprRes.rows[0]?.approved ?? 0);
+  const approvalConversionRate = apprTotal > 0 ? apprApproved / apprTotal : null;
+
+  // 4. 最近 blocked runs
+  const blockedRes = await params.pool.query(
+    `SELECT run_id, status, metadata->>'blockReason' AS block_reason, updated_at
+     FROM runs
+     WHERE tenant_id = $1
+       AND status IN ('needs_approval','needs_device','needs_arbiter','paused')
+     ORDER BY updated_at DESC
+     LIMIT 10`,
+    [params.tenantId],
+  );
+  const recentBlockedRuns = blockedRes.rows.map((r: any) => ({
+    runId: String(r.run_id),
+    status: String(r.status),
+    blockReason: r.block_reason ? String(r.block_reason) : null,
+    updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : "",
+  }));
+
+  return {
+    window: params.window ?? "1h",
+    timestamp: new Date().toISOString(),
+    totalRuns,
+    activeRuns,
+    blockedRuns,
+    succeededRuns,
+    failedRuns,
+    canceledRuns,
+    phaseDistribution,
+    avgStepDurationMs,
+    approvalConversionRate,
+    recentBlockedRuns,
+  };
 }

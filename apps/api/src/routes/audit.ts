@@ -5,10 +5,10 @@ import { Errors } from "../lib/errors";
 import { normalizeAuditErrorCategory } from "../modules/audit/auditRepo";
 import { dispatchAuditOutboxBatch } from "../modules/audit/outboxRepo";
 import { requirePermission } from "../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { setAuditContext } from "../modules/audit/context";
 import { createAuditExport, getAuditExport, listAuditExports } from "../modules/audit/exportRepo";
 import { createAuditLegalHold, getAuditLegalHold, listAuditLegalHolds, releaseAuditLegalHold } from "../modules/audit/legalHoldRepo";
-import { getAuditRetentionPolicy, upsertAuditRetentionPolicy } from "../modules/audit/retentionRepo";
 import {
   clearAuditSiemDlq,
   clearAuditSiemOutbox,
@@ -55,7 +55,7 @@ function sha256Hex(s: string) {
 }
 
 function computeEventHash(params: { prevHash: string | null; normalized: any }) {
-  const input = stableStringify({ prevHash: params.prevHash ?? null, normalized: params.normalized });
+  const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
   return sha256Hex(input);
 }
 
@@ -178,14 +178,18 @@ async function updateSiemDestinationGovernanceExtras(app: any, params: {
 export const auditRoutes: FastifyPluginAsync = async (app) => {
   const listAudit = async (req: any) => {
     setAuditContext(req, { resourceType: "audit", action: "read" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_READ });
 
+    const subject = req.ctx.subject!;
     const q = z
       .object({
         traceId: z.string().optional(),
         subjectId: z.string().optional(),
         action: z.string().optional(),
-        limit: z.coerce.number().int().positive().max(200).optional(),
+        from: z.string().optional(),
+        to: z.string().optional(),
+        limit: z.coerce.number().int().positive().max(500).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
       })
       .parse(req.query);
 
@@ -196,9 +200,11 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const limit = q.limit ?? 50;
-    const where: string[] = [];
-    const args: any[] = [];
+    const limit = q.limit ?? 100;
+    const offset = q.offset ?? 0;
+    // P0-FIX: 必须按 tenant_id 隔离，防止跨租户审计数据泄露
+    const where: string[] = ["tenant_id = $1"];
+    const args: any[] = [subject.tenantId];
 
     if (q.traceId) {
       args.push(q.traceId);
@@ -212,17 +218,33 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       args.push(q.action);
       where.push(`action = $${args.length}`);
     }
+    if (q.from) {
+      args.push(q.from);
+      where.push(`timestamp >= $${args.length}::timestamptz`);
+    }
+    if (q.to) {
+      args.push(q.to);
+      where.push(`timestamp <= $${args.length}::timestamptz`);
+    }
+
+    const whereClause = `WHERE ${where.join(" AND ")}`;
+
+    // 查询总数用于分页
+    const countRes = await app.db.query(`SELECT COUNT(*)::int AS total FROM audit_events ${whereClause}`, args);
+    const total = Number(countRes.rows[0]?.total ?? 0);
 
     args.push(limit);
+    args.push(offset);
     const sql = `
       SELECT *
       FROM audit_events
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ${whereClause}
       ORDER BY timestamp DESC
-      LIMIT $${args.length}
+      LIMIT $${args.length - 1} OFFSET $${args.length}
     `;
     const res = await app.db.query(sql, args);
-    return { events: res.rows };
+    req.ctx.audit!.outputDigest = { total, limit, offset, returned: res.rows.length };
+    return { events: res.rows, total, limit, offset };
   };
 
   app.get("/audit", listAudit);
@@ -230,19 +252,19 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
 
   const verifyHashchain = async (req: any) => {
     setAuditContext(req, { resourceType: "audit", action: "verify" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "verify" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_VERIFY });
 
     const subject = req.ctx.subject!;
+    // P0-FIX: 不接受外部 tenantId 参数，强制使用当前用户所属租户，防止越权查看其他租户哈希链
     const q = z
       .object({
-        tenantId: z.string().optional(),
         from: z.string().optional(),
         to: z.string().optional(),
         limit: z.coerce.number().int().positive().max(20000).optional(),
       })
       .parse(req.query);
 
-    const tenantId = q.tenantId ?? subject.tenantId;
+    const tenantId = subject.tenantId;
     const limit = q.limit ?? 5000;
     const where: string[] = ["tenant_id = $1"];
     const args: any[] = [tenantId];
@@ -286,7 +308,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       prevHash = prev.rowCount ? (prev.rows[0].event_hash as string | null) : null;
     }
     if (q.from && prevHash === null && events.length) prevHash = (events[0].prev_hash as string | null) ?? null;
-    const failures: Array<{ eventId: string; reason: string }> = [];
+    const failures: Array<{ eventId: string; reason: string; details?: any }> = [];
 
     for (const ev of events) {
       const expectedPrev = prevHash;
@@ -305,6 +327,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
         continue;
       }
 
+      // P1-2 ENHANCEMENT: 重新计算 event_hash 并验证数据完整性
       const normalized = {
         timestamp: new Date(ev.timestamp).toISOString(),
         subjectId: ev.subject_id ?? null,
@@ -338,6 +361,24 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
         continue;
       }
 
+      // 重新计算 hash 并比对
+      const computedHash = computeEventHash({ prevHash: storedPrev, normalized });
+      if (computedHash !== storedHash) {
+        ok = false;
+        failures.push({ 
+          eventId: String(ev.event_id), 
+          reason: "event_hash_integrity_failed",
+          details: {
+            storedHash: storedHash.slice(0, 16) + "...",
+            computedHash: computedHash.slice(0, 16) + "...",
+          },
+        });
+        app.log.warn(
+          { eventId: ev.event_id, storedHash: storedHash.slice(0, 16), computedHash: computedHash.slice(0, 16) },
+          "[audit] Hash chain integrity violation detected"
+        );
+      }
+
       prevHash = storedHash;
       checkedCount += 1;
     }
@@ -354,31 +395,9 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
     return { valid: Boolean(out.ok), ...out };
   });
 
-  app.get("/audit/retention", async (req) => {
-    setAuditContext(req, { resourceType: "audit", action: "retention.read" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "retention.read" });
-    const subject = req.ctx.subject!;
-    const current = await getAuditRetentionPolicy({ pool: app.db, tenantId: subject.tenantId });
-    const retentionDays = current?.retentionDays ?? 0;
-    const out = { tenantId: subject.tenantId, retentionDays, updatedAt: current?.updatedAt ?? null };
-    req.ctx.audit!.outputDigest = out;
-    return out;
-  });
-
-  app.put("/audit/retention", async (req) => {
-    const body = z.object({ retentionDays: z.number().int().min(0).max(36500) }).parse(req.body);
-    setAuditContext(req, { resourceType: "audit", action: "retention.update" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "retention.update" });
-    const subject = req.ctx.subject!;
-    const row = await upsertAuditRetentionPolicy({ pool: app.db, tenantId: subject.tenantId, retentionDays: body.retentionDays });
-    normalizeAuditErrorCategoryInRequest(req);
-    req.ctx.audit!.outputDigest = { tenantId: row.tenantId, retentionDays: row.retentionDays };
-    return { tenantId: row.tenantId, retentionDays: row.retentionDays, updatedAt: row.updatedAt };
-  });
-
   app.get("/audit/legal-holds", async (req) => {
     setAuditContext(req, { resourceType: "audit", action: "legalHold.manage" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "legalHold.manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_LEGAL_HOLD_MANAGE });
     const subject = req.ctx.subject!;
     const q = z.object({ status: z.enum(["active", "released"]).optional(), limit: z.coerce.number().int().positive().max(200).optional() }).parse(req.query);
     const items = await listAuditLegalHolds({ pool: app.db, tenantId: subject.tenantId, status: q.status, limit: q.limit ?? 50 });
@@ -400,7 +419,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body);
     setAuditContext(req, { resourceType: "audit", action: "legalHold.create" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "legalHold.manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_LEGAL_HOLD_MANAGE });
     const subject = req.ctx.subject!;
     const scopeId = body.scopeType === "tenant" ? subject.tenantId : body.scopeId;
     if (!scopeId) throw Errors.badRequest("缺少 scopeId");
@@ -425,7 +444,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
   app.post("/audit/legal-holds/:holdId/release", async (req) => {
     const params = z.object({ holdId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "audit", action: "legalHold.release" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "legalHold.manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_LEGAL_HOLD_MANAGE });
     const subject = req.ctx.subject!;
     const current = await getAuditLegalHold({ pool: app.db, tenantId: subject.tenantId, holdId: params.holdId });
     if (!current) throw Errors.badRequest("Hold 不存在");
@@ -438,7 +457,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/audit/exports", async (req) => {
     setAuditContext(req, { resourceType: "audit", action: "export" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "export" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_EXPORT });
     const subject = req.ctx.subject!;
     const limit = z.coerce.number().int().positive().max(200).optional().parse((req.query as any)?.limit) ?? 50;
     const items = await listAuditExports({ pool: app.db, tenantId: subject.tenantId, limit });
@@ -449,7 +468,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
   app.get("/audit/exports/:exportId", async (req) => {
     const params = z.object({ exportId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "audit", action: "export" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "export" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_EXPORT });
     const subject = req.ctx.subject!;
     const out = await getAuditExport({ pool: app.db, tenantId: subject.tenantId, exportId: params.exportId });
     if (!out) throw Errors.badRequest("Export 不存在");
@@ -472,7 +491,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body);
     setAuditContext(req, { resourceType: "audit", action: "export.requested" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "export" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_EXPORT });
     const subject = req.ctx.subject!;
     const filters = { ...body, requestedAt: new Date().toISOString() };
     const exp = await createAuditExport({ pool: app.db, tenantId: subject.tenantId, createdBy: subject.subjectId, filters });
@@ -488,7 +507,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/audit/siem-destinations", async (req) => {
     setAuditContext(req, { resourceType: "audit", action: "siem.destination.read" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "siem.destination.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_SIEM_DESTINATION_READ });
     const subject = req.ctx.subject!;
     const limit = z.coerce.number().int().positive().max(200).optional().parse((req.query as any)?.limit) ?? 50;
     const items0 = await listAuditSiemDestinations({ pool: app.db, tenantId: subject.tenantId, limit });
@@ -518,7 +537,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body);
     setAuditContext(req, { resourceType: "audit", action: "siem.destination.write" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "siem.destination.write" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_SIEM_DESTINATION_WRITE });
     const highRiskErr = requireHighRiskContext(req, body);
     if (highRiskErr) return reply.status(409).send(highRiskErr);
     const subject = req.ctx.subject!;
@@ -568,7 +587,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body);
     setAuditContext(req, { resourceType: "audit", action: "siem.destination.write" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "siem.destination.write" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_SIEM_DESTINATION_WRITE });
     const highRiskErr = requireHighRiskContext(req, body);
     if (highRiskErr) return reply.status(409).send(highRiskErr);
     const subject = req.ctx.subject!;
@@ -612,7 +631,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
   app.post("/audit/siem-destinations/:id/test", async (req, reply) => {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "audit", action: "siem.destination.test" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "siem.destination.test" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_SIEM_DESTINATION_TEST });
     const highRiskErr = requireHighRiskContext(req, req.body);
     if (highRiskErr) return reply.status(409).send(highRiskErr);
     const subject = req.ctx.subject!;
@@ -710,7 +729,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body ?? {});
     setAuditContext(req, { resourceType: "audit", action: "siem.destination.backfill" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "siem.destination.backfill" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_SIEM_DESTINATION_BACKFILL });
     const highRiskErr = requireHighRiskContext(req, body);
     if (highRiskErr) return reply.status(409).send(highRiskErr);
     const subject = req.ctx.subject!;
@@ -761,7 +780,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
   app.get("/audit/siem-destinations/:id/dlq", async (req) => {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "audit", action: "siem.dlq.read" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "siem.dlq.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_SIEM_DLQ_READ });
     const subject = req.ctx.subject!;
     const limit = z.coerce.number().int().positive().max(200).optional().parse((req.query as any)?.limit) ?? 50;
 
@@ -776,7 +795,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
   app.post("/audit/siem-destinations/:id/dlq/clear", async (req, reply) => {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "audit", action: "siem.dlq.clear" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "siem.dlq.write" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_SIEM_DLQ_WRITE });
     const highRiskErr = requireHighRiskContext(req, req.body);
     if (highRiskErr) return reply.status(409).send(highRiskErr);
     const subject = req.ctx.subject!;
@@ -794,7 +813,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ limit: z.number().int().positive().max(1000).optional() }).parse(req.body ?? {});
     setAuditContext(req, { resourceType: "audit", action: "siem.dlq.requeue" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "audit", action: "siem.dlq.write" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.AUDIT_SIEM_DLQ_WRITE });
     const highRiskErr = requireHighRiskContext(req, body);
     if (highRiskErr) return reply.status(409).send(highRiskErr);
     const subject = req.ctx.subject!;

@@ -1,3 +1,5 @@
+import { isPlainObject } from "./runtime";
+
 export type PolicyLiteral = string | number | boolean | null;
 
 export type PolicyOperand =
@@ -19,7 +21,19 @@ export type PolicyExpr =
   | { op: "lte"; left: PolicyOperand; right: PolicyOperand | PolicyLiteral }
   | { op: "between"; operand: PolicyOperand; low: PolicyLiteral; high: PolicyLiteral }
   | { op: "ip_in_cidr"; operand: PolicyOperand; cidrs: string[] }
-  | { op: "time_window"; timeZone: string; days: number[]; startHour: string; endHour: string };
+  | { op: "time_window"; timeZone: string; days: number[]; startHour: string; endHour: string }
+  // v2: CEL风格操作符
+  | { op: "regex"; operand: PolicyOperand; pattern: string; flags?: string }
+  | { op: "contains"; operand: PolicyOperand; value: string }
+  | { op: "starts_with"; operand: PolicyOperand; prefix: string }
+  | { op: "ends_with"; operand: PolicyOperand; suffix: string }
+  | { op: "gt"; left: PolicyOperand; right: PolicyOperand | PolicyLiteral }
+  | { op: "lt"; left: PolicyOperand; right: PolicyOperand | PolicyLiteral }
+  | { op: "neq"; left: PolicyOperand; right: PolicyOperand | PolicyLiteral }
+  | { op: "size"; operand: PolicyOperand; comparator: "eq" | "gt" | "lt" | "gte" | "lte"; value: number }
+  // v2: ABAC 层级操作符
+  | { op: "hierarchy"; operand: PolicyOperand; ancestorValue: string; separator?: string }
+  | { op: "attr_match"; attributes: Array<{ key: string; operand: PolicyOperand; value: PolicyLiteral }> };
 
 export const POLICY_EXPR_JSON_SCHEMA_V1 = {
   $id: "openslin:policy-expr:v1",
@@ -64,10 +78,6 @@ export const POLICY_EXPR_JSON_SCHEMA_V1 = {
     },
   },
 } as const;
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
 
 function isSafePathSegment(seg: string) {
   if (!seg) return false;
@@ -262,6 +272,88 @@ export function validatePolicyExpr(input: unknown): PolicyExprValidationResult {
       const endHour = String((v as any).endHour ?? "");
       if (!startHour || !endHour) return null;
       return { op: "time_window", timeZone: tz, days: days.map(Number), startHour, endHour };
+    }
+    // v2: CEL 风格操作符
+    if (op === "regex") {
+      const operand = parseOperand((v as any).operand);
+      if (!operand) return null;
+      const pattern = String((v as any).pattern ?? "");
+      if (!pattern) return null;
+      // 安全检查: 限制正则复杂度
+      if (pattern.length > 500) return null;
+      const flags = String((v as any).flags ?? "");
+      if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
+      return { op: "regex", operand, pattern, flags: flags || undefined };
+    }
+    if (op === "contains") {
+      const operand = parseOperand((v as any).operand);
+      if (!operand) return null;
+      const value = String((v as any).value ?? "");
+      if (!value) return null;
+      if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
+      return { op: "contains", operand, value };
+    }
+    if (op === "starts_with") {
+      const operand = parseOperand((v as any).operand);
+      if (!operand) return null;
+      const prefix = String((v as any).prefix ?? "");
+      if (!prefix) return null;
+      if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
+      return { op: "starts_with", operand, prefix };
+    }
+    if (op === "ends_with") {
+      const operand = parseOperand((v as any).operand);
+      if (!operand) return null;
+      const suffix = String((v as any).suffix ?? "");
+      if (!suffix) return null;
+      if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
+      return { op: "ends_with", operand, suffix };
+    }
+    if (op === "gt" || op === "lt" || op === "neq") {
+      const left = parseOperand((v as any).left);
+      if (!left) return null;
+      const rightRaw = (v as any).right;
+      const rightOp = parseOperand(rightRaw);
+      const rightLit = rightOp ? null : parseLiteral(rightRaw);
+      if (!rightOp && rightLit === null) return null;
+      if (left.kind === "payload") usedPayloadPaths.add(left.path);
+      if (rightOp?.kind === "payload") usedPayloadPaths.add(rightOp.path);
+      return { op, left, right: (rightOp ?? rightLit) as any };
+    }
+    if (op === "size") {
+      const operand = parseOperand((v as any).operand);
+      if (!operand) return null;
+      const comparator = String((v as any).comparator ?? "");
+      if (!["eq", "gt", "lt", "gte", "lte"].includes(comparator)) return null;
+      const value = Number((v as any).value);
+      if (!Number.isFinite(value)) return null;
+      if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
+      return { op: "size", operand, comparator: comparator as any, value };
+    }
+    if (op === "hierarchy") {
+      const operand = parseOperand((v as any).operand);
+      if (!operand) return null;
+      const ancestorValue = String((v as any).ancestorValue ?? "");
+      if (!ancestorValue) return null;
+      const separator = String((v as any).separator ?? "/");
+      if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
+      return { op: "hierarchy", operand, ancestorValue, separator };
+    }
+    if (op === "attr_match") {
+      const attributes = (v as any).attributes;
+      if (!Array.isArray(attributes) || attributes.length === 0 || attributes.length > 20) return null;
+      const parsed: Array<{ key: string; operand: PolicyOperand; value: PolicyLiteral }> = [];
+      for (const attr of attributes) {
+        const key = String(attr?.key ?? "");
+        if (!key) return null;
+        const operand = parseOperand(attr?.operand);
+        if (!operand) return null;
+        const value = parseLiteral(attr?.value);
+        if (value === null && attr?.value !== null) return null;
+        if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
+        parsed.push({ key, operand, value });
+      }
+      return { op: "attr_match", attributes: parsed };
     }
     return null;
   };
@@ -495,6 +587,69 @@ export function compilePolicyExprWhere(params: {
       const eh = parseInt(e.endHour, 10);
       const hourOk = sh <= eh ? (hour >= sh && hour < eh) : (hour >= sh || hour < eh);
       return dayOk && hourOk ? "TRUE" : "FALSE";
+    }
+    // v2: CEL 风格操作符编译
+    if (e.op === "regex") {
+      const opSql = operandSql(e.operand);
+      const patternParam = pushValue(e.pattern);
+      return `(${opSql})::text ~ ${patternParam}`;
+    }
+    if (e.op === "contains") {
+      const opSql = operandSql(e.operand);
+      const valueParam = pushValue(`%${e.value}%`);
+      return `(${opSql})::text ILIKE ${valueParam}`;
+    }
+    if (e.op === "starts_with") {
+      const opSql = operandSql(e.operand);
+      const prefixParam = pushValue(`${e.prefix}%`);
+      return `(${opSql})::text ILIKE ${prefixParam}`;
+    }
+    if (e.op === "ends_with") {
+      const opSql = operandSql(e.operand);
+      const suffixParam = pushValue(`%${e.suffix}`);
+      return `(${opSql})::text ILIKE ${suffixParam}`;
+    }
+    if (e.op === "gt") {
+      const left = operandSql(e.left);
+      const right = isPlainObject(e.right) ? operandSql(e.right as any) : literalSql(e.right as any);
+      if (isNumericCompare(e.left, e.right)) return `${numCast(left)} > ${numCast(right)}`;
+      return `(${left})::text > (${right})::text`;
+    }
+    if (e.op === "lt") {
+      const left = operandSql(e.left);
+      const right = isPlainObject(e.right) ? operandSql(e.right as any) : literalSql(e.right as any);
+      if (isNumericCompare(e.left, e.right)) return `${numCast(left)} < ${numCast(right)}`;
+      return `(${left})::text < (${right})::text`;
+    }
+    if (e.op === "neq") {
+      const left = operandSql(e.left);
+      const right = isPlainObject(e.right) ? operandSql(e.right as any) : literalSql(e.right as any);
+      return `(${left})::text <> (${right})::text`;
+    }
+    if (e.op === "size") {
+      const opSql = operandSql(e.operand);
+      const sizeExpr = `jsonb_array_length((${opSql})::jsonb)`;
+      const valParam = pushValue(e.value);
+      const cmp = e.comparator;
+      const op = cmp === "eq" ? "=" : cmp === "gt" ? ">" : cmp === "lt" ? "<" : cmp === "gte" ? ">=" : "<=";
+      return `${sizeExpr} ${op} ${valParam}::int`;
+    }
+    if (e.op === "hierarchy") {
+      // 层级匹配: 检查值是否以 ancestorValue 开头 (路径分隔符)
+      const opSql = operandSql(e.operand);
+      const sep = e.separator ?? "/";
+      const prefixParam = pushValue(`${e.ancestorValue}${sep}%`);
+      const exactParam = pushValue(e.ancestorValue);
+      return `((${opSql})::text = ${exactParam} OR (${opSql})::text LIKE ${prefixParam})`;
+    }
+    if (e.op === "attr_match") {
+      // ABAC 属性匹配: 所有属性均匹配
+      const conditions = e.attributes.map(attr => {
+        const opSql = operandSql(attr.operand);
+        const valParam = literalSql(attr.value);
+        return `(${opSql})::text = (${valParam})::text`;
+      });
+      return `(${conditions.join(" AND ")})`;
     }
     throw new Error("policy_violation:policy_expr_invalid");
   };

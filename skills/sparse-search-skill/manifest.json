@@ -1,0 +1,51 @@
+{
+  "identity": {
+    "name": "knowledge.search.sparse",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "BM25稀疏向量检索",
+    "en-US": "BM25 Sparse Vector Search"
+  },
+  "description": {
+    "zh-CN": "基于BM25算法的稀疏向量计算与检索能力。将文本转化为稀疏向量表示，支持词频匹配和精确关键词检索，可与Dense Embedding结合实现Hybrid Search（稀疏+稠密融合检索），显著提升关键词敏感型查询的召回率。",
+    "en-US": "BM25-based sparse vector computation and search. Converts text to sparse vector representation for term-frequency matching and precise keyword retrieval. Combines with Dense Embedding for Hybrid Search (sparse+dense fusion)."
+  },
+  "category": "knowledge",
+  "priority": 6,
+  "tags": ["bm25", "sparse", "search", "hybrid", "knowledge", "retrieval"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "knowledge",
+    "action": "sparse_search",
+    "idempotencyRequired": true,
+    "riskLevel": "low",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "action": { "type": "string", "required": true, "description": "操作类型: tokenize | compute | score | search" },
+        "text": { "type": "string", "description": "待处理的文本（tokenize/compute 操作）" },
+        "query": { "type": "string", "description": "查询文本（score/search 操作）" },
+        "vectorA": { "type": "json", "description": "稀疏向量A（score 操作: {term: weight}）" },
+        "vectorB": { "type": "json", "description": "稀疏向量B（score 操作: {term: weight}）" },
+        "documents": { "type": "json", "description": "文档列表（search 操作: [{id, text}] 或 [{id, sparseVector}]）" },
+        "topK": { "type": "number", "description": "返回前K个结果，默认 10" },
+        "language": { "type": "string", "description": "文本语言: zh | en | auto，默认 auto" },
+        "k1": { "type": "number", "description": "BM25 k1 参数（词频饱和度），默认 1.2" },
+        "b": { "type": "number", "description": "BM25 b 参数（文档长度归一化），默认 0.75" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "tokens": { "type": "json", "description": "分词结果 [string]（tokenize 操作）" },
+        "sparseVector": { "type": "json", "description": "稀疏向量 {term: weight}（compute 操作）" },
+        "score": { "type": "number", "description": "相似度得分（score 操作）" },
+        "results": { "type": "json", "description": "检索结果 [{id, score, matchedTerms}]（search 操作）" },
+        "termCount": { "type": "number", "description": "词项数量" }
+      }
+    }
+  },
+  "entry": "dist/index.js"
+}

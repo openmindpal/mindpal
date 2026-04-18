@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { isPlainObject } from "@openslin/shared";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
@@ -8,7 +9,7 @@ import { getRecord, updateRecord } from "../../modules/data/dataRepo";
 import { applyWriteFieldRules } from "../../modules/data/fieldRules";
 import { validateEntityPayload } from "../../modules/data/validate";
 import { authorize } from "../../modules/auth/authz";
-import { getEffectiveSchema } from "../../modules/metadata/schemaRepo";
+import { getEffectiveSchema, resolveSchemaNameForEntity } from "../../modules/metadata/schemaRepo";
 import { getOpByOpId, getServerWatermark, insertSyncOp, listOpsAfterCursor, upsertWatermark } from "./modules/syncRepo";
 import { getMergeRunById, insertMergeRun } from "./modules/syncMergeRepo";
 import { abandonConflictTicket, createConflictTicket, getConflictTicketById, listConflictTickets, resolveConflictTicket } from "./modules/syncConflictTicketRepo";
@@ -57,10 +58,6 @@ function summarizePatch(patch: any) {
   const kindSet = new Set(Object.values(kinds));
   const conflictType = kindSet.has("array") ? "list_conflict" : kindSet.has("object") ? "json_conflict" : "field_conflict";
   return { conflictType, touchedFields: keys, fieldKinds: kinds };
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
 }
 
 function computePatchDigest12(patch: any) {
@@ -1028,7 +1025,18 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
         return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "同步操作不存在", "en-US": "Sync op not found" }, traceId: req.ctx.traceId });
       }
 
-      const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!, name: String(op.schemaName ?? "core") });
+      const resolvedSchemaName = await resolveSchemaNameForEntity({
+        pool: app.db,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId!,
+        entityName: String(op.entityName ?? ""),
+        requestedSchemaName: typeof op.schemaName === "string" ? op.schemaName : null,
+      });
+      if (!resolvedSchemaName.ok) {
+        req.ctx.audit!.errorCategory = "policy_violation";
+        return reply.status(409).send({ errorCode: resolvedSchemaName.code, message: { "zh-CN": resolvedSchemaName.reason, "en-US": resolvedSchemaName.reason }, traceId: req.ctx.traceId });
+      }
+      const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!, name: resolvedSchemaName.schemaName });
       if (!schema) {
         req.ctx.audit!.errorCategory = "policy_violation";
         return reply.status(409).send({ errorCode: "SCHEMA_NOT_RELEASED", message: { "zh-CN": "Schema 未发布", "en-US": "Schema not released" }, traceId: req.ctx.traceId });

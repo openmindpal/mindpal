@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { IconChevronRight, IconCheck, IconX, IconRefresh } from "./ShellIcons";
+import { formatToolRef, timeAgo } from "./shellUtils";
 import styles from "./PendingActionsQueue.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
@@ -38,104 +40,89 @@ type PendingActionItem =
   | { type: "failed_run"; data: FailedRun }
   | { type: "deadletter"; data: DeadletterStep };
 
-/* ─── Icons ─────────────────────────────────────────────────────────────────── */
+/* ─── Inline Action State ─────────────────────────────────────────────────── */
 
-function IconApproval() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M9 11l3 3L22 4" />
-      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-    </svg>
-  );
-}
-
-function IconError() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="10" />
-      <line x1="12" y1="8" x2="12" y2="12" />
-      <line x1="12" y1="16" x2="12.01" y2="16" />
-    </svg>
-  );
-}
-
-function IconDeadletter() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
-      <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-    </svg>
-  );
-}
-
-function IconChevronRight() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-      <polyline points="9 18 15 12 9 6" />
-    </svg>
-  );
-}
-
-/* ─── Utility Functions ─────────────────────────────────────────────────────── */
-
-function formatToolRef(toolRef: string | null): string {
-  if (!toolRef) return "-";
-  const at = toolRef.lastIndexOf("@");
-  return at > 0 ? toolRef.slice(0, at) : toolRef;
-}
-
-function timeAgo(dateStr: string, locale: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diffMs = now - then;
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHr = Math.floor(diffMin / 60);
-
-  if (diffMin < 1) return t(locale, "pendingActions.justNow");
-  if (diffMin < 60) return t(locale, "pendingActions.minutesAgo").replace("{n}", String(diffMin));
-  if (diffHr < 24) return t(locale, "pendingActions.hoursAgo").replace("{n}", String(diffHr));
-  return t(locale, "pendingActions.daysAgo").replace("{n}", String(Math.floor(diffHr / 24)));
-}
+type InlineActionState = Record<string, "idle" | "loading" | "done" | "error">;
 
 /* ─── Action Item Component ─────────────────────────────────────────────────── */
 
-function ActionItem(props: { item: PendingActionItem; locale: string }) {
-  const { item, locale } = props;
+function ActionItem(props: {
+  item: PendingActionItem;
+  locale: string;
+  actionState: InlineActionState;
+  onApprove?: (approvalId: string) => void;
+  onReject?: (approvalId: string) => void;
+  onRetryRun?: (runId: string) => void;
+}) {
+  const { item, locale, actionState, onApprove, onReject, onRetryRun } = props;
 
   if (item.type === "approval") {
     const { data } = item;
     const href = `/gov/approvals/${encodeURIComponent(data.approvalId)}?lang=${encodeURIComponent(locale)}`;
+    const state = actionState[data.approvalId] ?? "idle";
     return (
-      <Link href={href} className={styles.actionItem}>
-        <span className={`${styles.actionIcon} ${styles.actionIconApproval}`}>
-          <IconApproval />
-        </span>
-        <div className={styles.actionContent}>
-          <span className={styles.actionType}>{t(locale, "pendingActions.type.approval")}</span>
-          <span className={styles.actionDetail}>{formatToolRef(data.toolRef)}</span>
-        </div>
-        <span className={styles.actionTime}>{timeAgo(data.requestedAt, locale)}</span>
-        <span className={styles.actionArrow}><IconChevronRight /></span>
-      </Link>
+      <div className={styles.actionItem}>
+        <span className={`${styles.actionIcon} ${styles.actionIconApproval}`} />
+        <Link href={href} className={styles.actionContent}>
+          <span className={styles.actionLabel}>{formatToolRef(data.toolRef) || t(locale, "pendingActions.type.approval")}</span>
+        </Link>
+        <span className={styles.actionTime}>{timeAgo(data.requestedAt, locale, "pendingActions")}</span>
+        {state === "done" ? (
+          <span className={styles.inlineActionDone}>{t(locale, "pendingActions.done")}</span>
+        ) : state === "error" ? (
+          <span className={styles.inlineActionError}>!</span>
+        ) : (
+          <span className={styles.inlineActions}>
+            <button
+              className={`${styles.inlineBtn} ${styles.inlineBtnApprove}`}
+              disabled={state === "loading"}
+              onClick={(e) => { e.stopPropagation(); onApprove?.(data.approvalId); }}
+              title={t(locale, "pendingActions.quickApprove")}
+            >
+              <IconCheck />
+            </button>
+            <button
+              className={`${styles.inlineBtn} ${styles.inlineBtnReject}`}
+              disabled={state === "loading"}
+              onClick={(e) => { e.stopPropagation(); onReject?.(data.approvalId); }}
+              title={t(locale, "pendingActions.quickReject")}
+            >
+              <IconX />
+            </button>
+          </span>
+        )}
+      </div>
     );
   }
 
   if (item.type === "failed_run") {
     const { data } = item;
     const href = `/runs/${encodeURIComponent(data.runId)}?lang=${encodeURIComponent(locale)}`;
+    const state = actionState[data.runId] ?? "idle";
     return (
-      <Link href={href} className={styles.actionItem}>
-        <span className={`${styles.actionIcon} ${styles.actionIconFailed}`}>
-          <IconError />
-        </span>
-        <div className={styles.actionContent}>
-          <span className={styles.actionType}>{t(locale, "pendingActions.type.failedRun")}</span>
-          <span className={styles.actionDetail}>{data.runId.slice(0, 8)}...</span>
-        </div>
-        <span className={styles.actionTime}>{timeAgo(data.updatedAt, locale)}</span>
-        <span className={styles.actionArrow}><IconChevronRight /></span>
-      </Link>
+      <div className={styles.actionItem}>
+        <span className={`${styles.actionIcon} ${styles.actionIconFailed}`} />
+        <Link href={href} className={styles.actionContent}>
+          <span className={styles.actionLabel}>{t(locale, "pendingActions.type.failedRun")} {data.runId.slice(0, 8)}</span>
+        </Link>
+        <span className={styles.actionTime}>{timeAgo(data.updatedAt, locale, "pendingActions")}</span>
+        {state === "done" ? (
+          <span className={styles.inlineActionDone}>{t(locale, "pendingActions.retried")}</span>
+        ) : state === "error" ? (
+          <span className={styles.inlineActionError}>!</span>
+        ) : (
+          <span className={styles.inlineActions}>
+            <button
+              className={`${styles.inlineBtn} ${styles.inlineBtnRetry}`}
+              disabled={state === "loading"}
+              onClick={(e) => { e.stopPropagation(); onRetryRun?.(data.runId); }}
+              title={t(locale, "pendingActions.quickRetry")}
+            >
+              <IconRefresh />
+            </button>
+          </span>
+        )}
+      </div>
     );
   }
 
@@ -143,19 +130,16 @@ function ActionItem(props: { item: PendingActionItem; locale: string }) {
     const { data } = item;
     const href = `/gov/workflow/deadletters?lang=${encodeURIComponent(locale)}`;
     return (
-      <Link href={href} className={styles.actionItem}>
-        <span className={`${styles.actionIcon} ${styles.actionIconDeadletter}`}>
-          <IconDeadletter />
-        </span>
-        <div className={styles.actionContent}>
-          <span className={styles.actionType}>{t(locale, "pendingActions.type.deadletter")}</span>
-          <span className={styles.actionDetail}>
+      <div className={styles.actionItem}>
+        <span className={`${styles.actionIcon} ${styles.actionIconDeadletter}`} />
+        <Link href={href} className={styles.actionContent}>
+          <span className={styles.actionLabel}>
             {formatToolRef(data.toolRef)} #{data.attempt}
           </span>
-        </div>
-        <span className={styles.actionTime}>{timeAgo(data.deadletteredAt, locale)}</span>
-        <span className={styles.actionArrow}><IconChevronRight /></span>
-      </Link>
+        </Link>
+        <span className={styles.actionTime}>{timeAgo(data.deadletteredAt, locale, "pendingActions")}</span>
+        <Link href={href} className={styles.actionArrow}><IconChevronRight /></Link>
+      </div>
     );
   }
 
@@ -166,13 +150,13 @@ function ActionItem(props: { item: PendingActionItem; locale: string }) {
 
 export default function PendingActionsQueue(props: {
   locale: string;
-  collapsed?: boolean;
+  onBadgeUpdate?: (count: number) => void;
 }) {
-  const { locale, collapsed } = props;
+  const { locale, onBadgeUpdate } = props;
   const [items, setItems] = useState<PendingActionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(true);
+  const [actionState, setActionState] = useState<InlineActionState>({});
 
   const fetchAll = useCallback(async () => {
     try {
@@ -216,6 +200,7 @@ export default function PendingActionsQueue(props: {
       });
 
       setItems(all.slice(0, 15));
+      onBadgeUpdate?.(all.length);
       setError(null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "fetch_error");
@@ -235,57 +220,56 @@ export default function PendingActionsQueue(props: {
     return () => clearInterval(timer);
   }, [fetchAll]);
 
-  if (collapsed) return null;
+  /* ─── Inline quick actions ─── */
 
-  const toggleExpand = () => setExpanded((e) => !e);
+  const handleApproval = useCallback(async (approvalId: string, decision: "approve" | "reject") => {
+    setActionState((s) => ({ ...s, [approvalId]: "loading" }));
+    try {
+      const res = await apiFetch(`/approvals/${encodeURIComponent(approvalId)}/decisions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        locale,
+        body: JSON.stringify({ decision, reason: decision === "approve" ? "Quick-approved from tray" : "Quick-rejected from tray" }),
+      });
+      if (res.ok) {
+        setActionState((s) => ({ ...s, [approvalId]: "done" }));
+        // Remove from list after brief delay
+        setTimeout(() => setItems((prev) => prev.filter((it) => !(it.type === "approval" && it.data.approvalId === approvalId))), 800);
+      } else {
+        console.error(`[PendingActions] approval decision failed: ${res.status}`);
+        setActionState((s) => ({ ...s, [approvalId]: "error" }));
+      }
+    } catch (err) {
+      console.error("[PendingActions] approval decision error:", err);
+      setActionState((s) => ({ ...s, [approvalId]: "error" }));
+    }
+  }, [locale]);
+
+  const handleRetryRun = useCallback(async (runId: string) => {
+    setActionState((s) => ({ ...s, [runId]: "loading" }));
+    try {
+      const res = await apiFetch(`/runs/${encodeURIComponent(runId)}/retry`, {
+        method: "POST",
+        locale,
+      });
+      if (res.ok) {
+        setActionState((s) => ({ ...s, [runId]: "done" }));
+        setTimeout(() => setItems((prev) => prev.filter((it) => !(it.type === "failed_run" && it.data.runId === runId))), 800);
+      } else {
+        console.error(`[PendingActions] retry run failed: ${res.status}`);
+        setActionState((s) => ({ ...s, [runId]: "error" }));
+      }
+    } catch (err) {
+      console.error("[PendingActions] retry run error:", err);
+      setActionState((s) => ({ ...s, [runId]: "error" }));
+    }
+  }, [locale]);
 
   // Count by type
-  const approvalCount = items.filter((i) => i.type === "approval").length;
-  const failedCount = items.filter((i) => i.type === "failed_run").length;
-  const deadletterCount = items.filter((i) => i.type === "deadletter").length;
-
   return (
     <div className={styles.container}>
-      {/* Header */}
-      <button className={styles.header} onClick={toggleExpand}>
-        <span className={styles.headerIcon}>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            style={{ transform: expanded ? "rotate(90deg)" : "rotate(0)", transition: "transform 0.15s" }}
-          >
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </span>
-        <span className={styles.headerTitle}>{t(locale, "pendingActions.title")}</span>
-        {items.length > 0 && (
-          <div className={styles.headerBadges}>
-            {approvalCount > 0 && (
-              <span className={`${styles.headerBadge} ${styles.headerBadgeApproval}`} title={t(locale, "pendingActions.type.approval")}>
-                {approvalCount}
-              </span>
-            )}
-            {failedCount > 0 && (
-              <span className={`${styles.headerBadge} ${styles.headerBadgeFailed}`} title={t(locale, "pendingActions.type.failedRun")}>
-                {failedCount}
-              </span>
-            )}
-            {deadletterCount > 0 && (
-              <span className={`${styles.headerBadge} ${styles.headerBadgeDeadletter}`} title={t(locale, "pendingActions.type.deadletter")}>
-                {deadletterCount}
-              </span>
-            )}
-          </div>
-        )}
-      </button>
-
       {/* Content */}
-      {expanded && (
-        <div className={styles.content}>
+      <div className={styles.content}>
           {loading && (
             <div className={styles.loadingState}>
               <span className={styles.spinner} />
@@ -315,12 +299,15 @@ export default function PendingActionsQueue(props: {
                   key={`${item.type}_${item.type === "approval" ? item.data.approvalId : item.type === "failed_run" ? item.data.runId : item.data.stepId}_${idx}`}
                   item={item}
                   locale={locale}
+                  actionState={actionState}
+                  onApprove={(id) => handleApproval(id, "approve")}
+                  onReject={(id) => handleApproval(id, "reject")}
+                  onRetryRun={handleRetryRun}
                 />
               ))}
             </div>
           )}
-        </div>
-      )}
+      </div>
     </div>
   );
 }

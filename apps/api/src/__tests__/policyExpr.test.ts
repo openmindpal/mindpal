@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compilePolicyExprWhere, validatePolicyExpr } from "@openslin/shared";
+import { compilePolicyExprWhere, evaluateAbacPolicySet, validatePolicyExpr } from "@openslin/shared";
 
 describe("policyExpr", () => {
   it("validatePolicyExpr: accepts basic eq expr", () => {
@@ -13,11 +13,9 @@ describe("policyExpr", () => {
     expect(v.usedPayloadPaths).toEqual([]);
   });
 
-  it("validatePolicyExpr: rejects unknown operator", () => {
+  it("validatePolicyExpr: accepts enhanced comparison operator", () => {
     const v = validatePolicyExpr({ op: "gt", left: { kind: "subject", key: "subjectId" }, right: "x" });
-    expect(v.ok).toBe(false);
-    if (v.ok) return;
-    expect(v.errorCode).toBe("POLICY_EXPR_INVALID");
+    expect(v.ok).toBe(true);
   });
 
   it("compilePolicyExprWhere: parameterizes payload path and values", () => {
@@ -48,5 +46,61 @@ describe("policyExpr", () => {
       }),
     ).toThrow();
   });
-});
 
+  it("evaluateAbacPolicySet: applies deny_overrides with enhanced operators", () => {
+    const result = evaluateAbacPolicySet(
+      {
+        policySetId: "ps-1",
+        tenantId: "t1",
+        name: "test",
+        version: 1,
+        combiningAlgorithm: "deny_overrides",
+        enabled: true,
+        rules: [
+          {
+            ruleId: "allow-owner",
+            name: "allow-owner",
+            resourceType: "entity:note",
+            actions: ["read"],
+            effect: "allow",
+            priority: 10,
+            enabled: true,
+            condition: {
+              op: "eq",
+              left: { kind: "record", key: "ownerSubjectId" },
+              right: { kind: "subject", key: "subjectId" },
+            },
+          },
+          {
+            ruleId: "deny-high-risk",
+            name: "deny-high-risk",
+            resourceType: "entity:note",
+            actions: ["read"],
+            effect: "deny",
+            priority: 20,
+            enabled: true,
+            condition: {
+              op: "gte",
+              left: { kind: "payload", path: "riskScore" },
+              right: 80,
+            },
+          },
+        ],
+      },
+      {
+        action: "read",
+        subject: { subjectId: "u1", tenantId: "t1", spaceId: "s1", attributes: {} },
+        resource: {
+          resourceType: "entity:note",
+          resourceId: "n1",
+          ownerSubjectId: "u1",
+          attributes: { riskScore: 92 },
+        },
+        environment: {},
+      },
+    );
+
+    expect(result.decision).toBe("deny");
+    expect(result.matchedRules.filter(rule => rule.matched)).toHaveLength(2);
+  });
+});

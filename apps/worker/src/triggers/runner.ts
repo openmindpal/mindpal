@@ -1,6 +1,25 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { Queue } from "bullmq";
 import { writeAudit } from "../workflow/processor/audit";
+import { isPlainObject } from "@openslin/shared";
+
+async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
 export type TriggerDefinitionRow = {
   triggerId: string;
@@ -63,10 +82,6 @@ function bucketStartIso(windowSec: number, date: Date) {
 
 function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k) => (vars[k] !== undefined ? vars[k] : m));
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
 }
 
 function safePath(path: unknown) {
@@ -136,11 +151,10 @@ async function createJobRunStepLikeApi(params: {
   idempotencyKey: string | null;
   input: any;
 }) {
-  await params.pool.query("BEGIN");
-  try {
+  return withTransaction(params.pool, async (client) => {
     let runRes: any;
     if (params.idempotencyKey) {
-      runRes = await params.pool.query(
+      runRes = await client.query(
         `
           INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key, created_by_subject_id, trigger)
           VALUES ($1,'created',$2,$3,$4,$5,$6)
@@ -151,7 +165,7 @@ async function createJobRunStepLikeApi(params: {
         [params.tenantId, params.runToolRef, params.input ?? null, params.idempotencyKey, params.createdBySubjectId, params.trigger],
       );
       const runId = String(runRes.rows[0].run_id);
-      const existing = await params.pool.query(
+      const existing = await client.query(
         `
           SELECT j.*, s.step_id AS first_step_id
           FROM jobs j
@@ -163,12 +177,11 @@ async function createJobRunStepLikeApi(params: {
         [params.tenantId, runId],
       );
       if (existing.rowCount) {
-        await params.pool.query("COMMIT");
         const row = existing.rows[0] as any;
         return { jobId: String(row.job_id), runId, stepId: String(row.first_step_id) };
       }
     } else {
-      runRes = await params.pool.query(
+      runRes = await client.query(
         `
           INSERT INTO runs (tenant_id, status, tool_ref, input_digest, idempotency_key, created_by_subject_id, trigger)
           VALUES ($1,'created',$2,$3,$4,$5,$6)
@@ -179,12 +192,12 @@ async function createJobRunStepLikeApi(params: {
     }
 
     const runId = String(runRes.rows[0].run_id);
-    const jobRes = await params.pool.query("INSERT INTO jobs (tenant_id, job_type, status, run_id) VALUES ($1,$2,'queued',$3) RETURNING *", [
+    const jobRes = await client.query("INSERT INTO jobs (tenant_id, job_type, status, run_id) VALUES ($1,$2,'queued',$3) RETURNING *", [
       params.tenantId,
       params.jobType,
       runId,
     ]);
-    const stepRes = await params.pool.query(
+    const stepRes = await client.query(
       `
         INSERT INTO steps (run_id, seq, status, tool_ref, input, input_digest)
         VALUES ($1, 1, 'pending', $2, $3, $4)
@@ -192,12 +205,37 @@ async function createJobRunStepLikeApi(params: {
       `,
       [runId, params.toolRef, params.input ?? null, params.input ?? null],
     );
-    await params.pool.query("COMMIT");
     return { jobId: String(jobRes.rows[0].job_id), runId, stepId: String(stepRes.rows[0].step_id) };
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
+}
+
+async function markCreatedWorkflowFailed(params: {
+  pool: Pool;
+  tenantId: string;
+  runId: string;
+  jobId: string;
+  stepId: string;
+  errorMessage: string;
+}) {
+  await params.pool.query(
+    "UPDATE runs SET status = 'failed', updated_at = now(), finished_at = COALESCE(finished_at, now()) WHERE tenant_id = $1 AND run_id = $2",
+    [params.tenantId, params.runId],
+  ).catch(() => undefined);
+  await params.pool.query(
+    "UPDATE jobs SET status = 'failed', updated_at = now() WHERE tenant_id = $1 AND job_id = $2",
+    [params.tenantId, params.jobId],
+  ).catch(() => undefined);
+  await params.pool.query(
+    `UPDATE steps
+     SET status = 'failed',
+         updated_at = now(),
+         finished_at = COALESCE(finished_at, now()),
+         error_category = 'queue_error',
+         last_error = $2,
+         queue_job_id = NULL
+     WHERE step_id = $1`,
+    [params.stepId, params.errorMessage],
+  ).catch(() => undefined);
 }
 
 export async function fireCronTrigger(params: { pool: Pool; queue: Queue; trigger: TriggerDefinitionRow; scheduledAt: string; traceId: string }) {
@@ -226,9 +264,10 @@ export async function fireCronTrigger(params: { pool: Pool; queue: Queue; trigge
   );
   if (!triggerRunRes.rowCount) return { ok: true, deduped: true as const };
 
+  let created: { jobId: string; runId: string; stepId: string } | null = null;
   try {
     const input = applyInputMapping(trigger.inputMapping, { scheduledAt, firedAt, trigger, event: null });
-    const created = await createJobRunStepLikeApi({
+    created = await createJobRunStepLikeApi({
       pool: params.pool,
       tenantId: trigger.tenantId,
       jobType: trigger.targetKind === "workflow" ? "tool.execute" : trigger.targetRef,
@@ -264,6 +303,16 @@ export async function fireCronTrigger(params: { pool: Pool; queue: Queue; trigge
     return { ok: true, deduped: false as const, runId: created.runId };
   } catch (e: any) {
     const msg = String(e?.message ?? e).slice(0, 1000);
+    if (created) {
+      await markCreatedWorkflowFailed({
+        pool: params.pool,
+        tenantId: trigger.tenantId,
+        runId: created.runId,
+        jobId: created.jobId,
+        stepId: created.stepId,
+        errorMessage: msg,
+      });
+    }
     await params.pool.query(
       "UPDATE trigger_runs SET status = 'failed', last_error = $3, updated_at = now() WHERE tenant_id = $1 AND trigger_run_id = $2",
       [trigger.tenantId, String(triggerRunRes.rows[0].trigger_run_id), msg],
@@ -338,9 +387,10 @@ export async function fireEventTrigger(params: {
   if (!triggerRunRes.rowCount) return { ok: true, deduped: true as const, matched: params.matched };
   if (!params.matched) return { ok: true, deduped: false as const, matched: false as const };
 
+  let created: { jobId: string; runId: string; stepId: string } | null = null;
   try {
     const input = applyInputMapping(trigger.inputMapping, { scheduledAt, firedAt, trigger, event: params.event });
-    const created = await createJobRunStepLikeApi({
+    created = await createJobRunStepLikeApi({
       pool: params.pool,
       tenantId: trigger.tenantId,
       jobType: trigger.targetKind === "workflow" ? "tool.execute" : trigger.targetRef,
@@ -376,6 +426,16 @@ export async function fireEventTrigger(params: {
     return { ok: true, deduped: false as const, matched: true as const, runId: created.runId };
   } catch (e: any) {
     const msg = String(e?.message ?? e).slice(0, 1000);
+    if (created) {
+      await markCreatedWorkflowFailed({
+        pool: params.pool,
+        tenantId: trigger.tenantId,
+        runId: created.runId,
+        jobId: created.jobId,
+        stepId: created.stepId,
+        errorMessage: msg,
+      });
+    }
     await params.pool.query(
       "UPDATE trigger_runs SET status = 'failed', last_error = $3, updated_at = now() WHERE tenant_id = $1 AND trigger_run_id = $2",
       [trigger.tenantId, String(triggerRunRes.rows[0].trigger_run_id), msg],

@@ -2,7 +2,10 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors } from "../lib/errors";
 import { requirePermission } from "../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { setAuditContext } from "../modules/audit/context";
+import { resolveSchemaNameForEntity } from "../modules/metadata/schemaRepo";
+import { resolveEffectiveToolRef } from "../modules/tools/resolve";
 import { createJobRunStep, getJob, getRunForSpace, listSteps } from "../modules/workflow/jobRepo";
 
 export const jobRoutes: FastifyPluginAsync = async (app) => {
@@ -14,14 +17,28 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     if (!idempotencyKey) throw Errors.badRequest("缺少 idempotency-key");
 
     setAuditContext(req, { resourceType: "workflow", action: "create", idempotencyKey, toolRef: "workflow:entity.create" });
-    const decision = await requirePermission({ req, resourceType: "workflow", action: "create" });
+    const decision = await requirePermission({ req, ...PERM.WORKFLOW_CREATE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
     const body = z.record(z.string(), z.any()).parse(req.body);
-    const schemaName = (req.headers["x-schema-name"] as string | undefined) ?? "core";
+    const resolvedSchemaName = await resolveSchemaNameForEntity({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      entityName: params.entity,
+      requestedSchemaName: req.headers["x-schema-name"] as string | undefined,
+    });
+    if (!resolvedSchemaName.ok) throw Errors.badRequest(resolvedSchemaName.reason);
+    const schemaName = resolvedSchemaName.schemaName;
 
-    const toolRef = `tool:entity.create:${params.entity}`;
+    const toolRef = await resolveEffectiveToolRef({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      name: "entity.create",
+    });
+    if (!toolRef) throw Errors.serviceNotReady("entity.create tool version");
     const { job, run, step } = await createJobRunStep({
       pool: app.db,
       tenantId: subject.tenantId,
@@ -33,13 +50,29 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
       trigger: "manual",
       masterKey: app.cfg.secrets.masterKey,
       input: {
-        schemaName,
-        entityName: params.entity,
-        payload: body,
-        tenantId: subject.tenantId,
         spaceId: subject.spaceId,
         subjectId: subject.subjectId,
         traceId: req.ctx.traceId,
+        toolRef,
+        toolContract: {
+          scope: "write",
+          resourceType: "entity",
+          action: "create",
+          idempotencyRequired: true,
+          riskLevel: "high",
+          approvalRequired: true,
+          fieldRules: (decision as any).fieldRules ?? null,
+          rowFilters: (decision as any).rowFilters ?? null,
+        },
+        input: {
+          schemaName,
+          entityName: params.entity,
+          payload: body,
+          tenantId: subject.tenantId,
+          spaceId: subject.spaceId,
+          subjectId: subject.subjectId,
+          traceId: req.ctx.traceId,
+        },
       },
     });
 
@@ -55,7 +88,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.get("/jobs/:jobId", async (req, reply) => {
     const params = z.object({ jobId: z.string() }).parse(req.params);
     setAuditContext(req, { resourceType: "workflow", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "workflow", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.WORKFLOW_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;

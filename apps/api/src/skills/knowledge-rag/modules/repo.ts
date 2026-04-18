@@ -1,44 +1,55 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
+import { computeMinhash, minhashOverlapScore } from "@openslin/shared";
 import { createVectorStore, resolveVectorStoreConfigFromEnv } from "./vectorStore";
+import { getRerankConfig, rerank } from "./rerank";
 
 export function sha256(text: string) {
   return crypto.createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-function tokenize(text: string) {
-  const out: string[] = [];
-  const s = text.toLowerCase();
-  let buf = "";
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]!;
-    const ok = (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "_" || ch === "-";
-    if (ok) buf += ch;
-    else {
-      if (buf.length >= 2) out.push(buf);
-      buf = "";
-    }
-    if (out.length >= 256) break;
-  }
-  if (buf.length >= 2) out.push(buf);
-  return out;
+/* ── 外部 Embedding 查询支持（Dense embedding 查询闭环） ── */
+
+type ExternalEmbeddingConfig = {
+  endpoint: string;
+  apiKey: string | null;
+  model: string;
+  dimensions: number;
+  timeoutMs: number;
+};
+
+function resolveExternalEmbeddingConfig(): ExternalEmbeddingConfig | null {
+  const endpoint = String(process.env.KNOWLEDGE_EMBEDDING_ENDPOINT ?? "").trim();
+  if (!endpoint) return null;
+  return {
+    endpoint,
+    apiKey: String(process.env.KNOWLEDGE_EMBEDDING_API_KEY ?? "").trim() || null,
+    model: String(process.env.KNOWLEDGE_EMBEDDING_MODEL ?? "text-embedding-3-small").trim(),
+    dimensions: Math.max(64, Math.min(4096, Number(process.env.KNOWLEDGE_EMBEDDING_DIMENSIONS ?? 1536))),
+    timeoutMs: Math.max(1000, Number(process.env.KNOWLEDGE_EMBEDDING_TIMEOUT_MS ?? 10000)),
+  };
 }
 
-function hash32(str: string) {
-  const h = crypto.createHash("sha256").update(str, "utf8").digest();
-  return h.readInt32BE(0);
-}
-
-function computeMinhash(text: string, k: number) {
-  const toks = tokenize(text);
-  const mins = new Array<number>(k).fill(2147483647);
-  for (const t of toks) {
-    for (let i = 0; i < k; i++) {
-      const v = hash32(`${i}:${t}`);
-      if (v < mins[i]!) mins[i] = v;
-    }
+async function fetchQueryEmbedding(cfg: ExternalEmbeddingConfig, text: string): Promise<number[] | null> {
+  const url = cfg.endpoint.replace(/\/$/, "") + "/v1/embeddings";
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (cfg.apiKey) headers["authorization"] = `Bearer ${cfg.apiKey}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+  try {
+    const payload: any = { input: [text.slice(0, 8000)], model: cfg.model };
+    if (cfg.dimensions) payload.dimensions = cfg.dimensions;
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload), signal: controller.signal } as any);
+    if (!res.ok) return null;
+    const json = (await res.json()) as any;
+    const data = Array.isArray(json?.data) ? json.data : [];
+    const vec = Array.isArray(data[0]?.embedding) ? (data[0].embedding as number[]) : [];
+    return vec.length > 0 ? vec : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
-  return mins.map((x) => (x === 2147483647 ? 0 : x));
 }
 
 export type KnowledgeDocumentRow = {
@@ -250,6 +261,68 @@ export async function searchChunks(params: { pool: Pool; tenantId: string; space
   return res.rows as any[];
 }
 
+/* ── HyDE: 假设性文档生成器 ── */
+async function generateHydeDocument(prompt: string): Promise<string | null> {
+  const endpoint = String(process.env.KNOWLEDGE_HYDE_LLM_ENDPOINT ?? process.env.LLM_ENDPOINT ?? "").trim();
+  if (!endpoint) return null;
+  const apiKey = String(process.env.KNOWLEDGE_HYDE_LLM_API_KEY ?? process.env.LLM_API_KEY ?? "").trim();
+  const model = String(process.env.KNOWLEDGE_HYDE_LLM_MODEL ?? process.env.LLM_MODEL ?? "gpt-4o-mini").trim();
+  const url = endpoint.replace(/\/$/, "") + "/v1/chat/completions";
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (apiKey) headers["authorization"] = `Bearer ${apiKey}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 300,
+        temperature: 0.7,
+      }),
+      signal: controller.signal,
+    } as any);
+    if (!res.ok) return null;
+    const json = (await res.json()) as any;
+    return String(json?.choices?.[0]?.message?.content ?? "").trim() || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* ── Query Expansion: 查询扩展 ── */
+function expandQuery(query: string, mode: string): string[] {
+  const expanded: string[] = [];
+
+  if (mode === "synonym" || mode === "both") {
+    // 简单的同义词扩展: 提取关键词并重组
+    const words = query.split(/[\s,，、]+/).filter(w => w.length >= 2);
+    if (words.length >= 2) {
+      // 生成部分关键词组合
+      for (let i = 0; i < Math.min(words.length, 4); i++) {
+        const subset = words.filter((_, idx) => idx !== i).join(" ");
+        if (subset.trim().length >= 2) expanded.push(subset.trim());
+      }
+    }
+  }
+
+  if (mode === "subquery" || mode === "both") {
+    // 子查询分解: 按句子/分号/顿号拆分
+    const parts = query.split(/[？；\?、;]+/).map(s => s.trim()).filter(s => s.length >= 4);
+    if (parts.length > 1) {
+      expanded.push(...parts.slice(0, 3));
+    }
+  }
+
+  // 去重并限制数量
+  return [...new Set(expanded)].filter(q => q !== query).slice(0, 4);
+}
+
 export async function searchChunksHybrid(params: {
   pool: Pool;
   tenantId: string;
@@ -284,6 +357,54 @@ export async function searchChunksHybrid(params: {
   const tags = Array.isArray(params.tags) ? params.tags.map(String).map((s) => s.trim()).filter(Boolean) : [];
   const sourceTypes = Array.isArray(params.sourceTypes) ? params.sourceTypes.map(String).map((s) => s.trim()).filter(Boolean) : [];
   const hasMetaFilter = (tags.length > 0 && tags.length <= 20) || (sourceTypes.length > 0 && sourceTypes.length <= 20);
+
+  /* ── HyDE (Hypothetical Document Embedding) 查询增强 ── */
+  let hydeEnabled = !!cfg?.enableHyde;
+  let hydeQuery = params.query;
+  let hydeStats: { enabled: boolean; generated: boolean; latencyMs: number } = { enabled: hydeEnabled, generated: false, latencyMs: 0 };
+  if (hydeEnabled) {
+    try {
+      const hydeStart = Date.now();
+      // 尝试从数据库读取 HyDE 配置
+      const hydeRes = await params.pool.query(
+        `SELECT enable_hyde, hyde_prompt_template FROM knowledge_retrieval_strategies WHERE tenant_id = $1 AND space_id = $2 AND is_active = TRUE LIMIT 1`,
+        [params.tenantId, params.spaceId],
+      ).catch(() => ({ rows: [] as any[], rowCount: 0 }));
+      if (hydeRes.rowCount && hydeRes.rows[0].enable_hyde) {
+        const template = String(hydeRes.rows[0].hyde_prompt_template ?? "").trim();
+        const hydePrompt = template
+          ? template.replace(/\{\{query\}\}/g, params.query)
+          : `请你当作领域专家，针对以下问题写一段简短的参考答案段落（约200字，不需要开头结尾，直接给出内容）：${params.query}`;
+        // 用 LLM 生成假设性文档（外部调用可配置）
+        const hydeDoc = await generateHydeDocument(hydePrompt).catch(() => null);
+        if (hydeDoc && hydeDoc.trim().length > 20) {
+          hydeQuery = hydeDoc.trim();
+          hydeStats.generated = true;
+        }
+      }
+      hydeStats.latencyMs = Date.now() - hydeStart;
+    } catch {
+      hydeEnabled = false;
+    }
+  }
+
+  /* ── Query Expansion (查询扩展) ── */
+  let expandedQueries: string[] = [params.query];
+  let queryExpansionStats: { enabled: boolean; expansionCount: number } = { enabled: false, expansionCount: 0 };
+  if (cfg?.enableQueryExpansion) {
+    try {
+      const expRes = await params.pool.query(
+        `SELECT enable_query_expansion, query_expansion_mode FROM knowledge_retrieval_strategies WHERE tenant_id = $1 AND space_id = $2 AND is_active = TRUE LIMIT 1`,
+        [params.tenantId, params.spaceId],
+      ).catch(() => ({ rows: [] as any[], rowCount: 0 }));
+      if (expRes.rowCount && expRes.rows[0].enable_query_expansion) {
+        const mode = String(expRes.rows[0].query_expansion_mode ?? "synonym");
+        const subQueries = expandQuery(params.query, mode);
+        expandedQueries = [params.query, ...subQueries];
+        queryExpansionStats = { enabled: true, expansionCount: subQueries.length };
+      }
+    } catch { /* 忽略 */ }
+  }
   const metaRes = hasMetaFilter
     ? await params.pool.query(
         `
@@ -349,11 +470,36 @@ export async function searchChunksHybrid(params: {
     `,
     [params.tenantId, params.spaceId, params.query, params.subjectId, hasDocFilter ? docIds : null, lexicalLimit],
   );
-  const vectorStore = createVectorStore(resolveVectorStoreConfigFromEnv());
-  const vectorRes = await vectorStore.query({
-    pool: params.pool,
-    q: { tenantId: params.tenantId, spaceId: params.spaceId, subjectId: params.subjectId, embeddingModelRef: "minhash:16@1", vector: qMinhash, topK: embedLimit, filters: hasDocFilter ? { documentIds: docIds } : undefined },
-  });
+  const vsCfg = resolveVectorStoreConfigFromEnv();
+  const vectorStore = createVectorStore(vsCfg);
+
+  /* Dense embedding 查询闭环：若外部 Embedding 已配置且 VectorStore 为 external 模式，
+   * 优先使用 dense vector 查询，失败时降级到 minhash
+   * HyDE 模式：使用假设性文档的 embedding 进行检索 */
+  let vectorRes;
+  const embQueryText = hydeStats.generated ? hydeQuery : params.query;
+  const extEmbCfg = vsCfg.mode === "external" ? resolveExternalEmbeddingConfig() : null;
+  if (extEmbCfg) {
+    const denseVec = await fetchQueryEmbedding(extEmbCfg, embQueryText);
+    if (denseVec && denseVec.length > 0) {
+      const denseModelRef = `${extEmbCfg.model}:${extEmbCfg.dimensions}`;
+      vectorRes = await vectorStore.query({
+        pool: params.pool,
+        q: { tenantId: params.tenantId, spaceId: params.spaceId, subjectId: params.subjectId, embeddingModelRef: denseModelRef, vector: denseVec, topK: embedLimit, filters: hasDocFilter ? { documentIds: docIds } : undefined },
+      });
+    } else {
+      /* dense embedding 获取失败，降级到 minhash */
+      vectorRes = await vectorStore.query({
+        pool: params.pool,
+        q: { tenantId: params.tenantId, spaceId: params.spaceId, subjectId: params.subjectId, embeddingModelRef: "minhash:16@1", vector: qMinhash, topK: embedLimit, filters: hasDocFilter ? { documentIds: docIds } : undefined },
+      });
+    }
+  } else {
+    vectorRes = await vectorStore.query({
+      pool: params.pool,
+      q: { tenantId: params.tenantId, spaceId: params.spaceId, subjectId: params.subjectId, embeddingModelRef: "minhash:16@1", vector: qMinhash, topK: embedLimit, filters: hasDocFilter ? { documentIds: docIds } : undefined },
+    });
+  }
   const chunkIds = vectorRes.results.map((r) => r.chunkId).filter(Boolean).slice(0, embedLimit);
   const scoreById = new Map<string, number>();
   for (const r of vectorRes.results) if (r && r.chunkId) scoreById.set(String(r.chunkId), Number(r.score ?? 0));
@@ -395,11 +541,7 @@ export async function searchChunksHybrid(params: {
   const qLower = params.query.toLowerCase();
   function overlapScore(mh: any) {
     const arr = Array.isArray(mh) ? (mh as number[]) : [];
-    if (!arr.length) return 0;
-    let hit = 0;
-    const set = new Set(qMinhash);
-    for (const v of arr) if (set.has(Number(v))) hit++;
-    return hit / k;
+    return minhashOverlapScore(qMinhash, arr);
   }
   function lexScore(snippet: string) {
     const pos = snippet.toLowerCase().indexOf(qLower);
@@ -407,7 +549,7 @@ export async function searchChunksHybrid(params: {
     return 1 / (1 + pos);
   }
 
-  const scored = candidates
+  const preRanked = candidates
     .map((c) => {
       const snippet = String(c.snippet ?? "");
       const sLex = lexScore(snippet);
@@ -421,18 +563,62 @@ export async function searchChunksHybrid(params: {
       return { ...c, _score: score, _sLex: sLex, _sVec: sVec, _sEmb: sEmb, _recencyBoost: recencyBoost, _metaBoost: metaBoost };
     })
     .sort((a, b) => (b._score as number) - (a._score as number))
-    .slice(0, params.limit);
+    .slice(0, Math.max(params.limit, 40)); // 给 rerank 留更多候选
+
+  /* ── Rerank 阶段 ── */
+  let scored = preRanked;
+  let rerankStats: { returned: number; reranked: boolean; degraded: boolean; degradeReason: string | null; latencyMs: number } = {
+    returned: preRanked.length, reranked: false, degraded: false, degradeReason: null, latencyMs: 0,
+  };
+  try {
+    const rerankCfg = await getRerankConfig({ pool: params.pool, tenantId: params.tenantId, spaceId: params.spaceId });
+    if (rerankCfg && preRanked.length > 0) {
+      const snippets = preRanked.map((c) => String(c.snippet ?? ""));
+      const rerankResult = await rerank({ config: rerankCfg, query: params.query, documents: snippets });
+      rerankStats = {
+        returned: rerankResult.items.length,
+        reranked: rerankResult.reranked,
+        degraded: rerankResult.degraded,
+        degradeReason: rerankResult.degradeReason,
+        latencyMs: rerankResult.latencyMs,
+      };
+      if (rerankResult.reranked && rerankResult.items.length > 0) {
+        /* 用 rerank 分数重新排序 */
+        const rerankedList: typeof preRanked = [];
+        for (const item of rerankResult.items) {
+          const orig = preRanked[item.originalIndex];
+          if (orig) {
+            rerankedList.push({ ...orig, _score: item.score, _rerankScore: item.score });
+          }
+        }
+        scored = rerankedList.slice(0, params.limit);
+      } else {
+        scored = preRanked.slice(0, params.limit);
+      }
+    } else {
+      scored = preRanked.slice(0, params.limit);
+    }
+  } catch (e: any) {
+    console.error(`[knowledge:searchChunksHybrid] rerank 阶段异常: ${e?.message ?? e}`);
+    scored = preRanked.slice(0, params.limit);
+    rerankStats.degraded = true;
+    rerankStats.degradeReason = `rerank_exception: ${e?.message ?? e}`;
+  }
 
   const latencyMs = Date.now() - startedAt;
   const stageStats = {
     metadata: { returned: metaRes.rowCount, limit: metaLimit, tagsCount: tags.length, sourceTypesCount: sourceTypes.length },
     lexical: { returned: lexRes.rowCount, limit: lexicalLimit },
     embedding: { returned: embRes.rowCount, limit: embedLimit, k, degraded: vectorRes.degraded, degradeReason: vectorRes.degradeReason },
+    sparse: { enabled: false, queryTermCount: 0 },
     merged: { candidateCount: candidates.length },
-    rerank: { returned: scored.length },
+    rerank: rerankStats,
+    hyde: hydeStats,
+    queryExpansion: queryExpansionStats,
     latencyMs,
   };
-  const rankPolicy = typeof cfg?.rankPolicy === "string" && cfg.rankPolicy.trim() ? String(cfg.rankPolicy) : "hybrid_minhash_rerank_v2";
+  const rankPolicy = typeof cfg?.rankPolicy === "string" && cfg.rankPolicy.trim() ? String(cfg.rankPolicy)
+    : rerankStats.reranked ? "hybrid_minhash_rerank_v2_external" : "hybrid_minhash_rerank_v2";
 
   const hits = scored.map((h) => ({
     ...h,
@@ -442,8 +628,10 @@ export async function searchChunksHybrid(params: {
       sLex: Number(h._sLex.toFixed(4)),
       sVec: Number(h._sVec.toFixed(4)),
       sEmb: Number(h._sEmb.toFixed(4)),
+      sSparse: 0,
       recencyBoost: Number(Number(h._recencyBoost ?? 0).toFixed(4)),
       metaBoost: Number(Number(h._metaBoost ?? 0).toFixed(4)),
+      ...(typeof (h as any)._rerankScore === "number" ? { rerankScore: Number((h as any)._rerankScore.toFixed(4)) } : {}),
     },
   }));
   return {
@@ -815,6 +1003,123 @@ export async function getIndexJob(params: { pool: Pool; tenantId: string; spaceI
   ]);
   if (!res.rowCount) return null;
   return toJob(res.rows[0]);
+}
+
+/* ── 文档管理 CRUD ─────────────────────────────────────────────────────── */
+
+export async function listDocuments(params: {
+  pool: Pool;
+  tenantId: string;
+  spaceId: string;
+  limit: number;
+  offset: number;
+  status?: string;
+  sourceType?: string;
+  search?: string;
+}) {
+  const args: any[] = [params.tenantId, params.spaceId];
+  let idx = 3;
+  const where: string[] = ["tenant_id = $1", "space_id = $2"];
+  if (params.status) {
+    where.push(`status = $${idx++}`);
+    args.push(params.status);
+  }
+  if (params.sourceType) {
+    where.push(`source_type = $${idx++}`);
+    args.push(params.sourceType);
+  }
+  if (params.search) {
+    where.push(`title ILIKE ('%' || $${idx++} || '%')`);
+    args.push(params.search);
+  }
+  args.push(params.limit);
+  args.push(params.offset);
+  const res = await params.pool.query(
+    `
+      SELECT id, tenant_id, space_id, version, title, source_type, tags, content_digest, status, visibility, owner_subject_id, created_at, updated_at
+      FROM knowledge_documents
+      WHERE ${where.join(" AND ")}
+      ORDER BY updated_at DESC
+      LIMIT $${idx++} OFFSET $${idx++}
+    `,
+    args,
+  );
+  const countRes = await params.pool.query(
+    `SELECT count(*)::int AS total FROM knowledge_documents WHERE ${where.slice(0, where.length).join(" AND ")}`,
+    args.slice(0, args.length - 2),
+  );
+  return {
+    documents: (res.rows as any[]).map(toDoc),
+    total: Number(countRes.rows[0]?.total ?? 0),
+  };
+}
+
+export async function getDocument(params: { pool: Pool; tenantId: string; spaceId: string; id: string }) {
+  const res = await params.pool.query(
+    `
+      SELECT id, tenant_id, space_id, version, title, source_type, tags, content_digest, status, visibility, owner_subject_id, created_at, updated_at
+      FROM knowledge_documents
+      WHERE tenant_id = $1 AND space_id = $2 AND id = $3
+      LIMIT 1
+    `,
+    [params.tenantId, params.spaceId, params.id],
+  );
+  if (!res.rowCount) return null;
+  return toDoc(res.rows[0]);
+}
+
+export async function updateDocument(params: {
+  pool: Pool;
+  tenantId: string;
+  spaceId: string;
+  id: string;
+  title?: string;
+  tags?: any;
+  status?: string;
+}) {
+  const sets: string[] = ["updated_at = now()"];
+  const args: any[] = [params.tenantId, params.spaceId, params.id];
+  let idx = 4;
+  if (params.title !== undefined) {
+    sets.push(`title = $${idx++}`);
+    args.push(params.title);
+  }
+  if (params.tags !== undefined) {
+    sets.push(`tags = $${idx++}::jsonb`);
+    args.push(JSON.stringify(params.tags));
+  }
+  if (params.status !== undefined) {
+    sets.push(`status = $${idx++}`);
+    args.push(params.status);
+  }
+  const res = await params.pool.query(
+    `
+      UPDATE knowledge_documents
+      SET ${sets.join(", ")}
+      WHERE tenant_id = $1 AND space_id = $2 AND id = $3
+      RETURNING id, tenant_id, space_id, version, title, source_type, tags, content_digest, status, created_at, updated_at
+    `,
+    args,
+  );
+  if (!res.rowCount) return null;
+  return toDoc(res.rows[0]);
+}
+
+export async function deleteDocument(params: { pool: Pool; tenantId: string; spaceId: string; id: string }) {
+  await params.pool.query("DELETE FROM knowledge_chunks WHERE tenant_id = $1 AND space_id = $2 AND document_id = $3", [params.tenantId, params.spaceId, params.id]);
+  const res = await params.pool.query(
+    "DELETE FROM knowledge_documents WHERE tenant_id = $1 AND space_id = $2 AND id = $3 RETURNING id",
+    [params.tenantId, params.spaceId, params.id],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+export async function getDocumentChunkCount(params: { pool: Pool; tenantId: string; spaceId: string; documentId: string }) {
+  const res = await params.pool.query(
+    "SELECT count(*)::int AS total FROM knowledge_chunks WHERE tenant_id = $1 AND space_id = $2 AND document_id = $3",
+    [params.tenantId, params.spaceId, params.documentId],
+  );
+  return Number(res.rows[0]?.total ?? 0);
 }
 
 export async function resolveEvidenceRef(params: {

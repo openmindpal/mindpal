@@ -1,66 +1,19 @@
-import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { redactValue } from "@openslin/shared";
-
-function sha256(text: string) {
-  return crypto.createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-/* ── Minhash 语义向量工具（与 knowledge 层 / memory-manager minhash:16@1 对齐）── */
-
-const MINHASH_K = 16;
-const MINHASH_MODEL_REF = "minhash:16@1";
-
-function tokenize(text: string) {
-  const out: string[] = [];
-  const s = text.toLowerCase();
-  let buf = "";
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]!;
-    const code = ch.charCodeAt(0);
-    if (code >= 0x4e00 && code <= 0x9fff) {
-      if (buf.length >= 2) out.push(buf);
-      buf = "";
-      out.push(ch);
-      if (out.length >= 512) break;
-      continue;
-    }
-    const ok = (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "_" || ch === "-";
-    if (ok) buf += ch;
-    else {
-      if (buf.length >= 2) out.push(buf);
-      buf = "";
-    }
-    if (out.length >= 512) break;
-  }
-  if (buf.length >= 2) out.push(buf);
-  return out;
-}
-
-function hash32(str: string) {
-  const h = crypto.createHash("sha256").update(str, "utf8").digest();
-  return h.readInt32BE(0);
-}
-
-function computeMinhash(text: string, k: number = MINHASH_K): number[] {
-  const toks = tokenize(text);
-  const mins = new Array<number>(k).fill(2147483647);
-  for (const t of toks) {
-    for (let i = 0; i < k; i++) {
-      const v = hash32(`${i}:${t}`);
-      if (v < mins[i]!) mins[i] = v;
-    }
-  }
-  return mins.map((x) => (x === 2147483647 ? 0 : x));
-}
-
-function minhashOverlapScore(a: number[], b: number[]): number {
-  if (!a.length || !b.length) return 0;
-  const setB = new Set(b);
-  let hit = 0;
-  for (const v of a) if (setB.has(v)) hit++;
-  return a.length ? hit / a.length : 0;
-}
+import {
+  redactValue,
+  // ── 从 @openslin/shared/memoryCore 导入的共享权威实现 ──
+  MINHASH_MODEL_REF,
+  computeMinhash,
+  minhashOverlapScore,
+  evaluateMemoryRisk,
+  memorySha256 as sha256,
+  computeMemoryRerankScore,
+  escapeIlikePat,
+  type WriteProof,
+  type MemoryRerankInput,
+  APPROVAL_REQUIRED_RISK_LEVELS,
+} from "@openslin/shared";
+import { encryptMemoryContent, decryptMemoryContent, isMemoryEncryptionEnabled } from "./memoryEncryption";
 
 export async function memoryWrite(params: {
   pool: Pool;
@@ -73,7 +26,6 @@ export async function memoryWrite(params: {
   const type = String(params.input?.type ?? "other");
   const title = params.input?.title ? String(params.input.title) : null;
   const contentTextRaw = String(params.input?.contentText ?? "");
-  const writePolicy = String(params.input?.writePolicy ?? "confirmed");
   const priority = typeof params.input?.priority === "number" && Number.isFinite(params.input.priority) ? Math.max(0, Math.min(100, params.input.priority)) : null;
   const confidence = typeof params.input?.confidence === "number" && Number.isFinite(params.input.confidence) ? Math.max(0, Math.min(1, params.input.confidence)) : null;
   const retentionDays = typeof params.input?.retentionDays === "number" && Number.isFinite(params.input.retentionDays) ? params.input.retentionDays : null;
@@ -83,6 +35,70 @@ export async function memoryWrite(params: {
   const contentText = String(redacted.value ?? "");
   const digest = sha256(contentText);
 
+  // ── 风险评估（统一调用 @openslin/shared 权威实现） ──
+  const riskEvaluation = evaluateMemoryRisk({ type, contentText, title });
+
+  // ── writeProof 服务端校验 ──
+  const intentPolicy = params.input?.writeIntent?.policy ?? "policyAllowed";
+  if (riskEvaluation.approvalRequired && intentPolicy !== "approved") {
+    throw new Error(
+      `policy_violation:high_risk_memory_write:riskLevel=${riskEvaluation.riskLevel},` +
+      `riskFactors=[${riskEvaluation.riskFactors.join(",")}],requiredPolicy=approved,gotPolicy=${intentPolicy}`
+    );
+  }
+
+  // 服务端根据实际 intent 生成 writeProof（而非简单信任客户端声明）
+  let writeProof: WriteProof;
+  if (params.input?.writeIntent) {
+    const intent = params.input.writeIntent;
+    switch (intent.policy) {
+      case "confirmed":
+        if (!intent.confirmationRef?.requestId) {
+          throw new Error("writeIntent policy=confirmed 需要提供 confirmationRef.requestId");
+        }
+        writeProof = {
+          policy: "confirmed",
+          provenAt: new Date().toISOString(),
+          provenBy: params.subjectId,
+          confirmationRef: {
+            requestId: intent.confirmationRef.requestId,
+            turnId: intent.confirmationRef.turnId,
+            confirmationType: intent.confirmationRef.confirmationType ?? "implicit",
+          },
+        };
+        break;
+      case "approved":
+        if (!intent.approvalId) {
+          throw new Error("writeIntent policy=approved 需要提供 approvalId");
+        }
+        // Worker 路径无法查询 approvals 表，但记录 approvalId 供审计追溯
+        writeProof = {
+          policy: "approved",
+          provenAt: new Date().toISOString(),
+          provenBy: params.subjectId,
+          approvalId: intent.approvalId,
+        } as WriteProof;
+        break;
+      case "policyAllowed":
+      default:
+        writeProof = {
+          policy: "policyAllowed",
+          provenAt: new Date().toISOString(),
+          provenBy: "system",
+          policyRef: { snapshotRef: intent.policyRef?.snapshotRef, decision: "allow" },
+        };
+        break;
+    }
+  } else {
+    // 没有提供 writeIntent，使用默认 policyAllowed
+    writeProof = {
+      policy: "policyAllowed",
+      provenAt: new Date().toISOString(),
+      provenBy: params.subjectId,
+      policyRef: { snapshotRef: undefined, decision: "allow" },
+    };
+  }
+
   const ownerSubjectId = scope === "user" ? params.subjectId : null;
 
   // 计算 minhash 向量
@@ -91,6 +107,46 @@ export async function memoryWrite(params: {
 
   const mergeThreshold = typeof params.input?.mergeThreshold === "number" && Number.isFinite(params.input.mergeThreshold) ? Math.max(0.6, Math.min(0.95, params.input.mergeThreshold)) : 0.86;
   const mergeLimit = typeof params.input?.mergeCandidateLimit === "number" && Number.isFinite(params.input.mergeCandidateLimit) ? Math.max(5, Math.min(200, Math.floor(params.input.mergeCandidateLimit))) : 50;
+
+  // ── 冲突检测：写入前检查是否存在语义相近但内容矛盾的记忆 ──
+  let conflictDetected = false;
+  let conflictMarker: string | null = null;
+  const CONFLICT_THRESHOLD = 0.3;
+  try {
+    const conflictCandRes = await params.pool.query(
+      `SELECT id, type, title, content_text, embedding_minhash
+       FROM memory_entries
+       WHERE tenant_id = $1 AND space_id = $2 AND type = $3
+         AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+         AND embedding_minhash IS NOT NULL AND embedding_minhash && $4::int[]
+       ORDER BY created_at DESC LIMIT 10`,
+      [params.tenantId, params.spaceId, type, minhash],
+    );
+    const newContentLower = contentText.toLowerCase().trim();
+    for (const row of conflictCandRes.rows as any[]) {
+      const mh = Array.isArray(row.embedding_minhash) ? (row.embedding_minhash as number[]) : [];
+      const overlapScore = minhashOverlapScore(minhash, mh);
+      if (overlapScore >= CONFLICT_THRESHOLD) {
+        const existingLower = String(row.content_text ?? "").toLowerCase().trim();
+        if (existingLower !== newContentLower) {
+          conflictDetected = true;
+          conflictMarker = String(row.id);
+          break;
+        }
+      }
+    }
+  } catch {
+    // 冲突检测失败不阻塞写入
+  }
+
+  // P2-03b: 列级加密（若启用，将 contentText 加密后存入 DB）
+  // 提前加密，确保合并分支和 INSERT 分支都使用 storedContentText
+  const storedContentText = await encryptMemoryContent({
+    pool: params.pool,
+    tenantId: params.tenantId,
+    plaintext: contentText,
+    scopeId: params.tenantId,
+  });
 
   try {
     const where: string[] = ["tenant_id = $1", "space_id = $2", "deleted_at IS NULL", "scope = $3", "type = $4"];
@@ -121,6 +177,7 @@ export async function memoryWrite(params: {
       }
     }
     if (bestId && bestScore >= mergeThreshold) {
+      // 合并更新：递增 factVersion，保留冲突标记
       const src = {
         kind: "tool",
         tool: "memory.write",
@@ -137,27 +194,35 @@ export async function memoryWrite(params: {
               retention_days = $6,
               expires_at = $7,
               write_policy = $8,
-              source_ref = COALESCE(source_ref, '{}'::jsonb) || $9::jsonb,
-              embedding_model_ref = $10,
-              embedding_minhash = $11,
+              write_proof = $9::jsonb,
+              source_ref = COALESCE(source_ref, '{}'::jsonb) || $10::jsonb,
+              embedding_model_ref = $11,
+              embedding_minhash = $12,
               embedding_updated_at = now(),
+              fact_version = COALESCE(fact_version, 1) + 1,
+              confidence = COALESCE($13, confidence),
+              conflict_marker = COALESCE($14, conflict_marker),
+              resolution_status = CASE WHEN $14 IS NOT NULL THEN 'pending' ELSE resolution_status END,
               updated_at = now()
           WHERE id = $1 AND tenant_id = $2
-          RETURNING id, scope, type, title, created_at
+          RETURNING id, scope, type, title, created_at, fact_version
         `,
-        [bestId, params.tenantId, title, contentText, digest, retentionDays, expiresAt, writePolicy, JSON.stringify(src), MINHASH_MODEL_REF, minhash],
+        [bestId, params.tenantId, title, storedContentText, digest, retentionDays, expiresAt, writeProof.policy, JSON.stringify(writeProof), JSON.stringify(src), MINHASH_MODEL_REF, minhash, confidence, conflictMarker],
       );
-      return { entry: { id: bestId, scope, type, title, createdAt: new Date().toISOString() }, dlpSummary: redacted.summary };
+      return { entry: { id: bestId, scope, type, title, createdAt: new Date().toISOString() }, dlpSummary: redacted.summary, riskEvaluation, conflictDetected };
     }
-  } catch {}
+  } catch (mergeErr) {
+    console.warn("[memory/processor] merge candidate query failed, falling through to INSERT:", (mergeErr as Error)?.message);
+  }
 
   const res = await params.pool.query(
     `
       INSERT INTO memory_entries (
         tenant_id, space_id, owner_subject_id, scope, type, title,
-        content_text, content_digest, retention_days, expires_at, write_policy, source_ref,
-        embedding_model_ref, embedding_minhash, embedding_updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now())
+        content_text, content_digest, retention_days, expires_at, write_policy, write_proof, source_ref,
+        embedding_model_ref, embedding_minhash, embedding_updated_at,
+        confidence, conflict_marker, resolution_status
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),$16,$17,$18)
       RETURNING id, scope, type, title, created_at
     `,
     [
@@ -167,18 +232,22 @@ export async function memoryWrite(params: {
       scope,
       type,
       title,
-      contentText,
+      storedContentText,
       digest,
       retentionDays,
       expiresAt,
-      writePolicy,
+      writeProof.policy,
+      JSON.stringify(writeProof),
       JSON.stringify({ kind: "tool", tool: "memory.write", ...(priority !== null ? { priority } : {}), ...(confidence !== null ? { confidence } : {}) }),
       MINHASH_MODEL_REF,
       minhash,
+      confidence,
+      conflictMarker,
+      conflictMarker ? "pending" : null,
     ],
   );
   const row = res.rows[0] as any;
-  return { entry: { id: row.id, scope: row.scope, type: row.type, title: row.title, createdAt: row.created_at }, dlpSummary: redacted.summary };
+  return { entry: { id: row.id, scope: row.scope, type: row.type, title: row.title, createdAt: row.created_at }, dlpSummary: redacted.summary, riskEvaluation, conflictDetected };
 }
 
 export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId: string; subjectId: string; input: any }) {
@@ -187,7 +256,52 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
   const limit = typeof params.input?.limit === "number" && Number.isFinite(params.input.limit) ? Math.max(1, Math.min(20, params.input.limit)) : 5;
   const types = Array.isArray(params.input?.types) ? params.input.types.map((t: any) => String(t)).slice(0, 20) : null;
 
-  if (!query) return { evidence: [], candidateCount: 0 };
+  if (!query) {
+    // P0-FIX: 空 query 时返回最近的记忆条目，支持“列出所有记忆”场景
+    const recentWhere: string[] = ["tenant_id = $1", "space_id = $2", "deleted_at IS NULL", "(expires_at IS NULL OR expires_at > now())"];
+    const recentArgs: any[] = [params.tenantId, params.spaceId];
+    let rIdx = 3;
+    if (scope) {
+      recentWhere.push(`scope = $${rIdx++}`);
+      recentArgs.push(scope);
+      if (scope === "user") {
+        recentWhere.push(`owner_subject_id = $${rIdx++}`);
+        recentArgs.push(params.subjectId);
+      }
+    }
+    if (types?.length) {
+      recentWhere.push(`type = ANY($${rIdx++}::text[])`);
+      recentArgs.push(types);
+    }
+    const recentRes = await params.pool.query(
+      `SELECT id, scope, type, title, content_text, created_at
+       FROM memory_entries
+       WHERE ${recentWhere.join(" AND ")}
+       ORDER BY updated_at DESC
+       LIMIT $${rIdx}`,
+      [...recentArgs, limit],
+    );
+    const evidence: Array<{ id: string; type: string; scope: string; title: string | null; snippet: string; createdAt: string }> = [];
+    for (const r of recentRes.rows as any[]) {
+      // P2-03b: 解密 content_text（自动检测明文/密文）
+      const decryptedContent = await decryptMemoryContent({
+        pool: params.pool, tenantId: params.tenantId, value: r.content_text,
+        options: { onFailure: "placeholder" },
+      });
+      const snippetRaw = (r.title ? `${r.title}\n` : "") + decryptedContent;
+      const clipped = snippetRaw.slice(0, 280);
+      const redacted = redactValue(clipped);
+      evidence.push({
+        id: r.id,
+        type: r.type,
+        scope: r.scope,
+        title: r.title,
+        snippet: String(redacted.value ?? ""),
+        createdAt: r.created_at,
+      });
+    }
+    return { evidence, candidateCount: evidence.length };
+  }
 
   const baseWhere: string[] = ["tenant_id = $1", "space_id = $2", "deleted_at IS NULL", "(expires_at IS NULL OR expires_at > now())"];
   const baseArgs: any[] = [params.tenantId, params.spaceId];
@@ -216,14 +330,16 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
   const lexIdx = scopeNextIdx;
   const lexRes = await params.pool.query(
     `
-      SELECT id, scope, type, title, content_text, created_at, embedding_minhash, 'lexical' AS _stage
+      SELECT id, scope, type, title, content_text, created_at, embedding_minhash,
+             confidence, fact_version, conflict_marker, resolution_status, source_ref,
+             'lexical' AS _stage
       FROM memory_entries
       WHERE ${scopeWhereClause}
         AND (content_text ILIKE $${lexIdx} OR COALESCE(title,'') ILIKE $${lexIdx})
       ORDER BY created_at DESC
       LIMIT $${lexIdx + 1}
     `,
-    [...scopeArgs, `%${query}%`, lexLimit],
+    [...scopeArgs, `%${escapeIlikePat(query)}%`, lexLimit],
   );
 
   // Stage 2: Semantic (minhash overlap)
@@ -234,7 +350,9 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
     const vecIdx = scopeNextIdx;
     const vecRes = await params.pool.query(
       `
-        SELECT id, scope, type, title, content_text, created_at, embedding_minhash, 'vector' AS _stage
+        SELECT id, scope, type, title, content_text, created_at, embedding_minhash,
+               confidence, fact_version, conflict_marker, resolution_status, source_ref,
+               'vector' AS _stage
         FROM memory_entries
         WHERE ${scopeWhereClause}
           AND embedding_minhash IS NOT NULL
@@ -265,52 +383,54 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
     }
   }
 
-  // Rerank
+  // Rerank：使用 @openslin/shared 统一 12 因子公式
   const candidates = Array.from(seen.values());
-  const queryLower = query.toLowerCase();
   const nowMs = Date.now();
 
   const scored = candidates.map((c) => {
-    const text = String(c.content_text ?? "").toLowerCase();
-    const title = String(c.title ?? "").toLowerCase();
-    const sLex = (text.includes(queryLower) || title.includes(queryLower)) ? 1 : 0;
-
-    const mh = Array.isArray(c.embedding_minhash) ? (c.embedding_minhash as number[]) : [];
-    const sVec = minhashOverlapScore(qMinhash, mh);
-
-    const createdAtMs = Date.parse(String(c.created_at ?? ""));
-    const ageMs = Number.isFinite(createdAtMs) ? Math.max(0, nowMs - createdAtMs) : 0;
-    const recencyBoost = 1 / (1 + ageMs / (24 * 60 * 60 * 1000));
-    const bothBonus = c._stage === "both" ? 0.1 : 0;
-
     const src = c.source_ref && typeof c.source_ref === "object" ? c.source_ref : null;
-    const priority = src && typeof src.priority === "number" && Number.isFinite(src.priority) ? Math.max(0, Math.min(100, src.priority)) : 0;
-    const writePolicy = String(c.write_policy ?? "");
-    const conf0 = src && typeof src.confidence === "number" && Number.isFinite(src.confidence) ? Math.max(0, Math.min(1, src.confidence)) : null;
-    const confidence = conf0 !== null ? conf0 : writePolicy === "confirmed" ? 1 : 0.6;
-    const priorityBoost = (priority / 100) * 0.08;
-    const trustBoost = confidence * 0.06;
-    const decay = Math.exp(-ageMs / (30 * 24 * 60 * 60 * 1000));
-    const score = (sLex * 1.2 + sVec + recencyBoost * 0.05 + bothBonus + priorityBoost + trustBoost) * decay;
+    const input: MemoryRerankInput = {
+      contentText: String(c.content_text ?? ""),
+      title: c.title ?? null,
+      createdAt: String(c.created_at ?? ""),
+      embeddingMinhash: Array.isArray(c.embedding_minhash) ? (c.embedding_minhash as number[]) : [],
+      denseScore: 0,
+      stage: String(c._stage ?? "lexical"),
+      confidence: typeof c.confidence === "number" && Number.isFinite(c.confidence) ? c.confidence : 0.5,
+      factVersion: typeof c.fact_version === "number" && Number.isFinite(c.fact_version) ? c.fact_version : 1,
+      conflictMarker: c.conflict_marker ?? null,
+      resolutionStatus: c.resolution_status ?? null,
+      memoryClass: String(c.memory_class ?? "semantic"),
+      decayScore: typeof c.decay_score === "number" && Number.isFinite(c.decay_score) ? c.decay_score : 1.0,
+      distilledTo: c.distilled_to ?? null,
+      sourcePriority: src && typeof src.priority === "number" ? src.priority : 0,
+    };
+    const score = computeMemoryRerankScore(input, query, qMinhash, nowMs);
     return { ...c, _score: score };
   });
 
   scored.sort((a, b) => (b._score as number) - (a._score as number));
   const topRows = scored.slice(0, limit);
 
-  const evidence = topRows.map((r: any) => {
-    const snippetRaw = (r.title ? `${r.title}\n` : "") + String(r.content_text ?? "");
+  const evidence: Array<{ id: string; type: string; scope: string; title: string | null; snippet: string; createdAt: string }> = [];
+  for (const r of topRows) {
+    // P2-03b: 解密 content_text（自动检测明文/密文）
+    const decryptedContent = await decryptMemoryContent({
+      pool: params.pool, tenantId: params.tenantId, value: r.content_text,
+      options: { onFailure: "placeholder" },
+    });
+    const snippetRaw = (r.title ? `${r.title}\n` : "") + decryptedContent;
     const clipped = snippetRaw.slice(0, 280);
     const redacted = redactValue(clipped);
-    return {
+    evidence.push({
       id: r.id,
       type: r.type,
       scope: r.scope,
       title: r.title,
       snippet: String(redacted.value ?? ""),
       createdAt: r.created_at,
-    };
-  });
+    });
+  }
 
   return { evidence, candidateCount: evidence.length };
 }

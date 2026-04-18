@@ -1,7 +1,25 @@
 import crypto from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { normalizeAuditErrorCategory } from "@openslin/shared";
+
+async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
 function normalizeAllowedDomains(v: any) {
   const arr = Array.isArray(v) ? v : [];
@@ -58,23 +76,22 @@ function computeBackoffMs(attemptCount: number) {
 }
 
 async function claimOne(params: { pool: Pool }) {
-  await params.pool.query("BEGIN");
-  try {
-    const res = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const res = await client.query(
       `
         SELECT
           o.*,
           i.status AS inst_status,
           i.egress_policy,
           t.default_egress_policy,
-          s.host AS smtp_host,
-          s.password_secret_id,
+          cc.config->>'host' AS smtp_host,
+          (cc.config->>'passwordSecretId')::uuid AS password_secret_id,
           sr.status AS secret_status
         FROM notification_outbox o
         JOIN connector_instances i ON i.id = o.connector_instance_id AND i.tenant_id = o.tenant_id
         JOIN connector_types t ON t.name = i.type_name
-        JOIN smtp_connector_configs s ON s.connector_instance_id = i.id AND s.tenant_id = i.tenant_id
-        JOIN secret_records sr ON sr.id = s.password_secret_id AND sr.tenant_id = i.tenant_id AND sr.connector_instance_id = i.id
+        JOIN connector_configs cc ON cc.connector_instance_id = i.id AND cc.tenant_id = i.tenant_id AND cc.type_name = 'mail.smtp'
+        JOIN secret_records sr ON sr.id = (cc.config->>'passwordSecretId')::uuid AND sr.tenant_id = i.tenant_id AND sr.connector_instance_id = i.id
         WHERE o.channel = 'email'
           AND o.connector_instance_id IS NOT NULL
           AND o.delivery_status IN ('queued','failed')
@@ -85,11 +102,10 @@ async function claimOne(params: { pool: Pool }) {
       `,
     );
     if (!res.rowCount) {
-      await params.pool.query("COMMIT");
       return null;
     }
     const row = res.rows[0];
-    const upd = await params.pool.query(
+    const upd = await client.query(
       `
         UPDATE notification_outbox
         SET delivery_status = 'processing',
@@ -103,12 +119,8 @@ async function claimOne(params: { pool: Pool }) {
       `,
       [row.outbox_id],
     );
-    await params.pool.query("COMMIT");
     return { outbox: upd.rows[0], ctx: row };
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 export async function tickEmailDeliveries(params: { pool: Pool; limit?: number }) {

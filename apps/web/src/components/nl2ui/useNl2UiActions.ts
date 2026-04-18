@@ -95,11 +95,11 @@ export function useNl2UiActions(
     setState((s) => ({ ...s, executing: true, lastResult: null }));
     try {
       const idemKey = genIdemKey();
-      const res = await apiFetch(`/orchestrator/execute`, {
+      const res = await apiFetch(`/tools/${encodeURIComponent(toolRef)}/execute`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "idempotency-key": idemKey },
         locale,
-        body: JSON.stringify({ toolRef, input, idempotencyKey: idemKey }),
+        body: JSON.stringify(input),
       });
       const json: any = await res.json().catch(() => null);
       if (!res.ok) {
@@ -130,12 +130,12 @@ export function useNl2UiActions(
   // ─── Public API — all operations go through Tool system ─────────────
   const createRecord = useCallback((entityName: string, payload: Record<string, unknown>) => {
     const toolRef = resolveToolRef("create", entityName);
-    void executeTool(toolRef, { entityName, payload, schemaName: "core" }, { showCreateForm: false });
+    void executeTool(toolRef, { entityName, payload }, { showCreateForm: false });
   }, [executeTool, resolveToolRef]);
 
   const updateRecord = useCallback((entityName: string, id: string, patch: Record<string, unknown>) => {
     const toolRef = resolveToolRef("update", entityName);
-    void executeTool(toolRef, { entityName, id, payload: patch, schemaName: "core" }, { editingRecord: null });
+    void executeTool(toolRef, { entityName, id, payload: patch }, { editingRecord: null });
   }, [executeTool, resolveToolRef]);
 
   const deleteRecord = useCallback((entityName: string, id: string) => {
@@ -145,7 +145,7 @@ export function useNl2UiActions(
       : true;
     if (!confirmed) return;
     const toolRef = resolveToolRef("delete", entityName);
-    void executeTool(toolRef, { entityName, id, schemaName: "core" }, {});
+    void executeTool(toolRef, { entityName, id }, {});
   }, [executeTool, resolveToolRef]);
 
   // ─── Form controls ─────────────────────────────────────────────────

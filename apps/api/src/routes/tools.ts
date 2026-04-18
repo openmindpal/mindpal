@@ -3,6 +3,7 @@ import { z } from "zod";
 import { resolvePromptInjectionPolicy, resolveSupplyChainPolicy, supplyChainGate as runSupplyChainGate } from "@openslin/shared";
 import { Errors } from "../lib/errors";
 import { requirePermission } from "../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { setAuditContext } from "../modules/audit/context";
 import { enqueueAuditOutboxForRequest } from "../modules/audit/requestOutbox";
 import { toolPublishSchema } from "../modules/tools/toolModel";
@@ -29,7 +30,7 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/tools", async (req) => {
     setAuditContext(req, { resourceType: "tool", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "tool", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.TOOL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -50,7 +51,7 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
   app.get("/tools/:name", async (req, reply) => {
     const params = z.object({ name: z.string().min(1) }).parse(req.params);
     setAuditContext(req, { resourceType: "tool", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "tool", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.TOOL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -67,7 +68,7 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
   app.post("/tools/:name/publish", async (req) => {
     const params = z.object({ name: z.string().min(1) }).parse(req.params);
     setAuditContext(req, { resourceType: "tool", action: "publish", requireOutbox: true });
-    const decision = await requirePermission({ req, resourceType: "tool", action: "publish" });
+    const decision = await requirePermission({ req, ...PERM.TOOL_PUBLISH });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -187,7 +188,7 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
   app.get("/tools/versions/:toolRef", async (req, reply) => {
     const params = z.object({ toolRef: z.string().min(3) }).parse(req.params);
     setAuditContext(req, { resourceType: "tool", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "tool", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.TOOL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -215,10 +216,12 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
       null;
 
     setAuditContext(req, { resourceType: "tool", action: "execute", toolRef, idempotencyKey: idempotencyKey ?? undefined });
-    const decision = await requirePermission({ req, resourceType: "tool", action: "execute" });
+    const decision = await requirePermission({ req, ...PERM.TOOL_EXECUTE });
     req.ctx.audit!.policyDecision = decision;
 
-    if (!["entity.create", "entity.update", "entity.delete", "memory.read", "memory.write", "knowledge.search"].includes(toolName)) {
+    // 基于 tool_definitions.source_layer 元数据动态判定，不再硬编码工具名称
+    const sourceLayer = (resolved.definition as any)?.sourceLayer ?? "";
+    if (sourceLayer !== "kernel" && sourceLayer !== "builtin") {
       if (!ver.artifactRef) {
         req.ctx.audit!.errorCategory = "policy_violation";
         throw Errors.forbidden();
@@ -226,10 +229,10 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (toolName === "memory.read") {
-      await requirePermission({ req, resourceType: "memory", action: "read" });
+      await requirePermission({ req, ...PERM.MEMORY_READ });
     }
     if (toolName === "memory.write") {
-      await requirePermission({ req, resourceType: "memory", action: "write" });
+      await requirePermission({ req, ...PERM.MEMORY_WRITE });
     }
 
     let scGate: any = null;
@@ -325,7 +328,7 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
     const admitted = await admitAndBuildStepEnvelope({
       pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId,
       subjectId: subject.subjectId ?? null, resolved, opDecision,
-      limits, requestedCapabilityEnvelope: capabilityEnvelope, requireRequestedEnvelope: true,
+      limits, requestedCapabilityEnvelope: capabilityEnvelope, requireRequestedEnvelope: false,
     });
     const effNetDigest = admitted.networkPolicyDigest;
 
@@ -373,7 +376,7 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
   app.get("/tools/runs/:runId", async (req, reply) => {
     const params = z.object({ runId: z.string().min(3) }).parse(req.params);
     setAuditContext(req, { resourceType: "tool", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "tool", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.TOOL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;
@@ -387,7 +390,7 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
   app.get("/tools/steps/:stepId", async (req, reply) => {
     const params = z.object({ stepId: z.string().min(3) }).parse(req.params);
     setAuditContext(req, { resourceType: "tool", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "tool", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.TOOL_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = req.ctx.subject!;

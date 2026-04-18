@@ -3,6 +3,17 @@
     "name": "webhook.send",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "Webhook 消息发送",
+    "en-US": "Webhook Message Send"
+  },
+  "description": {
+    "zh-CN": "向指定的 Webhook URL 发送文本消息，用于集成第三方服务",
+    "en-US": "Sends text messages to specified Webhook URL for third-party service integration"
+  },
+  "category": "integration",
+  "priority": 6,
+  "tags": ["webhook", "notification", "outbound", "integration"],
   "contract": {
     "scope": "write",
     "resourceType": "channel",

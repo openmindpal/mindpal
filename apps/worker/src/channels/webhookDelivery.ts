@@ -1,8 +1,26 @@
 import crypto from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { normalizeAuditErrorCategory } from "@openslin/shared";
 import { callDataPlaneJson } from "../workflow/processor/dataPlaneGateway";
+
+async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
 function stable(v: any): any {
   if (v === null || v === undefined) return null;
@@ -73,6 +91,42 @@ function computeBackoffMs(base: number, attemptCount: number) {
   return Math.min(ms, 60_000);
 }
 
+/**
+ * #1 FIX: 从 space 或 tenant 动态获取 locale，而不是硬编码 zh-CN。
+ * 优先级：space.default_locale > tenant.default_locale > 环境变量 > "zh-CN"
+ */
+async function resolveChannelLocale(params: { pool: Pool; tenantId: string; spaceId: string | null }): Promise<string> {
+  // 1. 尝试从 space 获取
+  if (params.spaceId) {
+    try {
+      const res = await params.pool.query(
+        "SELECT default_locale FROM spaces WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+        [params.spaceId, params.tenantId],
+      );
+      const loc = res.rowCount ? String(res.rows[0].default_locale ?? "").trim() : "";
+      if (loc) return loc;
+    } catch (e: any) {
+      console.warn(`[webhookDelivery] 无法从 space 获取 locale: ${e?.message ?? "unknown"}`);
+    }
+  }
+  // 2. 回退到 tenant
+  try {
+    const res = await params.pool.query(
+      "SELECT default_locale FROM tenants WHERE id = $1 LIMIT 1",
+      [params.tenantId],
+    );
+    const loc = res.rowCount ? String(res.rows[0].default_locale ?? "").trim() : "";
+    if (loc) return loc;
+  } catch (e: any) {
+    console.warn(`[webhookDelivery] 无法从 tenant 获取 locale: ${e?.message ?? "unknown"}`);
+  }
+  // 3. 环境变量回退
+  const envLocale = String(process.env.DEFAULT_LOCALE ?? "").trim();
+  if (envLocale) return envLocale;
+  // 4. 最终回退
+  return "zh-CN";
+}
+
 async function resolveMapping(params: {
   pool: Pool;
   tenantId: string;
@@ -121,9 +175,8 @@ function pickReplyText(locale: string, v: unknown) {
 }
 
 async function claimOne(params: { pool: Pool }) {
-  await params.pool.query("BEGIN");
-  try {
-    const res = await params.pool.query(
+  return withTransaction(params.pool, async (client) => {
+    const res = await client.query(
       `
         SELECT
           e.*,
@@ -143,11 +196,10 @@ async function claimOne(params: { pool: Pool }) {
       `,
     );
     if (!res.rowCount) {
-      await params.pool.query("COMMIT");
       return null;
     }
     const row = res.rows[0];
-    const upd = await params.pool.query(
+    const upd = await client.query(
       `
         UPDATE channel_ingress_events
         SET status = 'processing',
@@ -161,12 +213,8 @@ async function claimOne(params: { pool: Pool }) {
       `,
       [row.id],
     );
-    await params.pool.query("COMMIT");
     return { event: upd.rows[0], cfg: { spaceId: row.cfg_space_id ?? null, maxAttempts: Number(row.cfg_max_attempts ?? 8), backoffMsBase: Number(row.cfg_backoff_ms_base ?? 500) } };
-  } catch (e) {
-    await params.pool.query("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 async function hasMapping(params: { pool: Pool; tenantId: string; provider: string; workspaceId: string; channelUserId?: string | null; channelChatId?: string | null }) {
@@ -253,6 +301,9 @@ export async function tickWebhookDeliveries(params: { pool: Pool; limit?: number
       const resolvedChatId = mapping.channelChatId;
       if (!resolvedChatId) throw new Error("policy_violation:missing_channel_chat_id");
 
+      // #1 FIX: 从 space/tenant 动态获取 locale，而不是硬编码 zh-CN
+      const locale = await resolveChannelLocale({ pool: params.pool, tenantId, spaceId: mapping.spaceId });
+
       const convId = channelConversationId({ provider, workspaceId, channelChatId: resolvedChatId, threadId: null });
       const orch = await callDataPlaneJson({
         pool: params.pool,
@@ -261,10 +312,10 @@ export async function tickWebhookDeliveries(params: { pool: Pool; limit?: number
         subjectId: mapping.subjectId,
         traceId,
         method: "POST",
-        path: "/orchestrator/turn",
-        body: { message: text, locale: "zh-CN", conversationId: convId },
+        path: "/orchestrator/dispatch",
+        body: { message: text, locale, conversationId: convId, mode: "answer" },
       });
-      const replyText = pickReplyText("zh-CN", orch?.replyText);
+      const replyText = pickReplyText(locale, orch?.replyText);
       if (!replyText.trim()) throw new Error("invalid_reply");
 
       const outbox = await params.pool.query(

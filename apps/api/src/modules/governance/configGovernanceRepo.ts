@@ -20,6 +20,7 @@ import {
   resolveAllRuntimeConfigs,
   type ResolvedConfig,
 } from "@openslin/shared";
+import { getHotConfigEngine } from "../../lib/hotConfigEngine";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -168,6 +169,33 @@ export async function setConfigOverride(params: {
   };
 }
 
+/**
+ * P2-04a: 设置配置覆盖并广播热更新通知
+ */
+export async function setConfigOverrideWithNotify(params: {
+  pool: Pool;
+  tenantId: string;
+  configKey: string;
+  configValue: string;
+  description?: string;
+  changedBy?: string;
+}): Promise<SetConfigResult> {
+  const result = await setConfigOverride(params);
+
+  // 广播配置变更到所有实例
+  const engine = getHotConfigEngine();
+  if (engine) {
+    await engine.broadcastConfigChange({
+      tenantId: params.tenantId,
+      configKey: params.configKey,
+      action: "set",
+      newValue: params.configValue,
+    });
+  }
+
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Delete
 // ---------------------------------------------------------------------------
@@ -201,6 +229,31 @@ export async function deleteConfigOverride(params: {
   }
 
   return { deleted: (del.rowCount ?? 0) > 0, previousValue };
+}
+
+/**
+ * P2-04a: 删除配置覆盖并广播热更新通知
+ */
+export async function deleteConfigOverrideWithNotify(params: {
+  pool: Pool;
+  tenantId: string;
+  configKey: string;
+  changedBy?: string;
+}): Promise<{ deleted: boolean; previousValue: string | null }> {
+  const result = await deleteConfigOverride(params);
+
+  if (result.deleted) {
+    const engine = getHotConfigEngine();
+    if (engine) {
+      await engine.broadcastConfigChange({
+        tenantId: params.tenantId,
+        configKey: params.configKey,
+        action: "delete",
+      });
+    }
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

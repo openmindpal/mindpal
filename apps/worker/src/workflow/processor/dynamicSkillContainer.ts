@@ -134,7 +134,15 @@ export async function executeDynamicSkillContainered(params: {
     const cpus = Math.max(0.1, Math.min(8, params.limits.cpuMs / 1000));
     dockerArgs.push("--cpus", String(cpus));
   }
-  dockerArgs.push(image, "node", "-e", buildContainerRunnerScript());
+  // P2-02c: 多语言容器运行时 —— 根据入口文件后缀选择运行时命令
+  const entryFile = params.entryPath.replaceAll("\\\\", "/").replaceAll(params.artifactDir.replaceAll("\\\\", "/"), "/skill");
+  const isPythonEntry = entryFile.endsWith(".py");
+  if (isPythonEntry) {
+    // Python 容器运行时：使用 python3 + 内联 wrapper
+    dockerArgs.push(image, "python3", "-u", entryFile);
+  } else {
+    dockerArgs.push(image, "node", "-e", buildContainerRunnerScript());
+  }
 
   const child = child_process.spawn("docker", dockerArgs, { stdio: ["pipe", "pipe", "ignore"] });
   const kill = () => {

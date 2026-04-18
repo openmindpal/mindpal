@@ -1,5 +1,6 @@
 import type { I18nText } from "./api";
 import type { ApiError } from "./apiError";
+import { t } from "./i18n";
 
 export type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -130,3 +131,99 @@ export type ExecuteResponse = ApiError & {
   idempotencyKey?: string;
   receipt?: { status?: string; correlation?: Record<string, unknown> };
 };
+
+/* ─── P0: Unified Dispatch types ────────────────── */
+
+export type IntentMode = "answer" | "execute" | "collab";
+
+export type IntentClassification = {
+  mode: IntentMode;
+  confidence: number;
+  reason: string;
+  needsTask: boolean;
+  needsApproval: boolean;
+  complexity: "simple" | "moderate" | "complex";
+};
+
+export type ExecutionClass = "conversation" | "immediate_action" | "workflow" | "collab";
+
+export type TaskState = {
+  phase: string;
+  stepCount?: number;
+  currentStep?: number;
+  needsApproval?: boolean;
+  blockReason?: string;
+  /** P1-3.2: current execution role */
+  role?: string;
+  /** P1-3.3: next action hint */
+  nextAction?: string;
+  /** P1-3.4: evidence or artifact summary */
+  evidence?: unknown;
+  /** P1-3.5: approval status */
+  approvalStatus?: string;
+  /** task summary */
+  taskSummary?: string;
+};
+
+export type DispatchResponse = ApiError & {
+  mode: IntentMode;
+  executionClass?: ExecutionClass;
+  classification: IntentClassification;
+  conversationId: string;
+  replyText?: string;
+  toolSuggestions?: ToolSuggestion[];
+  taskId?: string;
+  runId?: string;
+  jobId?: string;
+  collabRunId?: string;
+  phase?: string;
+  taskState?: TaskState;
+  turnId?: string;
+  uiDirective?: unknown;
+  nl2uiResult?: unknown;
+  actionReceipt?: {
+    status: "completed" | "suggested";
+    toolCount?: number;
+    summary?: string;
+  };
+};
+
+/* ─── P1-1: Run phase labels ─── */
+export const RUN_PHASE_LABELS: Record<string, string> = {
+  created: "run.phase.created",
+  queued: "run.phase.queued",
+  retrieving: "run.phase.retrieving",
+  planning: "run.phase.planning",
+  planned: "run.phase.planned",
+  guarded: "run.phase.guarded",
+  running: "run.phase.running",
+  executing: "run.phase.executing",
+  reviewing: "run.phase.reviewing",
+  needs_approval: "run.phase.needs_approval",
+  needs_device: "run.phase.needs_device",
+  needs_arbiter: "run.phase.needs_arbiter",
+  paused: "run.phase.paused",
+  succeeded: "run.phase.succeeded",
+  failed: "run.phase.failed",
+  stopped: "run.phase.stopped",
+  canceled: "run.phase.canceled",
+  compensating: "run.phase.compensating",
+  compensated: "run.phase.compensated",
+};
+
+export function getPhaseLabel(phase: string, locale: string): string {
+  const key = RUN_PHASE_LABELS[phase];
+  return key ? t(locale, key) : phase;
+}
+
+export function isPhaseTerminal(phase: string): boolean {
+  return ["succeeded", "failed", "stopped", "canceled", "compensated"].includes(phase);
+}
+
+export function isPhaseBlocking(phase: string): boolean {
+  return ["needs_approval", "needs_device", "needs_arbiter", "paused"].includes(phase);
+}
+
+export function isPhaseActive(phase: string): boolean {
+  return ["queued", "retrieving", "planning", "executing", "reviewing", "running", "compensating"].includes(phase);
+}

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { IconX } from "./ShellIcons";
+import { formatToolRef, timeAgo } from "./shellUtils";
 import styles from "./ActiveRunList.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
@@ -30,145 +32,84 @@ type ActiveRun = {
   } | null;
 };
 
-/* ─── Icons ─────────────────────────────────────────────────────────────────── */
+/* ─── Helpers ───────────────────────────────────────────────────────────────── */
 
-function IconPlay() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-      <polygon points="5,3 19,12 5,21" />
-    </svg>
-  );
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id;
 }
 
-function IconPause() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-      <rect x="6" y="4" width="4" height="16" />
-      <rect x="14" y="4" width="4" height="16" />
-    </svg>
-  );
-}
-
-function IconClock() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12 6 12 12 16 14" />
-    </svg>
-  );
-}
-
-function IconChevronRight() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-      <polyline points="9 18 15 12 9 6" />
-    </svg>
-  );
-}
-
-/* ─── Utility Functions ─────────────────────────────────────────────────────── */
-
-function formatToolRef(toolRef: string | null): string {
-  if (!toolRef) return "-";
-  const at = toolRef.lastIndexOf("@");
-  return at > 0 ? toolRef.slice(0, at) : toolRef;
-}
-
-function getPhaseIcon(phase: string) {
+function dotClass(phase: string): string {
   switch (phase) {
-    case "executing":
-    case "running":
-      return <IconPlay />;
-    case "needs_approval":
-    case "needs_device":
-    case "needs_arbiter":
-      return <IconPause />;
+    case "executing": case "running":
+      return styles.statusDotRunning;
+    case "needs_approval": case "needs_device": case "needs_arbiter":
+      return styles.statusDotBlocked;
     default:
-      return <IconClock />;
+      return "";
   }
-}
-
-function getPhaseClass(phase: string): string {
-  switch (phase) {
-    case "executing":
-    case "running":
-      return styles.phaseExecuting;
-    case "needs_approval":
-    case "needs_device":
-    case "needs_arbiter":
-      return styles.phaseBlocked;
-    case "reviewing":
-      return styles.phaseReviewing;
-    default:
-      return styles.phasePending;
-  }
-}
-
-function timeAgo(dateStr: string, locale: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diffMs = now - then;
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHr = Math.floor(diffMin / 60);
-
-  if (diffMin < 1) return t(locale, "activeRuns.justNow");
-  if (diffMin < 60) return t(locale, "activeRuns.minutesAgo").replace("{n}", String(diffMin));
-  if (diffHr < 24) return t(locale, "activeRuns.hoursAgo").replace("{n}", String(diffHr));
-  return t(locale, "activeRuns.daysAgo").replace("{n}", String(Math.floor(diffHr / 24)));
 }
 
 /* ─── Run Item Component ────────────────────────────────────────────────────── */
 
-function RunItem(props: { run: ActiveRun; locale: string; onSelect?: (runId: string) => void }) {
-  const { run, locale, onSelect } = props;
+function RunItem(props: { run: ActiveRun; locale: string; cancelState: string; onCancel: (runId: string) => void }) {
+  const { run, locale, cancelState, onCancel } = props;
   const runHref = `/runs/${encodeURIComponent(run.runId)}?lang=${encodeURIComponent(locale)}`;
-
-  const handleClick = (e: React.MouseEvent) => {
-    if (onSelect) {
-      e.preventDefault();
-      onSelect(run.runId);
-    }
-  };
+  const stepLabel = run.currentStep
+    ? `${run.currentStep.name ?? formatToolRef(run.currentStep.toolRef)}`
+    : null;
 
   return (
-    <Link href={runHref} className={styles.runItem} onClick={handleClick}>
-      <div className={styles.runHeader}>
-        <span className={`${styles.phaseIndicator} ${getPhaseClass(run.phase)}`}>
-          {getPhaseIcon(run.phase)}
-        </span>
-        <span className={styles.runPhase}>{t(locale, `activeRuns.phase.${run.phase}`)}</span>
-        <span className={styles.runTime}>{timeAgo(run.updatedAt, locale)}</span>
-      </div>
+    <div className={styles.runItem}>
+      {/* Status dot */}
+      <span className={`${styles.statusDot} ${dotClass(run.phase)}`} />
 
-      {run.currentStep && (
-        <div className={styles.stepInfo}>
-          <span className={styles.stepName}>
-            {run.currentStep.name ?? formatToolRef(run.currentStep.toolRef)}
+      {/* Info block (clickable link) */}
+      <Link href={runHref} className={styles.runInfo}>
+        {/* Row 1: ID + phase + step count */}
+        <div className={styles.runRow1}>
+          <span className={styles.runId}>{shortId(run.runId)}</span>
+          <span className={styles.runPhase}>{t(locale, `activeRuns.phase.${run.phase}`)}</span>
+          <span className={styles.runStepCount}>
+            {t(locale, "activeRuns.step")} {run.progress.current}/{run.progress.total}
           </span>
-          {run.currentStep.attempt > 1 && (
-            <span className={styles.stepAttempt}>
-              #{run.currentStep.attempt}
-            </span>
-          )}
         </div>
-      )}
+        {/* Row 2: tool/step name (if available) */}
+        {stepLabel && (
+          <div className={styles.runRow2}>
+            <span className={styles.toolName}>{stepLabel}</span>
+            {run.currentStep!.attempt > 1 && (
+              <span className={styles.stepAttempt}>
+                {t(locale, "activeRuns.retry")} #{run.currentStep!.attempt}
+              </span>
+            )}
+          </div>
+        )}
+        {/* Row 3: progress bar */}
+        <div className={styles.runRow3}>
+          <div className={styles.progressBar}>
+            <div className={styles.progressFill} style={{ width: `${run.progress.percentage}%` }} />
+          </div>
+          <span className={styles.progressText}>{run.progress.percentage}%</span>
+        </div>
+      </Link>
 
-      <div className={styles.runFooter}>
-        <div className={styles.progressBar}>
-          <div
-            className={styles.progressFill}
-            style={{ width: `${run.progress.percentage}%` }}
-          />
-        </div>
-        <span className={styles.progressText}>
-          {run.progress.current}/{run.progress.total}
-        </span>
-        <span className={styles.runArrow}>
-          <IconChevronRight />
-        </span>
+      {/* Right: time + cancel */}
+      <div className={styles.runActions}>
+        <span className={styles.runTime}>{timeAgo(run.updatedAt, locale, "activeRuns")}</span>
+        {cancelState === "done" ? (
+          <span className={styles.cancelDone}>{t(locale, "activeRuns.cancelled")}</span>
+        ) : (
+          <button
+            className={styles.cancelBtn}
+            disabled={cancelState === "loading"}
+            onClick={(e) => { e.stopPropagation(); onCancel(run.runId); }}
+            title={t(locale, "activeRuns.cancel")}
+          >
+            <IconX />
+          </button>
+        )}
       </div>
-    </Link>
+    </div>
   );
 }
 
@@ -176,14 +117,13 @@ function RunItem(props: { run: ActiveRun; locale: string; onSelect?: (runId: str
 
 export default function ActiveRunList(props: {
   locale: string;
-  onSelectRun?: (runId: string) => void;
-  collapsed?: boolean;
+  onBadgeUpdate?: (count: number) => void;
 }) {
-  const { locale, onSelectRun, collapsed } = props;
+  const { locale, onBadgeUpdate } = props;
   const [runs, setRuns] = useState<ActiveRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(true);
+  const [cancelState, setCancelState] = useState<Record<string, "idle" | "loading" | "done" | "error">>({});
 
   const fetchRuns = useCallback(async () => {
     try {
@@ -194,11 +134,28 @@ export default function ActiveRunList(props: {
       }
       const data = await res.json();
       setRuns((data.activeRuns as ActiveRun[]) ?? []);
+      const count = ((data.activeRuns as unknown[]) ?? []).length;
+      onBadgeUpdate?.(count);
       setError(null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "fetch_error");
     } finally {
       setLoading(false);
+    }
+  }, [locale]);
+
+  const handleCancel = useCallback(async (runId: string) => {
+    setCancelState((s) => ({ ...s, [runId]: "loading" }));
+    try {
+      const res = await apiFetch(`/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST", locale });
+      if (res.ok || res.status === 409) {
+        setCancelState((s) => ({ ...s, [runId]: "done" }));
+        setTimeout(() => setRuns((prev) => prev.filter((r) => r.runId !== runId)), 800);
+      } else {
+        setCancelState((s) => ({ ...s, [runId]: "error" }));
+      }
+    } catch {
+      setCancelState((s) => ({ ...s, [runId]: "error" }));
     }
   }, [locale]);
 
@@ -213,67 +170,40 @@ export default function ActiveRunList(props: {
     return () => clearInterval(timer);
   }, [fetchRuns]);
 
-  if (collapsed) return null;
-
-  const toggleExpand = () => setExpanded((e) => !e);
-
   return (
     <div className={styles.container}>
-      {/* Header */}
-      <button className={styles.header} onClick={toggleExpand}>
-        <span className={styles.headerIcon}>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            style={{ transform: expanded ? "rotate(90deg)" : "rotate(0)", transition: "transform 0.15s" }}
-          >
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </span>
-        <span className={styles.headerTitle}>{t(locale, "activeRuns.title")}</span>
-        {runs.length > 0 && (
-          <span className={styles.headerCount}>{runs.length}</span>
-        )}
-      </button>
-
       {/* Content */}
-      {expanded && (
-        <div className={styles.content}>
-          {loading && (
-            <div className={styles.loadingState}>
-              <span className={styles.spinner} />
-              <span>{t(locale, "activeRuns.loading")}</span>
-            </div>
-          )}
+      <div className={styles.content}>
+        {loading && (
+          <div className={styles.loadingState}>
+            <span className={styles.spinner} />
+            <span>{t(locale, "activeRuns.loading")}</span>
+          </div>
+        )}
 
-          {!loading && error && (
-            <div className={styles.errorState}>
-              <span>{t(locale, "activeRuns.error")}</span>
-              <button className={styles.retryBtn} onClick={fetchRuns}>
-                {t(locale, "activeRuns.retry")}
-              </button>
-            </div>
-          )}
+        {!loading && error && (
+          <div className={styles.errorState}>
+            <span>{t(locale, "activeRuns.error")}</span>
+            <button className={styles.retryBtn} onClick={fetchRuns}>
+              {t(locale, "activeRuns.retry")}
+            </button>
+          </div>
+        )}
 
-          {!loading && !error && runs.length === 0 && (
-            <div className={styles.emptyState}>
-              <span>{t(locale, "activeRuns.empty")}</span>
-            </div>
-          )}
+        {!loading && !error && runs.length === 0 && (
+          <div className={styles.emptyState}>
+            <span>{t(locale, "activeRuns.empty")}</span>
+          </div>
+        )}
 
-          {!loading && !error && runs.length > 0 && (
-            <div className={styles.runList}>
-              {runs.map((run) => (
-                <RunItem key={run.runId} run={run} locale={locale} onSelect={onSelectRun} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        {!loading && !error && runs.length > 0 && (
+          <div className={styles.runList}>
+            {runs.map((run) => (
+              <RunItem key={run.runId} run={run} locale={locale} cancelState={cancelState[run.runId] ?? "idle"} onCancel={handleCancel} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

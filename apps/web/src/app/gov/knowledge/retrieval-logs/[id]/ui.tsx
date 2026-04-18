@@ -1,32 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { Card, PageHeader, Table, StructuredData, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { toRecord } from "@/lib/viewData";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type RetrievalLog = Record<string, unknown>;
 type RetrievalLogResp = ApiError & { log?: RetrievalLog };
 type EvidenceResolveResp = ApiError & { evidence?: Record<string, unknown> };
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
-}
 
 function pickArr(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
@@ -60,7 +43,7 @@ export default function RetrievalLogDetailClient(props: { locale: string; id: st
 
   const log = data?.log ?? null;
   const ranked = useMemo(() => {
-    const rec = asRecord(log);
+    const rec = toRecord(log);
     const v = rec ? rec.rankedEvidenceRefs : null;
     return pickArr(v);
   }, [log]);
@@ -94,7 +77,7 @@ export default function RetrievalLogDetailClient(props: { locale: string; id: st
         title={`${t(props.locale, "gov.nav.knowledgeLogs")}: ${props.id}`}
         actions={
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <Badge>{status || "-"}</Badge>
+            <StatusBadge locale={props.locale} status={status || 0} />
             <button disabled={busy} onClick={load}>
               {busy ? t(props.locale, "action.loading") : t(props.locale, "action.refresh")}
             </button>
@@ -105,7 +88,7 @@ export default function RetrievalLogDetailClient(props: { locale: string; id: st
       {error ? <pre style={{ color: "crimson", whiteSpace: "pre-wrap", margin: 0 }}>{error}</pre> : null}
 
       <Card title={t(props.locale, "gov.knowledgeLogs.detail.logTitle")}>
-        <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(log, null, 2)}</pre>
+        <StructuredData data={log} />
       </Card>
 
       <Card title={t(props.locale, "gov.knowledgeLogs.detail.rankedEvidenceRefsTitle")}>
@@ -123,23 +106,23 @@ export default function RetrievalLogDetailClient(props: { locale: string; id: st
           </thead>
           <tbody>
             {ranked.map((e, idx) => {
-              const rec = asRecord(e);
-              const sr = rec && asRecord(rec.sourceRef);
+              const rec = toRecord(e);
+              const sr = rec && toRecord(rec.sourceRef);
               const key = sr ? `${String(sr.documentId ?? "")}:${String(sr.version ?? "")}:${String(sr.chunkId ?? "")}` : `${idx}`;
               const resolved = evidenceByKey[key] ?? null;
               return (
                 <tr key={key}>
                   <td>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(sr ?? null, null, 2)}</pre>
+                    <StructuredData data={sr ?? null} />
                   </td>
                   <td>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(rec?.rankReason ?? null, null, 2)}</pre>
+                    <StructuredData data={rec?.rankReason ?? null} />
                   </td>
                   <td>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(rec?.snippetDigest ?? null, null, 2)}</pre>
+                    <StructuredData data={rec?.snippetDigest ?? null} />
                   </td>
                   <td>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(rec?.location ?? null, null, 2)}</pre>
+                    <StructuredData data={rec?.location ?? null} />
                   </td>
                   <td>
                     <button disabled={!sr || evidenceBusy === key} onClick={() => sr && resolveEvidence(sr)}>
@@ -147,7 +130,7 @@ export default function RetrievalLogDetailClient(props: { locale: string; id: st
                     </button>
                   </td>
                   <td>
-                    {resolved ? <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(resolved, null, 2)}</pre> : "-"}
+                    {resolved ? <StructuredData data={resolved} /> : "-"}
                   </td>
                 </tr>
               );

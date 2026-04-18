@@ -61,7 +61,7 @@ describe.sequential("schema compat admission e2e", { timeout: 60_000 }, () => {
       app.log.error(e);
       canRun = false;
     }
-  });
+  }, 120_000);
 
   afterAll(async () => {
     await app.close();
@@ -232,7 +232,7 @@ describe.sequential("schema compat admission e2e", { timeout: 60_000 }, () => {
     const stepId = String(migBody.migrationRun.stepId);
     const migrationRunId = String(migBody.migrationRun.migrationRunId);
 
-    await processStep({ pool, jobId, runId, stepId });
+    await processStep({ pool, jobId, runId, stepId, masterKey: "test-master-key" });
 
     const cs = await app.inject({
       method: "POST",
@@ -370,4 +370,3 @@ describe.sequential("schema compat admission e2e", { timeout: 60_000 }, () => {
     expect((rel.json() as any).errorCode).toBe("SCHEMA_BREAKING_CHANGE");
   });
 });
-

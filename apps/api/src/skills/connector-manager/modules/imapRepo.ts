@@ -1,4 +1,11 @@
+/**
+ * imapRepo.ts — IMAP 连接器配置（统一表代理）
+ *
+ * 底层使用 connector_configs 统一表，此文件提供 IMAP 类型化适配层。
+ * 新代码建议直接使用 connectorConfigRepo.ts。
+ */
 import type { Pool, PoolClient } from "pg";
+import { upsertConnectorConfig, getConnectorConfig } from "../../../modules/connectors/connectorConfigRepo";
 
 type Q = Pool | PoolClient;
 
@@ -16,19 +23,19 @@ export type ImapConnectorConfigRow = {
   updatedAt: string;
 };
 
-function toRow(r: any): ImapConnectorConfigRow {
+function fromConfig(row: { connectorInstanceId: string; tenantId: string; config: Record<string, unknown>; createdAt: string; updatedAt: string }): ImapConnectorConfigRow {
   return {
-    connectorInstanceId: r.connector_instance_id,
-    tenantId: r.tenant_id,
-    host: r.host,
-    port: Number(r.port),
-    useTls: Boolean(r.use_tls),
-    username: r.username,
-    passwordSecretId: r.password_secret_id,
-    mailbox: r.mailbox,
-    fetchWindowDays: r.fetch_window_days ?? null,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    connectorInstanceId: row.connectorInstanceId,
+    tenantId: row.tenantId,
+    host: String(row.config.host ?? ""),
+    port: Number(row.config.port ?? 0),
+    useTls: Boolean(row.config.useTls),
+    username: String(row.config.username ?? ""),
+    passwordSecretId: String(row.config.passwordSecretId ?? ""),
+    mailbox: String(row.config.mailbox ?? ""),
+    fetchWindowDays: row.config.fetchWindowDays != null ? Number(row.config.fetchWindowDays) : null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -44,44 +51,26 @@ export async function upsertImapConnectorConfig(params: {
   mailbox: string;
   fetchWindowDays?: number | null;
 }) {
-  const res = await params.pool.query(
-    `
-      INSERT INTO imap_connector_configs (
-        connector_instance_id, tenant_id, host, port, use_tls, username, password_secret_id, mailbox, fetch_window_days
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-      ON CONFLICT (connector_instance_id)
-      DO UPDATE SET
-        host = EXCLUDED.host,
-        port = EXCLUDED.port,
-        use_tls = EXCLUDED.use_tls,
-        username = EXCLUDED.username,
-        password_secret_id = EXCLUDED.password_secret_id,
-        mailbox = EXCLUDED.mailbox,
-        fetch_window_days = EXCLUDED.fetch_window_days,
-        updated_at = now()
-      RETURNING *
-    `,
-    [
-      params.connectorInstanceId,
-      params.tenantId,
-      params.host,
-      params.port,
-      params.useTls,
-      params.username,
-      params.passwordSecretId,
-      params.mailbox,
-      params.fetchWindowDays ?? null,
-    ],
-  );
-  return toRow(res.rows[0]);
+  const row = await upsertConnectorConfig({
+    pool: params.pool,
+    connectorInstanceId: params.connectorInstanceId,
+    tenantId: params.tenantId,
+    typeName: "mail.imap",
+    config: {
+      host: params.host,
+      port: params.port,
+      useTls: params.useTls,
+      username: params.username,
+      passwordSecretId: params.passwordSecretId,
+      mailbox: params.mailbox,
+      fetchWindowDays: params.fetchWindowDays ?? null,
+    },
+  });
+  return fromConfig(row);
 }
 
 export async function getImapConnectorConfig(params: { pool: Pool; tenantId: string; connectorInstanceId: string }) {
-  const res = await params.pool.query(
-    "SELECT * FROM imap_connector_configs WHERE tenant_id = $1 AND connector_instance_id = $2 LIMIT 1",
-    [params.tenantId, params.connectorInstanceId],
-  );
-  if (!res.rowCount) return null;
-  return toRow(res.rows[0]);
+  const row = await getConnectorConfig({ pool: params.pool, tenantId: params.tenantId, connectorInstanceId: params.connectorInstanceId });
+  if (!row || row.typeName !== "mail.imap") return null;
+  return fromConfig(row);
 }

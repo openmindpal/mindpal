@@ -3,12 +3,15 @@ import { z } from "zod";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { getDevicePolicy } from "./modules/devicePolicyRepo";
 import { getDeviceRecord } from "./modules/deviceRepo";
 import { cancelDeviceExecution, claimDeviceExecution, completeDeviceExecution, createDeviceExecution, getDeviceExecution, listDeviceExecutions, listPendingByDevice } from "./modules/deviceExecutionRepo";
 import { getToolDefinition, getToolVersionByRef } from "../../modules/tools/toolRepo";
 import { validateToolInput } from "../../modules/tools/validate";
 import { sha256Hex } from "../../lib/digest";
+import { pushToDevice } from "./deviceWsRegistry";
+import { sendD2DMessage } from "./modules/crossDeviceBus";
 
 function requireDevice(req: any) {
   const device = req.ctx.device;
@@ -86,7 +89,7 @@ function toDeviceExecution(e: any) {
 export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
   app.post("/device-executions", async (req) => {
     setAuditContext(req, { resourceType: "device_execution", action: "create" });
-    const decision = await requirePermission({ req, resourceType: "device_execution", action: "create" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_EXECUTION_CREATE });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -100,6 +103,8 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
         input: z.record(z.string(), z.any()).optional(),
       })
       .parse(req.body);
+
+    const startedAt = Date.now();
 
     const device = await getDeviceRecord({ pool: app.db, tenantId: subject.tenantId, deviceId: body.deviceId });
     if (!device) throw Errors.badRequest("Device 不存在");
@@ -170,12 +175,88 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
       policySnapshotRef,
       requireUserPresence,
     };
+
+    // ── P0-2 FIX: WS 主动推送 task_pending 给目标设备（支持多实例部署）──────
+    // 使用 crossDeviceBus.sendD2DMessage 替代 pushToDevice，确保跨节点推送
+    let pushMethod: "cross_device_bus" | "local_ws" = "local_ws";
+    let pushResult: "ok" | "failed" = "ok";
+    
+    try {
+      const redis = (app as any).redis;
+      if (redis) {
+        await sendD2DMessage({
+          pool: app.db,
+          redis,
+          msg: {
+            tenantId: subject.tenantId,
+            fromDeviceId: null, // 系统发出
+            routingKind: "direct",
+            toDeviceId: created.deviceId,
+            category: "task_notification",
+            priority: "high",
+            payload: {
+              type: "task_pending",
+              executionId: created.deviceExecutionId,
+              toolRef: created.toolRef,
+              requireUserPresence,
+            },
+            requireAck: false, // fire-and-forget
+            ttlMs: 60_000, // 1 分钟 TTL
+          },
+        });
+        pushMethod = "cross_device_bus";
+        app.log.info(
+          { deviceId: created.deviceId, executionId: created.deviceExecutionId },
+          "[device-execution] task_pending notification sent via crossDeviceBus"
+        );
+      } else {
+        // Redis 不可用时降级到本地 WS 推送
+        pushMethod = "local_ws";
+        app.log.warn("[device-execution] Redis unavailable, falling back to local WS push");
+        pushToDevice(created.deviceId, {
+          type: "task_pending",
+          payload: {
+            executionId: created.deviceExecutionId,
+            toolRef: created.toolRef,
+            requireUserPresence,
+          },
+        });
+      }
+    } catch (err: any) {
+      // WS 推送失败不影响主流程，但记录详细日志
+      pushResult = "failed";
+      app.log.error(
+        { 
+          err: err?.message, 
+          deviceId: created.deviceId, 
+          executionId: created.deviceExecutionId,
+          stack: err?.stack 
+        },
+        "[device-execution] task_pending notification failed"
+      );
+    } finally {
+      // P3-1: 记录设备推送指标
+      app.metrics.incDevicePushNotification({
+        method: pushMethod,
+        result: pushResult,
+      });
+    }
+
+    const latencyMs = Date.now() - startedAt;
+    
+    // P3-1: 记录 Device Execution 创建指标
+    app.metrics.observeDeviceExecution({
+      result: "ok",
+      latencyMs,
+      deviceType: device.deviceType ?? "unknown",
+    });
+
     return { execution: toPublicExecution(created) };
   });
 
   app.get("/device-executions", async (req) => {
     setAuditContext(req, { resourceType: "device_execution", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "device_execution", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_EXECUTION_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -204,7 +285,7 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
   app.get("/device-executions/:deviceExecutionId", async (req, reply) => {
     const params = z.object({ deviceExecutionId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "device_execution", action: "read" });
-    const decision = await requirePermission({ req, resourceType: "device_execution", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_EXECUTION_READ });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -217,7 +298,7 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
   app.post("/device-executions/:deviceExecutionId/cancel", async (req) => {
     const params = z.object({ deviceExecutionId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "device_execution", action: "cancel" });
-    const decision = await requirePermission({ req, resourceType: "device_execution", action: "cancel" });
+    const decision = await requirePermission({ req, ...PERM.DEVICE_EXECUTION_CANCEL });
     req.ctx.audit!.policyDecision = decision;
 
     const subject = requireSubject(req);
@@ -326,6 +407,12 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
           );
           const jobId = jobRes.rowCount ? String((jobRes.rows[0] as any).job_id ?? "") : "";
           if (jobId) {
+            const metaRes = await app.db.query(
+              "SELECT (input->>'collabRunId') AS collab_run_id, (input->>'spaceId') AS space_id FROM steps WHERE step_id = $1 LIMIT 1",
+              [done.stepId],
+            );
+            const collabRunId = metaRes.rowCount ? String((metaRes.rows[0] as any).collab_run_id ?? "") : "";
+            const spaceId = metaRes.rowCount ? String((metaRes.rows[0] as any).space_id ?? "") : "";
             await app.db.query(
               "UPDATE runs SET status = 'queued', updated_at = now() WHERE tenant_id = $1 AND run_id = $2 AND status = 'needs_device'",
               [device.tenantId, done.runId],
@@ -334,10 +421,23 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
               "UPDATE jobs SET status = 'queued', updated_at = now() WHERE tenant_id = $1 AND job_id = $2",
               [device.tenantId, jobId],
             );
+            // P0-4 FIX: step 现在用 needs_device 状态，恢复时先改回 pending 再入队
             await app.db.query(
-              "UPDATE steps SET status = 'pending', queue_job_id = NULL, updated_at = now() WHERE step_id = $1 AND status = 'pending'",
+              "UPDATE steps SET status = 'pending', queue_job_id = NULL, updated_at = now() WHERE step_id = $1 AND status IN ('pending', 'needs_device')",
               [done.stepId],
             );
+            if (collabRunId) {
+              await app.db.query(
+                "UPDATE collab_runs SET status = 'executing', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2 AND status = 'needs_device'",
+                [device.tenantId, collabRunId],
+              );
+            }
+            if (spaceId) {
+              await app.db.query(
+                "UPDATE memory_task_states SET phase = 'executing', block_reason = NULL, next_action = NULL, updated_at = now() WHERE tenant_id = $1 AND space_id = $2 AND run_id = $3 AND deleted_at IS NULL",
+                [device.tenantId, spaceId, done.runId],
+              );
+            }
             const bj = await app.queue.add(
               "step",
               { jobId, runId: done.runId, stepId: done.stepId },

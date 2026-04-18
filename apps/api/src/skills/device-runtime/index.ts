@@ -3,12 +3,16 @@ import type { BuiltinSkillPlugin } from "../../lib/skillPlugin";
 import { deviceRoutes } from "./routeDevices";
 import { deviceAgentRoutes } from "./routeDeviceAgent";
 import { deviceExecutionRoutes } from "./routeDeviceExecutions";
+import { deviceWsRoutes } from "./routeDeviceWs";
+import { deviceMessageRoutes } from "./routeDeviceMessages";
 
-/** Composite route that registers all three device sub-routes. */
+/** Composite route that registers all device sub-routes. */
 const compositeRoutes: FastifyPluginAsync = async (app) => {
   app.register(deviceRoutes);
   app.register(deviceAgentRoutes);
   app.register(deviceExecutionRoutes);
+  app.register(deviceWsRoutes);
+  app.register(deviceMessageRoutes);
 };
 
 const plugin: BuiltinSkillPlugin = {

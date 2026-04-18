@@ -34,7 +34,7 @@ function toSecret(r: any): SecretRecordRow {
     keyVersion: r.key_version,
     credentialVersion: typeof r.credential_version === "number" ? r.credential_version : Number(r.credential_version ?? 1),
     rotatedFromId: r.rotated_from_id ? String(r.rotated_from_id) : null,
-    encFormat: r.enc_format ?? "legacy.a256gcm",
+    encFormat: r.enc_format ?? "a256gcm",
     keyRef: r.key_ref ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,

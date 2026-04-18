@@ -1,9 +1,5 @@
 import type { Pool } from "pg";
-import { isSupportedSchemaMigrationKind } from "@openslin/shared";
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
+import { isSupportedSchemaMigrationKind, isPlainObject } from "@openslin/shared";
 
 function parsePath(path: unknown) {
   const raw = String(path ?? "").trim();

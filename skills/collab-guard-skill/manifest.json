@@ -3,6 +3,17 @@
     "name": "collab.guard",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "协作安全守卫",
+    "en-US": "Collaboration Security Guard"
+  },
+  "description": {
+    "zh-CN": "检查多智能体协作计划的安全性，验证权限、角色和资源限制，返回是否允许执行",
+    "en-US": "Validates multi-agent collaboration plan security, checks permissions, roles, and resource limits"
+  },
+  "category": "governance",
+  "priority": 9,
+  "tags": ["security", "collaboration", "validation", "authorization"],
   "contract": {
     "scope": "read",
     "resourceType": "agent_runtime",

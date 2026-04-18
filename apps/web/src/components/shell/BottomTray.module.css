@@ -20,10 +20,10 @@
 
 .resizeHandle {
   position: absolute;
-  top: -4px;
+  top: -8px;
   left: 0;
   right: 0;
-  height: 8px;
+  height: 16px;
   cursor: row-resize;
   z-index: 5;
 }
@@ -58,6 +58,17 @@
   border-bottom: 1px solid transparent;
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.headerActionSlot {
+  display: flex;
+  align-items: center;
+}
+
 .bottomTrayExpanded .header {
   border-bottom-color: var(--sl-border);
 }
@@ -81,6 +92,12 @@
   border-radius: var(--sl-radius-1);
   cursor: pointer;
   transition: all var(--sl-transition-fast);
+  position: relative;
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--sl-accent);
+  outline-offset: 1px;
 }
 
 .tab:hover {
@@ -91,6 +108,45 @@
 .tabActive {
   color: var(--sl-accent);
   background: var(--sl-accent-bg);
+}
+
+/* ─── Tab Badge ──────────────────────────────────────────────────────────────── */
+
+.tabBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--sl-accent);
+  color: #fff;
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+  animation: badgePop 0.25s ease-out;
+}
+
+.tabBadgeWarning {
+  background: var(--sl-warning, #f59e0b);
+}
+
+.tabBadgeInfo {
+  background: var(--sl-info, #3b82f6);
+}
+
+@keyframes badgePop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .tabLabel {
@@ -138,9 +194,25 @@
 /* ─── Content ─────────────────────────────────────────────────────────────── */
 
 .content {
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   min-height: 150px;
-  max-height: 500px;
+  max-height: 70vh;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sl-border) transparent;
+}
+
+.content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.content::-webkit-scrollbar-thumb {
+  background: var(--sl-border);
+  border-radius: 2px;
+}
+
+.content::-webkit-scrollbar-thumb:hover {
+  background: var(--sl-muted);
 }
 
 .placeholder {
@@ -160,4 +232,59 @@
   padding: 2px 8px;
   border-radius: var(--sl-radius-full);
   background: var(--sl-accent-bg);
+}
+
+/* ─── Collapsed Summary (shown next to expand button when collapsed) ────── */
+
+.collapsedSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--sl-muted);
+  margin-right: 4px;
+}
+
+.summaryDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.summaryDotActive {
+  background: var(--sl-success, #22c55e);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.summaryDotWarning {
+  background: var(--sl-warning, #f59e0b);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.summaryText {
+  white-space: nowrap;
+}
+
+/* ─── Small Screen Enhancements ──────────────────────────────────────── */
+
+@media (max-width: 599px) {
+  .tab {
+    padding: 0 8px;
+    gap: 3px;
+  }
+
+  .header {
+    padding: 0 8px;
+  }
+
+  .collapsedSummary {
+    display: none;
+  }
 }

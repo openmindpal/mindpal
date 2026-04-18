@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
 import { type ApiError, errText } from "@/lib/apiError";
 import { Card, PageHeader, Table, StatusBadge } from "@/components/ui";
+import { numberField, stringField, toDisplayText, toRecord } from "@/lib/viewData";
 
 type PageVersion = {
   version?: number;
@@ -18,6 +20,54 @@ type PageVersion = {
   updatedAt?: string;
 };
 type PageListItem = { name?: string; latestReleased?: PageVersion | null; draft?: PageVersion | null };
+
+function normalizeTitle(value: unknown): Record<string, string> | string | null {
+  if (typeof value === "string") return value;
+  const record = toRecord(value);
+  if (!record) return null;
+  const out: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(record)) {
+    if (typeof raw === "string") out[key] = raw;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function normalizePageVersion(value: unknown): PageVersion | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  const params = toRecord(record.params);
+  const ui = toRecord(record.ui);
+  const layout = toRecord(ui?.layout);
+  const blocks = Array.isArray(ui?.blocks) ? ui?.blocks : [];
+  return {
+    version: numberField(record, "version"),
+    status: stringField(record, "status"),
+    pageType: stringField(record, "pageType"),
+    title: normalizeTitle(record.title),
+    params: params ? { entityName: toDisplayText(params.entityName), nl2uiConfig: params.nl2uiConfig } : null,
+    ui: { layout: layout ? { variant: toDisplayText(layout.variant) } : undefined, blocks },
+    createdAt: toDisplayText(record.createdAt),
+    updatedAt: toDisplayText(record.updatedAt),
+  };
+}
+
+function normalizePageListItem(value: unknown): PageListItem | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  return {
+    name: toDisplayText(record.name),
+    latestReleased: normalizePageVersion(record.latestReleased),
+    draft: normalizePageVersion(record.draft),
+  };
+}
+
+function normalizePagesPayload(value: unknown) {
+  const record = toRecord(value);
+  if (!record) return null;
+  return {
+    pages: Array.isArray(record.pages) ? record.pages.map(normalizePageListItem).filter((item): item is PageListItem => Boolean(item)) : [],
+  };
+}
 
 function extractTitle(v: PageVersion | null | undefined, locale: string): string {
   if (!v?.title) return "";
@@ -44,22 +94,16 @@ function friendlyPageType(locale: string, pageType: string): string {
   return val !== key ? val : pageType;
 }
 
-function fmtTime(raw: string | undefined): string {
-  if (!raw) return "-";
-  try {
-    const d = new Date(raw);
-    if (isNaN(d.getTime())) return raw;
-    return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-  } catch { return raw; }
-}
-
 export default function GovUiPagesClient(props: { locale: string; initial: any }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [pagesRes, setPagesRes] = useState<{ status: number; json: any }>(props.initial?.pages ?? { status: 0, json: null });
+  const [pagesRes, setPagesRes] = useState<{ status: number; json: { pages: PageListItem[] } | null }>({
+    status: Number(props.initial?.pages?.status ?? 0),
+    json: normalizePagesPayload(props.initial?.pages?.json),
+  });
   const [q, setQ] = useState("");
 
-  const items = useMemo(() => (Array.isArray(pagesRes?.json?.pages) ? (pagesRes.json.pages as PageListItem[]) : []), [pagesRes]);
+  const items = useMemo(() => (Array.isArray(pagesRes?.json?.pages) ? pagesRes.json.pages : []), [pagesRes]);
   const filtered = useMemo(() => {
     const kw = q.trim().toLowerCase();
     if (!kw) return items;
@@ -76,8 +120,8 @@ export default function GovUiPagesClient(props: { locale: string; initial: any }
     setBusy(true);
     try {
       const res = await apiFetch(`/ui/pages`, { locale: props.locale, cache: "no-store" });
-      const json = await res.json().catch(() => null);
-      setPagesRes({ status: res.status, json });
+      const json: unknown = await res.json().catch(() => null);
+      setPagesRes({ status: res.status, json: normalizePagesPayload(json) });
       if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
     } finally {
       setBusy(false);
@@ -127,12 +171,12 @@ export default function GovUiPagesClient(props: { locale: string; initial: any }
               </thead>
               <tbody>
                 {filtered.map((it, idx) => {
-                  const name = String(it.name ?? "");
+                  const name = toDisplayText(it.name);
                   const titleText = extractTitle(it.draft, props.locale) || extractTitle(it.latestReleased, props.locale) || t(props.locale, "gov.uiPages.noTitle");
                   const source = inferSource(it);
-                  const pageType = String(it.draft?.pageType ?? it.latestReleased?.pageType ?? "");
+                  const pageType = toDisplayText(it.draft?.pageType ?? it.latestReleased?.pageType);
                   const relV = it.latestReleased?.version != null ? `v${it.latestReleased.version}` : "-";
-                  const updatedAt = fmtTime(it.draft?.updatedAt ?? it.latestReleased?.updatedAt);
+                  const updatedAt = fmtDateTime(it.draft?.updatedAt ?? it.latestReleased?.updatedAt, props.locale);
                   return (
                     <tr key={`${name}_${idx}`}>
                       <td style={{ fontWeight: 600, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

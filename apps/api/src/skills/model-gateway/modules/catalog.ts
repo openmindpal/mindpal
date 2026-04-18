@@ -1,14 +1,17 @@
-// Re-export provider contract from kernel lib for backward compatibility
+// Re-export provider contract from kernel lib for convenience
 export {
   openaiCompatibleProviders,
   type OpenAiCompatibleProvider,
   isOpenAiCompatibleProvider,
+  nativeProtocolProviders,
+  type NativeProtocolProvider,
+  isNativeProtocolProvider,
   supportedModelProviders,
   type SupportedModelProvider,
   isSupportedModelProvider,
 } from "../../../lib/modelProviderContract";
 
-import { isOpenAiCompatibleProvider } from "../../../lib/modelProviderContract";
+import { isOpenAiCompatibleProvider, isNativeProtocolProvider } from "../../../lib/modelProviderContract";
 
 export type ModelCatalogEntry = {
   provider: string;
@@ -30,13 +33,13 @@ export function findCatalogByRef(modelRef: string) {
   const provider = m[1];
   const model = m[2];
   if (!provider || !model) return null;
-  if (!isOpenAiCompatibleProvider(provider)) return null;
+  if (!isOpenAiCompatibleProvider(provider) && !isNativeProtocolProvider(provider)) return null;
   return {
     provider,
     model,
     modelRef: `${provider}:${model}`,
     endpointHost: "",
     capabilities: { chat: true, structuredOutput: false },
-    defaultLimits: { timeoutMs: 15000 },
+    defaultLimits: { timeoutMs: isNativeProtocolProvider(provider) ? 30000 : 15000 },
   };
 }

@@ -13,10 +13,13 @@
     "build": "tsc -b",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "lint": "node -e \"process.exit(0)\""
+    "lint": "node -e \"process.exit(0)\"",
+    "tray": "tsx src/index.ts tray"
   },
   "dependencies": {
-    "@openslin/shared": "*"
+    "@openslin/shared": "*",
+    "playwright-core": "^1.52.0",
+    "systray2": "^2.1.4"
   },
   "devDependencies": {
     "vitest": "^3.2.4"

@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
+import { apiFetch } from "@/lib/api";
+import { t, statusLabel, boolLabel } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
 import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type RunRow = Record<string, unknown>;
 type StepRow = Record<string, unknown>;
 type RunDetailResponse = ApiError & { run?: RunRow; steps?: StepRow[] };
@@ -24,20 +25,6 @@ type TimelineEvent = {
 type RunReplayResponse = ApiError & { timeline?: TimelineEvent[] };
 type EvalSuiteLite = { id?: string; name?: string };
 type EvalSuitesResponse = ApiError & { suites?: EvalSuiteLite[] };
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
@@ -327,7 +314,7 @@ export default function RunClient(props: { locale: string; runId: string; initia
         }
       />
 
-      <Card title={t(props.locale, "runs.detail.runCardTitle")} footer={run ? <Badge>{pickStr(run.status) || "-"}</Badge> : null}>
+      <Card title={t(props.locale, "runs.detail.runCardTitle")} footer={run ? <Badge>{statusLabel(pickStr(run.status), props.locale) || "-"}</Badge> : null}>
         <Table>
           <tbody>
             <tr>
@@ -348,15 +335,15 @@ export default function RunClient(props: { locale: string; runId: string; initia
             </tr>
             <tr>
               <th>{t(props.locale, "runs.detail.field.createdAt")}</th>
-              <td>{run ? pickStr(run.createdAt) || "-" : "-"}</td>
+              <td>{fmtDateTime(run?.createdAt, props.locale)}</td>
             </tr>
             <tr>
               <th>{t(props.locale, "runs.detail.field.startedAt")}</th>
-              <td>{run ? pickStr(run.startedAt) || "-" : "-"}</td>
+              <td>{fmtDateTime(run?.startedAt, props.locale)}</td>
             </tr>
             <tr>
               <th>{t(props.locale, "runs.detail.field.finishedAt")}</th>
-              <td>{run ? pickStr(run.finishedAt) || "-" : "-"}</td>
+              <td>{fmtDateTime(run?.finishedAt, props.locale)}</td>
             </tr>
             <tr>
               <th>{t(props.locale, "runs.detail.sealStatus")}</th>
@@ -417,14 +404,14 @@ export default function RunClient(props: { locale: string; runId: string; initia
               <tr key={`${pickStr(s.stepId)}:${idx}`}>
                 <td>{pickStr(s.seq) || "-"}</td>
                 <td>
-                  <Badge>{pickStr(s.status) || "-"}</Badge>
+                  <Badge>{statusLabel(pickStr(s.status), props.locale) || "-"}</Badge>
                 </td>
                 <td>{pickStr(s.attempt) || "-"}</td>
                 <td>{pickStr(s.toolRef) || "-"}</td>
                 <td>
                   <Badge>{(s as any).sealedAt ? t(props.locale, "runs.sealStatus.sealed") : t(props.locale, "runs.sealStatus.legacy")}</Badge>
                 </td>
-                <td>{String((s as any).compensable ?? false)}</td>
+                <td>{boolLabel(Boolean((s as any).compensable), props.locale)}</td>
                 <td>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button disabled={!pickStr(s.stepId) || compBusy === pickStr(s.stepId) || !(s as any).compensable} onClick={() => compensate(pickStr(s.stepId))}>
@@ -534,7 +521,7 @@ export default function RunClient(props: { locale: string; runId: string; initia
             <tbody>
               {timeline.map((e, idx) => (
                 <tr key={`${pickStr(e.timestamp)}:${pickStr(e.eventType)}:${idx}`}>
-                  <td>{pickStr(e.timestamp) || "-"}</td>
+                  <td>{fmtDateTime(e.timestamp, props.locale)}</td>
                   <td>{pickStr(e.eventType) || "-"}</td>
                   <td>{pickStr(e.stepId) || "-"}</td>
                   <td>{pickStr(e.result) || pickStr(e.errorCategory) || "-"}</td>

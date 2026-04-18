@@ -1,4 +1,11 @@
+/**
+ * exchangeRepo.ts — Exchange 连接器配置（统一表代理）
+ *
+ * 底层使用 connector_configs 统一表，此文件提供 Exchange 类型化适配层。
+ * 新代码建议直接使用 connectorConfigRepo.ts。
+ */
 import type { Pool, PoolClient } from "pg";
+import { upsertConnectorConfig, getConnectorConfig } from "./connectorConfigRepo";
 
 type Q = Pool | PoolClient;
 
@@ -12,15 +19,15 @@ export type ExchangeConnectorConfigRow = {
   updatedAt: string;
 };
 
-function toRow(r: any): ExchangeConnectorConfigRow {
+function fromConfig(row: { connectorInstanceId: string; tenantId: string; config: Record<string, unknown>; createdAt: string; updatedAt: string }): ExchangeConnectorConfigRow {
   return {
-    connectorInstanceId: r.connector_instance_id,
-    tenantId: r.tenant_id,
-    oauthGrantId: r.oauth_grant_id,
-    mailbox: r.mailbox,
-    fetchWindowDays: r.fetch_window_days ?? null,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    connectorInstanceId: row.connectorInstanceId,
+    tenantId: row.tenantId,
+    oauthGrantId: String(row.config.oauthGrantId ?? ""),
+    mailbox: String(row.config.mailbox ?? ""),
+    fetchWindowDays: row.config.fetchWindowDays != null ? Number(row.config.fetchWindowDays) : null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -32,30 +39,22 @@ export async function upsertExchangeConnectorConfig(params: {
   mailbox: string;
   fetchWindowDays?: number | null;
 }) {
-  const res = await params.pool.query(
-    `
-      INSERT INTO exchange_connector_configs (
-        connector_instance_id, tenant_id, oauth_grant_id, mailbox, fetch_window_days
-      )
-      VALUES ($1,$2,$3,$4,$5)
-      ON CONFLICT (connector_instance_id)
-      DO UPDATE SET
-        oauth_grant_id = EXCLUDED.oauth_grant_id,
-        mailbox = EXCLUDED.mailbox,
-        fetch_window_days = EXCLUDED.fetch_window_days,
-        updated_at = now()
-      RETURNING *
-    `,
-    [params.connectorInstanceId, params.tenantId, params.oauthGrantId, params.mailbox, params.fetchWindowDays ?? null],
-  );
-  return toRow(res.rows[0]);
+  const row = await upsertConnectorConfig({
+    pool: params.pool,
+    connectorInstanceId: params.connectorInstanceId,
+    tenantId: params.tenantId,
+    typeName: "mail.exchange",
+    config: {
+      oauthGrantId: params.oauthGrantId,
+      mailbox: params.mailbox,
+      fetchWindowDays: params.fetchWindowDays ?? null,
+    },
+  });
+  return fromConfig(row);
 }
 
 export async function getExchangeConnectorConfig(params: { pool: Pool; tenantId: string; connectorInstanceId: string }) {
-  const res = await params.pool.query(
-    "SELECT * FROM exchange_connector_configs WHERE tenant_id = $1 AND connector_instance_id = $2 LIMIT 1",
-    [params.tenantId, params.connectorInstanceId],
-  );
-  if (!res.rowCount) return null;
-  return toRow(res.rows[0]);
+  const row = await getConnectorConfig({ pool: params.pool, tenantId: params.tenantId, connectorInstanceId: params.connectorInstanceId });
+  if (!row || row.typeName !== "mail.exchange") return null;
+  return fromConfig(row);
 }

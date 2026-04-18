@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { attachDlpSummary, normalizeAuditErrorCategory, redactValue } from "@openslin/shared";
+import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, parseDocument, findParserByMimeType } from "@openslin/shared";
 
 function sha256(text: string) {
   return crypto.createHash("sha256").update(text, "utf8").digest("hex");
@@ -129,12 +129,31 @@ async function loadMediaText(pool: Pool, tenantId: string, spaceId: string, medi
   );
   if (!res.rowCount) return "";
   const ct = String(res.rows[0].content_type ?? "");
-  if (!ct.startsWith("text/")) return "";
   const bytes = res.rows[0].content_bytes as Buffer | null;
   if (!bytes) return "";
-  const max = 200_000;
-  const sliced = bytes.length > max ? bytes.subarray(0, max) : bytes;
-  return sliced.toString("utf8");
+
+  // 先尝试统一文档解析引擎（支持 PDF/Word/Excel/PPT 等）
+  const parser = findParserByMimeType(ct);
+  if (parser && !ct.startsWith("text/")) {
+    try {
+      const result = await parseDocument({ buffer: bytes, mimeType: ct });
+      if (result.text.trim()) {
+        console.log(`[knowledge:ingest] 文档解析成功: ${ct} => ${result.stats.parseMethod} (${result.text.length} 字符, ${result.stats.parseTimeMs}ms)`);
+        return result.text.slice(0, 500_000);
+      }
+    } catch (e: any) {
+      console.warn(`[knowledge:ingest] 文档解析失败 (${ct}): ${e?.message ?? e}，尝试纯文本回退`);
+    }
+  }
+
+  // 纯文本回退
+  if (ct.startsWith("text/")) {
+    const max = 200_000;
+    const sliced = bytes.length > max ? bytes.subarray(0, max) : bytes;
+    return sliced.toString("utf8");
+  }
+
+  return "";
 }
 
 export async function processKnowledgeIngestJob(params: { pool: Pool; ingestJobId: string }) {

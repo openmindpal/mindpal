@@ -1,6 +1,16 @@
 import { Errors } from "../../../lib/errors";
 
-export type OpenAiChatMessage = { role: string; content: string };
+/** 多模态 content part（OpenAI Vision 格式） */
+export type OpenAiContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }
+  | { type: "input_audio"; input_audio: { data: string; format?: string } }
+  | { type: "video_url"; video_url: { url: string } };
+
+/** content 可以是纯文本字符串，也可以是多模态内容数组 */
+export type OpenAiChatMessageContent = string | OpenAiContentPart[];
+
+export type OpenAiChatMessage = { role: string; content: OpenAiChatMessageContent };
 
 export async function openAiChatWithSecretRotation(params: {
   fetchFn: typeof fetch;
@@ -43,8 +53,12 @@ export async function openAiChatWithSecretRotation(params: {
 
       const json: any = await res.json().catch(() => null);
       if (!res.ok) {
-        const err = Errors.modelUpstreamFailed(`status=${res.status}`);
+        const upstreamMsg = json?.error?.message ?? json?.msg ?? json?.message ?? "";
+        const traceId = json?.error?.traceId ?? json?.traceId ?? json?.request_id ?? "";
+        const detail = [`status=${res.status}`, upstreamMsg && `msg=${upstreamMsg}`, traceId && `traceId=${traceId}`].filter(Boolean).join(" ");
+        const err = Errors.modelUpstreamFailed(detail);
         (err as any).upstreamStatus = res.status;
+        (err as any).upstreamBody = json;
         throw err;
       }
 
@@ -149,8 +163,13 @@ export async function openAiChatStreamWithSecretRotation(params: {
       });
 
       if (!res.ok) {
-        const err = Errors.modelUpstreamFailed(`status=${res.status}`);
+        const errJson: any = await res.json().catch(() => null);
+        const upstreamMsg = errJson?.error?.message ?? errJson?.msg ?? errJson?.message ?? "";
+        const traceId = errJson?.error?.traceId ?? errJson?.traceId ?? errJson?.request_id ?? "";
+        const detail = [`status=${res.status}`, upstreamMsg && `msg=${upstreamMsg}`, traceId && `traceId=${traceId}`].filter(Boolean).join(" ");
+        const err = Errors.modelUpstreamFailed(detail);
         (err as any).upstreamStatus = res.status;
+        (err as any).upstreamBody = errJson;
         throw err;
       }
       if (!res.body || typeof (res.body as any).getReader !== "function") {

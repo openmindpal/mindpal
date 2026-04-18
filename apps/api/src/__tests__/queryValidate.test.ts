@@ -19,7 +19,7 @@ describe("entity query validate", () => {
     expect(() =>
       validateEntityQuery({
         schema,
-        entityName: "notes",
+        entityName: "test_items",
         decision,
         query: { filters: { field: "secret", op: "eq", value: "x" } } as any,
       }),

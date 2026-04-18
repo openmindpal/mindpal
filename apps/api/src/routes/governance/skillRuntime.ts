@@ -110,7 +110,7 @@ export const governanceSkillRuntimeRoutes: FastifyPluginAsync = async (app) => {
             scopeType: String(row.scope_type),
             scopeId: String(row.scope_id),
             keyVersion: Number(row.key_version),
-            encFormat: String(row.enc_format ?? "legacy.a256gcm"),
+            encFormat: String(row.enc_format ?? "a256gcm"),
             encryptedPayload: row.encrypted_payload,
           });
           const obj = decrypted && typeof decrypted === "object" ? (decrypted as Record<string, unknown>) : {};

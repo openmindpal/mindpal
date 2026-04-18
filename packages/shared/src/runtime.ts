@@ -15,6 +15,24 @@ export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return Boolean(v) && typeof v === "object" && !Array.isArray(v);
 }
 
+/**
+ * 将未知输入归一化为 Set<string>
+ * 支持 Set / Array / 逗号分隔字符串
+ * @param value 原始输入
+ * @param fallbackCsv 当 value 为 null/undefined 时的默认逗号字符串
+ */
+export function normalizeStringSet(value: unknown, fallbackCsv: string): Set<string> {
+  if (value instanceof Set) return new Set(Array.from(value).map((x) => String(x).trim()).filter(Boolean));
+  if (Array.isArray(value)) return new Set(value.map((x) => String(x).trim()).filter(Boolean));
+  const raw = String(value ?? fallbackCsv);
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 类型定义
 // ─────────────────────────────────────────────────────────────────────────────
@@ -180,8 +198,60 @@ export function isAllowedEgress(params: { policy: NetworkPolicy; url: string; me
 // 运行时控制
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 并发计数器（进程级状态） */
-const concurrencyCounters = new Map<string, number>();
+/**
+ * 并发计数器 — 可插拔后端
+ *
+ * 默认使用进程内 Map（单实例模式）。
+ * 通过 setConcurrencyBackend() 注入 Redis 后端可实现多实例全局计数。
+ * 环境变量 CONCURRENCY_BACKEND=redis 时，调用者应在启动时注入 Redis 后端。
+ * Redis 不可用时自动降级到进程级计数。
+ */
+const localCounters = new Map<string, number>();
+
+/** 可插拔并发计数后端接口 */
+export interface ConcurrencyBackend {
+  /** 原子递增，返回递增后的值 */
+  increment(key: string): Promise<number>;
+  /** 原子递减 */
+  decrement(key: string): Promise<void>;
+}
+
+let _concurrencyBackend: ConcurrencyBackend | null = null;
+
+/** 注入 Redis 或其他分布式计数后端 */
+export function setConcurrencyBackend(backend: ConcurrencyBackend | null): void {
+  _concurrencyBackend = backend;
+}
+
+/** 获取当前后端（用于测试/调试） */
+export function getConcurrencyBackend(): ConcurrencyBackend | null {
+  return _concurrencyBackend;
+}
+
+/**
+ * 创建基于 Redis INCR/DECR 的并发后端。
+ * @param redis 需要支持 incr / decr / expire 命令的 Redis client
+ * @param ttlSeconds key 自动过期秒数（防泄漏），默认 300
+ */
+export function createRedisConcurrencyBackend(
+  redis: { incr(key: string): Promise<number>; decr(key: string): Promise<number>; expire(key: string, seconds: number): Promise<number> },
+  ttlSeconds = 300,
+): ConcurrencyBackend {
+  const prefix = "concurrency:";
+  return {
+    async increment(key: string): Promise<number> {
+      const rk = prefix + key;
+      const val = await redis.incr(rk);
+      // 首次创建时设置 TTL 防泄漏
+      if (val === 1) await redis.expire(rk, ttlSeconds).catch(() => {});
+      return val;
+    },
+    async decrement(key: string): Promise<void> {
+      const rk = prefix + key;
+      await redis.decr(rk).catch(() => {});
+    },
+  };
+}
 
 /**
  * 带出站检查的 fetch 包装
@@ -211,20 +281,50 @@ export async function runtimeFetch(params: {
 
 /**
  * 并发控制包装器
+ *
+ * 优先使用注入的分布式后端（Redis），Redis 失败时自动降级到进程级计数。
  * @param key 并发键
  * @param maxConcurrency 最大并发数
  * @param fn 要执行的函数
  */
 export async function withConcurrency<T>(key: string, maxConcurrency: number, fn: () => Promise<T>): Promise<T> {
-  const current = concurrencyCounters.get(key) ?? 0;
+  const backend = _concurrencyBackend;
+
+  // ── 分布式后端路径 ──
+  if (backend) {
+    let current: number;
+    try {
+      current = await backend.increment(key);
+    } catch {
+      // Redis increment 本身失败 → 降级到进程级 fallback（下方）
+      return withConcurrencyLocal(key, maxConcurrency, fn);
+    }
+    if (current > maxConcurrency) {
+      await backend.decrement(key).catch(() => {});
+      throw new Error("resource_exhausted:max_concurrency");
+    }
+    try {
+      return await fn();
+    } finally {
+      await backend.decrement(key).catch(() => {});
+    }
+  }
+
+  // ── 进程级 fallback ──
+  return withConcurrencyLocal(key, maxConcurrency, fn);
+}
+
+/** 进程级并发控制（内部辅助） */
+async function withConcurrencyLocal<T>(key: string, maxConcurrency: number, fn: () => Promise<T>): Promise<T> {
+  const current = localCounters.get(key) ?? 0;
   if (current >= maxConcurrency) throw new Error("resource_exhausted:max_concurrency");
-  concurrencyCounters.set(key, current + 1);
+  localCounters.set(key, current + 1);
   try {
     return await fn();
   } finally {
-    const after = (concurrencyCounters.get(key) ?? 1) - 1;
-    if (after <= 0) concurrencyCounters.delete(key);
-    else concurrencyCounters.set(key, after);
+    const after = (localCounters.get(key) ?? 1) - 1;
+    if (after <= 0) localCounters.delete(key);
+    else localCounters.set(key, after);
   }
 }
 

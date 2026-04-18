@@ -1,0 +1,287 @@
+# P3-16: OpenSlin 关键业务告警规则
+# 部署路径: /etc/prometheus/rules/openslin-alerts.yml
+
+groups:
+  # ═══════════════════════════════════════════════════════════
+  # 审计系统告警
+  # ═══════════════════════════════════════════════════════════
+  - name: openslin.audit
+    interval: 30s
+    rules:
+      # 审计写入失败率 > 1%
+      - alert: AuditWriteFailureRateHigh
+        expr: |
+          (
+            sum(rate(openslin_audit_write_failed_total[5m]))
+            /
+            clamp_min(sum(rate(openslin_http_requests_total[5m])), 0.001)
+          ) * 100 > 1
+        for: 3m
+        labels:
+          severity: critical
+          team: platform
+          component: audit
+        annotations:
+          summary: "审计写入失败率超过 1%"
+          description: "当前审计写入失败率为 {{ $value | printf \"%.2f\" }}%，已持续 3 分钟。审计日志是合规关键，需立即排查。"
+          runbook_url: "https://wiki.internal/runbook/audit-write-failure"
+
+      # 审计 Outbox 积压超过 1000
+      - alert: AuditOutboxBacklogHigh
+        expr: |
+          sum(openslin_audit_outbox_backlog{status="pending"}) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          component: audit
+        annotations:
+          summary: "审计 Outbox 积压超过 1000"
+          description: "审计 Outbox 待投递消息数为 {{ $value }}，可能存在消费端阻塞。"
+
+  # ═══════════════════════════════════════════════════════════
+  # 队列系统告警
+  # ═══════════════════════════════════════════════════════════
+  - name: openslin.queue
+    interval: 30s
+    rules:
+      # Workflow 队列积压超过 1000
+      - alert: WorkflowQueueBacklogHigh
+        expr: |
+          sum(openslin_workflow_queue_backlog{status="waiting"}) > 1000
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+          component: workflow
+        annotations:
+          summary: "Workflow 队列积压超过 1000"
+          description: "当前 Workflow 等待队列深度为 {{ $value }}，Worker 可能处理不过来，需扩容或排查阻塞。"
+
+      # 协同运行积压超过 500
+      - alert: CollabRunBacklogHigh
+        expr: |
+          sum(openslin_collab_runs_backlog{status="pending"}) > 500
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          component: collab
+        annotations:
+          summary: "协同运行积压超过 500"
+          description: "协同运行待处理积压为 {{ $value }}，可能影响用户体验。"
+
+  # ═══════════════════════════════════════════════════════════
+  # 授权/安全告警
+  # ═══════════════════════════════════════════════════════════
+  - name: openslin.authz
+    interval: 30s
+    rules:
+      # 授权拒绝率异常突增（5分钟内拒绝率 > 10%）
+      - alert: AuthzDenialRateAbnormal
+        expr: |
+          (
+            sum(rate(openslin_authz_denied_total[5m]))
+            /
+            clamp_min(sum(rate(openslin_http_requests_total[5m])), 0.001)
+          ) * 100 > 10
+        for: 3m
+        labels:
+          severity: critical
+          team: security
+          component: authz
+        annotations:
+          summary: "授权拒绝率异常高 (>10%)"
+          description: "当前授权拒绝率为 {{ $value | printf \"%.2f\" }}%。可能存在未授权访问尝试或权限配置错误。"
+
+      # 数据隔离违规
+      - alert: DataIsolationViolation
+        expr: |
+          sum(rate(openslin_data_isolation_violation_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: security
+          component: isolation
+        annotations:
+          summary: "检测到数据隔离违规"
+          description: "数据隔离违规速率为 {{ $value }} ops/s，可能存在跨租户数据泄露风险，需立即调查。"
+
+  # ═══════════════════════════════════════════════════════════
+  # API 性能告警
+  # ═══════════════════════════════════════════════════════════
+  - name: openslin.api
+    interval: 30s
+    rules:
+      # API P95 延迟超过 2 秒
+      - alert: ApiLatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(openslin_http_request_duration_ms_bucket[5m])) by (le)
+          ) > 2000
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          component: api
+        annotations:
+          summary: "API P95 延迟超过 2 秒"
+          description: "API 请求 P95 延迟为 {{ $value | printf \"%.0f\" }}ms，用户体验可能受影响。"
+
+      # 5xx 错误率超过 5%
+      - alert: ApiServerErrorRateHigh
+        expr: |
+          (
+            sum(rate(openslin_http_requests_total{status_class="5xx"}[5m]))
+            /
+            clamp_min(sum(rate(openslin_http_requests_total[5m])), 0.001)
+          ) * 100 > 5
+        for: 3m
+        labels:
+          severity: critical
+          team: platform
+          component: api
+        annotations:
+          summary: "API 5xx 错误率超过 5%"
+          description: "当前 5xx 错误率为 {{ $value | printf \"%.2f\" }}%，服务可能存在严重问题。"
+
+      # Worker 心跳超时（>120s 未更新）
+      - alert: WorkerHeartbeatStale
+        expr: |
+          openslin_worker_heartbeat_age_seconds > 120
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          component: worker
+        annotations:
+          summary: "Worker 心跳超时"
+          description: "Worker {{ $labels.worker }} 心跳已 {{ $value | printf \"%.0f\" }}s 未更新，可能已宕机。"
+
+  # ═══════════════════════════════════════════════════════════
+  # 评测/治理告警
+  # ═══════════════════════════════════════════════════════════
+  - name: openslin.eval
+    interval: 60s
+    rules:
+      # Eval Gate 连续阻断超过 10 次
+      - alert: EvalGateBlockFrequent
+        expr: |
+          sum(increase(openslin_eval_gate_blocked_total[30m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          component: eval
+        annotations:
+          summary: "Eval Gate 频繁阻断"
+          description: "过去 30 分钟内 Eval Gate 阻断了 {{ $value | printf \"%.0f\" }} 次发布尝试。可能存在质量回归或配置问题。"
+
+      # 治理门禁失败率突增
+      - alert: GovernanceGateFailureHigh
+        expr: |
+          sum(rate(openslin_governance_gate_failed_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          component: governance
+        annotations:
+          summary: "治理门禁失败率偏高"
+          description: "治理门禁失败速率为 {{ $value | printf \"%.2f\" }} ops/s，请检查策略配置。"
+
+  # ═══════════════════════════════════════════════════════════
+  # 基础设施告警
+  # ═══════════════════════════════════════════════════════════
+  - name: openslin.infra
+    interval: 30s
+    rules:
+      # DB 连接池等待队列过长
+      - alert: DbPoolWaitingHigh
+        expr: |
+          openslin_db_pool_waiting > 10
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+          component: database
+        annotations:
+          summary: "数据库连接池等待队列过长"
+          description: "当前有 {{ $value }} 个请求在等待数据库连接，可能需要调整连接池大小。"
+
+      # DB 连接池空闲连接为 0
+      - alert: DbPoolExhausted
+        expr: |
+          openslin_db_pool_idle == 0 and openslin_db_pool_waiting > 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          component: database
+        annotations:
+          summary: "数据库连接池耗尽"
+          description: "数据库连接池无空闲连接，{{ $value }} 个请求在等待。服务可能即将不可用。"
+
+      # 健康检查失败
+      - alert: ComponentUnhealthy
+        expr: |
+          openslin_health_status == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          component: health
+        annotations:
+          summary: "组件健康检查失败"
+          description: "组件 {{ $labels.component }} 健康状态为 unhealthy，需要立即排查。"
+
+      # 进程重启检测（uptime 骤降）
+      - alert: ProcessRestarted
+        expr: |
+          openslin_process_uptime_seconds < 60
+          and
+          openslin_process_uptime_seconds offset 5m > 300
+        for: 0m
+        labels:
+          severity: warning
+          team: platform
+          component: process
+        annotations:
+          summary: "检测到进程重启"
+          description: "API 进程似乎刚刚重启（uptime {{ $value | printf \"%.0f\" }}s），请确认是否为计划内重启。"
+
+  # ═══════════════════════════════════════════════════════════
+  # 冲突解决 / 同步告警
+  # ═══════════════════════════════════════════════════════════
+  - name: openslin.sync
+    interval: 60s
+    rules:
+      # 手动冲突解决积压
+      - alert: ConflictManualRequiredHigh
+        expr: |
+          sum(increase(openslin_conflict_manual_required_total[1h])) > 50
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          component: sync
+        annotations:
+          summary: "手动冲突解决请求过多"
+          description: "过去 1 小时产生了 {{ $value | printf \"%.0f\" }} 次手动冲突，可能需要优化合并策略。"
+
+      # 同步推送错误率高
+      - alert: SyncPushErrorRateHigh
+        expr: |
+          (
+            sum(rate(openslin_sync_push_total{result="error"}[5m]))
+            /
+            clamp_min(sum(rate(openslin_sync_push_total[5m])), 0.001)
+          ) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          component: sync
+        annotations:
+          summary: "Sync Push 错误率超过 5%"
+          description: "同步推送错误率为 {{ $value | printf \"%.2f\" }}%，离线同步可能受影响。"

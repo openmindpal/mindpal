@@ -1,30 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE, apiFetch } from "@/lib/api";
+import { t, statusLabel } from "@/lib/i18n";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { Badge, Card, PageHeader, Table, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type RunLite = { runId: string; status: string; toolRef?: string | null; policySnapshotRef?: string | null; idempotencyKey?: string | null; createdAt?: string; updatedAt?: string };
-type CollabDetailResp = { collabRun?: unknown; runs?: RunLite[]; latestEvents?: unknown[]; taskState?: unknown } & ApiError;
+type CollabStateResp = {
+  collabRunId?: string | null;
+  phase?: string | null;
+  currentTurn?: number | null;
+  currentRole?: string | null;
+  roleStates?: Record<string, { roleName?: string; status?: string; currentStepId?: string | null; progress?: number | null; lastUpdateAt?: string; metadata?: unknown }>;
+  completedStepIds?: string[];
+  failedStepIds?: string[];
+  pendingStepIds?: string[];
+  replanCount?: number | null;
+  startedAt?: string | null;
+  lastUpdatedAt?: string | null;
+  version?: number | null;
+};
+type StateUpdateResp = { updateId?: string; sourceRole?: string | null; updateType?: string | null; payload?: unknown; version?: number | null; createdAt?: string | null };
+type CollabDetailResp = { collabRun?: unknown; runs?: RunLite[]; latestEvents?: unknown[]; recentStateUpdates?: StateUpdateResp[]; collabState?: CollabStateResp | null; taskState?: unknown } & ApiError;
 type EnvelopesResp = { items?: unknown[]; nextBefore?: string | null } & ApiError;
 type EventsResp = { items?: unknown[]; nextBefore?: string | null } & ApiError;
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
+type StreamState = "disconnected" | "connecting" | "connected" | "reconnecting";
 
 function asArray(v: unknown): any[] {
   return Array.isArray(v) ? v : [];
@@ -46,6 +49,14 @@ export default function CollabRunClient(props: {
   const [eventsData, setEventsData] = useState<EventsResp | null>({ items: asArray((props.initial as any)?.latestEvents) });
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string>(() => new Date().toISOString());
+  const [streamState, setStreamState] = useState<StreamState>("disconnected");
+  const [lastStreamEventAt, setLastStreamEventAt] = useState<string>("");
+  const refreshInFlightRef = useRef(false);
+  const streamRef = useRef<EventSource | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectCountRef = useRef(0);
 
   const [envFromRole, setEnvFromRole] = useState<string>("planner");
   const [envToRole, setEnvToRole] = useState<string>("arbiter");
@@ -58,10 +69,23 @@ export default function CollabRunClient(props: {
   const [commitDecision, setCommitDecision] = useState<string>("");
 
   const collabRun = data?.collabRun ?? null;
+  const collabState = (data as any)?.collabState ?? null;
   const taskState = (data as any)?.taskState ?? null;
   const runs = useMemo(() => (Array.isArray(data?.runs) ? (data!.runs as RunLite[]) : []), [data]);
   const envelopes = useMemo(() => (Array.isArray(envData?.items) ? envData!.items! : []), [envData]);
   const events = useMemo(() => (Array.isArray(eventsData?.items) ? eventsData!.items! : []), [eventsData]);
+  const stateUpdates = useMemo(() => (Array.isArray(data?.recentStateUpdates) ? data!.recentStateUpdates! : []), [data]);
+  const roleStates = useMemo(() => {
+    if (!collabState || typeof collabState !== "object" || !collabState.roleStates || typeof collabState.roleStates !== "object") return [];
+    return Object.entries(collabState.roleStates).map(([roleName, value]) => ({
+      roleName,
+      ...(value as any),
+    }));
+  }, [collabState]);
+  const isTerminal = useMemo(() => {
+    const phase = String(collabState?.phase ?? (collabRun as any)?.status ?? "").trim();
+    return ["succeeded", "failed", "stopped", "canceled"].includes(phase);
+  }, [collabRun, collabState]);
 
   const initialError = useMemo(() => {
     if (status >= 400) return errText(props.locale, data);
@@ -78,34 +102,109 @@ export default function CollabRunClient(props: {
     return "";
   }, [events]);
 
-  async function refresh() {
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    if (!options?.silent) setRefreshing(true);
     setError("");
-    const dRes = await apiFetch(`/tasks/${encodeURIComponent(props.taskId)}/collab-runs/${encodeURIComponent(props.collabRunId)}`, {
-      locale: props.locale,
-      cache: "no-store",
-    });
-    setStatus(dRes.status);
-    const dJson: unknown = await dRes.json().catch(() => null);
-    setData((dJson as CollabDetailResp) ?? null);
+    try {
+      const dRes = await apiFetch(`/tasks/${encodeURIComponent(props.taskId)}/collab-runs/${encodeURIComponent(props.collabRunId)}`, {
+        locale: props.locale,
+        cache: "no-store",
+      });
+      setStatus(dRes.status);
+      const dJson: unknown = await dRes.json().catch(() => null);
+      setData((dJson as CollabDetailResp) ?? null);
 
-    const eRes = await apiFetch(`/tasks/${encodeURIComponent(props.taskId)}/collab-runs/${encodeURIComponent(props.collabRunId)}/events?limit=50`, {
-      locale: props.locale,
-      cache: "no-store",
-    });
-    const eJson: unknown = await eRes.json().catch(() => null);
-    if (eRes.ok) setEventsData((eJson as EventsResp) ?? null);
+      const eRes = await apiFetch(`/tasks/${encodeURIComponent(props.taskId)}/collab-runs/${encodeURIComponent(props.collabRunId)}/events?limit=50`, {
+        locale: props.locale,
+        cache: "no-store",
+      });
+      const eJson: unknown = await eRes.json().catch(() => null);
+      if (eRes.ok) setEventsData((eJson as EventsResp) ?? null);
 
-    const envRes = await apiFetch(`/tasks/${encodeURIComponent(props.taskId)}/collab-runs/${encodeURIComponent(props.collabRunId)}/envelopes?limit=50`, {
-      locale: props.locale,
-      cache: "no-store",
-    });
-    setEnvStatus(envRes.status);
-    const envJson: unknown = await envRes.json().catch(() => null);
-    setEnvData((envJson as EnvelopesResp) ?? null);
+      const envRes = await apiFetch(`/tasks/${encodeURIComponent(props.taskId)}/collab-runs/${encodeURIComponent(props.collabRunId)}/envelopes?limit=50`, {
+        locale: props.locale,
+        cache: "no-store",
+      });
+      setEnvStatus(envRes.status);
+      const envJson: unknown = await envRes.json().catch(() => null);
+      setEnvData((envJson as EnvelopesResp) ?? null);
+      setLastRefreshedAt(new Date().toISOString());
 
-    if (!dRes.ok) setError(errText(props.locale, (dJson as ApiError) ?? { errorCode: String(dRes.status) }));
-    else if (!envRes.ok) setError(errText(props.locale, (envJson as ApiError) ?? { errorCode: String(envRes.status) }));
-  }
+      if (!dRes.ok) setError(errText(props.locale, (dJson as ApiError) ?? { errorCode: String(dRes.status) }));
+      else if (!envRes.ok) setError(errText(props.locale, (envJson as ApiError) ?? { errorCode: String(envRes.status) }));
+    } finally {
+      refreshInFlightRef.current = false;
+      if (!options?.silent) setRefreshing(false);
+    }
+  }, [props.collabRunId, props.locale, props.taskId]);
+
+  useEffect(() => {
+    if (isTerminal) {
+      streamRef.current?.close();
+      streamRef.current = null;
+      setStreamState("disconnected");
+      return;
+    }
+    let closed = false;
+    const connect = () => {
+      if (closed) return;
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
+      }
+      setStreamState(reconnectCountRef.current > 0 ? "reconnecting" : "connecting");
+      const url = `${API_BASE}/tasks/${encodeURIComponent(props.taskId)}/collab-runs/${encodeURIComponent(props.collabRunId)}/stream`;
+      const es = new EventSource(url, { withCredentials: true });
+      streamRef.current = es;
+
+      es.onopen = () => {
+        reconnectCountRef.current = 0;
+        setStreamState("connected");
+      };
+      es.addEventListener("snapshot", (event: MessageEvent) => {
+        try {
+          const payload = JSON.parse(event.data) as CollabDetailResp & { envelopes?: EnvelopesResp };
+          setData(payload);
+          setEventsData({ items: asArray((payload as any)?.latestEvents) });
+          setEnvData((payload as any)?.envelopes ?? { items: [] });
+          setLastRefreshedAt(new Date().toISOString());
+          setLastStreamEventAt(new Date().toISOString());
+          setError("");
+        } catch {}
+      });
+      es.addEventListener("ping", () => {
+        setLastStreamEventAt(new Date().toISOString());
+      });
+      es.addEventListener("error", () => {
+        setStreamState("reconnecting");
+      });
+      es.onerror = () => {
+        es.close();
+        streamRef.current = null;
+        if (closed) return;
+        reconnectCountRef.current += 1;
+        setStreamState("reconnecting");
+        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+        const delay = Math.min(1000 * Math.pow(2, reconnectCountRef.current - 1), 10000);
+        reconnectTimerRef.current = setTimeout(connect, delay);
+      };
+    };
+    connect();
+    return () => {
+      closed = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
+      }
+      setStreamState("disconnected");
+    };
+  }, [isTerminal, props.collabRunId, props.taskId]);
 
   async function runAction(fn: () => Promise<void>) {
     setError("");
@@ -179,9 +278,12 @@ export default function CollabRunClient(props: {
         }
         actions={
           <>
-            <Badge>{status}</Badge>
+            <StatusBadge locale={props.locale} status={status} />
             <Badge>{envStatus}</Badge>
-            <button onClick={refresh} disabled={busy}>
+            <Badge>{`${t(props.locale, "collab.liveStream")}: ${streamState}`}</Badge>
+            <Badge>{`${t(props.locale, "collab.lastRefreshed")}: ${fmtDateTime(lastRefreshedAt, props.locale)}`}</Badge>
+            <Badge>{`${t(props.locale, "collab.lastStreamEvent")}: ${fmtDateTime(lastStreamEventAt || null, props.locale)}`}</Badge>
+            <button onClick={() => void refresh()} disabled={busy || refreshing}>
               {t(props.locale, "action.refresh")}
             </button>
           </>
@@ -204,6 +306,55 @@ export default function CollabRunClient(props: {
       </div>
 
       <div style={{ marginTop: 16 }}>
+        <Card title={t(props.locale, "collab.stateTitle")}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+            <div><b>phase</b>: {String(collabState?.phase ?? "-")}</div>
+            <div><b>currentRole</b>: {String(collabState?.currentRole ?? "-")}</div>
+            <div><b>currentTurn</b>: {String(collabState?.currentTurn ?? "-")}</div>
+            <div><b>version</b>: {String(collabState?.version ?? "-")}</div>
+            <div><b>replanCount</b>: {String(collabState?.replanCount ?? "0")}</div>
+            <div><b>updatedAt</b>: {fmtDateTime(collabState?.lastUpdatedAt, props.locale)}</div>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+              {JSON.stringify({
+                completedStepIds: collabState?.completedStepIds ?? [],
+                failedStepIds: collabState?.failedStepIds ?? [],
+                pendingStepIds: collabState?.pendingStepIds ?? [],
+              }, null, 2)}
+            </pre>
+          </div>
+        </Card>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <Table header={<span>{t(props.locale, "collab.roleStatesTitle")}</span>}>
+          <thead>
+            <tr>
+              <th align="left">role</th>
+              <th align="left">status</th>
+              <th align="left">currentStepId</th>
+              <th align="left">progress</th>
+              <th align="left">lastUpdateAt</th>
+              <th align="left">metadata</th>
+            </tr>
+          </thead>
+          <tbody>
+            {roleStates.map((role: any) => (
+              <tr key={String(role.roleName ?? "-")}>
+                <td>{String(role.roleName ?? "-")}</td>
+                <td><Badge>{statusLabel(String(role.status ?? "-"), props.locale)}</Badge></td>
+                <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{String(role.currentStepId ?? "-")}</td>
+                <td>{role.progress ?? "-"}</td>
+                <td>{fmtDateTime(role.lastUpdateAt, props.locale)}</td>
+                <td><pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(role.metadata ?? null, null, 2)}</pre></td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
         <Table header={<span>{t(props.locale, "collab.runsTitle")}</span>}>
           <thead>
             <tr>
@@ -220,10 +371,10 @@ export default function CollabRunClient(props: {
                   <Link href={`/runs/${encodeURIComponent(r.runId)}?lang=${encodeURIComponent(props.locale)}`}>{r.runId}</Link>
                 </td>
                 <td>
-                  <Badge>{r.status}</Badge>
+                  <Badge>{statusLabel(r.status, props.locale)}</Badge>
                 </td>
                 <td>{r.toolRef ?? "-"}</td>
-                <td>{r.createdAt ?? "-"}</td>
+                <td>{fmtDateTime(r.createdAt, props.locale)}</td>
               </tr>
             ))}
           </tbody>
@@ -299,7 +450,7 @@ export default function CollabRunClient(props: {
           <tbody>
             {events.map((e: any, i: number) => (
               <tr key={String(e?.eventId ?? i)}>
-                <td>{String(e?.createdAt ?? e?.created_at ?? "-")}</td>
+                <td>{fmtDateTime(e?.createdAt ?? e?.created_at, props.locale)}</td>
                 <td>
                   <Badge>{String(e?.type ?? "-")}</Badge>
                 </td>
@@ -308,6 +459,31 @@ export default function CollabRunClient(props: {
                 <td>
                   <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(e?.payloadDigest ?? e?.payload_digest ?? null, null, 2)}</pre>
                 </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <Table header={<span>{t(props.locale, "collab.stateUpdatesTitle")}</span>}>
+          <thead>
+            <tr>
+              <th align="left">createdAt</th>
+              <th align="left">sourceRole</th>
+              <th align="left">updateType</th>
+              <th align="left">version</th>
+              <th align="left">payload</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stateUpdates.map((u: any, i: number) => (
+              <tr key={String(u?.updateId ?? i)}>
+                <td>{fmtDateTime(u?.createdAt, props.locale)}</td>
+                <td>{String(u?.sourceRole ?? "-")}</td>
+                <td><Badge>{String(u?.updateType ?? "-")}</Badge></td>
+                <td>{String(u?.version ?? "-")}</td>
+                <td><pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(u?.payload ?? null, null, 2)}</pre></td>
               </tr>
             ))}
           </tbody>
@@ -329,7 +505,7 @@ export default function CollabRunClient(props: {
           <tbody>
             {envelopes.map((env: any, i: number) => (
               <tr key={String(env?.envelopeId ?? i)}>
-                <td>{String(env?.createdAt ?? env?.created_at ?? "-")}</td>
+                <td>{fmtDateTime(env?.createdAt ?? env?.created_at, props.locale)}</td>
                 <td>{String(env?.fromRole ?? env?.from_role ?? "-")}</td>
                 <td>{String(env?.toRole ?? env?.to_role ?? "-")}</td>
                 <td>

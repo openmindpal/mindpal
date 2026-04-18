@@ -88,14 +88,27 @@ export async function authenticate(params: { pool?: Pool; authorization?: string
   const token = parseAuthorizationValue(auth);
   if (!token) return null;
 
-  const mode = process.env.AUTHN_MODE === "pat" ? "pat" : process.env.AUTHN_MODE === "hmac" ? "hmac" : "dev";
+  const configuredMode = String(process.env.AUTHN_MODE ?? "").trim();
+  const nodeEnv = String(process.env.NODE_ENV ?? "").trim().toLowerCase();
+  const mode =
+    configuredMode === "pat"
+      ? "pat"
+      : configuredMode === "hmac"
+        ? "hmac"
+        : configuredMode === "dev"
+          ? "dev"
+          : nodeEnv === "production"
+            ? "hmac"
+            : "dev";
 
   if (mode === "pat") {
-    if (token.startsWith("pat_")) {
+    /* P1-04b: accept pat_, at_ (access), rt_ (refresh — reject as auth) prefixes */
+    if (token.startsWith("pat_") || token.startsWith("at_")) {
       if (!params.pool) return null;
       const rec = await getAuthTokenByHash({ pool: params.pool, tokenHash: sha256Hex(token) });
       if (!rec) return null;
       if (rec.revokedAt) return null;
+      if (rec.tokenType === "refresh") return null; // refresh tokens cannot be used as bearer auth
       if (rec.expiresAt) {
         const exp = Date.parse(rec.expiresAt);
         if (Number.isFinite(exp) && exp <= Date.now()) return null;

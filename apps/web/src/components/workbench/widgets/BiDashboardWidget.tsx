@@ -283,7 +283,7 @@ function GaugeChart(props: { data: any[]; measure?: string; uid?: string }) {
 
 // ─── Chart: Sparkline ────────────────────────────────────────────────────────
 
-function SparklineChart(props: { data: any[]; measure?: string; uid?: string }) {
+function SparklineChart(props: { data: any[]; measure?: string; uid?: string; locale?: string }) {
   const values = extractValues(props.data.slice(0, 30), props.measure);
   const nums = values.map((v) => v.value);
   const max = Math.max(...nums, 1), min = Math.min(...nums, 0);
@@ -304,8 +304,8 @@ function SparklineChart(props: { data: any[]; measure?: string; uid?: string }) 
         <circle className="__bi_pulse" cx={lastPt[0]} cy={lastPt[1]} r="3" fill={c} />
       </svg>
       <div style={{ display: "flex", gap: 12, fontSize: 11 }}>
-        <span style={{ color: "var(--sl-muted)" }}>Low <b style={{ color: "var(--sl-fg)" }}>{min.toLocaleString()}</b></span>
-        <span style={{ color: "var(--sl-muted)" }}>High <b style={{ color: "var(--sl-fg)" }}>{max.toLocaleString()}</b></span>
+        <span style={{ color: "var(--sl-muted)" }}>{t(props.locale, "widget.bi.low")} <b style={{ color: "var(--sl-fg)" }}>{min.toLocaleString()}</b></span>
+        <span style={{ color: "var(--sl-muted)" }}>{t(props.locale, "widget.bi.high")} <b style={{ color: "var(--sl-fg)" }}>{max.toLocaleString()}</b></span>
         <span style={{ color: c, fontWeight: 600, padding: "1px 8px", borderRadius: 10, background: up ? "rgba(16,185,129,.08)" : "rgba(239,68,68,.08)" }}>{up ? "▲" : "▼"} {last.toLocaleString()}</span>
       </div>
     </div>
@@ -363,7 +363,7 @@ function DashboardCard(props: {
       case "pie": return <PieChart data={data} measure={card.measures?.[0]} />;
       case "donut": return <PieChart data={data} measure={card.measures?.[0]} donut />;
       case "gauge": return <GaugeChart data={data} measure={card.measures?.[0]} uid={uid} />;
-      case "sparkline": return <SparklineChart data={data} measure={card.measures?.[0]} uid={uid} />;
+      case "sparkline": return <SparklineChart data={data} measure={card.measures?.[0]} uid={uid} locale={locale} />;
       case "table": return <SimpleTable data={data} locale={locale} />;
       default: return <div>{t(locale, "widget.unknownChartType")}</div>;
     }
@@ -382,8 +382,15 @@ function DashboardCard(props: {
   };
 
   const chartTypeLabels: Record<ChartType, string> = {
-    bar: "📊 Bar", line: "📈 Line", area: "🏔️ Area", pie: "🥧 Pie", donut: "🍩 Donut",
-    number: "🔢 KPI", gauge: "⏱️ Gauge", sparkline: "⚡ Spark", table: "📋 Table",
+    bar: `📊 ${t(locale, "widget.bi.chartType.bar")}`,
+    line: `📈 ${t(locale, "widget.bi.chartType.line")}`,
+    area: `🏔️ ${t(locale, "widget.bi.chartType.area")}`,
+    pie: `🥧 ${t(locale, "widget.bi.chartType.pie")}`,
+    donut: `🍩 ${t(locale, "widget.bi.chartType.donut")}`,
+    number: `🔢 ${t(locale, "widget.bi.chartType.number")}`,
+    gauge: `⏱️ ${t(locale, "widget.bi.chartType.gauge")}`,
+    sparkline: `⚡ ${t(locale, "widget.bi.chartType.sparkline")}`,
+    table: `📋 ${t(locale, "widget.bi.chartType.table")}`,
   };
 
   return (
@@ -409,7 +416,7 @@ function DashboardCard(props: {
             >
               {Object.entries(chartTypeLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
-            <button onClick={() => onRemove(card.id)} style={{ fontSize: 12, cursor: "pointer", background: "none", border: "none", color: "var(--sl-danger, #ef4444)", lineHeight: 1, padding: 2 }} title="Remove">✕</button>
+            <button onClick={() => onRemove(card.id)} style={{ fontSize: 12, cursor: "pointer", background: "none", border: "none", color: "var(--sl-danger, #ef4444)", lineHeight: 1, padding: 2 }} title={t(locale, "action.delete")}>✕</button>
           </div>
         )}
       </div>
@@ -422,6 +429,7 @@ function DashboardCard(props: {
 
 export function BiDashboardWidget(props: BiDashboardProps) {
   const { cards, onChange, readOnly = false, data = {} } = props;
+  const locale = props.locale ?? "zh-CN";
 
   const handleRemove = useCallback((id: string) => onChange(cards.filter((c) => c.id !== id)), [cards, onChange]);
   const handleUpdate = useCallback(
@@ -429,22 +437,22 @@ export function BiDashboardWidget(props: BiDashboardProps) {
     [cards, onChange],
   );
   const handleAdd = useCallback(
-    (type: ChartType) => onChange([...cards, createCard(type, `New ${type} chart`)]),
-    [cards, onChange],
+    (type: ChartType) => onChange([...cards, createCard(type, t(locale, "widget.bi.newChart").replace("{type}", t(locale, `widget.bi.chartType.${type}`)))]),
+    [cards, locale, onChange],
   );
 
   const sampleData = [
-    { label: "Q1", value: 42 },
-    { label: "Q2", value: 58 },
-    { label: "Q3", value: 35 },
-    { label: "Q4", value: 70 },
-    { label: "Q5", value: 52 },
+    { label: t(locale, "widget.bi.sample.q1"), value: 42 },
+    { label: t(locale, "widget.bi.sample.q2"), value: 58 },
+    { label: t(locale, "widget.bi.sample.q3"), value: 35 },
+    { label: t(locale, "widget.bi.sample.q4"), value: 70 },
+    { label: t(locale, "widget.bi.sample.q5"), value: 52 },
   ];
 
   const chartGroups: { label: string; types: ChartType[] }[] = [
-    { label: "Charts", types: ["bar", "line", "area", "pie", "donut"] },
-    { label: "KPI", types: ["number", "gauge", "sparkline"] },
-    { label: "Data", types: ["table"] },
+    { label: t(locale, "widget.bi.group.charts"), types: ["bar", "line", "area", "pie", "donut"] },
+    { label: t(locale, "widget.bi.group.kpi"), types: ["number", "gauge", "sparkline"] },
+    { label: t(locale, "widget.bi.group.data"), types: ["table"] },
   ];
 
   const btnStyle: React.CSSProperties = {
@@ -468,7 +476,7 @@ export function BiDashboardWidget(props: BiDashboardProps) {
             <div key={g.label} style={{ display: "flex", gap: 4, alignItems: "center" }}>
               <span style={{ fontSize: 10, fontWeight: 700, color: "var(--sl-muted, #94a3b8)", textTransform: "uppercase", letterSpacing: "0.05em", marginRight: 2 }}>{g.label}</span>
               {g.types.map((ct) => (
-                <button key={ct} style={btnStyle} onClick={() => handleAdd(ct)}>+ {ct}</button>
+                <button key={ct} style={btnStyle} onClick={() => handleAdd(ct)}>+ {t(locale, `widget.bi.chartType.${ct}`)}</button>
               ))}
             </div>
           ))}
@@ -497,7 +505,7 @@ export function BiDashboardWidget(props: BiDashboardProps) {
           <div style={{ fontSize: 14, fontWeight: 600, color: "var(--sl-fg, #475569)" }}>
             {readOnly ? t(props.locale, "widget.noDashboardCards") : t(props.locale, "widget.addChartHint")}
           </div>
-          <div style={{ fontSize: 12, marginTop: 4 }}>Bar · Line · Area · Pie · Donut · KPI · Gauge · Sparkline · Table</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>{t(locale, "widget.bi.chartType.summary")}</div>
         </div>
       )}
     </div>

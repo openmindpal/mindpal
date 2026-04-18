@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useMemo } from "react";
+import { t } from "@/lib/i18n";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,21 @@ const NODE_ICONS: Record<FlowNodeType, string> = {
   start: "▶", end: "■", action: "⚡", condition: "◇", parallel: "≡",
   wait: "⏳", llm: "🤖", tool: "🔧", human: "👤", webhook: "🔔",
   timer: "⏰", subflow: "↩",
+};
+
+const FLOW_NODE_LABEL_KEYS: Record<FlowNodeType, string> = {
+  start: "widget.flow.node.start",
+  end: "widget.flow.node.end",
+  action: "widget.flow.node.action",
+  condition: "widget.flow.node.condition",
+  parallel: "widget.flow.node.parallel",
+  wait: "widget.flow.node.wait",
+  llm: "widget.flow.node.llm",
+  tool: "widget.flow.node.tool",
+  human: "widget.flow.node.human",
+  webhook: "widget.flow.node.webhook",
+  timer: "widget.flow.node.timer",
+  subflow: "widget.flow.node.subflow",
 };
 
 function nodeShape(type: FlowNodeType): "circle" | "diamond" | "rect" | "hexagon" {
@@ -163,6 +179,7 @@ function SvgNode(props: {
 
 export function FlowCanvasWidget(props: FlowCanvasProps) {
   const { nodes, edges, onNodesChange, onEdgesChange, readOnly = false } = props;
+  const locale = props.locale ?? "zh-CN";
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [connectMode, setConnectMode] = useState(false);
@@ -218,13 +235,8 @@ export function FlowCanvasWidget(props: FlowCanvasProps) {
   const handleAddNode = useCallback((type: FlowNodeType) => {
     const x = 100 + Math.random() * 500;
     const y = 60 + Math.random() * 350;
-    const labels: Record<FlowNodeType, string> = {
-      start: "Start", end: "End", action: "Action", condition: "If/Else",
-      parallel: "Parallel", wait: "Wait", llm: "LLM Call", tool: "Tool",
-      human: "Human", webhook: "Webhook", timer: "Timer", subflow: "Sub-flow",
-    };
-    onNodesChange([...nodes, { id: genId("n"), type, label: labels[type], x, y }]);
-  }, [nodes, onNodesChange]);
+    onNodesChange([...nodes, { id: genId("n"), type, label: t(locale, FLOW_NODE_LABEL_KEYS[type]), x, y }]);
+  }, [locale, nodes, onNodesChange]);
 
   const handleRemoveNode = useCallback((id: string) => {
     onNodesChange(nodes.filter((n) => n.id !== id));
@@ -267,9 +279,9 @@ export function FlowCanvasWidget(props: FlowCanvasProps) {
   };
 
   const nodeGroups: { label: string; types: FlowNodeType[] }[] = [
-    { label: "Flow", types: ["start", "end", "action", "condition", "parallel", "wait"] },
-    { label: "AI", types: ["llm", "tool", "human"] },
-    { label: "Trigger", types: ["webhook", "timer", "subflow"] },
+    { label: t(locale, "widget.flow.group.flow"), types: ["start", "end", "action", "condition", "parallel", "wait"] },
+    { label: t(locale, "widget.flow.group.ai"), types: ["llm", "tool", "human"] },
+    { label: t(locale, "widget.flow.group.trigger"), types: ["webhook", "timer", "subflow"] },
   ];
 
   const VW = 900, VH = 550;
@@ -282,9 +294,9 @@ export function FlowCanvasWidget(props: FlowCanvasProps) {
           {nodeGroups.map((g) => (
             <div key={g.label} style={{ display: "flex", gap: 3, alignItems: "center" }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: "var(--sl-muted, #94a3b8)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{g.label}</span>
-              {g.types.map((t) => (
-                <button key={t} style={btnStyle} onClick={() => handleAddNode(t)}>
-                  <span style={{ fontSize: 11 }}>{NODE_ICONS[t]}</span> {t}
+              {g.types.map((type) => (
+                <button key={type} style={btnStyle} onClick={() => handleAddNode(type)}>
+                  <span style={{ fontSize: 11 }}>{NODE_ICONS[type]}</span> {t(locale, FLOW_NODE_LABEL_KEYS[type])}
                 </button>
               ))}
             </div>
@@ -294,13 +306,13 @@ export function FlowCanvasWidget(props: FlowCanvasProps) {
               style={{ ...btnStyle, background: connectMode ? "#6366f1" : undefined, color: connectMode ? "#fff" : undefined }}
               onClick={handleConnectToggle}
             >
-              🔗 {connectMode ? (connectSource ? "Click target" : "Click source") : "Connect"}
+              🔗 {connectMode ? (connectSource ? t(locale, "widget.flow.connect.clickTarget") : t(locale, "widget.flow.connect.clickSource")) : t(locale, "widget.flow.connect.idle")}
             </button>
             {selectedNodeId && (
-              <button style={{ ...btnStyle, color: "var(--sl-danger, #ef4444)" }} onClick={() => handleRemoveNode(selectedNodeId)}>🗑️ Node</button>
+              <button style={{ ...btnStyle, color: "var(--sl-danger, #ef4444)" }} onClick={() => handleRemoveNode(selectedNodeId)}>🗑️ {t(locale, "widget.flow.node.single")}</button>
             )}
             {selectedEdgeId && (
-              <button style={{ ...btnStyle, color: "var(--sl-danger, #ef4444)" }} onClick={() => handleRemoveEdge(selectedEdgeId)}>🗑️ Edge</button>
+              <button style={{ ...btnStyle, color: "var(--sl-danger, #ef4444)" }} onClick={() => handleRemoveEdge(selectedEdgeId)}>🗑️ {t(locale, "widget.flow.edge.single")}</button>
             )}
             <span style={{ fontSize: 10, color: "var(--sl-muted)", padding: "0 4px" }}>{Math.round(zoom * 100)}%</span>
             <button style={{ ...btnStyle, padding: "3px 6px" }} onClick={() => setZoom((z) => Math.min(z + 0.15, 3))}>+</button>
@@ -385,9 +397,9 @@ export function FlowCanvasWidget(props: FlowCanvasProps) {
         <div style={{ textAlign: "center", padding: 32, color: "var(--sl-muted, #94a3b8)" }}>
           <div style={{ fontSize: 28, marginBottom: 8 }}>🔀</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: "var(--sl-fg, #475569)" }}>
-            {readOnly ? "No flow defined" : "Add nodes using the toolbar above"}
+            {readOnly ? t(locale, "widget.flow.empty.readOnly") : t(locale, "widget.flow.empty.editable")}
           </div>
-          <div style={{ fontSize: 12, marginTop: 4 }}>Start · End · Action · Condition · LLM · Tool · Human · Webhook</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>{t(locale, "widget.flow.legend.summary")}</div>
         </div>
       )}
     </div>

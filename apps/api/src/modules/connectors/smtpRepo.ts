@@ -1,4 +1,11 @@
+/**
+ * smtpRepo.ts — SMTP 连接器配置（统一表代理）
+ *
+ * 底层使用 connector_configs 统一表，此文件提供 SMTP 类型化适配层。
+ * 新代码建议直接使用 connectorConfigRepo.ts。
+ */
 import type { Pool, PoolClient } from "pg";
+import { upsertConnectorConfig, getConnectorConfig } from "./connectorConfigRepo";
 
 type Q = Pool | PoolClient;
 
@@ -15,18 +22,18 @@ export type SmtpConnectorConfigRow = {
   updatedAt: string;
 };
 
-function toRow(r: any): SmtpConnectorConfigRow {
+function fromConfig(row: { connectorInstanceId: string; tenantId: string; config: Record<string, unknown>; createdAt: string; updatedAt: string }): SmtpConnectorConfigRow {
   return {
-    connectorInstanceId: r.connector_instance_id,
-    tenantId: r.tenant_id,
-    host: r.host,
-    port: Number(r.port),
-    useTls: Boolean(r.use_tls),
-    username: r.username,
-    passwordSecretId: r.password_secret_id,
-    fromAddress: r.from_address,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    connectorInstanceId: row.connectorInstanceId,
+    tenantId: row.tenantId,
+    host: String(row.config.host ?? ""),
+    port: Number(row.config.port ?? 0),
+    useTls: Boolean(row.config.useTls),
+    username: String(row.config.username ?? ""),
+    passwordSecretId: String(row.config.passwordSecretId ?? ""),
+    fromAddress: String(row.config.fromAddress ?? ""),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -41,33 +48,25 @@ export async function upsertSmtpConnectorConfig(params: {
   passwordSecretId: string;
   fromAddress: string;
 }) {
-  const res = await params.pool.query(
-    `
-      INSERT INTO smtp_connector_configs (
-        connector_instance_id, tenant_id, host, port, use_tls, username, password_secret_id, from_address
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      ON CONFLICT (connector_instance_id)
-      DO UPDATE SET
-        host = EXCLUDED.host,
-        port = EXCLUDED.port,
-        use_tls = EXCLUDED.use_tls,
-        username = EXCLUDED.username,
-        password_secret_id = EXCLUDED.password_secret_id,
-        from_address = EXCLUDED.from_address,
-        updated_at = now()
-      RETURNING *
-    `,
-    [params.connectorInstanceId, params.tenantId, params.host, params.port, params.useTls, params.username, params.passwordSecretId, params.fromAddress],
-  );
-  return toRow(res.rows[0]);
+  const row = await upsertConnectorConfig({
+    pool: params.pool,
+    connectorInstanceId: params.connectorInstanceId,
+    tenantId: params.tenantId,
+    typeName: "mail.smtp",
+    config: {
+      host: params.host,
+      port: params.port,
+      useTls: params.useTls,
+      username: params.username,
+      passwordSecretId: params.passwordSecretId,
+      fromAddress: params.fromAddress,
+    },
+  });
+  return fromConfig(row);
 }
 
 export async function getSmtpConnectorConfig(params: { pool: Pool; tenantId: string; connectorInstanceId: string }) {
-  const res = await params.pool.query(
-    "SELECT * FROM smtp_connector_configs WHERE tenant_id = $1 AND connector_instance_id = $2 LIMIT 1",
-    [params.tenantId, params.connectorInstanceId],
-  );
-  if (!res.rowCount) return null;
-  return toRow(res.rows[0]);
+  const row = await getConnectorConfig({ pool: params.pool, tenantId: params.tenantId, connectorInstanceId: params.connectorInstanceId });
+  if (!row || row.typeName !== "mail.smtp") return null;
+  return fromConfig(row);
 }

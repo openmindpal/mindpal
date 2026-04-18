@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSupportedModelProvider, openaiCompatibleProviders, supportedModelProviders } from "../skills/model-gateway/modules/catalog";
+import { isSupportedModelProvider, isNativeProtocolProvider, openaiCompatibleProviders, nativeProtocolProviders, supportedModelProviders } from "../skills/model-gateway/modules/catalog";
 
 describe("model gateway provider gate", () => {
   it("includes core providers", () => {
@@ -13,9 +13,20 @@ describe("model gateway provider gate", () => {
     }
   });
 
+  it("includes native protocol providers", () => {
+    expect(supportedModelProviders).toContain("anthropic");
+    expect(supportedModelProviders).toContain("gemini");
+    expect(isNativeProtocolProvider("anthropic")).toBe(true);
+    expect(isNativeProtocolProvider("gemini")).toBe(true);
+    expect(isSupportedModelProvider("anthropic")).toBe(true);
+    expect(isSupportedModelProvider("gemini")).toBe(true);
+    for (const p of nativeProtocolProviders) {
+      expect(isSupportedModelProvider(p)).toBe(true);
+    }
+  });
+
   it("rejects unknown providers", () => {
-    expect(isSupportedModelProvider("anthropic")).toBe(false);
-    expect(isSupportedModelProvider("gemini")).toBe(false);
+    expect(isSupportedModelProvider("cohere")).toBe(false);
     expect(isSupportedModelProvider("")).toBe(false);
   });
 });

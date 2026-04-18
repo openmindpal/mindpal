@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { normalizeNetworkPolicyV1, normalizeRuntimeLimitsV1 } from "@openslin/shared";
+import { normalizeNetworkPolicy, normalizeLimits } from "@openslin/shared";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
@@ -215,8 +215,8 @@ export const triggerRoutes: FastifyPluginAsync = async (app) => {
               format: "capabilityEnvelope.v1",
               dataDomain: { tenantId: subject.tenantId, spaceId: String(spaceId), subjectId: subject.subjectId ?? null, toolContract: { scope, resourceType, action, fieldRules: (opDecision as any).fieldRules ?? null, rowFilters: (opDecision as any).rowFilters ?? null } },
               secretDomain: { connectorInstanceIds: [] },
-              egressDomain: { networkPolicy: normalizeNetworkPolicyV1(effNetworkPolicy) },
-              resourceDomain: { limits: normalizeRuntimeLimitsV1({}) },
+              egressDomain: { networkPolicy: normalizeNetworkPolicy(effNetworkPolicy) },
+              resourceDomain: { limits: normalizeLimits({}) },
             };
             return createJobRunStep({
               pool: app.db,

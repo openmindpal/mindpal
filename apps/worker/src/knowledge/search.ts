@@ -1,45 +1,54 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { redactValue } from "@openslin/shared";
+import { redactValue, computeMinhash, minhashOverlapScore } from "@openslin/shared";
 import { createVectorStore, resolveVectorStoreConfigFromEnv } from "./vectorStore";
-
-function tokenize(text: string) {
-  const out: string[] = [];
-  const s = text.toLowerCase();
-  let buf = "";
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]!;
-    const ok = (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "_" || ch === "-";
-    if (ok) buf += ch;
-    else {
-      if (buf.length >= 2) out.push(buf);
-      buf = "";
-    }
-    if (out.length >= 256) break;
-  }
-  if (buf.length >= 2) out.push(buf);
-  return out;
-}
-
-function hash32(str: string) {
-  const h = crypto.createHash("sha256").update(str, "utf8").digest();
-  return h.readInt32BE(0);
-}
-
-function computeMinhash(text: string, k: number) {
-  const toks = tokenize(text);
-  const mins = new Array<number>(k).fill(2147483647);
-  for (const t of toks) {
-    for (let i = 0; i < k; i++) {
-      const v = hash32(`${i}:${t}`);
-      if (v < mins[i]!) mins[i] = v;
-    }
-  }
-  return mins.map((x) => (x === 2147483647 ? 0 : x));
-}
 
 function sha256_8(text: string) {
   return crypto.createHash("sha256").update(text, "utf8").digest("hex").slice(0, 8);
+}
+
+/* ── 外部 Embedding 查询支持（Dense embedding 查询闭环） ── */
+
+type ExternalEmbeddingConfig = {
+  endpoint: string;
+  apiKey: string | null;
+  model: string;
+  dimensions: number;
+  timeoutMs: number;
+};
+
+function resolveExternalEmbeddingConfig(): ExternalEmbeddingConfig | null {
+  const endpoint = String(process.env.KNOWLEDGE_EMBEDDING_ENDPOINT ?? "").trim();
+  if (!endpoint) return null;
+  return {
+    endpoint,
+    apiKey: String(process.env.KNOWLEDGE_EMBEDDING_API_KEY ?? "").trim() || null,
+    model: String(process.env.KNOWLEDGE_EMBEDDING_MODEL ?? "text-embedding-3-small").trim(),
+    dimensions: Math.max(64, Math.min(4096, Number(process.env.KNOWLEDGE_EMBEDDING_DIMENSIONS ?? 1536))),
+    timeoutMs: Math.max(1000, Number(process.env.KNOWLEDGE_EMBEDDING_TIMEOUT_MS ?? 10000)),
+  };
+}
+
+async function fetchQueryEmbedding(cfg: ExternalEmbeddingConfig, text: string): Promise<number[] | null> {
+  const url = cfg.endpoint.replace(/\/$/, "") + "/v1/embeddings";
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (cfg.apiKey) headers["authorization"] = `Bearer ${cfg.apiKey}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+  try {
+    const payload: any = { input: [text.slice(0, 8000)], model: cfg.model };
+    if (cfg.dimensions) payload.dimensions = cfg.dimensions;
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload), signal: controller.signal } as any);
+    if (!res.ok) return null;
+    const json = (await res.json()) as any;
+    const data = Array.isArray(json?.data) ? json.data : [];
+    const vec = Array.isArray(data[0]?.embedding) ? (data[0].embedding as number[]) : [];
+    return vec.length > 0 ? vec : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function knowledgeSearch(params: { pool: Pool; tenantId: string; spaceId: string; subjectId: string; input: any }) {
@@ -115,11 +124,32 @@ export async function knowledgeSearch(params: { pool: Pool; tenantId: string; sp
     `,
     [params.tenantId, params.spaceId, query, params.subjectId, hasDocFilter ? docIds : null, lexLimit],
   );
-  const vectorStore = createVectorStore(resolveVectorStoreConfigFromEnv());
-  const vectorRes = await vectorStore.query({
-    pool: params.pool,
-    q: { tenantId: params.tenantId, spaceId: params.spaceId, subjectId: params.subjectId, embeddingModelRef: "minhash:16@1", vector: qMinhash, topK: embLimit, filters: hasDocFilter ? { documentIds: docIds } : undefined },
-  });
+  const vsCfg = resolveVectorStoreConfigFromEnv();
+  const vectorStore = createVectorStore(vsCfg);
+
+  /* Dense embedding 查询闭环：优先使用 dense vector，失败降级 minhash */
+  let vectorRes;
+  const extEmbCfg = vsCfg.mode === "external" ? resolveExternalEmbeddingConfig() : null;
+  if (extEmbCfg) {
+    const denseVec = await fetchQueryEmbedding(extEmbCfg, query);
+    if (denseVec && denseVec.length > 0) {
+      const denseModelRef = `${extEmbCfg.model}:${extEmbCfg.dimensions}`;
+      vectorRes = await vectorStore.query({
+        pool: params.pool,
+        q: { tenantId: params.tenantId, spaceId: params.spaceId, subjectId: params.subjectId, embeddingModelRef: denseModelRef, vector: denseVec, topK: embLimit, filters: hasDocFilter ? { documentIds: docIds } : undefined },
+      });
+    } else {
+      vectorRes = await vectorStore.query({
+        pool: params.pool,
+        q: { tenantId: params.tenantId, spaceId: params.spaceId, subjectId: params.subjectId, embeddingModelRef: "minhash:16@1", vector: qMinhash, topK: embLimit, filters: hasDocFilter ? { documentIds: docIds } : undefined },
+      });
+    }
+  } else {
+    vectorRes = await vectorStore.query({
+      pool: params.pool,
+      q: { tenantId: params.tenantId, spaceId: params.spaceId, subjectId: params.subjectId, embeddingModelRef: "minhash:16@1", vector: qMinhash, topK: embLimit, filters: hasDocFilter ? { documentIds: docIds } : undefined },
+    });
+  }
   const chunkIds = vectorRes.results.map((r: { chunkId: string; score: number }) => r.chunkId).filter(Boolean).slice(0, embLimit);
   const scoreById = new Map<string, number>();
   for (const r of vectorRes.results) if (r && r.chunkId) scoreById.set(String(r.chunkId), Number(r.score ?? 0));
@@ -161,11 +191,7 @@ export async function knowledgeSearch(params: { pool: Pool; tenantId: string; sp
   const qLower = query.toLowerCase();
   function overlapScore(mh: any) {
     const arr = Array.isArray(mh) ? (mh as number[]) : [];
-    if (!arr.length) return 0;
-    let hit = 0;
-    const set = new Set(qMinhash);
-    for (const v of arr) if (set.has(Number(v))) hit++;
-    return hit / k;
+    return minhashOverlapScore(qMinhash, arr);
   }
   function lexScore(snippet: string) {
     const pos = snippet.toLowerCase().indexOf(qLower);

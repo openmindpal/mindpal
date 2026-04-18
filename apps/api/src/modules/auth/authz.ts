@@ -1,87 +1,13 @@
 import type { Pool } from "pg";
-import type { PolicyDecision } from "@openslin/shared";
-import { validatePolicyExpr } from "@openslin/shared";
+import type { PolicyDecision, AbacEvaluationRequest, AbacEvaluationResult, AbacPolicySet, AbacPolicyRule } from "@openslin/shared";
+import { validatePolicyExpr, evaluateAbacPolicySet, buildPolicySetIndex } from "@openslin/shared";
 import { createPolicySnapshot } from "./policySnapshotRepo";
 import { getPolicyCacheEpoch } from "./policyCacheEpochRepo";
-import { evaluateAbacPolicy, parseAbacConditions, type AbacContext, type AbacResult } from "./abacEngine";
 
 export type ResourceAction = {
   resourceType: string;
   action: string;
 };
-
-/* --- ABAC condition types --- architecture-05 section 7 --- */
-
-export type AbacCondition =
-  | { kind: "time_window"; afterHour: number; beforeHour: number; timezone?: string }
-  | { kind: "day_of_week"; days: number[] }
-  | { kind: "ip_range"; cidrs: string[] }
-  | { kind: "geo_country"; countries: string[] };
-
-function evaluateTimeWindow(cond: Extract<AbacCondition, { kind: "time_window" }>, now: Date): boolean {
-  const tz = cond.timezone ?? "UTC";
-  let hour: number;
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: tz }).format(now);
-    hour = parseInt(parts, 10);
-  } catch {
-    hour = now.getUTCHours();
-  }
-  if (cond.afterHour <= cond.beforeHour) {
-    return hour >= cond.afterHour && hour < cond.beforeHour;
-  }
-  return hour >= cond.afterHour || hour < cond.beforeHour;
-}
-
-function evaluateDayOfWeek(cond: Extract<AbacCondition, { kind: "day_of_week" }>, now: Date): boolean {
-  return cond.days.includes(now.getUTCDay());
-}
-
-function ipToLong(ip: string): number {
-  const parts = ip.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((p) => !Number.isFinite(p) || p < 0 || p > 255)) return -1;
-  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-}
-
-function evaluateIpRange(cond: Extract<AbacCondition, { kind: "ip_range" }>, clientIp: string | null): boolean {
-  if (!clientIp) return false;
-  const ipLong = ipToLong(clientIp);
-  if (ipLong < 0) return false;
-  for (const cidr of cond.cidrs) {
-    const [base, bits] = cidr.split("/");
-    const baseLong = ipToLong(base);
-    if (baseLong < 0) continue;
-    const mask = bits ? (~0 << (32 - parseInt(bits, 10))) >>> 0 : 0xffffffff;
-    if ((ipLong & mask) === (baseLong & mask)) return true;
-  }
-  return false;
-}
-
-function evaluateGeoCountry(cond: Extract<AbacCondition, { kind: "geo_country" }>, country: string | null): boolean {
-  if (!country) return false;
-  return cond.countries.map((c) => c.toUpperCase()).includes(country.toUpperCase());
-}
-
-export function evaluateAbacConditions(conditions: AbacCondition[], context: { now?: Date; clientIp?: string | null; country?: string | null }): { allowed: boolean; failedCondition?: string } {
-  const now = context.now ?? new Date();
-  for (const cond of conditions) {
-    switch (cond.kind) {
-      case "time_window":
-        if (!evaluateTimeWindow(cond, now)) return { allowed: false, failedCondition: "time_window" };
-        break;
-      case "day_of_week":
-        if (!evaluateDayOfWeek(cond, now)) return { allowed: false, failedCondition: "day_of_week" };
-        break;
-      case "ip_range":
-        if (!evaluateIpRange(cond, context.clientIp ?? null)) return { allowed: false, failedCondition: "ip_range" };
-        break;
-      case "geo_country":
-        if (!evaluateGeoCountry(cond, context.country ?? null)) return { allowed: false, failedCondition: "geo_country" };
-        break;
-    }
-  }
-  return { allowed: true };
-}
 
 type PermissionRow = {
   role_id: string;
@@ -101,6 +27,94 @@ type CachedAuthz = {
 };
 
 const authzCache = new Map<string, CachedAuthz>();
+
+/**
+ * 清除授权缓存（用于测试）
+ */
+export function clearAuthzCache(): void {
+  authzCache.clear();
+  abacPolicySetCache.clear();
+}
+
+// ─── 阶段1: ABAC 策略集查询缓存 ────────────────────────────────────
+// 避免每次 ABAC 评估都查询数据库,基于 tenantId + resourceType + epoch 做版本化缓存
+type CachedAbacPolicySets = {
+  policySets: AbacPolicySet[];
+  epoch: number;
+  expiresAtMs: number;
+};
+const abacPolicySetCache = new Map<string, CachedAbacPolicySets>();
+const ABAC_CACHE_TTL_MS = 30_000; // 30秒 TTL
+const ABAC_CACHE_MAX_SIZE = 5000;
+
+function getAbacCacheKey(tenantId: string, resourceType: string, epoch: number): string {
+  return `abac|${tenantId}|${resourceType}|${epoch}`;
+}
+
+async function loadAbacPolicySetsWithCache(params: {
+  pool: Pool;
+  tenantId: string;
+  resourceType: string;
+  tenantEpoch: number;
+}): Promise<AbacPolicySet[]> {
+  const key = getAbacCacheKey(params.tenantId, params.resourceType, params.tenantEpoch);
+  const cached = cacheGet<CachedAbacPolicySets>(abacPolicySetCache, key);
+  if (cached) {
+    return cached.policySets;
+  }
+
+  const policySetsRes = await params.pool.query(
+    `SELECT ps.policy_set_id, ps.name, ps.version, ps.resource_type, ps.combining_algorithm, ps.status
+     FROM abac_policy_sets ps
+     WHERE ps.tenant_id = $1 AND ps.resource_type = $2 AND ps.status = 'active'
+     ORDER BY ps.version DESC LIMIT 5`,
+    [params.tenantId, params.resourceType],
+  );
+
+  const policySets: AbacPolicySet[] = [];
+  for (const psRow of policySetsRes.rows) {
+    const rulesRes = await params.pool.query(
+      `SELECT rule_id, name, description, resource_type, actions, priority, effect, condition_expr, enabled, space_id, metadata
+       FROM abac_policy_rules
+       WHERE policy_set_id = $1 AND tenant_id = $2 AND enabled = true
+       ORDER BY priority ASC LIMIT 50`,
+      [psRow.policy_set_id, params.tenantId],
+    );
+
+    const rules: AbacPolicyRule[] = rulesRes.rows.map((r: any) => ({
+      ruleId: r.rule_id,
+      name: r.name,
+      description: r.description ?? "",
+      resourceType: r.resource_type,
+      actions: Array.isArray(r.actions) ? r.actions : [],
+      priority: r.priority,
+      effect: r.effect,
+      condition: r.condition_expr,
+      enabled: r.enabled,
+      tenantId: params.tenantId,
+      spaceId: r.space_id ?? undefined,
+      metadata: r.metadata ?? {},
+    }));
+
+    policySets.push({
+      policySetId: psRow.policy_set_id,
+      name: psRow.name,
+      version: psRow.version,
+      rules,
+      combiningAlgorithm: psRow.combining_algorithm,
+      resourceType: psRow.resource_type,
+      status: psRow.status,
+    });
+  }
+
+  cacheSet(abacPolicySetCache, key, {
+    policySets,
+    epoch: params.tenantEpoch,
+    expiresAtMs: Date.now() + ABAC_CACHE_TTL_MS,
+  }, ABAC_CACHE_MAX_SIZE);
+
+  return policySets;
+}
 
 function isFieldRulesTrivial(fieldRules: any) {
   const readAllowAll = Boolean(fieldRules?.read?.allow?.includes?.("*"));
@@ -318,7 +332,7 @@ export async function authorize(params: {
   spaceId?: string;
   resourceType: string;
   action: string;
-  abacCtx?: AbacContext;
+  abacRequest?: AbacEvaluationRequest;
 }): Promise<PolicyDecision> {
   const tenantEpoch = await getPolicyCacheEpoch({ pool: params.pool, tenantId: params.tenantId, scopeType: "tenant", scopeId: params.tenantId });
   const spaceEpoch = params.spaceId ? await getPolicyCacheEpoch({ pool: params.pool, tenantId: params.tenantId, scopeType: "space", scopeId: params.spaceId }) : 0;
@@ -348,6 +362,7 @@ export async function authorize(params: {
       [params.subjectId, params.tenantId, params.spaceId ?? null],
     );
     roleIds = rolesRes.rows.map((r) => r.role_id as string);
+    console.log(`[AUTHZ] subjectId=${params.subjectId}, tenantId=${params.tenantId}, spaceId=${params.spaceId}, roleIds=`, roleIds);
     if (roleIds.length === 0) {
       perms = [];
     } else {
@@ -465,23 +480,25 @@ export async function authorize(params: {
   }
 
   const effectiveFieldRules = fieldRules ?? { read: { allow: ["*"] }, write: { allow: ["*"] } };
-  let lastAbacResult: AbacResult | undefined;
+  let lastAbacResult: AbacEvaluationResult | undefined;
 
-  /* ─── ABAC condition evaluation (§7) ─── */
-  if (params.abacCtx) {
+  /* ─── ABAC 策略集评估 (新引擎 policyEngine.ts + 缓存 + 索引优化) ─── */
+  if (params.abacRequest) {
     try {
-      const abacRulesRes = await params.pool.query(
-        `SELECT conditions FROM abac_policies
-         WHERE tenant_id = $1 AND resource_type = $2 AND action = $3 AND enabled = true
-         ORDER BY priority ASC LIMIT 10`,
-        [params.tenantId, params.resourceType, params.action],
-      );
-      for (const row of abacRulesRes.rows) {
-        const conditions = parseAbacConditions((row as any).conditions);
-        if (conditions.length === 0) continue;
-        const abacResult = evaluateAbacPolicy({ conditions, ctx: params.abacCtx });
+      const abacPolicySets = await loadAbacPolicySetsWithCache({
+        pool: params.pool,
+        tenantId: params.tenantId,
+        resourceType: params.resourceType,
+        tenantEpoch: tenantEpoch,
+      });
+
+      for (const policySet of abacPolicySets) {
+        // 阶段2: 使用预构建索引进行快速评估
+        const index = buildPolicySetIndex(policySet);
+        const abacResult = evaluateAbacPolicySet(policySet, params.abacRequest, index);
         lastAbacResult = abacResult;
-        if (!abacResult.allowed) {
+
+        if (abacResult.decision === "deny") {
           const reason = `abac:${abacResult.reason}`;
           const explainV1 = buildExplainV1({
             decision: "deny",
@@ -523,8 +540,11 @@ export async function authorize(params: {
           };
         }
       }
-    } catch {
-      /* ABAC table may not exist yet – degrade gracefully */
+    } catch (err) {
+      /* ABAC 新表可能尚未迁移 — 优雅降级，记录错误日志 */
+      if (process.env.NODE_ENV !== "test") {
+        console.error("[authz] ABAC 策略集评估异常，降级跳过:", err instanceof Error ? err.message : err);
+      }
     }
   }
 

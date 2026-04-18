@@ -7,7 +7,7 @@ import type { EffectiveSchema, SearchParams } from "../../../../lib/types";
 
 async function loadEffectiveSchema(locale: string, entity: string) {
   const token = (await cookies()).get("openslin_token")?.value ?? "";
-  const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective?schemaName=core`, {
+  const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective`, {
     method: "GET",
     token,
     locale,

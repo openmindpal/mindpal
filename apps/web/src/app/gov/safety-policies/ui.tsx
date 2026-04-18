@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { apiFetch, text } from "@/lib/api";
-import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table, StatusBadge } from "@/components/ui";
+import { apiFetch } from "@/lib/api";
+import { t, statusLabel } from "@/lib/i18n";
+import { Badge, Card, PageHeader, Table, StatusBadge, StructuredData, getHelpHref } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { numberField, stringField, toDisplayText, toRecord } from "@/lib/viewData";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type SafetyPolicyType = "content" | "injection" | "risk";
 
 type PolicyRow = { policyId: string; policyType: SafetyPolicyType; name: string; createdAt: string };
@@ -16,22 +17,101 @@ type VersionsResp = { policy?: PolicyRow; versions?: Array<{ version: number; st
 type VersionResp = { version?: any } & ApiError;
 type DiffResp = { summary?: any } & ApiError;
 
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
+function normalizePolicyRow(value: unknown): PolicyRow | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  const policyType = stringField(record, "policyType");
+  if (policyType !== "content" && policyType !== "injection" && policyType !== "risk") return null;
+  return {
+    policyId: toDisplayText(record.policyId),
+    policyType,
+    name: toDisplayText(record.name),
+    createdAt: toDisplayText(record.createdAt),
+  };
 }
 
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg = msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
+function normalizePolicyListResp(value: unknown): PolicyListResp | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  const items = Array.isArray(record.items)
+    ? record.items.reduce<Array<{ policy: PolicyRow; activeVersion?: number | null; latest?: any | null }>>((acc, item) => {
+        const row = toRecord(item);
+        const policy = normalizePolicyRow(row?.policy);
+        if (!row || !policy) return acc;
+        acc.push({
+          policy,
+          activeVersion: row.activeVersion == null ? null : Number(row.activeVersion),
+          latest: row.latest ?? null,
+        });
+        return acc;
+      }, [])
+    : undefined;
+  return {
+    errorCode: stringField(record, "errorCode"),
+    message: record.message,
+    traceId: stringField(record, "traceId"),
+    dimension: stringField(record, "dimension"),
+    retryAfterSec: numberField(record, "retryAfterSec"),
+    items,
+  };
+}
+
+function normalizeVersionsResp(value: unknown): VersionsResp | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  const versions = Array.isArray(record.versions)
+    ? record.versions.reduce<Array<{ version: number; status: string; policyDigest: string; createdAt: string; publishedAt?: string | null }>>((acc, item) => {
+        const row = toRecord(item);
+        if (!row) return acc;
+        acc.push({
+          version: Number(row.version ?? 0),
+          status: toDisplayText(row.status),
+          policyDigest: toDisplayText(row.policyDigest),
+          createdAt: toDisplayText(row.createdAt),
+          publishedAt: row.publishedAt == null ? null : toDisplayText(row.publishedAt),
+        });
+        return acc;
+      }, [])
+    : undefined;
+  return {
+    errorCode: stringField(record, "errorCode"),
+    message: record.message,
+    traceId: stringField(record, "traceId"),
+    dimension: stringField(record, "dimension"),
+    retryAfterSec: numberField(record, "retryAfterSec"),
+    policy: normalizePolicyRow(record.policy) ?? undefined,
+    versions,
+  };
+}
+
+function normalizeVersionResp(value: unknown): VersionResp | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  return {
+    errorCode: stringField(record, "errorCode"),
+    message: record.message,
+    traceId: stringField(record, "traceId"),
+    dimension: stringField(record, "dimension"),
+    retryAfterSec: numberField(record, "retryAfterSec"),
+    version: record.version,
+  };
+}
+
+function normalizeDiffResp(value: unknown): DiffResp | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  return {
+    errorCode: stringField(record, "errorCode"),
+    message: record.message,
+    traceId: stringField(record, "traceId"),
+    dimension: stringField(record, "dimension"),
+    retryAfterSec: numberField(record, "retryAfterSec"),
+    summary: record.summary,
+  };
 }
 
 export default function SafetyPoliciesClient(props: { locale: string; initial: unknown; initialStatus: number }) {
-  const [data, setData] = useState<PolicyListResp | null>((props.initial as PolicyListResp) ?? null);
+  const [data, setData] = useState<PolicyListResp | null>(normalizePolicyListResp(props.initial));
   const [status, setStatus] = useState<number>(props.initialStatus);
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -50,19 +130,25 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
   const [overrideSpaceId, setOverrideSpaceId] = useState<string>("");
   const [overrideTarget, setOverrideTarget] = useState<{ policyId: string; version: number } | null>(null);
 
-  const items = useMemo(() => (Array.isArray((data as any)?.items) ? ((data as any).items as any[]) : []), [data]);
+  const items = useMemo(() => (Array.isArray(data?.items) ? data.items : []), [data]);
   const filtered = useMemo(() => {
     if (!filterType) return items;
     return items.filter((x) => String(x?.policy?.policyType ?? "") === filterType);
   }, [filterType, items]);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paged = useMemo(() => filtered.slice(page * pageSize, (page + 1) * pageSize), [filtered, page]);
+
   async function refresh() {
     setError("");
+    setPage(0);
     const qs = filterType ? `?policyType=${encodeURIComponent(filterType)}&limit=50` : "?limit=50";
     const res = await apiFetch(`/governance/safety-policies${qs}`, { locale: props.locale, cache: "no-store" });
     setStatus(res.status);
     const json: unknown = await res.json().catch(() => null);
-    setData((json as PolicyListResp) ?? null);
+    setData(normalizePolicyListResp(json));
     if (!res.ok) setError(errText(props.locale, (json as any) ?? { errorCode: String(res.status) }));
   }
 
@@ -108,7 +194,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
       const res = await apiFetch(`/governance/safety-policies/${encodeURIComponent(policyId)}/versions?limit=50`, { locale: props.locale, cache: "no-store" });
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
-      setVersions((json as VersionsResp) ?? null);
+      setVersions(normalizeVersionsResp(json));
       setVersionDetail(null);
       setDiff(null);
     } catch (e: unknown) {
@@ -128,7 +214,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
       });
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
-      setVersionDetail((json as VersionResp) ?? null);
+      setVersionDetail(normalizeVersionResp(json));
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -146,7 +232,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
       });
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
-      setDiff((json as DiffResp) ?? null);
+      setDiff(normalizeDiffResp(json));
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -208,6 +294,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
     <div>
       <PageHeader
         title={t(props.locale, "gov.safetyPolicies.title")}
+        helpHref={getHelpHref("/gov/safety-policies", props.locale) ?? undefined}
         description={<StatusBadge locale={props.locale} status={status} />}
         actions={
           <>
@@ -267,20 +354,22 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
               </tr>
             </thead>
             <tbody>
-              {filtered.map((x: any) => (
-                <tr key={String(x?.policy?.policyId ?? "")}>
-                  <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{String(x?.policy?.policyId ?? "")}</td>
+              {paged.length === 0 ? (
+                <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+              ) : paged.map((x) => (
+                <tr key={toDisplayText(x?.policy?.policyId)}>
+                  <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{toDisplayText(x?.policy?.policyId)}</td>
                   <td>
-                    <Badge>{String(x?.policy?.policyType ?? "")}</Badge>
+                    <Badge>{toDisplayText(x?.policy?.policyType)}</Badge>
                   </td>
-                  <td>{String(x?.policy?.name ?? "")}</td>
+                  <td>{toDisplayText(x?.policy?.name)}</td>
                   <td>{x?.activeVersion ?? "-"}</td>
-                  <td>{x?.latest?.version ?? "-"}</td>
+                  <td>{toDisplayText(toRecord(x?.latest)?.version ?? "-")}</td>
                   <td>
                     <button
                       disabled={busy}
                       onClick={() => {
-                        const pid = String(x?.policy?.policyId ?? "");
+                        const pid = toDisplayText(x?.policy?.policyId);
                         setSelectedPolicyId(pid);
                         loadVersions(pid);
                       }}
@@ -292,6 +381,19 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
               ))}
             </tbody>
           </Table>
+          {totalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, filtered.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(filtered.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+                <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -322,7 +424,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
                     <tr key={String(v.version)}>
                       <td>{v.version}</td>
                       <td>
-                        <Badge>{v.status}</Badge>
+                        <Badge>{statusLabel(v.status, props.locale)}</Badge>
                       </td>
                       <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{v.policyDigest.slice(0, 12)}</td>
                       <td style={{ display: "flex", gap: 8 }}>
@@ -393,8 +495,8 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
                 </button>
               </div>
 
-              {diff ? <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(diff, null, 2)}</pre> : null}
-              {versionDetail ? <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(versionDetail, null, 2)}</pre> : null}
+              {diff ? <StructuredData data={diff} /> : null}
+              {versionDetail ? <StructuredData data={versionDetail} /> : null}
             </div>
           </Card>
         </div>
@@ -402,4 +504,3 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
     </div>
   );
 }
-

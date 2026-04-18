@@ -97,10 +97,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ workbenchKey: 
     const cap = findAllowedCap(manifest, "dataBindings", "schema.effective");
     if (!cap) return NextResponse.json({ errorCode: "WORKBENCH_MANIFEST_DENIED" }, { status: 403 });
     const entityName = String((payload as any)?.entityName ?? "");
-    const schemaName = String((payload as any)?.schemaName ?? "core");
+    const schemaName = typeof (payload as any)?.schemaName === "string" && String((payload as any).schemaName).trim()
+      ? String((payload as any).schemaName).trim()
+      : "";
     if (!entityName) return NextResponse.json({ errorCode: "BAD_REQUEST" }, { status: 400 });
     if (!allowEntityName(cap.allow, entityName)) return NextResponse.json({ errorCode: "WORKBENCH_MANIFEST_DENIED" }, { status: 403 });
-    const res = await apiFetch(`/schemas/${encodeURIComponent(entityName)}/effective?schemaName=${encodeURIComponent(schemaName)}`, {
+    const query = schemaName ? `?schemaName=${encodeURIComponent(schemaName)}` : "";
+    const res = await apiFetch(`/schemas/${encodeURIComponent(entityName)}/effective${query}`, {
       method: "GET",
       token,
       locale,

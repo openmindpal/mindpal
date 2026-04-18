@@ -1,14 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { API_BASE, apiFetch, text } from "@/lib/api";
+import { Fragment, useMemo, useState } from "react";
+import { API_BASE, apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table, StatusBadge, TabNav } from "@/components/ui";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { Badge, Card, PageHeader, Table, StatusBadge, TabNav, getHelpHref } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type AuditEventRow = Record<string, unknown>;
-type AuditListResponse = ApiError & { events?: AuditEventRow[] };
-type AuditRetentionResponse = ApiError & { retentionDays?: number; updatedAt?: string | null };
+type AuditListResponse = ApiError & { events?: AuditEventRow[]; total?: number; limit?: number; offset?: number };
 type AuditLegalHoldRow = { holdId: string; scopeType: string; scopeId: string; status: string; reason: string; createdAt?: string | null };
 type AuditLegalHoldsResponse = ApiError & { items?: AuditLegalHoldRow[] };
 type AuditExportRow = { exportId: string; status: string; createdAt?: string | null; artifactId?: string | null; artifactRef?: string | null };
@@ -42,23 +42,8 @@ type AuditVerifyResponse = ApiError & {
   failures?: Array<{ eventId: string; reason: string }>;
 };
 
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
 type InitialData = { status: number; json: unknown };
-type AuditInitialResponse = { events?: AuditEventRow[] };
+type AuditInitialResponse = { events?: AuditEventRow[]; total?: number; offset?: number };
 
 export default function AuditClient(props: { locale: string; initial?: InitialData }) {
   const [error, setError] = useState<string>("");
@@ -67,19 +52,21 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
   const [traceId, setTraceId] = useState<string>("");
   const [subjectId, setSubjectId] = useState<string>("");
   const [action, setAction] = useState<string>("");
-  const [limit, setLimit] = useState<string>("50");
-  const initialEvents = props.initial?.json ? ((props.initial.json as AuditInitialResponse).events ?? []) : [];
+  const [fromTs, setFromTs] = useState<string>("");
+  const [toTs, setToTs] = useState<string>("");
+  const [limit, setLimit] = useState<string>("100");
+  const initialResponse = props.initial?.json ? (props.initial.json as AuditInitialResponse) : null;
+  const initialEvents = initialResponse?.events ?? [];
   const [events, setEvents] = useState<AuditEventRow[]>(initialEvents);
   const [eventsStatus, setEventsStatus] = useState<number>(props.initial?.status ?? 0);
+  const [totalCount, setTotalCount] = useState<number>(initialResponse?.total ?? initialEvents.length);
+  const [serverOffset, setServerOffset] = useState<number>(initialResponse?.offset ?? 0);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
-  const [verifyTenantId, setVerifyTenantId] = useState<string>("");
   const [verifyFrom, setVerifyFrom] = useState<string>("");
   const [verifyTo, setVerifyTo] = useState<string>("");
   const [verifyLimit, setVerifyLimit] = useState<string>("5000");
   const [verifyResult, setVerifyResult] = useState<AuditVerifyResponse | null>(null);
-
-  const [retentionDays, setRetentionDays] = useState<string>("0");
-  const [retentionUpdatedAt, setRetentionUpdatedAt] = useState<string>("");
 
   const [holdScopeType, setHoldScopeType] = useState<"tenant" | "space">("tenant");
   const [holdScopeId, setHoldScopeId] = useState<string>("");
@@ -100,6 +87,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
   const [exportWorkflowRef, setExportWorkflowRef] = useState<string>("");
   const [exportTraceId, setExportTraceId] = useState<string>("");
   const [exportLimit, setExportLimit] = useState<string>("2000");
+  const [exportFormat, setExportFormat] = useState<"json" | "csv">("json");
   const [exports, setExports] = useState<AuditExportRow[]>([]);
 
   const [siemDestinations, setSiemDestinations] = useState<AuditSiemDestinationRow[]>([]);
@@ -108,6 +96,9 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
   const [siemEnabled, setSiemEnabled] = useState<boolean>(false);
   const [siemBatchSize, setSiemBatchSize] = useState<string>("200");
   const [siemTimeoutMs, setSiemTimeoutMs] = useState<string>("5000");
+  const [siemRunId, setSiemRunId] = useState<string>("");
+  const [siemStepId, setSiemStepId] = useState<string>("");
+  const [siemPolicySnapshotRef, setSiemPolicySnapshotRef] = useState<string>("");
   const [siemLastResult, setSiemLastResult] = useState<unknown>(null);
   const [siemDlqDestId, setSiemDlqDestId] = useState<string>("");
   const [siemDlqStatus, setSiemDlqStatus] = useState<number>(0);
@@ -115,10 +106,24 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
   const [siemDlqLastResult, setSiemDlqLastResult] = useState<unknown>(null);
 
   const eventRows = useMemo(() => events, [events]);
+  const pageSize = Number(limit) || 200;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const currentPage = Math.floor(serverOffset / pageSize);
   const exportRows = useMemo(() => exports, [exports]);
   const holdRows = useMemo(() => holds, [holds]);
   const siemRows = useMemo(() => siemDestinations, [siemDestinations]);
   const siemDlqRows = useMemo(() => siemDlqItems, [siemDlqItems]);
+
+  const siemHighRiskHeaders = useMemo(() => {
+    const runId = siemRunId.trim();
+    const stepId = siemStepId.trim();
+    const policySnapshotRef = siemPolicySnapshotRef.trim();
+    const headers: Record<string, string> = {};
+    if (runId) headers["x-run-id"] = runId;
+    if (stepId) headers["x-step-id"] = stepId;
+    if (policySnapshotRef) headers["x-policy-snapshot-ref"] = policySnapshotRef;
+    return headers;
+  }, [siemRunId, siemStepId, siemPolicySnapshotRef]);
 
   async function downloadArtifact(artifactId: string) {
     setError("");
@@ -142,22 +147,28 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
     }
   }
 
-  async function search() {
+  async function search(offset = 0) {
     setError("");
     setBusy(true);
+    setSelectedEventId(null);
     try {
       const q = new URLSearchParams();
       if (traceId.trim()) q.set("traceId", traceId.trim());
       if (subjectId.trim()) q.set("subjectId", subjectId.trim());
       if (action.trim()) q.set("action", action.trim());
+      if (fromTs.trim()) q.set("from", fromTs.trim());
+      if (toTs.trim()) q.set("to", toTs.trim());
       const n = Number(limit);
       if (Number.isFinite(n) && n > 0) q.set("limit", String(n));
+      if (offset > 0) q.set("offset", String(offset));
       const res = await apiFetch(`/audit?${q.toString()}`, { locale: props.locale, cache: "no-store" });
       setEventsStatus(res.status);
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       const out = (json as AuditListResponse) ?? {};
       setEvents(Array.isArray(out.events) ? out.events : []);
+      setTotalCount(out.total ?? 0);
+      setServerOffset(out.offset ?? 0);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -165,13 +176,17 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
     }
   }
 
+  const goToPage = (p: number) => {
+    const n = Number(limit) || 200;
+    search(p * n);
+  };
+
   async function verify() {
     setError("");
     setBusy(true);
     setVerifyResult(null);
     try {
       const q = new URLSearchParams();
-      if (verifyTenantId.trim()) q.set("tenantId", verifyTenantId.trim());
       if (verifyFrom.trim()) q.set("from", verifyFrom.trim());
       if (verifyTo.trim()) q.set("to", verifyTo.trim());
       const n = Number(verifyLimit);
@@ -180,46 +195,6 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setVerifyResult((json as AuditVerifyResponse) ?? null);
-    } catch (e: unknown) {
-      setError(errText(props.locale, toApiError(e)));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function loadRetention() {
-    setError("");
-    setBusy(true);
-    try {
-      const res = await apiFetch(`/audit/retention`, { locale: props.locale, cache: "no-store" });
-      const json: unknown = await res.json().catch(() => null);
-      if (!res.ok) throw toApiError(json);
-      const out = (json as AuditRetentionResponse) ?? {};
-      setRetentionDays(String(out.retentionDays ?? 0));
-      setRetentionUpdatedAt(out.updatedAt ? String(out.updatedAt) : "");
-    } catch (e: unknown) {
-      setError(errText(props.locale, toApiError(e)));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveRetention() {
-    setError("");
-    setBusy(true);
-    try {
-      const days = Number(retentionDays);
-      const res = await apiFetch(`/audit/retention`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        locale: props.locale,
-        body: JSON.stringify({ retentionDays: Number.isFinite(days) ? days : 0 }),
-      });
-      const json: unknown = await res.json().catch(() => null);
-      if (!res.ok) throw toApiError(json);
-      const out = (json as AuditRetentionResponse) ?? {};
-      setRetentionDays(String(out.retentionDays ?? 0));
-      setRetentionUpdatedAt(out.updatedAt ? String(out.updatedAt) : "");
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -334,7 +309,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
       const timeoutMs = Number(siemTimeoutMs);
       const res = await apiFetch(`/audit/siem-destinations`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...siemHighRiskHeaders },
         locale: props.locale,
         body: JSON.stringify({
           name: siemName.trim(),
@@ -363,7 +338,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
     try {
       const res = await apiFetch(`/audit/siem-destinations`, {
         method: "PUT",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...siemHighRiskHeaders },
         locale: props.locale,
         body: JSON.stringify({
           id: d.id,
@@ -391,7 +366,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
     setBusy(true);
     setSiemLastResult(null);
     try {
-      const res = await apiFetch(`/audit/siem-destinations/${encodeURIComponent(id)}/test`, { method: "POST", locale: props.locale });
+      const res = await apiFetch(`/audit/siem-destinations/${encodeURIComponent(id)}/test`, { method: "POST", locale: props.locale, headers: siemHighRiskHeaders });
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setSiemLastResult((json as AuditSiemDestinationTestResponse) ?? null);
@@ -409,7 +384,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
     try {
       const res = await apiFetch(`/audit/siem-destinations/${encodeURIComponent(id)}/backfill`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...siemHighRiskHeaders },
         locale: props.locale,
         body: JSON.stringify({ clearOutbox: true }),
       });
@@ -447,7 +422,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
     setBusy(true);
     setSiemDlqLastResult(null);
     try {
-      const res = await apiFetch(`/audit/siem-destinations/${encodeURIComponent(destinationId)}/dlq/clear`, { method: "POST", locale: props.locale });
+      const res = await apiFetch(`/audit/siem-destinations/${encodeURIComponent(destinationId)}/dlq/clear`, { method: "POST", locale: props.locale, headers: siemHighRiskHeaders });
       setSiemDlqStatus(res.status);
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
@@ -467,7 +442,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
     try {
       const res = await apiFetch(`/audit/siem-destinations/${encodeURIComponent(destinationId)}/dlq/requeue`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...siemHighRiskHeaders },
         locale: props.locale,
         body: JSON.stringify({ limit: 200 }),
       });
@@ -497,6 +472,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
         workflowRef: exportWorkflowRef.trim() || undefined,
         traceId: exportTraceId.trim() || undefined,
         limit: Number(exportLimit) || undefined,
+        format: exportFormat,
       };
       const res = await apiFetch(`/audit/exports`, {
         method: "POST",
@@ -539,6 +515,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
     <div>
       <PageHeader
         title={t(props.locale, "gov.audit.title")}
+        helpHref={getHelpHref("/gov/audit", props.locale) ?? undefined}
         actions={
           <>
             <StatusBadge locale={props.locale} status={eventsStatus} />
@@ -570,10 +547,18 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                       <input value={action} onChange={(e) => setAction(e.target.value)} disabled={busy} style={{ width: 220 }} />
                     </label>
                     <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span>{t(props.locale, "gov.audit.field.from")}</span>
+                      <input type="datetime-local" value={fromTs} onChange={(e) => setFromTs(e.target.value)} disabled={busy} style={{ width: 200 }} />
+                    </label>
+                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span>{t(props.locale, "gov.audit.field.to")}</span>
+                      <input type="datetime-local" value={toTs} onChange={(e) => setToTs(e.target.value)} disabled={busy} style={{ width: 200 }} />
+                    </label>
+                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <span>{t(props.locale, "gov.audit.limit")}</span>
                       <input value={limit} onChange={(e) => setLimit(e.target.value)} disabled={busy} style={{ width: 100 }} />
                     </label>
-                    <button onClick={search} disabled={busy}>
+                    <button onClick={() => search(0)} disabled={busy}>
                       {t(props.locale, "action.apply")}
                     </button>
                   </div>
@@ -584,7 +569,12 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                     header={
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                         <span>{t(props.locale, "gov.audit.eventsTitle")}</span>
-                        <Badge>{eventRows.length}</Badge>
+                        <Badge>{totalCount}</Badge>
+                        {totalCount > 0 && (
+                          <span style={{ fontSize: 12, opacity: 0.6 }}>
+                            ({t(props.locale, "pagination.showing").replace("{from}", String(serverOffset + 1)).replace("{to}", String(serverOffset + eventRows.length))})
+                          </span>
+                        )}
                       </div>
                     }
                   >
@@ -597,51 +587,75 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                         <th align="left">{t(props.locale, "gov.audit.events.table.action")}</th>
                         <th align="left">{t(props.locale, "gov.audit.events.table.result")}</th>
                         <th align="left">{t(props.locale, "gov.audit.events.table.trace_id")}</th>
+                        <th align="left">{t(props.locale, "gov.audit.anomaly.label")}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {eventRows.map((ev, idx) => (
-                        <tr key={`${String(ev.event_id ?? "")}:${idx}`}>
-                          <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{String(ev.event_id ?? "")}</td>
-                          <td>{String(ev.timestamp ?? "")}</td>
+                      {eventRows.length === 0 ? (
+                        <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                      ) : eventRows.map((ev, idx) => {
+                        const evId = String(ev.event_id ?? "");
+                        const act = String(ev.action ?? "").toLowerCase();
+                        const anomalies: string[] = [];
+                        if (act.includes("delete") && (act.includes("bulk") || act.includes("batch"))) anomalies.push(t(props.locale, "gov.audit.anomaly.bulkDelete"));
+                        if (act.includes("permission") || act.includes("role") || act.includes("grant") || act.includes("revoke")) anomalies.push(t(props.locale, "gov.audit.anomaly.permChange"));
+                        const isSelected = selectedEventId === evId;
+                        return (
+                        <Fragment key={`${evId}:${idx}`}>
+                        <tr
+                          onClick={() => setSelectedEventId(isSelected ? null : evId)}
+                          style={{
+                            cursor: "pointer",
+                            ...(isSelected ? { background: "rgba(59,130,246,0.08)" } : anomalies.length ? { background: "rgba(239,68,68,0.06)" } : {}),
+                          }}
+                        >
+                          <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{evId}</td>
+                          <td>{fmtDateTime(ev.timestamp, props.locale)}</td>
                           <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{String(ev.subject_id ?? "")}</td>
                           <td>{String(ev.resource_type ?? "")}</td>
                           <td>{String(ev.action ?? "")}</td>
                           <td>{String(ev.result ?? "")}</td>
                           <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{String(ev.trace_id ?? "")}</td>
+                          <td>{anomalies.length > 0 ? anomalies.map((a, i) => <Badge key={i} tone="warning">{a}</Badge>) : "-"}</td>
                         </tr>
-                      ))}
+                        {isSelected && (
+                          <tr key={`${evId}:detail`}>
+                            <td colSpan={8} style={{ background: "rgba(59,130,246,0.04)", padding: "12px 16px" }}>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+                                {Object.entries(ev)
+                                  .filter(([k]) => !["event_id", "timestamp", "subject_id", "resource_type", "action", "result", "trace_id"].includes(k))
+                                  .map(([k, v]) => (
+                                    <div key={k} style={{ fontSize: 13 }}>
+                                      <span style={{ fontWeight: 600, color: "var(--sl-muted)", marginRight: 6 }}>{k}:</span>
+                                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", wordBreak: "break-all" }}>
+                                        {typeof v === "object" && v !== null ? JSON.stringify(v, null, 2) : String(v ?? "-")}
+                                      </span>
+                                    </div>
+                                  ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
+                        );
+                      })}
                     </tbody>
                   </Table>
+                  {totalPages > 1 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                      <span style={{ opacity: 0.7, fontSize: 13 }}>
+                        {t(props.locale, "pagination.showing").replace("{from}", String(serverOffset + 1)).replace("{to}", String(serverOffset + eventRows.length))}
+                        {t(props.locale, "pagination.total").replace("{count}", String(totalCount))}
+                      </span>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button disabled={currentPage === 0 || busy} onClick={() => goToPage(currentPage - 1)}>{t(props.locale, "pagination.prev")}</button>
+                        <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(currentPage + 1))}</span>
+                        <button disabled={currentPage >= totalPages - 1 || busy} onClick={() => goToPage(currentPage + 1)}>{t(props.locale, "pagination.next")}</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
-            ),
-          },
-          {
-            key: "retention",
-            label: t(props.locale, "gov.audit.tab.retention"),
-            content: (
-              <Card
-                title={t(props.locale, "gov.audit.retentionTitle")}
-                footer={
-                  <span>
-                    {t(props.locale, "gov.audit.footer.updatedAt")}={retentionUpdatedAt || "-"}
-                  </span>
-                }
-              >
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <span>{t(props.locale, "gov.audit.retentionDays")}</span>
-                    <input value={retentionDays} onChange={(e) => setRetentionDays(e.target.value)} disabled={busy} style={{ width: 120 }} />
-                  </label>
-                  <button onClick={loadRetention} disabled={busy}>
-                    {t(props.locale, "action.refresh")}
-                  </button>
-                  <button onClick={saveRetention} disabled={busy}>
-                    {t(props.locale, "action.save")}
-                  </button>
-                </div>
-              </Card>
             ),
           },
           {
@@ -726,7 +740,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                             <td>{`${h.scopeType}:${h.scopeId}`}</td>
                             <td>{h.status}</td>
                             <td>{h.reason}</td>
-                            <td>{h.createdAt ?? "-"}</td>
+                            <td>{fmtDateTime(h.createdAt, props.locale)}</td>
                             <td>
                               <button onClick={() => releaseHold(h.holdId)} disabled={busy || h.status !== "active"}>
                                 {t(props.locale, "action.release")}
@@ -795,6 +809,13 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                       <span>{t(props.locale, "gov.audit.limit")}</span>
                       <input value={exportLimit} onChange={(e) => setExportLimit(e.target.value)} disabled={busy} style={{ width: 120 }} />
                     </label>
+                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span>{t(props.locale, "gov.audit.exportFormat")}</span>
+                      <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value as "json" | "csv")} disabled={busy}>
+                        <option value="json">{t(props.locale, "gov.audit.exportFormat.json")}</option>
+                        <option value="csv">{t(props.locale, "gov.audit.exportFormat.csv")}</option>
+                      </select>
+                    </label>
                     <button onClick={createExport} disabled={busy}>
                       {t(props.locale, "gov.audit.exportCreate")}
                     </button>
@@ -819,7 +840,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                           <tr key={ex.exportId}>
                             <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{ex.exportId}</td>
                             <td>{ex.status}</td>
-                            <td>{ex.createdAt ?? "-"}</td>
+                            <td>{fmtDateTime(ex.createdAt, props.locale)}</td>
                             <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
                               {ex.artifactId ? (
                                 <button onClick={() => downloadArtifact(ex.artifactId!)} disabled={busy}>
@@ -863,6 +884,23 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                     <span>{t(props.locale, "gov.audit.siem.dlq")}</span>
                   </div>
 
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span>{t(props.locale, "gov.audit.field.runId")}</span>
+                      <input value={siemRunId} onChange={(e) => setSiemRunId(e.target.value)} disabled={busy} style={{ width: 180 }} />
+                    </label>
+                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span>{t(props.locale, "gov.audit.field.stepId")}</span>
+                      <input value={siemStepId} onChange={(e) => setSiemStepId(e.target.value)} disabled={busy} style={{ width: 180 }} />
+                    </label>
+                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span>{t(props.locale, "gov.audit.field.policySnapshotRef")}</span>
+                      <input value={siemPolicySnapshotRef} onChange={(e) => setSiemPolicySnapshotRef(e.target.value)} disabled={busy} style={{ width: 280 }} />
+                    </label>
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    {t(props.locale, "gov.audit.siem.highRiskHint")}
+                  </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <span>{t(props.locale, "gov.audit.siem.name")}</span>
@@ -939,7 +977,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                                 }}
                               />
                             </td>
-                            <td>{d.updatedAt ?? "-"}</td>
+                            <td>{fmtDateTime(d.updatedAt, props.locale)}</td>
                             <td>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                 <button onClick={() => testSiemDestination(d.id)} disabled={busy}>
@@ -995,9 +1033,9 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                             {siemDlqRows.map((x) => (
                               <tr key={x.id}>
                                 <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{x.eventId}</td>
-                                <td>{x.eventTs}</td>
+                                <td>{fmtDateTime(x.eventTs, props.locale)}</td>
                                 <td>{String(x.attempts)}</td>
-                                <td>{x.createdAt ?? "-"}</td>
+                                <td>{fmtDateTime(x.createdAt, props.locale)}</td>
                                 <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
                                   {x.lastErrorDigest ? JSON.stringify(x.lastErrorDigest) : "-"}
                                 </td>
@@ -1029,10 +1067,6 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
               >
                 <div style={{ display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <span>{t(props.locale, "gov.audit.field.tenantId")}</span>
-                      <input value={verifyTenantId} onChange={(e) => setVerifyTenantId(e.target.value)} disabled={busy} style={{ width: 220 }} />
-                    </label>
                     <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <span>{t(props.locale, "gov.audit.field.from")}</span>
                       <input value={verifyFrom} onChange={(e) => setVerifyFrom(e.target.value)} disabled={busy} style={{ width: 220 }} />

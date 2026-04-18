@@ -56,10 +56,15 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: node scripts/secret-scan.mjs
+      - name: Lint (root-level)
+        run: npm run lint
+      - name: Architecture boundary scan
+        run: npm run boundary-scan
       - run: npm run build
-      - run: npm -w apps/api test
-      - run: npm -w apps/worker test
-      - run: npm -w apps/device-agent test
+      - name: Run all tests
+        run: npm test
+      - name: Run eval regression gate
+        run: npm -w apps/api run eval:ci
 
   web-e2e:
     if: >-

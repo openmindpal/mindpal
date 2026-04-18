@@ -5,6 +5,7 @@ import { getSecretRecordEncryptedPayload } from "../../../modules/secrets/secret
 import { writeSecretUsageEvent } from "../../../modules/secrets/usageRepo";
 import { getConnectorInstance, getConnectorType } from "../../connector-manager/modules/connectorRepo";
 import { getEffectiveSafetyPolicyVersion } from "../../safety-policy/modules/safetyPolicyRepo";
+import { checkModelDegradation } from "../../../modules/modelGateway/routingPolicyRepo";
 import {
   extractTextForPromptInjectionScan,
   getPromptInjectionPolicyFromEnv,
@@ -12,20 +13,19 @@ import {
   shouldDenyPromptInjectionForTarget,
   summarizePromptInjection,
 } from "../../safety-policy/modules/promptInjectionGuard";
-import { findCatalogByRef, isOpenAiCompatibleProvider as isOpenAiCompatProviderFromCatalog } from "./catalog";
+import { findCatalogByRef } from "./catalog";
 import { getBindingByModelRef, listBindings } from "./bindingRepo";
 import { getEffectiveRoutingPolicy } from "../../../modules/modelGateway/routingPolicyRepo";
-import { openAiChatStreamWithSecretRotation, openAiChatWithSecretRotation } from "./openaiChat";
+import { invokeProviderChatStreamWithSecretRotation, invokeProviderChatWithSecretRotation } from "./providerAdapterRegistry";
 import {
   dlpRuleIdsFromSummary,
   getAllowedDomains,
   getHostFromBaseUrl,
   hasDlpEnvOverride,
   isModelUpstreamError,
-  isOpenAiCompatibleProvider,
   isPlainObject,
   normalizeBaseUrl,
-  normalizeOpenAiCompatibleBaseUrl,
+  normalizeProviderBaseUrl,
   resolveScope,
   type OutputSchemaFieldType,
 } from "./helpers";
@@ -141,7 +141,7 @@ export async function invokeModelChatUpstreamStream(params: {
     constraints?: { candidates?: string[] };
     scene?: string;
     outputSchema?: { fields: Record<string, { type: OutputSchemaFieldType; required?: boolean }> };
-    messages: Array<{ role: string; content: string }>;
+    messages: Array<{ role: string; content: string | Array<{type: string; [k: string]: any}> }>;
     timeoutMs?: number;
     temperature?: number;
     maxTokens?: number;
@@ -159,7 +159,26 @@ export async function invokeModelChatUpstreamStream(params: {
   const body = params.body;
   const scene = (body.scene ? String(body.scene).trim() : body.purpose).slice(0, 100) || body.purpose;
 
-  const injEff = await getEffectiveSafetyPolicyVersion({ pool: params.app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, policyType: "injection" });
+  // ═══ 性能优化: 并行化安全策略 + 路由解析 DB 查询 ═══
+  // 原流程: injection(~30ms) → content(~30ms) → routing(~30ms) = ~90ms 串行
+  // 新流程: Promise.all([injection, content, routing]) = ~30ms 并行
+  const needsRoutingQuery = !body.constraints?.candidates?.length && !body.modelRef;
+  const [injEff, contentEff, routingQueryResult] = await Promise.all([
+    getEffectiveSafetyPolicyVersion({ pool: params.app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, policyType: "injection" }),
+    getEffectiveSafetyPolicyVersion({ pool: params.app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, policyType: "content" }),
+    needsRoutingQuery
+      ? (async () => {
+          const policy = await getEffectiveRoutingPolicy({ pool: params.app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, purpose: body.purpose });
+          if (Boolean(policy?.enabled) && policy!.primaryModelRef) {
+            return { type: "policy" as const, candidates: [policy!.primaryModelRef, ...(policy!.fallbackModelRefs ?? [])], reason: "routing_policy" };
+          }
+          const allBindings = await listBindings(params.app.db, subject.tenantId, scope.scopeType, scope.scopeId);
+          return { type: "bindings" as const, candidates: allBindings.map(b => b.modelRef), reason: "default_binding" };
+        })()
+      : Promise.resolve(null),
+  ]);
+
+  // 安全检查：提示注入扫描（本地正则，<1ms）
   const piPolicy = injEff?.policyJson ? resolvePromptInjectionPolicy(injEff.policyJson as any) : getPromptInjectionPolicyFromEnv();
   const piMode = piPolicy.mode;
   const piText = extractTextForPromptInjectionScan(body.messages);
@@ -184,7 +203,6 @@ export async function invokeModelChatUpstreamStream(params: {
     throw err;
   }
 
-  const contentEff = await getEffectiveSafetyPolicyVersion({ pool: params.app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, policyType: "content" });
   const envDlpOverride = hasDlpEnvOverride(process.env);
   const dlpPolicy = envDlpOverride ? resolveDlpPolicyFromEnv(process.env) : contentEff?.policyJson ? resolveDlpPolicy(contentEff.policyJson as any) : resolveDlpPolicyFromEnv(process.env);
   const dlpTarget = "model:invoke";
@@ -219,6 +237,7 @@ export async function invokeModelChatUpstreamStream(params: {
   const redactModelPrompt = String(process.env.DLP_REDACT_MODEL_PROMPT ?? "").trim() === "1";
   const messages = redactModelPrompt && Array.isArray(promptDlp.value) ? (promptDlp.value as any[]) : body.messages;
 
+  // 使用并行查询结果构建候选列表
   const candidates: string[] = [];
   let routeReason = "default_binding";
   if (body.constraints?.candidates?.length) {
@@ -227,21 +246,61 @@ export async function invokeModelChatUpstreamStream(params: {
   } else if (body.modelRef) {
     routeReason = "explicit_modelRef";
     candidates.push(body.modelRef);
-  } else {
-    // Check routing policy first
-    const policy = await getEffectiveRoutingPolicy({ pool: params.app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, purpose: body.purpose });
-    const policyEnabled = Boolean(policy?.enabled);
-    if (policyEnabled && policy!.primaryModelRef) {
-      routeReason = "routing_policy";
-      candidates.push(policy!.primaryModelRef, ...(policy!.fallbackModelRefs ?? []));
-    } else {
-      // Fallback to default binding
-      const b = (await listBindings(params.app.db, subject.tenantId, scope.scopeType, scope.scopeId))[0] ?? null;
-      if (b) candidates.push(b.modelRef);
-    }
+  } else if (routingQueryResult) {
+    routeReason = routingQueryResult.reason;
+    candidates.push(...routingQueryResult.candidates);
   }
   const uniqCandidates = Array.from(new Set(candidates.filter(Boolean))).slice(0, 10);
   if (!uniqCandidates.length) throw Errors.badRequest("未配置模型绑定");
+
+  // 多模态感知路由：根据图片/音频/视频内容优先选择更匹配的模型
+  const VISION_PATTERNS = /vision|\bvl\b|4v|image|multimodal|eye|visual|omni/i;
+  const AUDIO_PATTERNS = /audio|speech|voice|realtime|omni/i;
+  const VIDEO_PATTERNS = /video|vision|omni|multimodal/i;
+  const hasImageContent = messages.some((m: any) =>
+    Array.isArray(m.content) && (m.content as any[]).some((p: any) => p?.type === "image_url")
+  );
+  const hasAudioContent = messages.some((m: any) =>
+    Array.isArray(m.content) && (m.content as any[]).some((p: any) => p?.type === "input_audio")
+  );
+  const hasVideoContent = messages.some((m: any) =>
+    Array.isArray(m.content) && (m.content as any[]).some((p: any) => p?.type === "video_url")
+  );
+  const rankingPatterns = hasVideoContent ? VIDEO_PATTERNS : hasAudioContent ? AUDIO_PATTERNS : hasImageContent ? VISION_PATTERNS : null;
+  if (rankingPatterns) {
+    // 如果当前候选列表中没有明确的 vision 模型，自动从全部绑定中注入所有模型作为候选
+    // （因为多模态模型名称不一定包含 vision/vl，如 qwen-plus、gpt-4o 等）
+    const hasVisionCandidate = uniqCandidates.some(c => rankingPatterns.test(c));
+    if (!hasVisionCandidate) {
+      const allBindings = await listBindings(params.app.db, subject.tenantId, scope.scopeType, scope.scopeId);
+      const otherBindings = allBindings.filter(b => !uniqCandidates.includes(b.modelRef));
+      if (otherBindings.length > 0) {
+        // 将其他绑定模型按 vision 模式优先排序后插入候选列表前面
+        const sorted = [...otherBindings].sort((a, b) => {
+          const aV = rankingPatterns.test(a.modelRef) ? 0 : 1;
+          const bV = rankingPatterns.test(b.modelRef) ? 0 : 1;
+          return aV - bV;
+        });
+        for (const vb of sorted) {
+          uniqCandidates.unshift(vb.modelRef);
+        }
+        params.app.log.info(
+          { injected: sorted.map(b => b.modelRef), originalDefault: candidates[0], allCandidates: uniqCandidates.slice(0, 10) },
+          "[multimodal-routing] 检测到多模态输入且默认模型不匹配，已注入其他模型候选"
+        );
+      } else {
+        params.app.log.warn({ candidates: uniqCandidates }, "[multimodal-routing] 检测到多模态输入但只有一个模型绑定，将直接使用");
+      }
+    } else {
+      // 有 vision 候选但可能不在最前面，排序让 vision 模型优先
+      uniqCandidates.sort((a, b) => {
+        const aVision = rankingPatterns.test(a) ? 0 : 1;
+        const bVision = rankingPatterns.test(b) ? 0 : 1;
+        return aVision - bVision;
+      });
+      params.app.log.info({ hasImageContent, hasAudioContent, hasVideoContent, candidates: uniqCandidates }, "[multimodal-routing] 检测到多模态内容，已优先排序匹配模型");
+    }
+  }
 
   const attempts: Array<{ modelRef: string; status: "success" | "skipped" | "error"; errorCode?: string; reason?: string; secretTries?: number; provider?: string }> = [];
   let lastPolicyViolation: { errorCode: string; message: any } | null = null;
@@ -250,7 +309,6 @@ export async function invokeModelChatUpstreamStream(params: {
   let lastProviderUnsupported: string | null = null;
 
   const startedAtMs = Date.now();
-
   for (const modelRef of uniqCandidates) {
     const binding = await getBindingByModelRef(params.app.db, subject.tenantId, scope.scopeType, scope.scopeId, modelRef);
     if (!binding) {
@@ -303,7 +361,7 @@ export async function invokeModelChatUpstreamStream(params: {
         attempts.push({ modelRef, status: "error", errorCode: "POLICY_VIOLATION", reason: "base_url_missing", provider: cat.provider });
         continue;
       }
-      bindingBaseUrl = normalizeOpenAiCompatibleBaseUrl(bindingBaseUrlRaw);
+      bindingBaseUrl = normalizeProviderBaseUrl(cat.provider, bindingBaseUrlRaw);
       try {
         endpointHost = getHostFromBaseUrl(bindingBaseUrl);
       } catch {
@@ -336,13 +394,16 @@ export async function invokeModelChatUpstreamStream(params: {
           const re = /-\s+([a-zA-Z0-9._:-]+@\d+)/g;
           let m: RegExpExecArray | null;
           while ((m = re.exec(combined)) !== null) refs.push(String(m[1]));
-          const picked = refs.find((r) => r.startsWith("entity.create@")) ?? refs[0] ?? "entity.create@1";
-          const toolName = picked.split("@")[0] ?? "";
-          let inputDraft: any = {};
-          if (toolName === "entity.create") {
-            inputDraft = { schemaName: "core", entityName: "notes", payload: { title: "note" } };
+          const picked = refs[0] ?? null;
+          if (picked) {
+            const toolName = picked.split("@")[0] ?? "";
+            const inputDraft: any = toolName === "entity.create"
+              ? { payload: { title: "untitled" } }
+              : {};
+            outputText = `我可以用 ${picked} 来处理这个请求。\n\`\`\`tool_call\n${JSON.stringify([{ toolRef: picked, inputDraft }])}\n\`\`\``;
+          } else {
+            outputText = `echo:未检测到工具引用`;
           }
-          outputText = `我可以用 ${picked} 来处理这个请求。\n\`\`\`tool_call\n${JSON.stringify([{ toolRef: picked, inputDraft }])}\n\`\`\``;
         } else {
           const last = messages[messages.length - 1];
           const lastContent = String((last as any)?.content ?? "");
@@ -356,17 +417,14 @@ export async function invokeModelChatUpstreamStream(params: {
         const promptTokens = messages.reduce((a: number, m: any) => a + Math.max(1, Math.ceil(String((m as any).content ?? "").length / 4)), 0);
         const completionTokens = Math.max(1, Math.ceil(outputText.length / 4));
         usage = { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens };
-      } else if (cat.provider === "openai" || isOpenAiCompatibleProvider(cat.provider) || isOpenAiCompatProviderFromCatalog(cat.provider)) {
+      } else {
         const secretIds = Array.isArray((binding as any).secretIds) && (binding as any).secretIds.length ? (binding as any).secretIds : [binding.secretId];
-        const apiKeys: string[] = [];
-        const secretMetas: Array<{ secretId: string; credentialVersion: number }> = [];
-        for (const secretId of secretIds) {
+        const secretPairs = await Promise.all(secretIds.map(async (secretId: string) => {
           const secret = await getSecretRecordEncryptedPayload(params.app.db, subject.tenantId, secretId);
           if (!secret) throw Errors.badRequest("Secret 不存在");
           if (secret.secret.status !== "active") throw Errors.badRequest("Secret 未激活");
           if (secret.secret.scopeType !== scope.scopeType || secret.secret.scopeId !== scope.scopeId) throw Errors.forbidden();
           if (secret.secret.connectorInstanceId !== inst.id) throw Errors.badRequest("Secret 与 ConnectorInstance 不匹配");
-
           let decrypted: any;
           try {
             decrypted = await decryptSecretPayload({
@@ -387,14 +445,17 @@ export async function invokeModelChatUpstreamStream(params: {
           const payloadObj = decrypted && typeof decrypted === "object" ? (decrypted as Record<string, unknown>) : {};
           const apiKey = typeof payloadObj.apiKey === "string" ? payloadObj.apiKey : "";
           if (!apiKey) throw Errors.badRequest("Secret payload 缺少 apiKey");
-          apiKeys.push(apiKey);
-          secretMetas.push({ secretId: secret.secret.id, credentialVersion: secret.secret.credentialVersion });
-        }
+          return { apiKey, meta: { secretId: secret.secret.id, credentialVersion: secret.secret.credentialVersion } };
+        }));
+        const apiKeys = secretPairs.map(p => p.apiKey);
+        const secretMetas = secretPairs.map(p => p.meta);
 
         const effTimeoutMs =
           typeof body.timeoutMs === "number" && Number.isFinite(body.timeoutMs)
             ? Math.max(1, Math.min(120_000, Math.round(body.timeoutMs)))
-            : Math.max(1, Math.min(120_000, Math.round(Number(cat.defaultLimits?.timeoutMs ?? 15_000))));
+            : Math.max(1, Math.min(120_000, Math.round(Number(cat.defaultLimits?.timeoutMs ?? 30_000))));
+        const requestPath = binding.chatCompletionsPath ?? (binding as any).chat_path ?? null;
+
         const tries = await (async () => {
           if (body.stream) {
             const ctrl = new AbortController();
@@ -403,16 +464,16 @@ export async function invokeModelChatUpstreamStream(params: {
               if (params.signal.aborted) ctrl.abort();
               else params.signal.addEventListener("abort", onAbort, { once: true });
             }
-            /* Timeout only applies until first delta arrives; clear once streaming starts */
             let streamStarted = false;
             const timer = setTimeout(() => { if (!streamStarted) ctrl.abort(); }, effTimeoutMs);
             const usageFromStream: any = {};
             let result: any;
             try {
-              result = await openAiChatStreamWithSecretRotation({
+              result = await invokeProviderChatStreamWithSecretRotation({
+                provider: cat.provider,
                 fetchFn: fetch,
                 baseUrl: bindingBaseUrl!,
-                chatCompletionsPath: binding.chatCompletionsPath ?? (binding as any).chat_path ?? "/chat/completions",
+                requestPath,
                 model: cat.model,
                 messages: messages.map((m: any) => ({ role: m.role, content: m.content })),
                 apiKeys,
@@ -437,10 +498,11 @@ export async function invokeModelChatUpstreamStream(params: {
             usage = Object.keys(usageFromStream).length ? usageFromStream : { tokens: null };
             return typeof result.secretTries === "number" && Number.isFinite(result.secretTries) ? Math.max(1, Math.min(secretMetas.length, Math.round(result.secretTries))) : null;
           }
-          const result = await openAiChatWithSecretRotation({
+          const result = await invokeProviderChatWithSecretRotation({
+            provider: cat.provider,
             fetchFn: fetch,
             baseUrl: bindingBaseUrl!,
-            chatCompletionsPath: binding.chatCompletionsPath ?? (binding as any).chat_path ?? "/chat/completions",
+            requestPath,
             model: cat.model,
             messages: messages.map((m: any) => ({ role: m.role, content: m.content })),
             apiKeys,
@@ -472,12 +534,6 @@ export async function invokeModelChatUpstreamStream(params: {
             });
           }
         }
-      } else {
-        lastProviderUnsupported = cat.provider;
-        const err = Errors.modelProviderUnsupported(String(cat.provider ?? ""));
-        lastPolicyViolation = { errorCode: err.errorCode, message: err.messageI18n };
-        attempts.push({ modelRef, status: "error", errorCode: err.errorCode, reason: "provider_unsupported", provider: String(cat.provider ?? "") });
-        continue;
       }
 
       let structuredOutput: Record<string, unknown> | null = null;
@@ -536,6 +592,15 @@ export async function invokeModelChatUpstreamStream(params: {
         latencyMs,
         result: "success",
       });
+
+      // P2-模型: 回传实际调用指标到能力画像退化检测（fire-and-forget）
+      checkModelDegradation({
+        pool: params.app.db,
+        tenantId: subject.tenantId,
+        modelRef: cat.modelRef,
+        actualLatencyMs: latencyMs,
+        actualSuccess: true,
+      }).catch(() => {}); // 不阻塞主链路
       return {
         outputText,
         output: structuredOutput,
@@ -551,6 +616,19 @@ export async function invokeModelChatUpstreamStream(params: {
       if (isModelUpstreamError(e)) {
         lastUpstreamErr = e;
         attempts.push({ modelRef, status: "error", errorCode: "MODEL_UPSTREAM_FAILED", reason: "upstream_failed", provider: cat.provider });
+        // P2-模型: 失败指标回传退化检测
+        checkModelDegradation({
+          pool: params.app.db,
+          tenantId: subject.tenantId,
+          modelRef: cat.modelRef,
+          actualLatencyMs: Date.now() - startedAtMs,
+          actualSuccess: false,
+        }).catch(() => {});
+        continue;
+      }
+      if (e?.errorCode === "MODEL_PROVIDER_UNSUPPORTED") {
+        lastProviderUnsupported = cat.provider;
+        attempts.push({ modelRef, status: "error", errorCode: "MODEL_PROVIDER_UNSUPPORTED", reason: "provider_unsupported", provider: cat.provider });
         continue;
       }
       throw e;

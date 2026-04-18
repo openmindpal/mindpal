@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
-import { validateCapabilityEnvelopeV1, resolveSupplyChainPolicy, checkTrust, checkDependencyScan, checkSbom } from "@openslin/shared";
+import type Redis from "ioredis";
+import { validateCapabilityEnvelopeV1, resolveSupplyChainPolicy, checkTrust, checkDependencyScan, checkSbom, isToolAllowedForPolicy } from "@openslin/shared";
 import { acquireWriteLease, releaseWriteLease } from "../writeLease";
 import { writeAudit } from "./audit";
 import { executeBuiltinTool } from "./builtinTools";
@@ -17,17 +18,25 @@ import { appendCollabEventOnce } from "../../lib/collabEvents";
 import { checkExecutionInvariants, isSideEffectWriteTool } from "./stepValidation";
 import { validateStepTransition, validateRunTransition, sealRunIfFinished } from "./stepSealing";
 import { extractErrorInfo, getErrorRecoveryDecision } from "./stepErrorClassifier";
+import { applyWorkerCollabState } from "../collabStateSync";
 
-// ── 辅助函数（保留原位置引用兼容）──
-function isSideEffectWriteToolName(toolName: string) {
-  return isSideEffectWriteTool(toolName);
-}
+// P2-1 FIX: 移除冗余包装函数 isSideEffectWriteToolName，直接使用 isSideEffectWriteTool
 
-export async function processStep(params: { pool: Pool; jobId: string; runId: string; stepId: string; masterKey?: string }) {
+export async function processStep(params: { pool: Pool; jobId: string; runId: string; stepId: string; masterKey?: string; redis?: Redis }) {
   const masterKey =
     String(params.masterKey ?? "").trim() ||
     String(process.env.API_MASTER_KEY ?? "").trim() ||
-    (process.env.NODE_ENV === "production" ? "" : "dev-master-key-change-me");
+    // P2-4 FIX: 移除硬编码回退，生产环境严格要求配置
+    "";
+  if (!masterKey) {
+    // #2 FIX: masterKey 缺失时必须中止执行，而非静默降级导致后续工具调用难以诊断的失败
+    const errorMsg =
+      "[processStep] FATAL: API_MASTER_KEY 未配置且未通过参数传入。" +
+      "密钥加解密、工具调用等功能无法正常工作。" +
+      `请在环境变量或 Worker 启动参数中配置 API_MASTER_KEY。(stepId=${params.stepId}, runId=${params.runId})`;
+    console.error(errorMsg);
+    throw new Error("master_key_not_configured: 无法执行步骤，请联系管理员配置 API_MASTER_KEY");
+  }
   const stepRes = await params.pool.query("SELECT * FROM steps WHERE step_id = $1 LIMIT 1", [params.stepId]);
   if (stepRes.rowCount === 0) throw new Error("step_not_found");
   const step = stepRes.rows[0];
@@ -54,23 +63,39 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
   const runStatus = String(run.status ?? "");
   const stepStatus = String(step.status ?? "");
   if (runStatus === "needs_approval") {
-    validateStepTransition(params.stepId, stepStatus, "pending");
+    validateStepTransition(params.stepId, stepStatus, "needs_approval");
     await params.pool.query("UPDATE jobs SET status = 'needs_approval', updated_at = now() WHERE job_id = $1", [params.jobId]);
-    await params.pool.query("UPDATE steps SET status = 'pending', updated_at = now() WHERE step_id = $1 AND status <> 'succeeded'", [params.stepId]);
+    await params.pool.query("UPDATE steps SET status = 'needs_approval', updated_at = now() WHERE step_id = $1 AND status NOT IN ('succeeded', 'failed', 'canceled')", [params.stepId]);
+    // P0-4 FIX: 通知 Agent Loop 步骤已进入阻塞态
+    publishStepDone(params);
     return;
   }
 
   if (runStatus === "needs_arbiter") {
-    validateStepTransition(params.stepId, stepStatus, "pending");
+    validateStepTransition(params.stepId, stepStatus, "needs_arbiter");
     await params.pool.query("UPDATE jobs SET status = 'needs_arbiter', updated_at = now() WHERE job_id = $1", [params.jobId]);
-    await params.pool.query("UPDATE steps SET status = 'pending', updated_at = now() WHERE step_id = $1 AND status <> 'succeeded'", [params.stepId]);
+    await params.pool.query("UPDATE steps SET status = 'needs_arbiter', updated_at = now() WHERE step_id = $1 AND status NOT IN ('succeeded', 'failed', 'canceled')", [params.stepId]);
+    // P0-4 FIX: 通知 Agent Loop 步骤已进入阻塞态
+    publishStepDone(params);
     return;
   }
 
   if (runStatus === "needs_device") {
-    validateStepTransition(params.stepId, stepStatus, "pending");
+    validateStepTransition(params.stepId, stepStatus, "needs_device");
     await params.pool.query("UPDATE jobs SET status = 'needs_device', updated_at = now() WHERE job_id = $1", [params.jobId]);
-    await params.pool.query("UPDATE steps SET status = 'pending', updated_at = now() WHERE step_id = $1 AND status <> 'succeeded'", [params.stepId]);
+    await params.pool.query("UPDATE steps SET status = 'needs_device', updated_at = now() WHERE step_id = $1 AND status NOT IN ('succeeded', 'failed', 'canceled')", [params.stepId]);
+    // P0-4 FIX: 通知 Agent Loop 步骤已进入阻塞态
+    publishStepDone(params);
+    return;
+  }
+
+  // P1-1: paused 状态处理——run 被暂停时，step 挂起等待恢复
+  if (runStatus === "paused") {
+    validateStepTransition(params.stepId, stepStatus, "paused");
+    await params.pool.query("UPDATE jobs SET status = 'paused', updated_at = now() WHERE job_id = $1", [params.jobId]);
+    await params.pool.query("UPDATE steps SET status = 'paused', updated_at = now() WHERE step_id = $1 AND status NOT IN ('succeeded','failed','canceled')", [params.stepId]);
+    // P0-4 FIX: 通知 Agent Loop 步骤已进入暂停态
+    publishStepDone(params);
     return;
   }
 
@@ -99,7 +124,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
   // ── P1-12: 架构不变式检查 ──
   const parsedForInv = toolRef ? parseToolRef(toolRef) : null;
   const isWriteToolForInv = String(metaInput?.toolContract?.scope ?? "") === "write"
-    || (parsedForInv ? isSideEffectWriteToolName(parsedForInv.name) : false);
+    || (parsedForInv ? isSideEffectWriteTool(parsedForInv.name) : false);
   checkExecutionInvariants({
     stepId: params.stepId,
     runId: params.runId,
@@ -135,6 +160,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     if (!tenantId) return;
     await appendCollabEventOnce({
       pool: params.pool,
+      redis: params.redis,
       tenantId,
       spaceId: spaceIdFromMeta,
       collabRunId,
@@ -148,6 +174,24 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     });
   }
 
+  async function syncCollabStateSafe(input: Parameters<typeof applyWorkerCollabState>[0]) {
+    if (!collabRunId || !tenantId) return;
+    try {
+      await applyWorkerCollabState({
+        ...input,
+        redis: params.redis,
+        taskId,
+      });
+    } catch (e: any) {
+      console.warn("[processStep] collab state sync failed", {
+        stepId: params.stepId,
+        collabRunId,
+        updateType: input.updateType,
+        error: String(e?.message ?? e),
+      });
+    }
+  }
+
   validateRunTransition(params.runId, runStatus, isComp ? "compensating" : "running");
   await params.pool.query("UPDATE runs SET status = $2, started_at = COALESCE(started_at, now()), updated_at = now() WHERE run_id = $1", [
     params.runId,
@@ -157,7 +201,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
   const networkPolicy = normalizeNetworkPolicy(metaInput?.networkPolicy);
   const parsedForDigest = toolRef ? parseToolRef(toolRef) : null;
   const sideEffectWrite =
-    String(metaInput?.toolContract?.scope ?? "") === "write" || (parsedForDigest ? isSideEffectWriteToolName(parsedForDigest.name) : false);
+    String(metaInput?.toolContract?.scope ?? "") === "write" || (parsedForDigest ? isSideEffectWriteTool(parsedForDigest.name) : false);
   const inputDigest = {
     toolRef,
     limits,
@@ -171,6 +215,21 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     "UPDATE steps SET status = $2, attempt = attempt + 1, input_digest = COALESCE(input_digest, $3), started_at = COALESCE(started_at, now()), updated_at = now() WHERE step_id = $1",
     [params.stepId, isComp ? "compensating" : "running", inputDigest],
   );
+  await syncCollabStateSafe({
+    pool: params.pool,
+    tenantId,
+    collabRunId,
+    phase: "executing",
+    setCurrentRole: true,
+    currentRole: actorRole,
+    roleName: actorRole,
+    roleStatus: "active",
+    currentStepId: params.stepId,
+    progress: 0,
+    updateType: "role_status",
+    sourceRole: actorRole ?? "system",
+    payload: { status: "running", stepId: params.stepId, planStepId, stepKind },
+  });
   if (jobType === "agent.run" && tenantId && spaceIdFromMeta) {
     const phase =
       stepKind === "retriever"
@@ -226,6 +285,8 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
       }
       const spaceIdNorm = spaceId === null || spaceId === undefined ? null : String(spaceId);
       const subjectIdNorm = subjectId === null || subjectId === undefined ? null : String(subjectId);
+      // P1-5: secretDomain 使用传入 envelope 中的值（已在 API 端经过 admission 校验）
+      const parsedSecretDomain = parsed.envelope.secretDomain ?? { connectorInstanceIds: [] };
       const expected = validateCapabilityEnvelopeV1({
         format: "capabilityEnvelope.v1",
         dataDomain: {
@@ -240,7 +301,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
             rowFilters: (tc as any).rowFilters ?? null,
           },
         },
-        secretDomain: { connectorInstanceIds: [] },
+        secretDomain: parsedSecretDomain,
         egressDomain: { networkPolicy },
         resourceDomain: { limits },
       });
@@ -349,6 +410,50 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
       return;
     }
 
+    // P1-2 FIX: 多智能体协作时的角色权限边界校验
+    const rolePermissionContext = metaInput?.rolePermissionContext ?? null;
+    if (rolePermissionContext && collabRunId) {
+      const roleName = String(rolePermissionContext.roleName ?? "");
+      const allowedTools = Array.isArray(rolePermissionContext.allowedTools) ? rolePermissionContext.allowedTools : [];
+      
+      // 校验当前工具是否在角色的允许列表中
+      if (allowedTools.length > 0 && !isToolAllowedForPolicy(allowedTools, toolRef)) {
+        const violationMsg = `role_permission_boundary_violation: role=${roleName}, tool=${toolRef}, allowed=[${allowedTools.join(",")}]`;
+        console.warn(`[processStep] ${violationMsg}`);
+        
+        await params.pool.query(
+          "UPDATE steps SET status = 'failed', error_category = $2, last_error = $3, updated_at = now() WHERE step_id = $1",
+          [params.stepId, "policy_violation", violationMsg]
+        );
+        await params.pool.query("UPDATE runs SET status = 'failed', updated_at = now() WHERE run_id = $1", [params.runId]);
+        await params.pool.query("UPDATE jobs SET status = 'failed', updated_at = now(), result_summary = $2 WHERE job_id = $1", [params.jobId, { error: violationMsg }]);
+        await updateCompensationStatus("failed");
+        
+        // 记录审计事件
+        await writeAudit(params.pool, {
+          traceId, tenantId, spaceId, subjectId,
+          runId: params.runId, stepId: params.stepId, toolRef,
+          result: "error",
+          inputDigest: digestObject(step.input),
+          errorCategory: "policy_violation",
+        });
+        
+        // 记录collab事件
+        try {
+          await appendCollabEventOnceForStep("collab.permission.violation", {
+            roleName,
+            attemptedTool: toolRef,
+            allowedTools,
+            violation: violationMsg,
+          });
+        } catch {
+          // 审计写入失败不影响主流程
+        }
+        
+        return;
+      }
+    }
+
     const ver = await loadToolVersion(params.pool, tenantId, toolRef);
     if (!ver) {
       const msg = `tool_not_released:${toolRef}`;
@@ -372,15 +477,22 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     const rowFilters = toolContract?.rowFilters ?? null;
     const idempotencyRequired = toolContract?.idempotencyRequired ?? ["entity.create", "entity.update", "entity.delete", "memory.write"].includes(parsed.name);
     let idempotencyKey = run.idempotency_key as string | null;
-    if (jobType === "agent.run") {
+    // P0-FIX: agent.dispatch / agent.dispatch.upgrade 也需要从 rawInput 中提取幂等键
+    if (jobType === "agent.run" || jobType.startsWith("agent.dispatch")) {
       const ik = rawInput?.idempotencyKey;
       if (typeof ik === "string" && ik.trim()) idempotencyKey = ik;
+    }
+    // P0-FIX: 如果仍然缺少幂等键，对 agent.dispatch 类型自动生成（这些步骤由 Agent Loop / dispatch 内部创建，非用户直接提交）
+    if (!idempotencyKey && idempotencyRequired && jobType.startsWith("agent.dispatch")) {
+      const crypto = await import("node:crypto");
+      idempotencyKey = `auto:${params.runId}:${params.stepId}:${crypto.randomUUID()}`;
+      console.log(`[processStep] 自动生成幂等键 for ${parsed.name}: ${idempotencyKey.slice(0, 40)}...`);
     }
     const metaToolInput = metaInput && typeof metaInput === "object" && !Array.isArray(metaInput) ? (metaInput as any).input : undefined;
     const toolInput = (metaToolInput !== undefined ? metaToolInput : rawInput?.input) ?? {};
 
     if (idempotencyRequired && !idempotencyKey) throw new Error("policy_violation:missing_idempotency_key");
-    const schemaName = toolInput?.schemaName ?? "core";
+    const schemaName = typeof toolInput?.schemaName === "string" && toolInput.schemaName.trim() ? toolInput.schemaName.trim() : undefined;
 
     const concurrencyKey = `${tenantId}:${toolRef}`;
     const startedAt = Date.now();
@@ -628,6 +740,20 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         }
       }
     }
+    await syncCollabStateSafe({
+      pool: params.pool,
+      tenantId,
+      collabRunId,
+      roleName: actorRole,
+      roleStatus: "completed",
+      currentStepId: params.stepId,
+      progress: 100,
+      addCompletedStepIds: [params.stepId],
+      removePendingStepIds: [params.stepId],
+      updateType: "step_progress",
+      sourceRole: actorRole ?? "system",
+      payload: { stepId: params.stepId, planStepId, status: "completed", stepKind },
+    });
 
     if (jobType === "agent.run" && tenantId && spaceIdFromMeta) {
       const artifactsUpdate = async (patch: any) => {
@@ -684,6 +810,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
               const j = JSON.parse(v);
               if (Array.isArray(j)) return j.length;
             } catch {
+              // P2-4: JSON.parse 失败是预期行为（非数组字符串），安全忽略
             }
           }
           return null;
@@ -717,6 +844,21 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
           ]);
           if (collabRunId) {
             await params.pool.query("UPDATE collab_runs SET status = 'stopped', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2", [tenantId, collabRunId]);
+            await syncCollabStateSafe({
+              pool: params.pool,
+              tenantId,
+              collabRunId,
+              phase: "stopped",
+              setCurrentRole: true,
+              currentRole: null,
+              roleName: actorRole,
+              roleStatus: "completed",
+              currentStepId: params.stepId,
+              progress: 100,
+              updateType: "phase_change",
+              sourceRole: actorRole ?? "guard",
+              payload: { reason: "guard_denied", stepId: params.stepId, planStepId },
+            });
             try {
               await appendCollabEventOnceForStep("collab.run.stopped", { reason: "guard_denied" });
             } catch (e: any) {
@@ -733,13 +875,31 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
 
         if (requiresApproval) {
           const next = await params.pool.query(
-            "SELECT step_id, tool_ref, policy_snapshot_ref, input_digest FROM steps WHERE run_id = $1 AND status = 'pending' AND (input->>'stepKind') = 'executor' ORDER BY seq ASC LIMIT 1",
+            "SELECT step_id, tool_ref, policy_snapshot_ref, input_digest, (input->>'actorRole') AS actor_role FROM steps WHERE run_id = $1 AND status = 'pending' AND (input->>'stepKind') = 'executor' ORDER BY seq ASC LIMIT 1",
             [params.runId],
           );
           const nextStepId = next.rowCount ? String(next.rows[0].step_id) : null;
+          const nextActorRole = next.rowCount && next.rows[0].actor_role ? String(next.rows[0].actor_role) : null;
           await params.pool.query("UPDATE runs SET status = 'needs_approval', updated_at = now() WHERE run_id = $1", [params.runId]);
           await params.pool.query("UPDATE jobs SET status = 'needs_approval', updated_at = now() WHERE job_id = $1", [params.jobId]);
-          if (collabRunId) await params.pool.query("UPDATE collab_runs SET status = 'needs_approval', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2", [tenantId, collabRunId]);
+          if (collabRunId) {
+            await params.pool.query("UPDATE collab_runs SET status = 'needs_approval', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2", [tenantId, collabRunId]);
+            await syncCollabStateSafe({
+              pool: params.pool,
+              tenantId,
+              collabRunId,
+              phase: "needs_approval",
+              setCurrentRole: true,
+              currentRole: nextActorRole,
+              roleName: nextActorRole,
+              roleStatus: "blocked",
+              currentStepId: nextStepId,
+              progress: 0,
+              updateType: "phase_change",
+              sourceRole: actorRole ?? "guard",
+              payload: { reason: "guard_requires_approval", stepId: nextStepId, planStepId, requestedBy: params.stepId },
+            });
+          }
           if (spaceIdFromMeta && nextStepId && metaInput?.subjectId) {
             await params.pool.query(
               "INSERT INTO approvals (tenant_id, space_id, run_id, step_id, status, requested_by_subject_id, policy_snapshot_ref, input_digest) VALUES ($1,$2,$3,$4,'pending',$5,$6,$7) ON CONFLICT (tenant_id, run_id) DO NOTHING",
@@ -773,7 +933,23 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         if (!autoArbiter) {
           await params.pool.query("UPDATE runs SET status = 'needs_arbiter', updated_at = now() WHERE run_id = $1", [params.runId]);
           await params.pool.query("UPDATE jobs SET status = 'needs_arbiter', updated_at = now() WHERE job_id = $1", [params.jobId]);
-          if (collabRunId) await params.pool.query("UPDATE collab_runs SET status = 'needs_arbiter', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2", [tenantId, collabRunId]);
+          if (collabRunId) {
+            await params.pool.query("UPDATE collab_runs SET status = 'needs_arbiter', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2", [tenantId, collabRunId]);
+            await syncCollabStateSafe({
+              pool: params.pool,
+              tenantId,
+              collabRunId,
+              phase: "needs_arbiter",
+              setCurrentRole: true,
+              currentRole: "arbiter",
+              roleName: "arbiter",
+              roleStatus: "waiting",
+              progress: 0,
+              updateType: "phase_change",
+              sourceRole: actorRole ?? "guard",
+              payload: { reason: "guard_completed", requestedRole: "arbiter", stepId: params.stepId, planStepId },
+            });
+          }
           await params.pool.query(
             "UPDATE memory_task_states SET phase = $4, updated_at = now() WHERE tenant_id = $1 AND space_id = $2 AND run_id = $3 AND deleted_at IS NULL",
             [tenantId, spaceIdFromMeta, params.runId, "needs_arbiter"],
@@ -840,13 +1016,13 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
       }
     }
 
-    if (jobType === "agent.run") {
+    if (jobType === "agent.run" || jobType === "agent.dispatch" || jobType === "agent.dispatch.upgrade") {
       const aggRes = await params.pool.query(
         `
           SELECT
             COUNT(*)::int AS total,
             COUNT(*) FILTER (WHERE status = 'succeeded')::int AS succeeded,
-            COUNT(*) FILTER (WHERE status IN ('pending','running'))::int AS remaining
+            COUNT(*) FILTER (WHERE status IN ('pending','running','needs_device'))::int AS remaining
           FROM steps
           WHERE run_id = $1
         `,
@@ -869,6 +1045,21 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
           isComp ? "compensated" : "succeeded",
         ]);
         await params.pool.query("UPDATE jobs SET status = 'succeeded', progress = 100, updated_at = now(), result_summary = $2 WHERE job_id = $1", [params.jobId, safeOutput]);
+        await syncCollabStateSafe({
+          pool: params.pool,
+          tenantId,
+          collabRunId,
+          phase: "succeeded",
+          setCurrentRole: true,
+          currentRole: null,
+          roleName: actorRole,
+          roleStatus: "completed",
+          currentStepId: params.stepId,
+          progress: 100,
+          updateType: "phase_change",
+          sourceRole: actorRole ?? "system",
+          payload: { status: "succeeded", stepId: params.stepId, planStepId, runId: params.runId },
+        });
         if (tenantId && spaceIdFromMeta) {
           await params.pool.query(
             "UPDATE memory_task_states SET phase = $4, updated_at = now() WHERE tenant_id = $1 AND space_id = $2 AND run_id = $3 AND deleted_at IS NULL",
@@ -887,35 +1078,17 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     }
 
     await writeAudit(params.pool, { traceId, runId: params.runId, stepId: params.stepId, toolRef, result: "success", inputDigest, outputDigest });
+    // ── Redis Pub/Sub: 发布步骤完成事件，通知 Agent Loop 停止轮询 ──
+    publishStepDone(params);
   } catch (err: any) {
-    const rawMsg = String(err?.message ?? err);
-    const msg = rawMsg.startsWith("concurrency_limit:") ? "resource_exhausted:max_concurrency" : rawMsg;
-    const category =
-      msg === "timeout"
-        ? "timeout"
-        : msg === "needs_device"
-          ? "needs_device"
-          : msg.startsWith("resource_exhausted:")
-            ? "resource_exhausted"
-            : msg.startsWith("policy_violation:")
-              ? "policy_violation"
-              : msg.startsWith("output_schema:") || msg.startsWith("input_schema:")
-                ? "internal"
-                : msg === "write_lease_busy"
-                  ? "retryable"
-                  : msg.startsWith("conflict_")
-                    ? "retryable"
-                    : msg.startsWith("schema_not_found:")
-                      ? "retryable"
-                      : msg.startsWith("device_execution_failed:")
-                        ? "device_execution_failed"
-                        : "retryable";
+    const { message: msg, category } = extractErrorInfo(err);
+    const recoveryDecision = getErrorRecoveryDecision(category);
 
-    /* ── 设备执行挂起：参考 needs_approval 模式，不标记 step 为 failed ── */
+    /* ── 设备执行挂起：step 标记为 needs_device（非 pending），并通知 Agent Loop ── */
     if (category === "needs_device") {
       const deviceExecutionId = (err as any)?.deviceExecutionId ?? null;
       const deviceId = (err as any)?.deviceId ?? null;
-      await params.pool.query("UPDATE steps SET status = 'pending', updated_at = now() WHERE step_id = $1", [params.stepId]);
+      await params.pool.query("UPDATE steps SET status = 'needs_device', queue_job_id = NULL, updated_at = now() WHERE step_id = $1", [params.stepId]);
       await params.pool.query("UPDATE runs SET status = 'needs_device', updated_at = now() WHERE run_id = $1", [params.runId]);
       await params.pool.query("UPDATE jobs SET status = 'needs_device', updated_at = now() WHERE job_id = $1", [params.jobId]);
       if (tenantId && spaceIdFromMeta) {
@@ -926,6 +1099,21 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
       }
       if (collabRunId) {
         await params.pool.query("UPDATE collab_runs SET status = 'needs_device', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2", [tenantId, collabRunId]);
+        await syncCollabStateSafe({
+          pool: params.pool,
+          tenantId,
+          collabRunId,
+          phase: "needs_device",
+          setCurrentRole: true,
+          currentRole: actorRole,
+          roleName: actorRole,
+          roleStatus: "blocked",
+          currentStepId: params.stepId,
+          progress: null,
+          updateType: "phase_change",
+          sourceRole: actorRole ?? "system",
+          payload: { status: "needs_device", stepId: params.stepId, planStepId, deviceExecutionId, deviceId },
+        });
         try {
           await appendCollabEventOnceForStep("collab.run.needs_device", { deviceExecutionId, deviceId, stepId: params.stepId, toolRef });
         } catch (e: any) {
@@ -934,6 +1122,8 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
       }
       console.log(`[processStep] needs_device: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${deviceExecutionId} deviceId=${deviceId}`);
       await writeAudit(params.pool, { traceId, runId: params.runId, stepId: params.stepId, toolRef: toolRef ?? undefined, result: "success", inputDigest, outputDigest: { status: "needs_device", deviceExecutionId, deviceId } });
+      // P0-4 FIX: 通知 Agent Loop 步骤已进入阻塞态（needs_device 是 Agent Loop 的终态之一）
+      publishStepDone(params);
       return;
     }
     const outputDigest = {
@@ -945,6 +1135,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
       depsDigest: null,
       artifactRef: null,
       error: msg,
+      errorRecovery: recoveryDecision,
       capabilityEnvelopeSummary: isPlainObject((err as any)?.capabilityEnvelopeSummary) ? (err as any).capabilityEnvelopeSummary : null,
       writeLease: isPlainObject(err?.writeLease) ? err.writeLease : null,
     };
@@ -994,6 +1185,23 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         }
       }
     }
+    await syncCollabStateSafe({
+      pool: params.pool,
+      tenantId,
+      collabRunId,
+      phase: "failed",
+      setCurrentRole: true,
+      currentRole: actorRole,
+      roleName: actorRole,
+      roleStatus: "failed",
+      currentStepId: params.stepId,
+      progress: null,
+      addFailedStepIds: [params.stepId],
+      removePendingStepIds: [params.stepId],
+      updateType: "error",
+      sourceRole: actorRole ?? "system",
+      payload: { status: "failed", stepId: params.stepId, planStepId, errorCategory: category, error: msg },
+    });
     await params.pool.query("UPDATE runs SET status = 'failed', updated_at = now() WHERE run_id = $1", [params.runId]);
     await params.pool.query("UPDATE jobs SET status = 'failed', updated_at = now(), result_summary = $2 WHERE job_id = $1", [params.jobId, { error: msg }]);
     await sealRunIfFinished({ pool: params.pool, runId: params.runId });
@@ -1029,7 +1237,22 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     }
 
     await writeAudit(params.pool, { traceId, runId: params.runId, stepId: params.stepId, toolRef: toolRef ?? undefined, result: "error", inputDigest, outputDigest, errorCategory: category });
-    if (category === "policy_violation" || category === "internal") return;
+    // ── Redis Pub/Sub: 发布步骤完成事件（失败也是终态） ──
+    publishStepDone(params);
+    if (!recoveryDecision.shouldRethrow) return;
     throw err;
+  }
+}
+
+/**
+ * 通过 Redis Pub/Sub 发布步骤完成信号。
+ * Agent Loop 订阅 `step:done:{stepId}` 频道，收到信号后从 DB 确认终态。
+ * fire-and-forget，失败不影响主流程。
+ */
+function publishStepDone(params: { stepId: string; redis?: Redis }) {
+  try {
+    params.redis?.publish(`step:done:${params.stepId}`, "1").catch(() => {});
+  } catch {
+    // fire-and-forget
   }
 }

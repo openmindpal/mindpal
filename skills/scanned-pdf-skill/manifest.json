@@ -1,0 +1,49 @@
+{
+  "identity": {
+    "name": "knowledge.pdf.ocr",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "扫描件PDF OCR增强",
+    "en-US": "Scanned PDF OCR Enhancement"
+  },
+  "description": {
+    "zh-CN": "对扫描件PDF进行OCR文字识别增强。当标准PDF解析器提取的文字极少或为空时，自动逐页渲染为图像并执行OCR，恢复完整文字内容。适用于扫描合同、影印文档、历史档案等场景。",
+    "en-US": "Enhances scanned PDFs with OCR recognition. When standard PDF parser extracts minimal or no text, automatically renders pages as images and performs OCR to recover full text content."
+  },
+  "category": "knowledge",
+  "priority": 7,
+  "tags": ["pdf", "ocr", "scanned", "knowledge", "document"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "document",
+    "action": "pdf_ocr",
+    "idempotencyRequired": true,
+    "riskLevel": "low",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "pdfUrl": { "type": "string", "description": "PDF 文件 URL" },
+        "pdfBase64": { "type": "string", "description": "PDF base64 编码数据（与 pdfUrl 二选一）" },
+        "existingText": { "type": "string", "description": "标准解析器已提取的文字（用于判断是否需要OCR降级）" },
+        "language": { "type": "string", "description": "OCR识别语言: chi_sim | eng 等，默认自动检测" },
+        "minTextThreshold": { "type": "number", "description": "触发OCR的最小文字字数阈值，默认 50" },
+        "maxPages": { "type": "number", "description": "最大OCR处理页数，默认 100" },
+        "dpi": { "type": "number", "description": "渲染DPI，默认 300" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "text": { "type": "string", "required": true, "description": "OCR提取的完整文字" },
+        "pageCount": { "type": "number", "description": "处理的页数" },
+        "ocrTriggered": { "type": "boolean", "required": true, "description": "是否触发了OCR（false=标准文本已足够）" },
+        "wordCount": { "type": "number", "description": "提取的字数" },
+        "confidence": { "type": "number", "required": true, "description": "识别置信度 0-1" },
+        "pageResults": { "type": "json", "description": "逐页OCR结果 [{page, text, confidence}]" }
+      }
+    }
+  },
+  "entry": "dist/index.js"
+}

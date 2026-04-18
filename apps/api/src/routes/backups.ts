@@ -4,18 +4,44 @@ import crypto from "node:crypto";
 import { Errors } from "../lib/errors";
 import { setAuditContext } from "../modules/audit/context";
 import { requirePermission } from "../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import { getArtifactContent } from "../modules/artifacts/artifactRepo";
 import { createBackup, getBackup, listBackups } from "../modules/backups/backupRepo";
-import { getEffectiveSchema } from "../modules/metadata/schemaRepo";
+import { getEffectiveSchema, resolveSchemaNameForEntities } from "../modules/metadata/schemaRepo";
 import { applyWriteFieldRules } from "../modules/data/fieldRules";
 import { validateEntityPayload } from "../modules/data/validate";
 import { createJobRunStepWithoutToolRef } from "../modules/workflow/jobRepo";
 
 export const backupRoutes: FastifyPluginAsync = async (app) => {
+  async function resolveSchemaNameOrThrow(params: {
+    tenantId: string;
+    spaceId?: string;
+    requestedSchemaName?: string | null;
+    entityNames: string[];
+  }) {
+    const resolved = await resolveSchemaNameForEntities({
+      pool: app.db,
+      tenantId: params.tenantId,
+      spaceId: params.spaceId,
+      requestedSchemaName: params.requestedSchemaName,
+      entityNames: params.entityNames,
+    });
+    if (!resolved.ok) throw Errors.badRequest(resolved.reason);
+    return resolved.schemaName;
+  }
+
+  function makeRestoreTargetSpace(params: { requestedId?: string; requestedName?: string }) {
+    const targetSpaceId =
+      params.requestedId?.trim() ||
+      `space_restore_${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
+    const targetSpaceName = params.requestedName?.trim() || targetSpaceId;
+    return { targetSpaceId, targetSpaceName };
+  }
+
   app.get("/spaces/:spaceId/backups", async (req) => {
     const params = z.object({ spaceId: z.string() }).parse(req.params);
     setAuditContext(req, { resourceType: "backup", action: "list" });
-    await requirePermission({ req, resourceType: "backup", action: "list" });
+    await requirePermission({ req, ...PERM.BACKUP_LIST });
     const subject = req.ctx.subject!;
     if (subject.spaceId && subject.spaceId !== params.spaceId) {
       req.ctx.audit!.errorCategory = "policy_violation";
@@ -30,7 +56,7 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
   app.get("/backups/:backupId", async (req) => {
     const params = z.object({ backupId: z.string().min(3) }).parse(req.params);
     setAuditContext(req, { resourceType: "backup", action: "get" });
-    await requirePermission({ req, resourceType: "backup", action: "get" });
+    await requirePermission({ req, ...PERM.BACKUP_GET });
     const subject = req.ctx.subject!;
     const b = await getBackup({ pool: app.db, tenantId: subject.tenantId, backupId: params.backupId });
     if (!b) throw Errors.badRequest("Backup 不存在");
@@ -45,7 +71,7 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
   app.post("/spaces/:spaceId/backups", async (req) => {
     const params = z.object({ spaceId: z.string() }).parse(req.params);
     setAuditContext(req, { resourceType: "backup", action: "create" });
-    const decision = await requirePermission({ req, resourceType: "backup", action: "create" });
+    const decision = await requirePermission({ req, ...PERM.BACKUP_CREATE });
     req.ctx.audit!.policyDecision = decision;
     const subject = req.ctx.subject!;
     if (subject.spaceId && subject.spaceId !== params.spaceId) {
@@ -61,7 +87,12 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body);
 
-    const schemaName = body.schemaName ?? "core";
+    const schemaName = await resolveSchemaNameOrThrow({
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      requestedSchemaName: body.schemaName,
+      entityNames: body.entityNames ?? [],
+    });
     const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, name: schemaName });
     if (!schema) throw Errors.badRequest(`Schema 未发布：${schemaName}`);
 
@@ -111,7 +142,7 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
   app.post("/spaces/:spaceId/restores", async (req) => {
     const params = z.object({ spaceId: z.string() }).parse(req.params);
     setAuditContext(req, { resourceType: "backup", action: "restore" });
-    const decision = await requirePermission({ req, resourceType: "backup", action: "restore" });
+    const decision = await requirePermission({ req, ...PERM.BACKUP_RESTORE });
     req.ctx.audit!.policyDecision = decision;
     const subject = req.ctx.subject!;
     if (subject.spaceId && subject.spaceId !== params.spaceId) {
@@ -125,13 +156,14 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
         mode: z.enum(["dry_run", "commit"]).optional(),
         conflictStrategy: z.enum(["fail", "upsert"]).optional(),
         schemaName: z.string().min(1).optional(),
+        targetMode: z.enum(["current_space", "new_space"]).optional(),
+        targetSpaceId: z.string().min(1).max(128).optional(),
+        targetSpaceName: z.string().min(1).max(200).optional(),
       })
       .parse(req.body);
 
     const mode = body.mode ?? "dry_run";
-    const schemaName = body.schemaName ?? "core";
-    const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, name: schemaName });
-    if (!schema) throw Errors.badRequest(`Schema 未发布：${schemaName}`);
+    const targetMode = body.targetMode ?? "current_space";
 
     const artifact = await getArtifactContent(app.db, subject.tenantId, body.backupArtifactId);
     if (!artifact) throw Errors.badRequest("backupArtifactId 不存在");
@@ -152,8 +184,29 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
       return lines.map((l) => JSON.parse(l));
     };
 
+    const lines = parseItems();
+    const schemaName = await resolveSchemaNameOrThrow({
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      requestedSchemaName: body.schemaName,
+      entityNames: lines.map((it) => String(it?.entityName ?? "")),
+    });
+    const schema = await getEffectiveSchema({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, name: schemaName });
+    if (!schema) throw Errors.badRequest(`Schema 未发布：${schemaName}`);
+
+    const restoreTarget = makeRestoreTargetSpace({
+      requestedId: targetMode === "new_space" ? body.targetSpaceId : params.spaceId,
+      requestedName: targetMode === "new_space" ? body.targetSpaceName : undefined,
+    });
+    const targetSpaceId = targetMode === "current_space" ? params.spaceId : restoreTarget.targetSpaceId;
+    const targetSpaceName = targetMode === "current_space" ? restoreTarget.targetSpaceName : restoreTarget.targetSpaceName;
+
+    if (targetMode === "new_space" && mode === "dry_run" && body.targetSpaceId?.trim()) {
+      const exists = await app.db.query("SELECT 1 FROM spaces WHERE tenant_id = $1 AND id = $2 LIMIT 1", [subject.tenantId, targetSpaceId]);
+      if (exists.rowCount) throw Errors.badRequest("目标空间已存在");
+    }
+
     if (mode === "dry_run") {
-      const lines = parseItems();
       let accepted = 0;
       let rejected = 0;
       let conflicts = 0;
@@ -169,7 +222,7 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
           if (it.id) {
             const exists = await app.db.query(
               "SELECT 1 FROM entity_records WHERE tenant_id = $1 AND space_id = $2 AND id = $3 LIMIT 1",
-              [subject.tenantId, params.spaceId, it.id],
+              [subject.tenantId, targetSpaceId, it.id],
             );
             if (exists.rowCount) conflicts += 1;
           }
@@ -182,11 +235,34 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const conflictsDigest = crypto.createHash("sha256").update(JSON.stringify({ conflicts, reasons })).digest("hex");
-      req.ctx.audit!.outputDigest = { mode, accepted, rejected, conflicts, conflictsDigest };
-      return { mode, acceptedCount: accepted, rejectedCount: rejected, conflicts, conflictsDigest };
+      req.ctx.audit!.outputDigest = { mode, targetMode, targetSpaceId, accepted, rejected, conflicts, conflictsDigest };
+      return {
+        mode,
+        targetMode,
+        targetSpaceId,
+        targetSpaceName,
+        acceptedCount: accepted,
+        rejectedCount: rejected,
+        conflicts,
+        conflictsDigest,
+      };
     }
 
-    const runToolRef = `space.restore:${params.spaceId}`;
+    if (targetMode === "new_space") {
+      await requirePermission({ req, ...PERM.SPACE_CREATE });
+      const insertSpace = await app.db.query(
+        `
+          INSERT INTO spaces (id, tenant_id, name)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (id) DO NOTHING
+          RETURNING id
+        `,
+        [targetSpaceId, subject.tenantId, targetSpaceName],
+      );
+      if (!insertSpace.rowCount) throw Errors.badRequest("目标空间已存在");
+    }
+
+    const runToolRef = `space.restore:${targetSpaceId}`;
     const { job, run, step } = await createJobRunStepWithoutToolRef({
       pool: app.db,
       tenantId: subject.tenantId,
@@ -195,7 +271,10 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
       policySnapshotRef: decision.snapshotRef,
       input: {
         kind: "space.restore",
-        spaceId: params.spaceId,
+        spaceId: targetSpaceId,
+        sourceSpaceId: params.spaceId,
+        targetSpaceId,
+        targetMode,
         schemaName,
         backupArtifactId: body.backupArtifactId,
         conflictStrategy: body.conflictStrategy ?? "fail",
@@ -211,7 +290,7 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
 
     await app.queue.add("step", { jobId: job.jobId, runId: run.runId, stepId: step.stepId }, { attempts: 3, backoff: { type: "exponential", delay: 500 } });
     const receipt = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId, runId: run.runId, stepId: step.stepId }, status: "queued" as const };
-    req.ctx.audit!.outputDigest = { mode, runId: run.runId, stepId: step.stepId, conflictStrategy: body.conflictStrategy ?? "fail" };
-    return { receipt, runId: run.runId, stepId: step.stepId, jobId: job.jobId };
+    req.ctx.audit!.outputDigest = { mode, targetMode, targetSpaceId, runId: run.runId, stepId: step.stepId, conflictStrategy: body.conflictStrategy ?? "fail" };
+    return { receipt, runId: run.runId, stepId: step.stepId, jobId: job.jobId, targetMode, targetSpaceId, targetSpaceName };
   });
 };

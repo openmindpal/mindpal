@@ -1,0 +1,12 @@
+{
+  "name": "@openslin/schema-create-skill",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@openslin/shared": "*"
+  },
+  "license": "Apache-2.0"
+}

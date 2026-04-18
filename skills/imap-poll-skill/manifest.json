@@ -3,6 +3,17 @@
     "name": "imap.poll",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "IMAP 邮件轮询",
+    "en-US": "IMAP Email Poll"
+  },
+  "description": {
+    "zh-CN": "通过 IMAP 协议轮询邮箱，获取新邮件及其摘要、正文和附件信息",
+    "en-US": "Polls mailbox via IMAP protocol to fetch new emails with summary, body, and attachments"
+  },
+  "category": "communication",
+  "priority": 6,
+  "tags": ["email", "imap", "poll", "inbound"],
   "contract": {
     "scope": "read",
     "resourceType": "channel",

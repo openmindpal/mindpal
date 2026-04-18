@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { t } from "@/lib/i18n";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -62,13 +63,11 @@ function parseEventDate(dateStr: string): string {
   }
 }
 
-const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function CalendarWidget(props: CalendarWidgetProps) {
   const { events, title } = props;
+  const locale = props.locale ?? "zh-CN";
 
   // Determine initial month from events or use current
   const initialDate = useMemo(() => {
@@ -98,8 +97,26 @@ export function CalendarWidget(props: CalendarWidgetProps) {
   const firstDayOfWeek = days[0]?.getDay() ?? 0;
   const today = toDateKey(new Date());
 
-  const weekdays = WEEKDAYS_EN;
-  const months = MONTHS_EN;
+  const weekdays = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(locale === "zh-CN" ? "zh-CN" : "en-US", { weekday: "short" });
+    const base = new Date(Date.UTC(2026, 3, 5));
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(base);
+      d.setUTCDate(base.getUTCDate() + i);
+      return formatter.format(d);
+    });
+  }, [locale]);
+
+  const monthLabel = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat(locale === "zh-CN" ? "zh-CN" : "en-US", {
+        year: "numeric",
+        month: "short",
+      }).format(new Date(year, month, 1));
+    } catch {
+      return `${year}-${String(month + 1).padStart(2, "0")}`;
+    }
+  }, [locale, month, year]);
 
   const prevMonth = () => {
     if (month === 0) { setYear(year - 1); setMonth(11); }
@@ -124,7 +141,7 @@ export function CalendarWidget(props: CalendarWidgetProps) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, padding: "6px 4px", borderRadius: 10, background: "var(--sl-bg,#f8fafc)" }}>
         <button onClick={prevMonth} className="__cal_nav" style={navBtnStyle}>◀</button>
         <div style={{ fontSize: 15, fontWeight: 700, color: "var(--sl-fg, #1e293b)", letterSpacing: "0.02em" }}>
-          {months[month]} {year}
+          {monthLabel}
         </div>
         <button onClick={nextMonth} className="__cal_nav" style={navBtnStyle}>▶</button>
       </div>
@@ -193,7 +210,7 @@ export function CalendarWidget(props: CalendarWidgetProps) {
         return (
           <div style={{ marginTop: 12, borderTop: "1px solid var(--sl-border, #e2e8f0)", paddingTop: 8 }}>
             <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 6 }}>
-              Events this month ({monthEvents.length})
+              {t(locale, "widget.calendar.eventsThisMonth").replace("{count}", String(monthEvents.length))}
             </div>
             {monthEvents.slice(0, 5).map((ev, idx) => (
               <div key={ev.id} className="__cal_ev" style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 2px", fontSize: 12 }}>

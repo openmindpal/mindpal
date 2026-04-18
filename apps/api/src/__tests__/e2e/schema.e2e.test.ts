@@ -5,7 +5,7 @@
 import {
   describe, expect, it, beforeAll, afterAll,
   crypto, pool,
-  getTestContext, releaseTestContext,
+  getTestContext, releaseTestContext, TEST_SCHEMA_NAME,
   makeHeaders,
   type TestContext,
 } from "./setup";
@@ -21,7 +21,7 @@ describe.sequential("e2e:schema", { timeout: 60_000 }, () => {
     await releaseTestContext();
   });
 
-  it("可读取 schemas 列表并包含 core", async () => {
+  it("可读取 schemas 列表并包含测试 schema", async () => {
     if (!ctx.canRun) return;
     const res = await ctx.app.inject({
       method: "GET",
@@ -37,14 +37,14 @@ describe.sequential("e2e:schema", { timeout: 60_000 }, () => {
     const body = res.json() as any;
     expect(String(body.requestId ?? "")).toMatch(/./);
     expect(Array.isArray(body.schemas)).toBe(true);
-    expect(body.schemas.some((s: any) => s.name === "core")).toBe(true);
+    expect(body.schemas.some((s: any) => s.name === TEST_SCHEMA_NAME)).toBe(true);
   });
 
   it("effective schema 可返回字段列表", async () => {
     if (!ctx.canRun) return;
     const res = await ctx.app.inject({
       method: "GET",
-      url: "/schemas/notes/effective?schemaName=core",
+      url: `/schemas/test_items/effective?schemaName=${encodeURIComponent(TEST_SCHEMA_NAME)}`,
       headers: {
         authorization: "Bearer admin",
         "x-tenant-id": "tenant_dev",
@@ -54,7 +54,7 @@ describe.sequential("e2e:schema", { timeout: 60_000 }, () => {
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as any;
-    expect(body.entityName).toBe("notes");
+    expect(body.entityName).toBe("test_items");
     expect(body.fields?.title).toBeTruthy();
   });
 

@@ -20,6 +20,8 @@ export type DeviceExecutionRow = {
   errorCategory: string | null;
   runId: string | null;
   stepId: string | null;
+  createdAt: string;
+  claimedAt: string | null;
 };
 
 function toRow(r: any): DeviceExecutionRow {
@@ -35,7 +37,48 @@ function toRow(r: any): DeviceExecutionRow {
     errorCategory: r.error_category ?? null,
     runId: r.run_id ?? null,
     stepId: r.step_id ?? null,
+    createdAt: r.created_at,
+    claimedAt: r.claimed_at ?? null,
   };
+}
+
+const ACTIVE_DEVICE_MAX_STALENESS_MS = Number(process.env.DEVICE_ACTIVE_MAX_STALENESS_MS ?? 90_000);
+const DEVICE_EXECUTION_PENDING_TIMEOUT_MS = Number(process.env.DEVICE_EXECUTION_PENDING_TIMEOUT_MS ?? 45_000);
+
+const DEVICE_TOOL_ALIAS_MAP: Record<string, string> = {
+  "browser.navigate": "device.browser.open",
+  "device.browser.navigate": "device.browser.open",
+  "browser.fill": "device.browser.type",
+  "device.browser.fill": "device.browser.type",
+  "desktop.screen.capture": "device.desktop.screenshot",
+  "desktop.screenshot": "device.desktop.screenshot",
+  "desktop.clipboard.get": "device.clipboard.read",
+  "desktop.clipboard.set": "device.clipboard.write",
+};
+
+function normalizeDeviceToolName(toolName: string): string {
+  if (DEVICE_TOOL_ALIAS_MAP[toolName]) return DEVICE_TOOL_ALIAS_MAP[toolName];
+  if (toolName.startsWith("browser.")) return `device.${toolName}`;
+  if (toolName.startsWith("desktop.")) return `device.${toolName}`;
+  return toolName;
+}
+
+export function isDeviceExecutionStale(params: {
+  execution: Pick<DeviceExecutionRow, "status" | "createdAt" | "claimedAt">;
+  nowMs?: number;
+  deviceLastSeenAt?: string | null;
+  deviceStatus?: string | null;
+}): boolean {
+  const nowMs = params.nowMs ?? Date.now();
+  const executionStartedAt = Date.parse(params.execution.claimedAt ?? params.execution.createdAt);
+  const ageMs = Number.isFinite(executionStartedAt) ? nowMs - executionStartedAt : DEVICE_EXECUTION_PENDING_TIMEOUT_MS + 1;
+  if (ageMs > DEVICE_EXECUTION_PENDING_TIMEOUT_MS) return true;
+  if (params.deviceStatus && params.deviceStatus !== "active") return true;
+  if (params.deviceLastSeenAt) {
+    const lastSeenMs = Date.parse(params.deviceLastSeenAt);
+    if (!Number.isFinite(lastSeenMs) || nowMs - lastSeenMs > ACTIVE_DEVICE_MAX_STALENESS_MS) return true;
+  }
+  return false;
 }
 
 /** 检查指定 run/step 是否已有已完成的 device_execution */
@@ -89,6 +132,7 @@ export async function findActiveDeviceForTool(params: {
   spaceId: string;
   toolName: string;
 }): Promise<{ deviceId: string } | null> {
+  const normalizedToolName = normalizeDeviceToolName(params.toolName);
   const res = await params.pool.query(
     `
       SELECT d.device_id
@@ -97,15 +141,51 @@ export async function findActiveDeviceForTool(params: {
       WHERE d.tenant_id = $1
         AND d.space_id = $2
         AND d.status = 'active'
-        AND d.last_seen_at > now() - interval '5 minutes'
-        AND p.allowed_tools::jsonb @> $3::jsonb
+        AND d.last_seen_at > now() - ($3::int * interval '1 millisecond')
+        AND p.allowed_tools::jsonb @> $4::jsonb
       ORDER BY d.last_seen_at DESC
       LIMIT 1
     `,
-    [params.tenantId, params.spaceId, JSON.stringify([params.toolName])],
+    [params.tenantId, params.spaceId, ACTIVE_DEVICE_MAX_STALENESS_MS, JSON.stringify([normalizedToolName])],
   );
   if (!res.rowCount) return null;
   return { deviceId: String(res.rows[0].device_id) };
+}
+
+async function getDeviceLiveness(params: {
+  pool: Pool;
+  tenantId: string;
+  deviceId: string;
+}): Promise<{ status: string | null; lastSeenAt: string | null } | null> {
+  const res = await params.pool.query(
+    `
+      SELECT status, last_seen_at
+      FROM device_records
+      WHERE tenant_id = $1 AND device_id = $2
+      LIMIT 1
+    `,
+    [params.tenantId, params.deviceId],
+  );
+  if (!res.rowCount) return null;
+  return {
+    status: res.rows[0].status ? String(res.rows[0].status) : null,
+    lastSeenAt: res.rows[0].last_seen_at ? String(res.rows[0].last_seen_at) : null,
+  };
+}
+
+async function cancelPendingDeviceExecution(params: {
+  pool: Pool;
+  tenantId: string;
+  deviceExecutionId: string;
+}) {
+  await params.pool.query(
+    `
+      UPDATE device_executions
+      SET status = 'canceled', canceled_at = now(), updated_at = now()
+      WHERE tenant_id = $1 AND device_execution_id = $2 AND status IN ('pending','claimed')
+    `,
+    [params.tenantId, params.deviceExecutionId],
+  );
 }
 
 /** 创建关联 run/step 的 device_execution */
@@ -154,19 +234,20 @@ export async function createDeviceExecutionForStep(params: {
 
 /** 判断工具名是否为设备端工具 */
 export function isDeviceTool(toolName: string): boolean {
-  return toolName.startsWith("device.");
+  return normalizeDeviceToolName(toolName).startsWith("device.");
 }
 
 /** 获取设备工具的风险级别（用于决定是否需要用户在场确认） */
 export function deviceToolRequiresUserPresence(toolName: string): boolean {
-  const highRisk = [
+  const highRisk = new Set([
     "device.desktop.screenshot",
     "device.desktop.launch",
     "device.file.write",
     "device.file.delete",
-    "device.browser.navigate",
-  ];
-  return highRisk.includes(toolName);
+    "device.browser.open",
+    "device.browser.screenshot",
+  ]);
+  return highRisk.has(normalizeDeviceToolName(toolName));
 }
 
 /**
@@ -205,13 +286,14 @@ export async function executeDeviceToolDispatch(params: {
       console.error(`[device-dispatch] device execution failed: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${completed.deviceExecutionId} errorCategory=${msg}`);
       throw new Error(`device_execution_failed:${msg}`);
     }
-    // 成功：返回设备执行结果
+    // 成功：返回设备执行结果，展开 outputDigest 使其匹配工具 outputSchema
     console.log(`[device-dispatch] device execution completed: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${completed.deviceExecutionId}`);
+    const deviceOutputDigest = completed.outputDigest && typeof completed.outputDigest === "object" && !Array.isArray(completed.outputDigest) ? completed.outputDigest : {};
     return {
+      success: completed.status === "succeeded",
+      ...deviceOutputDigest,
       deviceExecutionId: completed.deviceExecutionId,
       deviceId: completed.deviceId,
-      status: completed.status,
-      outputDigest: completed.outputDigest,
       evidenceRefs: completed.evidenceRefs,
     };
   }
@@ -225,6 +307,26 @@ export async function executeDeviceToolDispatch(params: {
   });
 
   if (pending) {
+    const deviceLiveness = await getDeviceLiveness({
+      pool: params.pool,
+      tenantId: params.tenantId,
+      deviceId: pending.deviceId,
+    });
+    if (isDeviceExecutionStale({
+      execution: pending,
+      deviceLastSeenAt: deviceLiveness?.lastSeenAt ?? null,
+      deviceStatus: deviceLiveness?.status ?? null,
+    })) {
+      await cancelPendingDeviceExecution({
+        pool: params.pool,
+        tenantId: params.tenantId,
+        deviceExecutionId: pending.deviceExecutionId,
+      });
+      console.error(
+        `[device-dispatch] stale device execution canceled: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${pending.deviceExecutionId} deviceId=${pending.deviceId} deviceStatus=${deviceLiveness?.status ?? "unknown"} lastSeenAt=${deviceLiveness?.lastSeenAt ?? "null"}`,
+      );
+      throw new Error("timeout");
+    }
     console.log(`[device-dispatch] existing pending device execution: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${pending.deviceExecutionId} status=${pending.status}`);
     const e: any = new Error("needs_device");
     e.deviceExecutionId = pending.deviceExecutionId;

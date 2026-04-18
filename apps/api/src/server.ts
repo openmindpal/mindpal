@@ -6,7 +6,7 @@ import websocket from "@fastify/websocket";
 import type { ApiConfig } from "./config";
 import { Errors, isAppError } from "./lib/errors";
 import { createRedisClient } from "./modules/redis/client";
-import { auditRoutes } from "./routes/audit";
+import { initServerTimers } from "./lib/serverTimers";
 import { entityRoutes } from "./routes/entities";
 import { effectiveSchemaRoutes } from "./routes/effectiveSchema";
 import { healthRoutes } from "./routes/health";
@@ -26,11 +26,14 @@ import { keyringRoutes } from "./routes/keyring";
 import { metricsRoutes } from "./routes/metrics";
 import { diagnosticsRoutes } from "./routes/diagnostics";
 import { skillLifecycleRoutes } from "./routes/extended";
+import { scimRoutes } from "./routes/scimRoutes";
+import { spacesRoutes } from "./routes/spaces";
+import { auditRoutes } from "./routes/audit";
+import { notificationPreferenceRoutes } from "./routes/notificationPreferences";
+import { toolCategoryRoutes } from "./routes/toolCategory";
 import { getBuiltinSkills, validateSkillDependencies, isBuiltinSkillRegistrySealed, runStartupConsistencyCheck } from "./lib/skillPlugin";
-import { initBuiltinSkills } from "./skills/registry";
-import { collectCollabBacklogMetrics } from "./modules/metrics/collabBacklog";
+import { initBuiltinSkills, checkSkillLayerConsistency } from "./skills/registry";
 import { createMetricsRegistry } from "./modules/metrics/metrics";
-import { dispatchAuditOutboxBatch } from "./modules/audit/outboxRepo";
 import { requestContextPlugin } from "./plugins/requestContext";
 import { authenticationPlugin } from "./plugins/authentication";
 import { preferencesPlugin } from "./plugins/preferences";
@@ -39,123 +42,71 @@ import { idempotencyKeyPlugin } from "./plugins/idempotencyKey";
 import { dlpPlugin } from "./plugins/dlp";
 import { auditPlugin } from "./plugins/audit";
 import { metricsPlugin } from "./plugins/metrics";
+import { tenantIsolationPlugin } from "./plugins/tenantIsolation";
+import { structuredLoggingPlugin } from "./plugins/structuredLogging";
+import { apiVersionPlugin } from "./plugins/apiVersioning";
+import { realtimeNotificationPlugin } from "./plugins/realtimeNotification";
+import { distributedTracingPlugin } from "./plugins/distributedTracing";
 import { autoDiscoverAndRegisterTools } from "./modules/tools/toolAutoDiscovery";
+import { runBoundaryScan, formatBoundaryScanReport } from "./lib/startupBoundaryScan";
+import { internalRoutes } from "./routes/internal";
+
+function normalizePayloadDates(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map((item) => normalizePayloadDates(item, seen));
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return seen.get(value);
+  const output: Record<string, unknown> = {};
+  seen.set(value, output);
+  for (const [key, item] of Object.entries(value)) {
+    output[key] = normalizePayloadDates(item, seen);
+  }
+  return output;
+}
 
 export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
-  const app = Fastify({ logger: true });
+  const pluginTimeout = Math.max(Number(process.env.FASTIFY_PLUGIN_TIMEOUT_MS ?? 120_000) || 120_000, 60_000);
+  const app = Fastify({
+    logger: true,
+    pluginTimeout,
+    forceCloseConnections: true,
+    bodyLimit: 30 * 1024 * 1024 /* 30MB，支持 base64 图片附件 */,
+  });
   app.decorate("db", deps.db);
   app.decorate("queue", deps.queue);
   app.decorate("redis", createRedisClient(cfg));
   app.decorate("cfg", cfg);
   app.decorate("metrics", createMetricsRegistry());
+  app.redis.on("error", () => undefined);
   app.register(websocket);
+  app.addContentTypeParser("application/scim+json", { parseAs: "string" }, (_req, body, done) => {
+    try {
+      done(null, body ? JSON.parse(String(body)) : {});
+    } catch (err) {
+      done(err as Error);
+    }
+  });
 
-  // NOTE: autoDiscoverAndRegisterTools is now called after initBuiltinSkills() to ensure
-  // the built-in skill registry is sealed before tool discovery runs.
-  const auditOutboxEnabled = process.env.AUDIT_OUTBOX_DISPATCHER === "0" ? false : true;
-  const auditOutboxIntervalMs = Math.max(250, Number(process.env.AUDIT_OUTBOX_INTERVAL_MS ?? "1000") || 1000);
-  const auditOutboxBatch = Math.max(1, Math.min(200, Number(process.env.AUDIT_OUTBOX_BATCH ?? "50") || 50));
-  let lastOutboxBacklogAtMs = 0;
-  const auditOutboxTimer =
-    auditOutboxEnabled
-      ? setInterval(() => {
-          dispatchAuditOutboxBatch({ pool: app.db, limit: auditOutboxBatch })
-            .then((r) => {
-              app.metrics.incAuditOutboxDispatch({ result: "ok" }, r.ok);
-              app.metrics.incAuditOutboxDispatch({ result: "failed" }, r.failed);
-            })
-            .catch((e: any) => {
-              console.warn("[server] audit outbox dispatch failed", { error: String(e?.message ?? e) });
-            });
-          const now = Date.now();
-          const interval = Math.max(1000, Number(process.env.AUDIT_OUTBOX_BACKLOG_INTERVAL_MS ?? "10000") || 10000);
-          if (now - lastOutboxBacklogAtMs >= interval) {
-            lastOutboxBacklogAtMs = now;
-            app.db
-              .query("SELECT status, COUNT(*)::int AS c FROM audit_outbox GROUP BY status")
-              .then((res) => {
-                const map = new Map<string, number>();
-                for (const row of res.rows) map.set(String((row as any).status), Number((row as any).c ?? 0));
-                const statuses = ["queued", "processing", "succeeded", "failed"];
-                for (const s of statuses) app.metrics.setAuditOutboxBacklog({ status: s, count: map.get(s) ?? 0 });
-                /* P1-2: outbox backlog 告警阈值 */
-                const outboxThreshold = Math.max(1, Number(process.env.ALERT_OUTBOX_BACKLOG_THRESHOLD ?? "500") || 500);
-                const deadletterThreshold = Math.max(1, Number(process.env.ALERT_OUTBOX_DEADLETTER_THRESHOLD ?? "10") || 10);
-                const totalPending = (map.get("queued") ?? 0) + (map.get("processing") ?? 0) + (map.get("failed") ?? 0);
-                const deadletterCount = map.get("deadletter") ?? 0;
-                if (totalPending > outboxThreshold) {
-                  console.error("[ALERT] audit_outbox_backlog exceeded threshold", { totalPending, threshold: outboxThreshold });
-                  app.metrics.incAlertFired({ alert: "outbox_backlog" });
-                }
-                if (deadletterCount > deadletterThreshold) {
-                  console.error("[ALERT] audit_outbox_deadletter exceeded threshold", { deadletterCount, threshold: deadletterThreshold });
-                  app.metrics.incAlertFired({ alert: "outbox_deadletter" });
-                }
-              })
-              .catch((e: any) => {
-                console.warn("[server] audit outbox backlog query failed", { error: String(e?.message ?? e) });
-              });
-          }
-        }, auditOutboxIntervalMs)
-      : null;
-  if (auditOutboxTimer) auditOutboxTimer.unref();
+  /* P3-01: 结构化日志插件（尽早注册，覆盖所有后续插件和路由） */
+  app.register(structuredLoggingPlugin);
 
-  const queueBacklogIntervalMs = Math.max(1000, Number(process.env.WORKFLOW_QUEUE_BACKLOG_INTERVAL_MS ?? "10000") || 10000);
-  const canReadQueueCounts = Boolean(app.queue && typeof (app.queue as any).getJobCounts === "function");
-  const queueBacklogTimer = canReadQueueCounts
-    ? setInterval(() => {
-        (app.queue as any)
-          .getJobCounts("waiting", "active", "delayed", "failed")
-          .then((c: any) => {
-            const statuses = ["waiting", "active", "delayed", "failed"] as const;
-            for (const s of statuses) app.metrics.setWorkflowQueueBacklog({ status: s, count: Number(c?.[s] ?? 0) });
-            /* P1-2: queue backlog 告警阈值 */
-            const queueThreshold = Math.max(1, Number(process.env.ALERT_QUEUE_BACKLOG_THRESHOLD ?? "1000") || 1000);
-            const totalQueue = Number(c?.waiting ?? 0) + Number(c?.active ?? 0) + Number(c?.delayed ?? 0);
-            if (totalQueue > queueThreshold) {
-              console.error("[ALERT] workflow_queue_backlog exceeded threshold", { totalQueue, threshold: queueThreshold });
-              app.metrics.incAlertFired({ alert: "queue_backlog" });
-            }
-          })
-          .catch((e: any) => {
-            console.warn("[server] queue backlog query failed", { error: String(e?.message ?? e) });
-          });
-      }, queueBacklogIntervalMs)
-    : null;
-  if (queueBacklogTimer) queueBacklogTimer.unref();
+  /* P3-14: 分布式追踪插件（在日志之后、路由之前） */
+  app.register(distributedTracingPlugin);
 
-  const collabBacklogIntervalMs = Math.max(1000, Number(process.env.COLLAB_BACKLOG_INTERVAL_MS ?? "10000") || 10000);
-  const collabBacklogTimer = setInterval(() => {
-    collectCollabBacklogMetrics(app.db, app.metrics).catch(() => {});
-  }, collabBacklogIntervalMs);
-  collabBacklogTimer.unref();
+  /* P3-02: API 版本化过渡中间件 */
+  app.register(apiVersionPlugin);
 
-  const workerMetricsIntervalMs = Math.max(1000, Number(process.env.WORKER_METRICS_INTERVAL_MS ?? "10000") || 10000);
-  const workerMetricsTimer = setInterval(() => {
-    Promise.all([
-      app.redis.get("worker:heartbeat:ts"),
-      app.redis.get("worker:workflow:step:success"),
-      app.redis.get("worker:workflow:step:error"),
-      app.redis.get("worker:tool_execute:success"),
-      app.redis.get("worker:tool_execute:error"),
-    ])
-      .then(([hb, ok, err, toolOk, toolErr]) => {
-        const ts = hb ? Number(hb) : NaN;
-        const ageSec = Number.isFinite(ts) ? Math.max(0, (Date.now() - ts) / 1000) : 1e9;
-        app.metrics.setWorkerHeartbeatAgeSeconds({ worker: "workflow", ageSeconds: ageSec });
-        app.metrics.setWorkerWorkflowStepCount({ result: "success", count: ok ? Number(ok) : 0 });
-        app.metrics.setWorkerWorkflowStepCount({ result: "error", count: err ? Number(err) : 0 });
-        app.metrics.setWorkerToolExecuteCount({ result: "success", count: toolOk ? Number(toolOk) : 0 });
-        app.metrics.setWorkerToolExecuteCount({ result: "error", count: toolErr ? Number(toolErr) : 0 });
-      })
-      .catch(() => {
-      });
-  }, workerMetricsIntervalMs);
-  workerMetricsTimer.unref();
+  /* P3-06a: WebSocket 实时通知插件 */
+  app.register(realtimeNotificationPlugin);
+
+  // ── 定时器：审计 outbox、队列 backlog、协同 backlog、Worker 指标 ──
+  const timers = initServerTimers({ db: deps.db, queue: deps.queue, redis: app.redis, metrics: app.metrics, log: app.log });
 
   const corsAllowedMethods = "GET,POST,PUT,DELETE,OPTIONS";
   const corsAllowedHeaders =
     "content-type,authorization,x-tenant-id,x-space-id,x-user-locale,x-space-locale,x-tenant-locale,x-schema-name,x-trace-id,idempotency-key";
+  // P2-1: 允许前端读取自定义响应头
+  const corsExposeHeaders = "x-request-id,x-trace-id,x-ratelimit-remaining,x-ratelimit-reset";
 
   function isAllowedOrigin(origin: string) {
     const allowed = cfg.cors?.allowedOrigins ?? [];
@@ -169,6 +120,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     if (isAllowedOrigin(origin)) {
       reply.header("access-control-allow-origin", origin);
       reply.header("access-control-allow-credentials", "true");
+      reply.header("access-control-expose-headers", corsExposeHeaders);
       reply.header("vary", "origin");
     }
 
@@ -177,22 +129,56 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
         reply.header("access-control-allow-methods", corsAllowedMethods);
         reply.header("access-control-allow-headers", corsAllowedHeaders);
         reply.header("access-control-max-age", "600");
+        reply.code(204).send();
+      } else {
+        // 9.2 FIX: 不允许的 origin 返回 403，而非 204
+        reply.code(403).send({ errorCode: "CORS_ORIGIN_DENIED", message: "Origin not allowed" });
       }
-      reply.code(204).send();
       return;
     }
   });
 
   app.addHook("onClose", async () => {
-    if (auditOutboxTimer) clearInterval(auditOutboxTimer);
-    if (queueBacklogTimer) clearInterval(queueBacklogTimer);
-    clearInterval(workerMetricsTimer);
-    await app.redis.quit();
+    timers.stopAll();
+    const quit = app.redis.quit().catch(() => undefined);
+    await Promise.race([
+      quit,
+      new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
+    ]);
+    try {
+      app.redis.disconnect();
+    } catch {}
+  });
+
+  app.addHook("preSerialization", async (_req, _reply, payload) => {
+    return normalizePayloadDates(payload);
   });
 
   app.setErrorHandler(async (err, req, reply) => {
     req.log.error({ err, traceId: req.ctx?.traceId, requestId: req.ctx?.requestId }, "request_error");
     const pgCode = typeof (err as any)?.code === "string" ? String((err as any).code) : "";
+
+    // 42P01/42703: 输出详细缺失表/列名到日志，加速问题定位
+    if (pgCode === "42P01" || pgCode === "42703") {
+      const pgMessage = (err as any)?.message ?? "";
+      const pgDetail = (err as any)?.detail ?? "";
+      const pgTable = (err as any)?.table ?? "";
+      const pgColumn = (err as any)?.column ?? "";
+      req.log.error(
+        {
+          pgCode,
+          pgMessage,
+          pgDetail,
+          pgTable,
+          pgColumn,
+          route: req.routeOptions?.url ?? req.url,
+          method: req.method,
+          traceId: req.ctx?.traceId,
+        },
+        `[DB_SCHEMA_MISMATCH] PostgreSQL ${pgCode === "42P01" ? "undefined_table" : "undefined_column"}: ${pgMessage}`,
+      );
+    }
+
     const appErr =
       err instanceof ZodError
         ? Errors.badRequest("参数校验失败")
@@ -203,7 +189,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
             : pgCode === "23503"
               ? Errors.badRequest("关联记录不存在")
               : pgCode === "42P01" || pgCode === "42703"
-                ? Errors.serviceNotReady("数据库结构未初始化或版本不匹配")
+                ? Errors.serviceNotReady(`数据库结构未初始化或版本不匹配 (${pgCode === "42P01" ? "缺少表" : "缺少列"}: ${(err as any)?.message?.match(/(?:relation|column)\s+"([^"]+)"/)?.[1] ?? "unknown"})`)
                 : Errors.internal();
     const status = appErr.httpStatus;
     const auditSafetySummary = (() => {
@@ -224,6 +210,9 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     return reply.status(status).send(payload);
   });
 
+  // ── P2: 内部通信端点（Worker→API，不走标准认证链路）──
+  app.register(internalRoutes);
+
   app.register(async (scoped) => {
     await requestContextPlugin(scoped, { platformLocale: cfg.platformLocale });
     await authenticationPlugin(scoped, {});
@@ -233,6 +222,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     await dlpPlugin(scoped, {});
     await auditPlugin(scoped, {});
     await metricsPlugin(scoped, {});
+    await tenantIsolationPlugin(scoped, {}); // P1-03b: per-tenant concurrency tracking
 
     scoped.register(healthRoutes);
     scoped.register(diagnosticsRoutes);
@@ -241,25 +231,28 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     scoped.register(authTokenRoutes);
     // ── Core Kernel Routes (primitives that remain in kernel) ────────
     scoped.register(auditRoutes);
-    scoped.register(entityRoutes);
-    scoped.register(effectiveSchemaRoutes);
-    scoped.register(jobRoutes);
-    scoped.register(schemaRoutes);
-    scoped.register(toolRoutes);
-    scoped.register(secretRoutes);
-    scoped.register(governanceRoutes);
-    scoped.register(runRoutes);
-    scoped.register(policySnapshotRoutes);
-    scoped.register(rbacRoutes);
-    scoped.register(approvalRoutes);
-    scoped.register(settingsRoutes);
-    scoped.register(keyringRoutes);
     scoped.register(skillLifecycleRoutes);
+    scoped.register(scimRoutes);
+    scoped.register(notificationPreferenceRoutes); // P3-06b: 通知偏好 + 收件箱
+
+    // ── P2-3: /v1 版本化路由 ──
+    // 业务路由同时保留 root 兼容入口，并注册 /v1 前缀。
+    const v1Routes = [
+      entityRoutes, effectiveSchemaRoutes, jobRoutes, schemaRoutes, toolRoutes,
+      secretRoutes, governanceRoutes, runRoutes, policySnapshotRoutes,
+      rbacRoutes, approvalRoutes, settingsRoutes, keyringRoutes, spacesRoutes,
+      toolCategoryRoutes,  // P2: 工具分类管理路由
+    ];
+
+    for (const route of v1Routes) scoped.register(route);
+
+    scoped.register(async (v1) => {
+      for (const route of v1Routes) v1.register(route);
+    }, { prefix: "/v1" });
 
     // ── Built-in Skill Routes (auto-discovered) ────────────────────
-    initBuiltinSkills();
+    await initBuiltinSkills();
 
-    // Run comprehensive startup consistency check
     const startupCheck = runStartupConsistencyCheck();
     if (startupCheck.warnings.length > 0) {
       for (const w of startupCheck.warnings) app.log.warn(w);
@@ -269,6 +262,29 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
       throw new Error(`[startup] Skill registry consistency check failed: ${startupCheck.errors.join("; ")}`);
     }
     app.log.info(startupCheck.summary, "[startup] Skill registry consistency check passed");
+
+    // ── Skill Layer Consistency Check ─────────────────────────────
+    const layerCheck = checkSkillLayerConsistency();
+    if (!layerCheck.ok) {
+      app.log.warn({ mismatches: layerCheck.layerMismatches, orphans: layerCheck.orphanedDirs }, layerCheck.summary);
+    } else {
+      app.log.info(layerCheck.summary);
+    }
+
+    try {
+      const srcRoot = __dirname;
+      const scanResult = runBoundaryScan(srcRoot);
+      if (!scanResult.ok || scanResult.warnings.length > 0) {
+        app.log.warn(formatBoundaryScanReport(scanResult));
+      }
+      app.log.info(
+        { scannedFiles: scanResult.scannedFiles, violations: scanResult.violations.length, ok: scanResult.ok },
+        "[startup] Module boundary scan completed",
+      );
+    } catch (e: any) {
+      app.log.warn({ err: e?.message }, "[startup] Module boundary scan skipped (non-fatal)");
+    }
+
     const registeredSkills: string[] = [];
     for (const [name, skill] of getBuiltinSkills()) {
       scoped.register(skill.routes);
@@ -276,12 +292,30 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     }
     app.log.info({ registeredSkills: registeredSkills.length, skills: registeredSkills }, "[startup] Built-in skills registered");
 
-    // Auto-discover and register tools (now that builtin skills are registered and sealed)
     try {
       const discovery = await autoDiscoverAndRegisterTools(app.db);
       app.log.info({ registered: discovery.registered, skipped: discovery.skipped }, "[startup] Tool discovery completed");
     } catch (e: any) {
       app.log.error({ err: e }, "[startup] Tool discovery failed (non-fatal)");
+    }
+
+    try {
+      const bindingRes = await app.db.query<{ model_ref: string; status: string }>(
+        `SELECT model_ref, status FROM provider_bindings WHERE status = 'enabled' LIMIT 10`
+      );
+      const enabledCount = bindingRes.rowCount ?? 0;
+      if (enabledCount === 0) {
+        app.log.warn(
+          "[startup] ⚠️ 未找到任何已启用的模型绑定 (provider_bindings)\u3002" +
+          "编排/意图分类/工具建议等功能将无法正常工作。" +
+          "请通过 [设置 > 模型接入] 配置至少一个模型绑定。"
+        );
+      } else {
+        const refs = bindingRes.rows.map(r => r.model_ref);
+        app.log.info({ count: enabledCount, models: refs }, "[startup] Model bindings check passed");
+      }
+    } catch (e: any) {
+      app.log.warn({ err: e?.message }, "[startup] Model bindings check skipped (table may not exist)");
     }
   });
 

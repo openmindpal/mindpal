@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { IconBell, IconShield, IconAlert, IconCheckLg, IconInfo, IconRefresh, IconCheckAll } from "./ShellIcons";
 import styles from "./NotificationPanel.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
@@ -19,116 +20,106 @@ interface NotificationItem {
   meta?: Record<string, unknown>;
 }
 
-/* ─── Icons ─────────────────────────────────────────────────────────────────── */
-
-function IconBell() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>;
+interface OutboxRecord {
+  outboxId: string;
+  channel: string;
+  deliveryStatus: string;
+  templateId: string;
+  templateVersion: number;
+  recipientRef: string;
+  createdAt: string;
+  updatedAt: string;
+  lastErrorCategory?: string | null;
 }
 
-function IconShield() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>;
-}
+function mapOutboxToNotification(rec: OutboxRecord): NotificationItem {
+  let type: NotificationItem["type"] = "system";
+  if (rec.lastErrorCategory) {
+    type = "policy_reject";
+  } else if (rec.deliveryStatus === "queued") {
+    type = "approval";
+  } else if (rec.channel === "email" || rec.channel === "sms") {
+    type = "event";
+  }
 
-function IconAlert() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>;
-}
-
-function IconCheck() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>;
-}
-
-function IconInfo() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>;
-}
-
-function IconRefresh() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>;
-}
-
-function IconCheckAll() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>;
+  return {
+    id: rec.outboxId,
+    type,
+    title: `${rec.channel} - ${rec.recipientRef}`,
+    message: `Status: ${rec.deliveryStatus}`,
+    createdAt: rec.createdAt,
+    read: rec.deliveryStatus === "sent" || rec.deliveryStatus === "canceled",
+    url: "/gov/notifications",
+  };
 }
 
 /* ─── Component ─────────────────────────────────────────────────────────────── */
 
-export default function NotificationPanel({ locale }: { locale: string }) {
+export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: string; onBadgeUpdate?: (count: number) => void }) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "unread">("all");
 
-  // Demo data (in real implementation, this would fetch from API)
   const loadNotifications = useCallback(async () => {
     setLoading(true);
     try {
-      // Try to fetch from API
-      const res = await apiFetch(`/notifications?limit=50`, { method: "GET", locale });
+      const res = await apiFetch(`/notifications/outbox?limit=50`, { method: "GET", locale });
       if (res.ok) {
-        const data = await res.json() as { notifications?: NotificationItem[] };
-        setNotifications(data.notifications || []);
+        const data = await res.json() as { outbox?: OutboxRecord[] };
+        const mapped = (data.outbox || []).map(mapOutboxToNotification);
+        setNotifications(mapped);
+        const unread = mapped.filter((n) => !n.read).length;
+        onBadgeUpdate?.(unread);
       } else {
-        // Use demo data if API not available
-        setNotifications([
-          {
-            id: "n1",
-            type: "audit",
-            title: t(locale, "notification.audit.title"),
-            message: t(locale, "notification.audit.example"),
-            createdAt: new Date(Date.now() - 3600000).toISOString(),
-            read: false,
-            url: "/gov/audit",
-          },
-          {
-            id: "n2",
-            type: "approval",
-            title: t(locale, "notification.approval.title"),
-            message: t(locale, "notification.approval.example"),
-            createdAt: new Date(Date.now() - 7200000).toISOString(),
-            read: false,
-            url: "/gov/approvals",
-          },
-          {
-            id: "n3",
-            type: "policy_reject",
-            title: t(locale, "notification.policyReject.title"),
-            message: t(locale, "notification.policyReject.example"),
-            createdAt: new Date(Date.now() - 86400000).toISOString(),
-            read: true,
-          },
-          {
-            id: "n4",
-            type: "system",
-            title: t(locale, "notification.system.title"),
-            message: t(locale, "notification.system.example"),
-            createdAt: new Date(Date.now() - 172800000).toISOString(),
-            read: true,
-          },
-        ]);
+        setNotifications([]);
       }
-    } catch {
-      // Use demo data on error
+    } catch (err) {
+      // Network error — show empty list
+      console.error("Failed to load notifications:", err);
       setNotifications([]);
     }
     setLoading(false);
-  }, [locale]);
+  }, [locale, onBadgeUpdate]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Initial data load
     loadNotifications();
   }, [loadNotifications]);
 
-  const markAllRead = useCallback(() => {
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    const timer = setInterval(loadNotifications, 30_000);
+    return () => clearInterval(timer);
+  }, [loadNotifications]);
+
+  const markAllRead = useCallback(async () => {
+    // Optimistic UI update
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-  }, []);
+    onBadgeUpdate?.(0);
+    // Sync to backend (fire-and-forget)
+    try {
+      await apiFetch("/notifications/inbox/read-all", { method: "POST", locale });
+    } catch (err) {
+      console.error("[NotificationPanel] markAllRead API error:", err);
+    }
+  }, [locale, onBadgeUpdate]);
 
   const markRead = useCallback((id: string) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-  }, []);
+    setNotifications((prev) => {
+      const updated = prev.map((n) => (n.id === id ? { ...n, read: true } : n));
+      const unread = updated.filter((n) => !n.read).length;
+      onBadgeUpdate?.(unread);
+      return updated;
+    });
+    // Sync single read to backend (fire-and-forget)
+    apiFetch(`/notifications/inbox/${encodeURIComponent(id)}/read`, { method: "POST", locale }).catch(() => {});
+  }, [locale, onBadgeUpdate]);
 
   const getTypeIcon = (type: NotificationItem["type"]) => {
     switch (type) {
       case "audit": return <IconShield />;
       case "policy_reject": return <IconAlert />;
-      case "approval": return <IconCheck />;
+      case "approval": return <IconCheckLg />;
       case "event": return <IconBell />;
       default: return <IconInfo />;
     }

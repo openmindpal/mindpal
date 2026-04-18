@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useId } from "react";
+import { t } from "@/lib/i18n";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ const CHART_CSS = `
 
 // ─── Bar Chart (SVG) ─────────────────────────────────────────────────────────
 
-function BarChart({ data, W, H, uid }: { data: ChartDataPoint[]; W: number; H: number; uid: string }) {
+function BarChart({ data, W, H, uid, locale }: { data: ChartDataPoint[]; W: number; H: number; uid: string; locale: string }) {
   const maxVal = Math.max(...data.map((d) => d.value), 1);
   const PL = 38, PB = 32, PT = 8;
   const chartW = W - PL - 8;
@@ -80,7 +81,7 @@ function BarChart({ data, W, H, uid }: { data: ChartDataPoint[]; W: number; H: n
   const gridLines = [0.25, 0.5, 0.75, 1];
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="bar chart">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={t(locale, "widget.chart.aria.bar")}>
       <defs>
         {data.map((d, i) => {
           const c = d.color || CHART_COLORS[i % CHART_COLORS.length];
@@ -143,7 +144,7 @@ function bezierPath(points: { x: number; y: number }[]): string {
   return parts.join(" ");
 }
 
-function LineChart({ data, W, H, uid }: { data: ChartDataPoint[]; W: number; H: number; uid: string }) {
+function LineChart({ data, W, H, uid, locale }: { data: ChartDataPoint[]; W: number; H: number; uid: string; locale: string }) {
   const maxVal = Math.max(...data.map((d) => d.value), 1);
   const PL = 38, PB = 32, PT = 12;
   const chartH = H - PB - PT;
@@ -163,7 +164,7 @@ function LineChart({ data, W, H, uid }: { data: ChartDataPoint[]; W: number; H: 
   const c = data[0]?.color || "#6366f1";
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="line chart">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={t(locale, "widget.chart.aria.line")}>
       <defs>
         <linearGradient id={`${uid}_areaG`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={c} stopOpacity={0.18} />
@@ -198,7 +199,7 @@ function LineChart({ data, W, H, uid }: { data: ChartDataPoint[]; W: number; H: 
 
 // ─── Pie / Donut Chart (SVG) ─────────────────────────────────────────────────
 
-function PieChart({ data, W, H, donut }: { data: ChartDataPoint[]; W: number; H: number; donut?: boolean }) {
+function PieChart({ data, W, H, donut, locale }: { data: ChartDataPoint[]; W: number; H: number; donut?: boolean; locale: string }) {
   const total = data.reduce((sum, d) => sum + d.value, 0) || 1;
   const legendH = Math.min(data.length, 6) * 18 + 8;
   const chartArea = Math.min(W, H - legendH);
@@ -237,7 +238,7 @@ function PieChart({ data, W, H, donut }: { data: ChartDataPoint[]; W: number; H:
   });
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="pie chart">
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={t(locale, "widget.chart.aria.pie")}>
       {/* Drop shadow for depth */}
       <defs>
         <filter id="__cwPieSh"><feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.1" /></filter>
@@ -252,7 +253,7 @@ function PieChart({ data, W, H, donut }: { data: ChartDataPoint[]; W: number; H:
       {donut && (
         <>
           <text x={cx} y={cy - 2} textAnchor="middle" fontSize={18} fontWeight={800} fill="var(--sl-fg,#1e293b)">{total.toLocaleString()}</text>
-          <text x={cx} y={cy + 14} textAnchor="middle" fontSize={10} fill="#94a3b8">total</text>
+          <text x={cx} y={cy + 14} textAnchor="middle" fontSize={10} fill="#94a3b8">{t(locale, "widget.chart.total")}</text>
         </>
       )}
       {/* Legend */}
@@ -278,8 +279,7 @@ function PieChart({ data, W, H, donut }: { data: ChartDataPoint[]; W: number; H:
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export function ChartWidget(props: ChartWidgetProps) {
-  const { chartType, data, title, width = 400, height = 260, locale: _locale = "zh-CN" } = props;
-  void _locale;
+  const { chartType, data, title, width = 400, height = 260, locale = "zh-CN" } = props;
   const uid = useId().replace(/:/g, "_");
 
   const coloredData = useMemo(
@@ -291,7 +291,7 @@ export function ChartWidget(props: ChartWidgetProps) {
     return (
       <div style={{ padding: 32, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
         <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.5 }}>📊</div>
-        No chart data
+        {t(locale, "widget.chart.empty")}
       </div>
     );
   }
@@ -302,12 +302,12 @@ export function ChartWidget(props: ChartWidgetProps) {
       {title && (
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, padding: "0 8px", color: "var(--sl-fg, #1e293b)", display: "flex", alignItems: "center", gap: 8 }}>
           {title}
-          <span style={{ fontSize: 10, color: "#94a3b8", fontWeight: 400 }}>{data.length} items</span>
+          <span style={{ fontSize: 10, color: "#94a3b8", fontWeight: 400 }}>{t(locale, "widget.chart.items").replace("{count}", String(data.length))}</span>
         </div>
       )}
-      {chartType === "bar" && <BarChart data={coloredData} W={width} H={height} uid={uid} />}
-      {chartType === "line" && <LineChart data={coloredData} W={width} H={height} uid={uid} />}
-      {chartType === "pie" && <PieChart data={coloredData} W={width} H={height} />}
+      {chartType === "bar" && <BarChart data={coloredData} W={width} H={height} uid={uid} locale={locale} />}
+      {chartType === "line" && <LineChart data={coloredData} W={width} H={height} uid={uid} locale={locale} />}
+      {chartType === "pie" && <PieChart data={coloredData} W={width} H={height} locale={locale} />}
     </div>
   );
 }

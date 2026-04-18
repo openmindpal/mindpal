@@ -15,8 +15,8 @@ import type { FastifyPluginAsync } from "fastify";
 import {
   getRegistryInfo,
   listConfigOverrides,
-  setConfigOverride,
-  deleteConfigOverride,
+  setConfigOverrideWithNotify,
+  deleteConfigOverrideWithNotify,
   resolveConfig,
   resolveAllConfigs,
   getConfigChangeAuditLog,
@@ -95,7 +95,7 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
 
     const pool = (req.server as any).pg;
     try {
-      const result = await setConfigOverride({
+      const result = await setConfigOverrideWithNotify({
         pool,
         tenantId,
         configKey,
@@ -125,7 +125,7 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
     if (!configKey) return reply.status(400).send({ error: "missing_config_key" });
 
     const pool = (req.server as any).pg;
-    const result = await deleteConfigOverride({
+    const result = await deleteConfigOverrideWithNotify({
       pool,
       tenantId,
       configKey,

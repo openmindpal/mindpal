@@ -2,30 +2,15 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { Badge, Card, PageHeader, Table, StatusBadge, getHelpHref } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type ChangeSetRow = { id: string; title?: string; scope_type?: string; scope_id?: string; status?: string; created_at?: string };
 type ChangeSetsResponse = ApiError & { changesets?: ChangeSetRow[] };
 type PipelineRow = { changesetId: string; mode: string; gates: Array<{ gateType: string; status: string; required: boolean }>; warningsCount: number };
 type PipelinesResponse = ApiError & { pipelines?: PipelineRow[] };
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
 
 export default function ChangeSetsClient(props: { locale: string; initial: unknown; initialStatus: number; initialPipelines: unknown; initialPipelinesStatus: number }) {
   const [scope, setScope] = useState<"space" | "tenant" | "">( "");
@@ -40,8 +25,13 @@ export default function ChangeSetsClient(props: { locale: string; initial: unkno
   const [createScope, setCreateScope] = useState<"space" | "tenant">("space");
   const [canaryTargetsText, setCanaryTargetsText] = useState<string>("");
   const [creating, setCreating] = useState<boolean>(false);
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
 
   const items = useMemo(() => (Array.isArray(data?.changesets) ? data!.changesets! : []), [data]);
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const paged = useMemo(() => items.slice(page * pageSize, (page + 1) * pageSize), [items, page]);
   const pipelinesById = useMemo(() => {
     const arr = Array.isArray(pipes?.pipelines) ? pipes!.pipelines! : [];
     const m = new Map<string, PipelineRow>();
@@ -62,6 +52,7 @@ export default function ChangeSetsClient(props: { locale: string; initial: unkno
 
   async function refresh() {
     setError("");
+    setPage(0);
     const q = new URLSearchParams();
     if (scope) q.set("scope", scope);
     const n = Number(limit);
@@ -113,9 +104,10 @@ export default function ChangeSetsClient(props: { locale: string; initial: unkno
     <div>
       <PageHeader
         title={t(props.locale, "gov.changesets.title")}
+        helpHref={getHelpHref("/gov/changesets", props.locale) ?? undefined}
         actions={
           <>
-            <Badge>{status}</Badge>
+            <StatusBadge locale={props.locale} status={status} />
             <Badge>{pipesStatus}</Badge>
             <button onClick={refresh}>{t(props.locale, "action.refresh")}</button>
           </>
@@ -147,31 +139,97 @@ export default function ChangeSetsClient(props: { locale: string; initial: unkno
 
       <div style={{ marginTop: 16 }}>
         <Card title={t(props.locale, "gov.changesets.createTitle")}>
+          {/* Wizard step indicator */}
+          <div style={{ display: "flex", gap: 0, marginBottom: 20 }}>
+            {[1, 2, 3].map((step) => {
+              const isActive = wizardStep === step;
+              const isDone = wizardStep > step;
+              return (
+                <div key={step} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", position: "relative" }}>
+                  <div style={{ width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, background: isActive ? "var(--sl-accent)" : isDone ? "#22c55e" : "var(--sl-surface)", color: isActive || isDone ? "#fff" : "var(--sl-muted)", border: `2px solid ${isActive ? "var(--sl-accent)" : isDone ? "#22c55e" : "var(--sl-border)"}` }}>
+                    {isDone ? "✓" : step}
+                  </div>
+                  <span style={{ fontSize: 11, marginTop: 4, fontWeight: isActive ? 600 : 400, color: isActive ? "var(--sl-accent)" : "var(--sl-muted)" }}>
+                    {t(props.locale, `gov.changesets.wizard.step${step}`)}
+                  </span>
+                  {step < 3 && <div style={{ position: "absolute", top: 13, left: "60%", right: "-40%", height: 2, background: isDone ? "#22c55e" : "var(--sl-border)" }} />}
+                </div>
+              );
+            })}
+          </div>
+
           <div style={{ display: "grid", gap: 10, maxWidth: 720 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <div>{t(props.locale, "gov.changesets.titleLabel")}</div>
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t(props.locale, "gov.changesets.titlePlaceholder")} />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <div>{t(props.locale, "gov.changesets.scope")}</div>
-              <select value={createScope} onChange={(e) => setCreateScope(e.target.value === "tenant" ? "tenant" : "space")}>
-                <option value="space">{t(props.locale, "scope.space")}</option>
-                <option value="tenant">{t(props.locale, "scope.tenant")}</option>
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <div>{t(props.locale, "gov.changesets.canaryTargets")}</div>
-              <input
-                value={canaryTargetsText}
-                onChange={(e) => setCanaryTargetsText(e.target.value)}
-                placeholder={t(props.locale, "gov.changesets.canaryTargetsPlaceholder")}
-              />
-            </label>
-            <div>
-              <button onClick={create} disabled={!title.trim() || creating}>
-                {creating ? t(props.locale, "action.creating") : t(props.locale, "action.create")}
-              </button>
-            </div>
+            {/* Step 1: Title */}
+            {wizardStep === 1 && (
+              <>
+                <p style={{ color: "var(--sl-muted)", fontSize: 12, margin: 0 }}>{t(props.locale, "gov.changesets.wizard.step1Desc")}</p>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{t(props.locale, "gov.changesets.titleLabel")}</div>
+                  <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t(props.locale, "gov.changesets.titlePlaceholder")} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid var(--sl-border)" }} />
+                </label>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+                  <button disabled={!title.trim()} onClick={() => setWizardStep(2)} style={{ padding: "6px 16px", borderRadius: 6, background: "var(--sl-accent)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, opacity: !title.trim() ? 0.5 : 1 }}>
+                    {t(props.locale, "gov.changesets.wizard.next")} →
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Step 2: Scope */}
+            {wizardStep === 2 && (
+              <>
+                <p style={{ color: "var(--sl-muted)", fontSize: 12, margin: 0 }}>{t(props.locale, "gov.changesets.wizard.step2Desc")}</p>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{t(props.locale, "gov.changesets.scope")}</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {(["space", "tenant"] as const).map(s => (
+                      <button key={s} onClick={() => setCreateScope(s)} style={{ flex: 1, padding: "10px 16px", borderRadius: 8, border: `2px solid ${createScope === s ? "var(--sl-accent)" : "var(--sl-border)"}`, background: createScope === s ? "rgba(var(--sl-accent-rgb,59,130,246),0.08)" : "var(--sl-surface)", cursor: "pointer", fontWeight: createScope === s ? 600 : 400, fontSize: 13 }}>
+                        {t(props.locale, `scope.${s}`)}
+                      </button>
+                    ))}
+                  </div>
+                </label>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
+                  <button onClick={() => setWizardStep(1)} style={{ padding: "6px 16px", borderRadius: 6, border: "1px solid var(--sl-border)", background: "var(--sl-surface)", cursor: "pointer" }}>
+                    ← {t(props.locale, "gov.changesets.wizard.prev")}
+                  </button>
+                  <button onClick={() => setWizardStep(3)} style={{ padding: "6px 16px", borderRadius: 6, background: "var(--sl-accent)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>
+                    {t(props.locale, "gov.changesets.wizard.next")} →
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Step 3: Canary + Create */}
+            {wizardStep === 3 && (
+              <>
+                <p style={{ color: "var(--sl-muted)", fontSize: 12, margin: 0 }}>{t(props.locale, "gov.changesets.wizard.step3Desc")}</p>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{t(props.locale, "gov.changesets.canaryTargets")}</div>
+                  <input
+                    value={canaryTargetsText}
+                    onChange={(e) => setCanaryTargetsText(e.target.value)}
+                    placeholder={t(props.locale, "gov.changesets.canaryTargetsPlaceholder")}
+                    style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid var(--sl-border)" }}
+                  />
+                  <span style={{ fontSize: 11, color: "var(--sl-muted)" }}>{t(props.locale, "gov.changesets.wizard.canaryHint")}</span>
+                </label>
+                {/* Review summary */}
+                <div style={{ padding: 10, borderRadius: 6, background: "var(--sl-surface)", border: "1px solid var(--sl-border)", fontSize: 12, display: "grid", gap: 4 }}>
+                  <div><strong>{t(props.locale, "gov.changesets.titleLabel")}:</strong> {title}</div>
+                  <div><strong>{t(props.locale, "gov.changesets.scope")}:</strong> {t(props.locale, `scope.${createScope}`)}</div>
+                  {canaryTargetsText.trim() && <div><strong>{t(props.locale, "gov.changesets.canaryTargets")}:</strong> {canaryTargetsText}</div>}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
+                  <button onClick={() => setWizardStep(2)} style={{ padding: "6px 16px", borderRadius: 6, border: "1px solid var(--sl-border)", background: "var(--sl-surface)", cursor: "pointer" }}>
+                    ← {t(props.locale, "gov.changesets.wizard.prev")}
+                  </button>
+                  <button onClick={() => { create(); setWizardStep(1); }} disabled={!title.trim() || creating} style={{ padding: "8px 20px", borderRadius: 6, background: "var(--sl-accent)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, opacity: (!title.trim() || creating) ? 0.5 : 1 }}>
+                    {creating ? t(props.locale, "action.creating") : t(props.locale, "gov.changesets.wizard.review")}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Card>
       </div>
@@ -197,7 +255,7 @@ export default function ChangeSetsClient(props: { locale: string; initial: unkno
             </tr>
           </thead>
           <tbody>
-            {items.map((cs) => (
+            {paged.map((cs) => (
               <tr key={cs.id}>
                 <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{cs.id}</td>
                 <td>{cs.title ?? "-"}</td>
@@ -244,6 +302,19 @@ export default function ChangeSetsClient(props: { locale: string; initial: unkno
             ))}
           </tbody>
         </Table>
+        {totalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, items.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(items.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+              <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

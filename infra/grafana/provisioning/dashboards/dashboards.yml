@@ -1,0 +1,13 @@
+# P3-13: Grafana Dashboard 自动配置
+apiVersion: 1
+
+providers:
+  - name: "OpenSlin"
+    orgId: 1
+    folder: "OpenSlin"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

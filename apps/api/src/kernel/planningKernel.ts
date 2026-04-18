@@ -18,12 +18,13 @@
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
+import { isToolAllowedForPolicy } from "@openslin/shared";
 import { invokeModelChat, parseToolCallsFromOutput, type LlmSubject } from "../lib/llm";
-import { discoverEnabledTools, type EnabledTool } from "../skills/orchestrator/modules/orchestrator";
+import { discoverEnabledTools, type EnabledTool } from "../modules/agentContext";
 import { getToolDefinition, getToolVersionByRef, type ToolDefinition } from "../modules/tools/toolRepo";
 import { resolveEffectiveToolRef } from "../modules/tools/resolve";
 import { isToolEnabled } from "../modules/governance/toolGovernanceRepo";
-import { routeByIntent, type RouteResult } from "../modules/skills/skillRouter";
+import { routeByIntent, type RouteResult } from "../modules/semanticRouting/skillIntentRouter";
 
 /* Re-export for convenience so callers only need one import. */
 export { discoverEnabledTools, type EnabledTool };
@@ -66,6 +67,8 @@ export interface PlanningResult {
   enabledTools: EnabledTool[];
   /** Semantic routing result (if applicable). */
   semanticRoute?: RouteResult;
+  /** P0-6: Tool calls that were dropped due to validation failure. */
+  droppedToolCalls?: DroppedToolCall[];
 }
 
 /* ================================================================== */
@@ -85,10 +88,13 @@ export interface BuildPromptParams {
  */
 export function buildPlannerPrompt(params: BuildPromptParams): string {
   const role = params.plannerRole ?? "agent";
+  // P2-4: a/an 冠词判断基于发音而非首字母
+  const vowelSounds = /^[aeiou]/i;
+  const article = vowelSounds.test(role) ? "an" : "a";
   if (!params.toolCatalog) {
-    return `You are a${role.startsWith("a") ? "n" : ""} ${role} planner. No tools are currently available.`;
+    return `You are ${article} ${role} planner. No tools are currently available.`;
   }
-  return `You are a${role.startsWith("a") ? "n" : ""} ${role} planner. Given the user message and available tools, suggest which tools to invoke.
+  return `You are ${article} ${role} planner. Given the user message and available tools, suggest which tools to invoke.
 
 ## Available Tools
 ${params.toolCatalog}
@@ -161,10 +167,19 @@ export interface ParseSuggestionsParams {
   spaceId: string;
   modelOutputText: string;
   enabledTools: EnabledTool[];
-  /** Max steps to pick from suggestions. */
-  maxSteps: number;
+  /** Max steps to pick from suggestions. Undefined means no platform default cap. */
+  maxSteps?: number;
   /** Default actorRole for each plan step. */
   actorRole?: string;
+  /** Optional: trace ID for audit logging of dropped tool_calls. */
+  traceId?: string | null;
+}
+
+/** P0-6: Dropped tool_call record for audit purposes. */
+export interface DroppedToolCall {
+  toolRef: string;
+  reason: "not_enabled" | "not_released" | "not_found" | "invalid_format";
+  inputDraft?: Record<string, unknown>;
 }
 
 /**
@@ -180,14 +195,28 @@ export async function parsePlanSuggestions(params: ParseSuggestionsParams): Prom
   filteredSuggestionCount: number;
   parseErrorCount: number;
   failureCategory: PlanFailureCategory | null;
+  /** P0-6: Tool calls that were dropped due to validation failure. */
+  droppedToolCalls: DroppedToolCall[];
 }> {
-  const { pool, tenantId, spaceId, modelOutputText, enabledTools, maxSteps } = params;
+  const { pool, tenantId, spaceId, modelOutputText, enabledTools, maxSteps, traceId } = params;
   const actorRole = params.actorRole ?? "executor";
 
   const parsed = parseToolCallsFromOutput(modelOutputText);
   const enabledToolRefSet = new Set(enabledTools.map((t) => t.toolRef));
-  const suggestions = parsed.toolCalls.filter((tc) => enabledToolRefSet.has(tc.toolRef));
-  const picked = suggestions.slice(0, Math.max(0, maxSteps));
+  
+  // P0-6: 强制校验 - 静默丢弃未启用的工具调用并记录
+  const droppedToolCalls: DroppedToolCall[] = [];
+  const suggestions: Array<{ toolRef: string; inputDraft: Record<string, unknown> }> = [];
+  
+  for (const tc of parsed.toolCalls) {
+    if (enabledToolRefSet.has(tc.toolRef) || isToolAllowedForPolicy(enabledToolRefSet, tc.toolRef)) {
+      suggestions.push(tc);
+    } else {
+      droppedToolCalls.push({ toolRef: tc.toolRef, reason: "not_enabled", inputDraft: tc.inputDraft });
+    }
+  }
+  
+  const picked = typeof maxSteps === "number" ? suggestions.slice(0, Math.max(0, maxSteps)) : suggestions;
 
   let failureCategory: PlanFailureCategory | null = null;
   if (parsed.parseErrorCount > 0 && !picked.length) {
@@ -207,10 +236,16 @@ export async function parsePlanSuggestions(params: ParseSuggestionsParams): Prom
     if (!effToolRef) continue;
 
     const ver = await getToolVersionByRef(pool, tenantId, effToolRef);
-    if (!ver || String(ver.status) !== "released") continue;
+    if (!ver || String(ver.status) !== "released") {
+      droppedToolCalls.push({ toolRef: rawToolRef, reason: ver ? "not_released" : "not_found", inputDraft: s.inputDraft });
+      continue;
+    }
 
     const enabled = await isToolEnabled({ pool, tenantId, spaceId, toolRef: effToolRef });
-    if (!enabled) continue;
+    if (!enabled) {
+      droppedToolCalls.push({ toolRef: effToolRef, reason: "not_enabled", inputDraft: s.inputDraft });
+      continue;
+    }
 
     const def = await getToolDefinition(pool, tenantId, toolName);
     const approvalRequired = Boolean(def?.approvalRequired) || def?.riskLevel === "high";
@@ -230,12 +265,18 @@ export async function parsePlanSuggestions(params: ParseSuggestionsParams): Prom
     });
   }
 
+  // P0-6: 审计日志 - 记录被丢弃的工具调用（用于调试和安全分析）
+  if (droppedToolCalls.length > 0 && traceId) {
+    // Note: 实际日志记录由调用方处理，这里仅返回数据
+  }
+
   return {
     planSteps,
     rawSuggestionCount: parsed.toolCalls.length,
     filteredSuggestionCount: suggestions.length,
     parseErrorCount: parsed.parseErrorCount,
     failureCategory,
+    droppedToolCalls,
   };
 }
 
@@ -253,8 +294,8 @@ export interface RunPlanningParams {
   traceId: string | null;
   /** User message to plan for. */
   userMessage: string;
-  /** Max steps to produce. */
-  maxSteps: number;
+  /** Max steps to produce. Undefined means no platform default cap. */
+  maxSteps?: number;
   /** Purpose tag for model gateway. */
   purpose?: string;
   /** Planner role label (default "agent"). */
@@ -277,6 +318,7 @@ export async function runPlanningPipeline(params: RunPlanningParams): Promise<Pl
   } = params;
   const purpose = params.purpose ?? "agent-runtime.plan";
   const plannerRole = params.plannerRole ?? "agent";
+  const pipelineStartMs = Date.now();
 
   // Phase 1: discover enabled tools
   const toolDiscovery = await discoverEnabledTools({ pool, tenantId: subject.tenantId, spaceId, locale });
@@ -314,14 +356,24 @@ export async function runPlanningPipeline(params: RunPlanningParams): Promise<Pl
     failureCategory = "model_error";
   }
 
-  // Phase 4: parse & validate suggestions
+  // Phase 4: parse & validate suggestions (P0-6: 强制校验并记录丢弃)
   const parseResult = await parsePlanSuggestions({
     pool, tenantId: subject.tenantId, spaceId,
     modelOutputText: llmResult.modelOutputText,
     enabledTools: toolDiscovery.tools,
     maxSteps,
     actorRole,
+    traceId,
   });
+
+  // P0-6: 审计日志 - 记录被丢弃的工具调用
+  if (parseResult.droppedToolCalls.length > 0) {
+    app.log.warn({ 
+      traceId, 
+      droppedCount: parseResult.droppedToolCalls.length,
+      dropped: parseResult.droppedToolCalls.map(d => ({ toolRef: d.toolRef, reason: d.reason })),
+    }, "[P0-6] tool_call 强制校验: 工具调用被静默丢弃");
+  }
 
   // Determine failure category if no steps produced
   if (!parseResult.planSteps.length) {
@@ -334,6 +386,14 @@ export async function runPlanningPipeline(params: RunPlanningParams): Promise<Pl
             ? "no_enabled_suggestion"
             : "empty");
     }
+    // P0-2: 规划流水线失败指标
+    app.metrics.observePlanningPipeline({
+      result: (failureCategory as any) ?? "empty",
+      latencyMs: Date.now() - pipelineStartMs,
+      stepCount: 0,
+      droppedCount: parseResult.droppedToolCalls.length,
+      semanticRouteUsed: !!semanticRoute?.resolved,
+    });
     return {
       ok: false,
       planSteps: [],
@@ -344,8 +404,18 @@ export async function runPlanningPipeline(params: RunPlanningParams): Promise<Pl
       toolCatalog: toolDiscovery.catalog,
       enabledTools: toolDiscovery.tools,
       semanticRoute,
+      droppedToolCalls: parseResult.droppedToolCalls,
     };
   }
+
+  // P0-2: 规划流水线成功指标
+  app.metrics.observePlanningPipeline({
+    result: "ok",
+    latencyMs: Date.now() - pipelineStartMs,
+    stepCount: parseResult.planSteps.length,
+    droppedCount: parseResult.droppedToolCalls.length,
+    semanticRouteUsed: !!semanticRoute?.resolved,
+  });
 
   return {
     ok: true,
@@ -357,5 +427,6 @@ export async function runPlanningPipeline(params: RunPlanningParams): Promise<Pl
     toolCatalog: toolDiscovery.catalog,
     enabledTools: toolDiscovery.tools,
     semanticRoute,
+    droppedToolCalls: parseResult.droppedToolCalls,
   };
 }

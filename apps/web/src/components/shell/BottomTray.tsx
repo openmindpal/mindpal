@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
+import { IconHistory, IconBell, IconDevice, IconPlayLg, IconInbox, IconChevronUp, IconChevronDown } from "./ShellIcons";
 import RunHistoryPanel from "./RunHistoryPanel";
 import NotificationPanel from "./NotificationPanel";
 import DeviceActionsPanel from "./DeviceActionsPanel";
@@ -9,43 +11,78 @@ import ActiveRunList from "./ActiveRunList";
 import PendingActionsQueue from "./PendingActionsQueue";
 import styles from "./BottomTray.module.css";
 
-/* ─── Icons ─────────────────────────────────────────────────────────────────── */
-
-function IconHistory() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>;
-}
-
-function IconBell() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>;
-}
-
-function IconDevice() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>;
-}
-
-function IconPlay() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><polygon points="10 8 16 12 10 16 10 8" /></svg>;
-}
-
-function IconInbox() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg>;
-}
-
-function IconChevronUp() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="18 15 12 9 6 15" /></svg>;
-}
-
-function IconChevronDown() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>;
-}
-
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
 
 type TrayTab = "activeRuns" | "pendingActions" | "runs" | "notifications" | "deviceActions";
 
+interface TabBadgeCounts {
+  activeRuns: number;
+  pendingActions: number;
+  notifications: number;
+  deviceActions: number;
+}
+
+/* ─── Badge count fetcher (lightweight, single round-trip where possible) ──── */
+
+async function fetchBadgeCounts(locale: string): Promise<TabBadgeCounts> {
+  const counts: TabBadgeCounts = { activeRuns: 0, pendingActions: 0, notifications: 0, deviceActions: 0 };
+  try {
+    const [activeRes, approvalsRes, runsRes, deadlettersRes, notifRes, deviceRes] = await Promise.all([
+      apiFetch("/runs/active?limit=1", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/approvals?status=pending&limit=1", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/runs?status=failed&limit=1", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/governance/workflow/deadletters?limit=1", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/notifications/outbox?limit=50", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/device-executions?limit=1", { locale, cache: "no-store" }).catch(() => null),
+    ]);
+
+    if (activeRes?.ok) {
+      const d = await activeRes.json();
+      counts.activeRuns = (d.activeRuns as unknown[])?.length ?? d.total ?? 0;
+    }
+
+    // Pending actions = approvals + failed runs + deadletters
+    if (approvalsRes?.ok) {
+      const d = await approvalsRes.json();
+      counts.pendingActions += (d.items as unknown[])?.length ?? d.total ?? 0;
+    }
+    if (runsRes?.ok) {
+      const d = await runsRes.json();
+      counts.pendingActions += (d.runs as unknown[])?.length ?? d.total ?? 0;
+    }
+    if (deadlettersRes?.ok) {
+      const d = await deadlettersRes.json();
+      counts.pendingActions += (d.deadletters as unknown[])?.length ?? d.total ?? 0;
+    }
+
+    if (notifRes?.ok) {
+      const d = await notifRes.json();
+      const outbox = (d.outbox as { deliveryStatus?: string }[]) ?? [];
+      counts.notifications = outbox.filter((o) => o.deliveryStatus !== "sent" && o.deliveryStatus !== "canceled").length;
+    }
+
+    if (deviceRes?.ok) {
+      const d = await deviceRes.json();
+      const execs = (d.executions as { status?: string }[]) ?? [];
+      counts.deviceActions = execs.filter((e) => e.status === "pending" || e.status === "claimed").length;
+    }
+  } catch (err) {
+    console.error("[BottomTray] badge count fetch error:", err);
+  }
+  return counts;
+}
+
+/* ─── Callback type for sub-panels to report their counts ───────────────── */
+
+export type BadgeUpdateFn = (key: keyof TabBadgeCounts, count: number) => void;
+
 /* ─── Component ─────────────────────────────────────────────────────────────── */
 
-export default function BottomTray({ locale }: { locale: string }) {
+export default function BottomTray({
+  locale,
+}: {
+  locale: string;
+}) {
   const TRAY_KEY = "openslin_bottom_tray";
   const trayRef = useRef<HTMLDivElement>(null);
 
@@ -55,6 +92,33 @@ export default function BottomTray({ locale }: { locale: string }) {
   const [height, setHeight] = useState(280);
   const [isDragging, setIsDragging] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+
+  /* ─── Badge counts ─── */
+  const [badges, setBadges] = useState<TabBadgeCounts>({ activeRuns: 0, pendingActions: 0, notifications: 0, deviceActions: 0 });
+  const refreshBadges = useCallback(async () => {
+    const c = await fetchBadgeCounts(locale);
+    setBadges(c);
+  }, [locale]);
+
+  // Sub-panel badge update callback — avoids redundant API calls
+  const updateBadge: BadgeUpdateFn = useCallback((key, count) => {
+    setBadges((prev) => (prev[key] === count ? prev : { ...prev, [key]: count }));
+  }, []);
+
+  // Initial badge load + periodic refresh (only when collapsed; expanded panels report their own counts)
+  useEffect(() => {
+    const initial = setTimeout(refreshBadges, 0);
+    const timer = setInterval(() => {
+      // Skip polling when expanded — sub-panels refresh themselves
+      if (!trayRef.current?.classList.contains(styles.bottomTrayExpanded)) {
+        refreshBadges();
+      }
+    }, 15_000);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(timer);
+    };
+  }, [refreshBadges]);
 
   // Restore state from localStorage after hydration
   useEffect(() => {
@@ -97,11 +161,18 @@ export default function BottomTray({ locale }: { locale: string }) {
     setIsDragging(true);
   }, []);
 
+  // Double-click resize handle to toggle full height
+  const handleDragDoubleClick = useCallback(() => {
+    const maxH = Math.round(window.innerHeight * 0.7);
+    setHeight((prev) => (prev >= maxH - 10 ? 280 : maxH));
+  }, []);
+
   useEffect(() => {
     if (!isDragging) return;
     const handleMove = (e: MouseEvent) => {
+      const maxH = Math.round(window.innerHeight * 0.7);
       const newHeight = window.innerHeight - e.clientY;
-      setHeight(Math.max(150, Math.min(500, newHeight)));
+      setHeight(Math.max(150, Math.min(maxH, newHeight)));
     };
     const handleUp = () => setIsDragging(false);
     document.addEventListener("mousemove", handleMove);
@@ -120,13 +191,14 @@ export default function BottomTray({ locale }: { locale: string }) {
     setExpanded((p) => !p);
   }, []);
 
-  const tabs: { key: TrayTab; icon: React.ReactNode; labelKey: string }[] = [
-    { key: "activeRuns", icon: <IconPlay />, labelKey: "activeRuns.title" },
-    { key: "pendingActions", icon: <IconInbox />, labelKey: "pendingActions.title" },
+  const tabs: { key: TrayTab; icon: React.ReactNode; labelKey: string; badgeKey?: keyof TabBadgeCounts }[] = [
+    { key: "activeRuns", icon: <IconPlayLg />, labelKey: "activeRuns.title", badgeKey: "activeRuns" },
+    { key: "pendingActions", icon: <IconInbox />, labelKey: "pendingActions.title", badgeKey: "pendingActions" },
     { key: "runs", icon: <IconHistory />, labelKey: "bottomTray.runs" },
-    { key: "notifications", icon: <IconBell />, labelKey: "bottomTray.notifications" },
-    { key: "deviceActions", icon: <IconDevice />, labelKey: "bottomTray.deviceActions" },
+    { key: "notifications", icon: <IconBell />, labelKey: "bottomTray.notifications", badgeKey: "notifications" },
+    { key: "deviceActions", icon: <IconDevice />, labelKey: "bottomTray.deviceActions", badgeKey: "deviceActions" },
   ];
+
 
   return (
     <div ref={trayRef} className={`${styles.bottomTray} ${expanded ? styles.bottomTrayExpanded : ""}`}>
@@ -135,40 +207,99 @@ export default function BottomTray({ locale }: { locale: string }) {
         <div
           className={`${styles.resizeHandle} ${isDragging ? styles.resizeHandleActive : ""}`}
           onMouseDown={handleDragStart}
+          onDoubleClick={handleDragDoubleClick}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize panel"
         />
       )}
 
       {/* Header bar (always visible) */}
       <div className={styles.header}>
-        <div className={styles.tabs}>
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              className={`${styles.tab} ${activeTab === tab.key ? styles.tabActive : ""}`}
-              onClick={() => {
-                setActiveTab(tab.key);
-                if (!expanded) setExpanded(true);
-              }}
-            >
-              {tab.icon}
-              <span className={styles.tabLabel}>{t(locale, tab.labelKey)}</span>
-            </button>
-          ))}
+        <div className={styles.tabs} role="tablist" aria-label="Bottom tray tabs">
+          {tabs.map((tab) => {
+            const count = tab.badgeKey ? badges[tab.badgeKey] : 0;
+            const isActive = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                role="tab"
+                id={`tray-tab-${tab.key}`}
+                aria-selected={isActive}
+                aria-controls={expanded ? `tray-panel-${tab.key}` : undefined}
+                className={`${styles.tab} ${isActive ? styles.tabActive : ""}`}
+                onClick={() => {
+                  setActiveTab(tab.key);
+                  if (!expanded) setExpanded(true);
+                }}
+                title={t(locale, tab.labelKey)}
+              >
+                {tab.icon}
+                <span className={styles.tabLabel}>{t(locale, tab.labelKey)}</span>
+                {count > 0 && (
+                  <span
+                    className={`${styles.tabBadge} ${
+                      tab.key === "pendingActions" ? styles.tabBadgeWarning
+                        : tab.key === "notifications" ? styles.tabBadgeInfo
+                        : ""
+                    }`}
+                    aria-label={`${count} items`}
+                  >
+                    {count > 99 ? "99+" : count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
-        <button className={styles.expandBtn} onClick={toggleExpand}>
-          {expanded ? <IconChevronDown /> : <IconChevronUp />}
-          <span>{t(locale, expanded ? "bottomTray.collapse" : "bottomTray.expand")}</span>
-        </button>
+        <div className={styles.headerActions}>
+          {/* Collapsed summary: show quick status when tray is collapsed */}
+          {!expanded && (badges.activeRuns > 0 || badges.pendingActions > 0) && (
+            <span className={styles.collapsedSummary}>
+              {badges.activeRuns > 0 && (
+                <>
+                  <span className={`${styles.summaryDot} ${styles.summaryDotActive}`} />
+                  <span className={styles.summaryText}>
+                    {badges.activeRuns} {t(locale, "bottomTray.summaryRunning")}
+                  </span>
+                </>
+              )}
+              {badges.pendingActions > 0 && (
+                <>
+                  <span className={`${styles.summaryDot} ${styles.summaryDotWarning}`} />
+                  <span className={styles.summaryText}>
+                    {badges.pendingActions} {t(locale, "bottomTray.summaryPending")}
+                  </span>
+                </>
+              )}
+            </span>
+          )}
+          <button
+            className={styles.expandBtn}
+            onClick={toggleExpand}
+            aria-expanded={expanded}
+            aria-label={t(locale, expanded ? "bottomTray.collapse" : "bottomTray.expand")}
+          >
+            {expanded ? <IconChevronDown /> : <IconChevronUp />}
+            <span>{t(locale, expanded ? "bottomTray.collapse" : "bottomTray.expand")}</span>
+          </button>
+        </div>
       </div>
 
       {/* Content panel (only when expanded) */}
       {expanded && (
-        <div className={styles.content} style={{ height }}>
-          {activeTab === "activeRuns" && <ActiveRunList locale={locale} />}
-          {activeTab === "pendingActions" && <PendingActionsQueue locale={locale} />}
+        <div
+          className={styles.content}
+          style={{ height }}
+          role="tabpanel"
+          id={`tray-panel-${activeTab}`}
+          aria-labelledby={`tray-tab-${activeTab}`}
+        >
+          {activeTab === "activeRuns" && <ActiveRunList locale={locale} onBadgeUpdate={(count: number) => updateBadge("activeRuns", count)} />}
+          {activeTab === "pendingActions" && <PendingActionsQueue locale={locale} onBadgeUpdate={(count: number) => updateBadge("pendingActions", count)} />}
           {activeTab === "runs" && <RunHistoryPanel locale={locale} />}
-          {activeTab === "notifications" && <NotificationPanel locale={locale} />}
-          {activeTab === "deviceActions" && <DeviceActionsPanel locale={locale} />}
+          {activeTab === "notifications" && <NotificationPanel locale={locale} onBadgeUpdate={(count: number) => updateBadge("notifications", count)} />}
+          {activeTab === "deviceActions" && <DeviceActionsPanel locale={locale} onBadgeUpdate={(count: number) => updateBadge("deviceActions", count)} />}
         </div>
       )}
     </div>

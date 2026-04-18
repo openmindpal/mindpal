@@ -82,8 +82,24 @@ export interface SkillToolDeclaration {
   idempotencyRequired?: boolean;
   riskLevel?: "low" | "medium" | "high";
   approvalRequired?: boolean;
+  category?: string;
+  priority?: number;
+  tags?: string[];
   inputSchema?: any;
   outputSchema?: any;
+  /**
+   * P1-5b: 声明工具所需的 secret scope
+   * - 列出工具运行时可能访问的 connector 类型
+   * - 运行时根据此声明限制 secretDomain.connectorInstanceIds
+   * - 示例: ["mail.imap", "mail.exchange", "oauth.google"]
+   */
+  requiredSecretScopes?: string[];
+  /**
+   * 额外权限声明：工具执行前需动态检查的附加权限。
+   * 每条声明包含 resourceType 和 action，由执行内核自动调用 requirePermission。
+   * 示例: [{ resourceType: "memory", action: "read" }]
+   */
+  extraPermissions?: Array<{ resourceType: string; action: string }>;
 }
 
 /* ------------------------------------------------------------------ */

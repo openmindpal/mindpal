@@ -56,10 +56,7 @@ export type ReasoningContext = {
 };
 
 /* ────────────────── Utility ──────────────────── */
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
-}
+import { isPlainObject } from "@openslin/shared";
 
 function getByPath(obj: any, path: string[]): unknown {
   let cur: any = obj;
@@ -231,7 +228,7 @@ async function tier2PatternMatch(ctx: ReasoningContext, event: EventEnvelope): P
 
 function buildEventReasoningPrompt(event: EventEnvelope, locale: string): string {
   const parts: string[] = [
-    "You are MindPal's AI Event Reasoning engine. You receive IoT/device/system events and decide what action to take.",
+    "You are 灵智Mindpal's AI Event Reasoning engine. You receive IoT/device/system events and decide what action to take.",
     "",
     "## Event Details",
     `- Event Type: ${event.eventType}`,

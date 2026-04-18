@@ -1,8 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { Errors } from "../../lib/errors";
+import { AppError, Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
+import { PERM } from "@openslin/shared";
 import {
   createFederationNode,
   updateFederationNode,
@@ -41,12 +42,36 @@ import {
   type FederationEnvelopeV1,
 } from "../../skills/collab-runtime/modules/federationGateway";
 
+function ensureFederationAuthConfig(params: {
+  authMethod?: "bearer" | "hmac" | "mtls" | "none";
+  authSecretId?: string | null;
+}) {
+  if (!params.authMethod || params.authMethod === "none") return;
+  if (!params.authSecretId) {
+    throw new AppError({
+      errorCode: "FEDERATION_AUTH_SECRET_REQUIRED",
+      httpStatus: 400,
+      message: {
+        "zh-CN": `${params.authMethod} 认证需要绑定密钥`,
+        "en-US": `${params.authMethod} authentication requires authSecretId`,
+      },
+    });
+  }
+}
+
+function resolvePeerCertificateFingerprint256(req: unknown): string | null {
+  const socket = (req as { raw?: { socket?: { getPeerCertificate?: (detailed?: boolean) => { fingerprint256?: string } } } } | undefined)?.raw?.socket;
+  const cert = socket?.getPeerCertificate?.(true);
+  const fingerprint = String(cert?.fingerprint256 ?? "").trim();
+  return fingerprint || null;
+}
+
 export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
   // ─── 获取联邦网关状态 ────────────────────────────────────────────────
   app.get("/governance/federation/status", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "federation.status.read" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const status = getFederationGatewayStatus();
     const nodes = await listFederationNodes({ pool: app.db, tenantId: subject.tenantId, limit: 100 });
@@ -60,7 +85,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
   app.get("/governance/federation/nodes", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "federation.node.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const q = req.query as Record<string, unknown>;
     const limit = z.coerce.number().int().min(1).max(200).optional().parse(q?.limit) ?? 50;
@@ -77,7 +102,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     const subject = req.ctx.subject!;
     const params = z.object({ nodeId: z.string().uuid() }).parse(req.params);
     setAuditContext(req, { resourceType: "governance", action: "federation.node.read" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const node = await getFederationNode({ pool: app.db, tenantId: subject.tenantId, nodeId: params.nodeId });
     if (!node) throw Errors.notFound("federation_node");
@@ -107,6 +132,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
 
     setAuditContext(req, { resourceType: "governance", action: "federation.node.create" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
+    ensureFederationAuthConfig({ authMethod: body.authMethod, authSecretId: body.authSecretId });
 
     const node = await createFederationNode({
       pool: app.db,
@@ -144,6 +170,12 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
 
     setAuditContext(req, { resourceType: "governance", action: "federation.node.update" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
+    const current = await getFederationNode({ pool: app.db, tenantId: subject.tenantId, nodeId: params.nodeId });
+    if (!current) throw Errors.notFound("federation_node");
+    ensureFederationAuthConfig({
+      authMethod: body.authMethod,
+      authSecretId: body.authSecretId !== undefined ? body.authSecretId : current.authSecretId,
+    });
 
     const node = await updateFederationNode({
       pool: app.db,
@@ -176,15 +208,17 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
   app.post("/governance/federation/nodes/:nodeId/test", async (req) => {
     const subject = req.ctx.subject!;
     const params = z.object({ nodeId: z.string().uuid() }).parse(req.params);
-    const body = z.object({ authToken: z.string().optional() }).parse(req.body ?? {});
+    const body = z.object({ authToken: z.string().optional(), sourceNodeId: z.string().uuid().optional() }).parse(req.body ?? {});
 
     setAuditContext(req, { resourceType: "governance", action: "federation.node.test" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const result = await testFederationNode({
       pool: app.db,
       tenantId: subject.tenantId,
       nodeId: params.nodeId,
+      masterKey: app.cfg.secrets.masterKey,
+      sourceNodeId: body.sourceNodeId,
       authToken: body.authToken,
     });
 
@@ -212,7 +246,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ nodeId: z.string().uuid() }).parse(req.params);
 
     setAuditContext(req, { resourceType: "governance", action: "federation.capability.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const capabilities = await listNodeCapabilities({ pool: app.db, tenantId: subject.tenantId, nodeId: params.nodeId });
 
@@ -261,7 +295,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     const limit = z.coerce.number().int().min(1).max(200).optional().parse(q?.limit) ?? 50;
 
     setAuditContext(req, { resourceType: "governance", action: "federation.log.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const logs = await listEnvelopeLogs({ pool: app.db, tenantId: subject.tenantId, nodeId, correlationId, limit });
 
@@ -298,11 +332,19 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const envelope = parseResult.data as FederationEnvelopeV1;
+    if (envelope.tenantId !== tenantId) {
+      return reply.status(400).send({ errorCode: "TENANT_MISMATCH", message: { "zh-CN": "租户头与信封不一致", "en-US": "Tenant header does not match envelope" } });
+    }
     const result = await handleInboundFederationEnvelope({
       pool: app.db,
       tenantId,
       sourceNodeId,
       envelope,
+      masterKey: app.cfg.secrets.masterKey,
+      headers: req.headers,
+      peerCertificateFingerprint256: resolvePeerCertificateFingerprint256(req),
+      clientIp: req.ip,
+      userAgent: req.headers["user-agent"] as string | undefined,
     });
 
     if (!result.accepted) {
@@ -336,7 +378,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
   app.get("/governance/federation/permission-grants", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "federation.permission.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const q = req.query as Record<string, unknown>;
     const nodeId = z.string().uuid().optional().parse(q?.nodeId);
@@ -433,7 +475,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
       .parse(req.body);
 
     setAuditContext(req, { resourceType: "governance", action: "federation.permission.check" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const result = await checkPermission({
       pool: app.db,
@@ -455,7 +497,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
   app.get("/governance/federation/user-grants", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "federation.user-grant.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const q = req.query as Record<string, unknown>;
     const grantorSubject = z.string().optional().parse(q?.grantorSubject);
@@ -541,7 +583,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
   app.get("/governance/federation/content-policies", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "federation.content-policy.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const q = req.query as Record<string, unknown>;
     const policyType = z.enum(["usage_restriction", "lifecycle", "redaction", "encryption"]).optional().parse(q?.policyType);
@@ -565,7 +607,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ policyId: z.string().uuid() }).parse(req.params);
 
     setAuditContext(req, { resourceType: "governance", action: "federation.content-policy.read" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const policy = await getContentPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.policyId });
     if (!policy) throw Errors.notFound("content_policy");
@@ -662,7 +704,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
   app.get("/governance/federation/audit-logs", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "federation.audit.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.read" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.GOVERNANCE_FEDERATION_READ });
 
     const q = req.query as Record<string, unknown>;
     const nodeId = z.string().uuid().optional().parse(q?.nodeId);

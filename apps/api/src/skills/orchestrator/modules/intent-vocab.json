@@ -1,0 +1,63 @@
+{
+  "$schema": "intent-vocab-schema",
+  "version": 3,
+  "description": "极薄快速短路规则词表 — 仅服务于 <20 条硬短路规则，其余全走 LLM",
+  "updatedAt": "2026-04-10T13:00:00Z",
+
+  "greetingWords": [
+    "你好", "嗨", "hello", "hi", "hey", "早上好", "下午好", "晚上好",
+    "谢谢", "感谢", "明白", "了解", "收到", "嗯", "好", "对",
+    "再见", "拜拜", "bye", "thanks", "thank you", "got it"
+  ],
+
+  "collabKeywords": [
+    "协作", "协同", "多智能体", "多角色", "multi-agent", "collaborate"
+  ],
+
+  "interventionPatterns": [
+    { "re": "^(?:停止|取消|终止|中断)", "type": "cancel" },
+    { "re": "^(?:暂停|等等|等一下|先别)", "type": "pause" },
+    { "re": "(?:继续|接着|接下来)", "type": "resume" },
+    { "re": "(?:修改|改成|换成|调整|更改).*(?:步骤|上一步|第.+步|目标)", "type": "modify_step" },
+    { "re": "(?:换个|换一个|改目标|换思路)", "type": "change_goal" },
+    { "re": "(?:回滚|撤回|撤销|重新来|重做)", "type": "modify_step" },
+    { "re": "(?:跳过|跳到|直接执行)", "type": "modify_step" }
+  ],
+
+  "highRiskKeywords": [
+    "删除", "移除", "清空", "格式化", "重置", "销毁", "回滚",
+    "drop", "delete", "remove", "destroy", "reset", "purge"
+  ],
+
+  "executeRequestPrefixes": [
+    "帮我", "请帮我", "帮忙", "麻烦", "能不能帮", "可以帮", "请你",
+    "please", "can you", "could you", "help me", "I need you to"
+  ],
+
+  "executeActionVerbs": [
+    "创建", "生成", "搜索", "查找", "打开", "运行", "部署", "发送",
+    "安装", "下载", "编写", "修改", "更新", "上传", "导出", "导入",
+    "构建", "编译", "启动", "重启", "配置", "设置", "添加", "新建",
+    "create", "generate", "search", "find", "open", "run", "deploy",
+    "send", "install", "download", "write", "update", "upload",
+    "export", "import", "build", "compile", "start", "restart", "setup"
+  ],
+
+  "questionIndicators": [
+    "什么", "怎么", "为什么", "哪个", "几个", "多少", "如何", "是否",
+    "能否", "是不是", "有没有", "哪些", "何时", "谁",
+    "what", "how", "why", "which", "when", "where", "who", "is there"
+  ],
+
+  "opinionPrefixes": [
+    "我觉得", "我认为", "我的看法", "个人觉得", "我的意见", "依我看",
+    "不是请求", "我只是想说", "我只是说说", "我只是觉得", "我想说的是",
+    "I think", "in my opinion", "my view", "I believe", "I feel"
+  ],
+
+  "followUpConfirms": [
+    "好的继续", "可以继续", "同意", "确认", "没问题", "继续吧",
+    "是的", "对的", "好的", "行", "可以", "没错", "下一步",
+    "yes", "ok", "sure", "confirmed", "go ahead", "proceed", "next"
+  ]
+}

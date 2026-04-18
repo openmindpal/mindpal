@@ -1,7 +1,9 @@
+import { collabStreamRedisChannel, createCollabStreamSignal } from "@openslin/shared";
 import type { Pool } from "pg";
 
 export type AppendCollabEventOnceParams = {
   pool: Pool;
+  redis?: { publish(channel: string, message: string): Promise<number> };
   tenantId: string;
   spaceId: string | null;
   collabRunId: string;
@@ -37,5 +39,16 @@ export async function appendCollabEventOnce(p: AppendCollabEventOnceParams) {
     "INSERT INTO collab_run_events (tenant_id, space_id, collab_run_id, task_id, type, actor_role, run_id, step_id, payload_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
     [p.tenantId, p.spaceId, p.collabRunId, p.taskId, p.type, p.actorRole, p.runId, p.stepId, p.payloadDigest],
   );
+  if (p.redis) {
+    await p.redis.publish(
+      collabStreamRedisChannel(p.collabRunId),
+      JSON.stringify(createCollabStreamSignal({
+        collabRunId: p.collabRunId,
+        tenantId: p.tenantId,
+        taskId: p.taskId,
+        kind: "event",
+        source: "worker",
+      })),
+    ).catch(() => {});
+  }
 }
-

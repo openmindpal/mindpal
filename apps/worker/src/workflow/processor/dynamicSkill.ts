@@ -14,6 +14,7 @@ import { resolveSkillRuntimeRemoteEndpoint } from "@openslin/shared";
 import { executeDynamicSkillSandboxed } from "./dynamicSkillSandbox";
 import { executeDynamicSkillContainered } from "./dynamicSkillContainer";
 import { executeDynamicSkillRemote } from "./dynamicSkillRemote";
+import { executePythonSkill } from "./pythonSkillRunner";
 
 export { executeDynamicSkillRemote } from "./dynamicSkillRemote";
 export type { DynamicSkillExecResult } from "./dynamicSkillTypes";
@@ -60,6 +61,36 @@ export async function executeDynamicSkill(params: {
   const entryRel = String(loaded.manifest?.entry ?? "");
   if (!entryRel) throw new Error("policy_violation:manifest_missing_entry");
   const entryPath = path.resolve(artifactDir, entryRel);
+
+  // ── P2-02: 多语言运行时检测 ──
+  // 通过入口文件后缀或 manifest.runtime 判断运行时语言
+  const declaredRuntime = String(loaded.manifest?.runtime ?? "").toLowerCase();
+  const isPythonSkill = declaredRuntime === "python"
+    || entryRel.endsWith(".py")
+    || entryPath.endsWith(".py");
+
+  if (isPythonSkill) {
+    // Python Skill 走专用路径，不需要 Node.js 禁用模块检查
+    const res = await executePythonSkill({
+      toolRef: params.toolRef,
+      tenantId: params.tenantId,
+      spaceId: params.spaceId,
+      subjectId: params.subjectId,
+      traceId: params.traceId,
+      idempotencyKey: params.idempotencyKey,
+      input: params.input,
+      limits: params.limits,
+      networkPolicy: params.networkPolicy,
+      artifactRef: params.artifactRef,
+      depsDigest: computed,
+      entryPath,
+      artifactDir,
+      signal: params.signal,
+    });
+    return { output: res.output, depsDigest: res.depsDigest, runtimeBackend: res.runtimeBackend, degraded: res.degraded, runnerSummary: res.runnerSummary };
+  }
+
+  // ── Node.js Skill 原有流程 ──
   const entryText = await fs.readFile(entryPath, "utf8");
   const forbidden = [
     "node:child_process",

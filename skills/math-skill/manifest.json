@@ -3,6 +3,17 @@
     "name": "math.add",
     "version": "1.0.0"
   },
+  "displayName": {
+    "zh-CN": "数学加法",
+    "en-US": "Math Addition"
+  },
+  "description": {
+    "zh-CN": "执行两个数字的加法运算，返回求和结果",
+    "en-US": "Performs addition of two numbers and returns the sum"
+  },
+  "category": "analytics",
+  "priority": 5,
+  "tags": ["math", "calculation", "arithmetic"],
   "contract": {
     "scope": "read",
     "resourceType": "tool",

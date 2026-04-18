@@ -13,7 +13,7 @@ import { computeSealedDigestV1 } from "./sealed";
 
 /**
  * 验证 Step 状态转换是否合法
- * Warn-only, 不阻塞执行（向后兼容）
+ * Warn-only, 不阻塞执行
  */
 export function validateStepTransition(stepId: string, fromRaw: string, toRaw: string): boolean {
   const from = normalizeStepStatus(fromRaw);
@@ -29,7 +29,7 @@ export function validateStepTransition(stepId: string, fromRaw: string, toRaw: s
 
 /**
  * 验证 Run 状态转换是否合法
- * Warn-only, 不阻塞执行（向后兼容）
+ * Warn-only, 不阻塞执行
  */
 export function validateRunTransition(runId: string, fromRaw: string, toRaw: string): boolean {
   const from = normalizeRunStatus(fromRaw);
@@ -107,7 +107,7 @@ export async function sealRunIfFinished(params: { pool: Pool; runId: string }): 
 // 输出摘要构建
 // ────────────────────────────────────────────────────────────────
 
-import type { EgressEvent, NetworkPolicy, RuntimeLimits } from "./runtime";
+import type { EgressEvent, NetworkPolicy, RuntimeLimits } from "@openslin/shared";
 import { sha256Hex, stableStringify, digestObject } from "./common";
 import { computeEvidenceDigestV1, deriveIsolation } from "./sealed";
 

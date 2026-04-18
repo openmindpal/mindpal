@@ -4,12 +4,59 @@ import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
 import { sha256Hex } from "../../lib/digest";
-import { getEmbeddingJob, getIngestJob, getIndexJob, getRetrievalLog, listEmbeddingJobs, listIngestJobs, listIndexJobs, listRetrievalLogs, searchChunksHybrid } from "../../skills/knowledge-rag/modules/repo";
+import { getEmbeddingJob, getIngestJob, getIndexJob, getRetrievalLog, listEmbeddingJobs, listIngestJobs, listIndexJobs, listRetrievalLogs, searchChunksHybrid, listDocuments, getDocument, getDocumentChunkCount } from "../../skills/knowledge-rag/modules/repo";
 import { getEvidenceRetentionPolicy, upsertEvidenceRetentionPolicy } from "../../skills/knowledge-rag/modules/evidenceGovernanceRepo";
 import { activateRetrievalStrategy, createRetrievalStrategy, createStrategyEvalRun, getLatestStrategyEvalSummary, getRetrievalStrategy, getStrategyEvalRun, listRetrievalStrategies, listStrategyEvalRuns, setStrategyEvalRunFinished } from "../../skills/knowledge-rag/modules/strategyRepo";
 import { createRetrievalEvalRun, createRetrievalEvalSet, getRetrievalEvalRun, getRetrievalEvalSet, listRetrievalEvalRuns, listRetrievalEvalSets, setRetrievalEvalRunFinished } from "../../skills/knowledge-rag/modules/qualityRepo";
 
 export const governanceKnowledgeRoutes: FastifyPluginAsync = async (app) => {
+  /* ── 文档管理 governance ────────────────────────────────────────── */
+
+  app.get("/governance/knowledge/documents", async (req) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "knowledge", action: "search" });
+    const decision = await requirePermission({ req, resourceType: "knowledge", action: "search" });
+    req.ctx.audit!.policyDecision = decision;
+    if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
+    const q = z
+      .object({
+        limit: z.coerce.number().int().positive().max(100).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
+        status: z.string().min(1).optional(),
+        sourceType: z.string().min(1).optional(),
+        search: z.string().min(1).optional(),
+      })
+      .parse(req.query);
+    const result = await listDocuments({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      limit: q.limit ?? 50,
+      offset: q.offset ?? 0,
+      status: q.status,
+      sourceType: q.sourceType,
+      search: q.search,
+    });
+    req.ctx.audit!.outputDigest = { count: result.documents.length, total: result.total };
+    return result;
+  });
+
+  app.get("/governance/knowledge/documents/:id", async (req, reply) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "knowledge", action: "search" });
+    const decision = await requirePermission({ req, resourceType: "knowledge", action: "search" });
+    req.ctx.audit!.policyDecision = decision;
+    if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
+    const params = z.object({ id: z.string().uuid() }).parse(req.params);
+    const doc = await getDocument({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, id: params.id });
+    if (!doc) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "文档不存在", "en-US": "Document not found" }, traceId: req.ctx.traceId });
+    const chunkCount = await getDocumentChunkCount({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, documentId: params.id });
+    req.ctx.audit!.outputDigest = { documentId: doc.id, version: doc.version, chunkCount };
+    return { document: doc, chunkCount };
+  });
+
+  /* ── 检索日志 ────────────────────────────────────────────────── */
+
   app.get("/governance/knowledge/retrieval-logs", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "knowledge", action: "search" });

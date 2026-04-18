@@ -1,8 +1,48 @@
 import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicyV1, normalizeRuntimeLimitsV1, validateCapabilityEnvelopeV1 } from "@openslin/shared";
-import { getEffectiveToolLimit } from "../governance/limitsRepo";
+import { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicy, normalizeLimits, validateCapabilityEnvelopeV1 } from "@openslin/shared";
 import { getEffectiveToolNetworkPolicy } from "../governance/toolNetworkPolicyRepo";
 import { sha256Hex } from "../../lib/digest";
+
+/* ── P1-5: secretDomain 最小权限实装 ── */
+
+/**
+ * 获取有效的 connectorInstanceIds
+ * - 基于 tenant/space 范围查询允许的 connector instances
+ * - 可通过 requestedIds 限制请求范围
+ */
+export async function getEffectiveConnectorInstanceIds(params: {
+  pool: any;
+  tenantId: string;
+  spaceId: string | null;
+  requestedIds?: string[];
+}): Promise<string[]> {
+  // 查询当前 scope 下允许的 connector instances
+  const scopeType = params.spaceId ? "space" : "tenant";
+  const scopeId = params.spaceId ?? params.tenantId;
+
+  const res = await params.pool.query(
+    `
+      SELECT id
+      FROM connector_instances
+      WHERE tenant_id = $1
+        AND scope_type = $2
+        AND scope_id = $3
+        AND status = 'enabled'
+      ORDER BY created_at DESC
+      LIMIT 100
+    `,
+    [params.tenantId, scopeType, scopeId],
+  );
+
+  const allowedIds = new Set((res.rows as any[]).map((r) => String(r.id)));
+
+  // 如果有请求的 IDs，取交集
+  if (params.requestedIds && params.requestedIds.length > 0) {
+    return params.requestedIds.filter((id) => allowedIds.has(id));
+  }
+
+  return Array.from(allowedIds);
+}
 
 export function networkPolicyDigest(allowedDomains: string[], rules: any[] | null) {
   const canon = allowedDomains.map((d) => d.trim()).filter(Boolean).sort();
@@ -36,6 +76,8 @@ export async function admitToolExecution(params: {
   limits?: any;
   requestedCapabilityEnvelope?: any;
   requireRequestedEnvelope: boolean;
+  /** P1-5: 请求的 connectorInstanceIds（可选），用于限制 secretDomain 范围 */
+  requestedConnectorInstanceIds?: string[];
 }) : Promise<ExecutionAdmissionResult> {
   const isPlainObject = (v: any) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
@@ -46,11 +88,15 @@ export async function admitToolExecution(params: {
 
   let limits = params.limits;
   if (!limits || typeof limits !== "object" || Array.isArray(limits)) limits = {};
-  if (limits.maxConcurrency === undefined) {
-    const tl = await getEffectiveToolLimit({ pool: params.pool, tenantId: params.tenantId, spaceId: params.spaceId, toolRef: params.toolRef });
-    if (tl) limits.maxConcurrency = tl.defaultMaxConcurrency;
-  }
-  const effLimits = normalizeRuntimeLimitsV1(limits);
+  const effLimits = normalizeLimits(limits);
+
+  // P1-5: 获取有效的 connectorInstanceIds
+  const effConnectorInstanceIds = await getEffectiveConnectorInstanceIds({
+    pool: params.pool,
+    tenantId: params.tenantId,
+    spaceId: params.spaceId,
+    requestedIds: params.requestedConnectorInstanceIds,
+  });
 
   const effectiveEnvelope: CapabilityEnvelopeV1 = {
     format: "capabilityEnvelope.v1",
@@ -66,8 +112,8 @@ export async function admitToolExecution(params: {
         rowFilters: params.toolContract.rowFilters ?? null,
       },
     },
-    secretDomain: { connectorInstanceIds: [] },
-    egressDomain: { networkPolicy: normalizeNetworkPolicyV1(effNetworkPolicy) },
+    secretDomain: { connectorInstanceIds: effConnectorInstanceIds },
+    egressDomain: { networkPolicy: normalizeNetworkPolicy(effNetworkPolicy) },
     resourceDomain: { limits: effLimits },
   };
 

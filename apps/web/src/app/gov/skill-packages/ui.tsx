@@ -1,29 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { apiFetch, text } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { fmtDateTime } from "@/lib/fmtDateTime";
+import { Badge, Card, PageHeader, Table, StructuredData, StatusBadge } from "@/components/ui";
+import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
-type ApiError = { errorCode?: string; message?: unknown; traceId?: string };
 type SkillPackagesResponse = ApiError & { items?: any[] };
 type SkillPackageUploadResponse = ApiError & { artifactId?: string; depsDigest?: string; signatureStatus?: string; scanSummary?: unknown; manifestSummary?: unknown };
 type ToolPublishResponse = ApiError & { toolRef?: string; version?: any };
-
-function toApiError(e: unknown): ApiError {
-  if (e && typeof e === "object") return e as ApiError;
-  return { errorCode: "ERROR", message: String(e) };
-}
-
-function errText(locale: string, e: ApiError | null) {
-  if (!e) return "";
-  const code = e.errorCode ?? "ERROR";
-  const msgVal = e.message;
-  const msg =
-    msgVal && typeof msgVal === "object" ? text(msgVal as Record<string, string>, locale) : msgVal != null ? String(msgVal) : "";
-  const trace = e.traceId ? ` traceId=${e.traceId}` : "";
-  return `${code}${msg ? `: ${msg}` : ""}${trace}`.trim();
-}
 
 function guessFormat(name: string): "zip" | "tgz" {
   const lower = name.toLowerCase();
@@ -238,7 +224,7 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
         title={t(props.locale, "gov.skillPackages.title")}
         actions={
           <>
-            <Badge>{status}</Badge>
+            <StatusBadge locale={props.locale} status={status} />
             <button onClick={refresh} disabled={busy}>
               {t(props.locale, "action.refresh")}
             </button>
@@ -280,7 +266,7 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
                   {t(props.locale, "action.copy")}
                 </button>
               </div>
-              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(uploadResult, null, 2)}</pre>
+              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><StructuredData data={uploadResult} /></pre>
             </div>
           ) : null}
         </Card>
@@ -312,7 +298,7 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
                   {t(props.locale, "action.copy")}
                 </button>
               </div>
-              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(importUrlResult, null, 2)}</pre>
+              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><StructuredData data={importUrlResult} /></pre>
             </div>
           ) : null}
         </Card>
@@ -354,7 +340,7 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
                   {t(props.locale, "action.copy")}
                 </button>
               </div>
-              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(importGitResult, null, 2)}</pre>
+              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><StructuredData data={importGitResult} /></pre>
             </div>
           ) : null}
         </Card>
@@ -373,7 +359,7 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
               <a href={`/gov/tools?lang=${encodeURIComponent(props.locale)}`}>{t(props.locale, "gov.skillPackages.openGovTools")}</a>
             ) : null}
           </div>
-          {pubResult ? <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(pubResult, null, 2)}</pre> : null}
+          {pubResult ? <div style={{ marginTop: 8 }}><StructuredData data={pubResult} /></div> : null}
         </Card>
 
         <Card>
@@ -389,14 +375,16 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
               </tr>
             </thead>
             <tbody>
-              {items.map((r, idx) => {
+              {items.length === 0 ? (
+                  <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                ) : items.map((r, idx) => {
                 const aid = String(r?.artifactId ?? r?.artifact_id ?? "");
                 return (
                   <tr key={`${aid || "x"}:${idx}`}>
                     <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{aid || "-"}</td>
                     <td>{String(r?.type ?? "-")}</td>
                     <td>{String(r?.format ?? "-")}</td>
-                    <td>{String(r?.createdAt ?? r?.created_at ?? "-")}</td>
+                    <td>{fmtDateTime(r?.createdAt ?? r?.created_at, props.locale)}</td>
                     <td>
                       <button onClick={() => copyText(aid)} disabled={busy || !aid}>
                         {t(props.locale, "action.copy")}
