@@ -7,6 +7,7 @@ import { t } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
 import type { IntentMode } from "@/lib/types";
 import { type RecentEntry, TERMINAL_RUN_STATUSES, NAV_ITEMS, loadRecent, addRecent } from "./homeHelpers";
+import type { FlowMessage } from "./homeHelpers";
 import StatusBar from "@/components/shell/StatusBar";
 import RecentAndFavorites from "@/components/shell/RecentAndFavorites";
 import BottomTray from "@/components/shell/BottomTray";
@@ -114,10 +115,11 @@ export default function HomeChat(props: { locale: string }) {
   useEffect(() => {
     if (prevBusyRef.current && !busy && voiceConvRef.current) {
       const lastAssistant = [...flow].reverse().find(
-        (it) => it.role === "assistant" && it.kind === "message" && (it as any).text
+        (it): it is { kind: "message" } & FlowMessage =>
+          it.kind === "message" && it.role === "assistant" && Boolean((it as FlowMessage).text)
       );
-      if (lastAssistant && (lastAssistant as any).text) {
-        void speak((lastAssistant as any).text).then(() => {
+      if (lastAssistant?.text) {
+        void speak(lastAssistant.text).then(() => {
           if (voiceConvRef.current) {
             startVoice();
           }

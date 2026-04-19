@@ -12,7 +12,9 @@
  * - RoleTransition: 角色间的状态转换
  */
 import type { Pool } from "pg";
-import { isConsensusReached, type ConsensusProposal, type ConsensusVote } from "@openslin/shared";
+import { isConsensusReached, type ConsensusProposal, type ConsensusVote, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:dynamicCoordinator" });
 import { executeReplan, getReplanAttemptCount, type ReplanContext, type ReplanResult, type GuardReviewResult, DEFAULT_REPLAN_CONFIG } from "./collabReplanner";
 import type { VerificationResult } from "../../../kernel/verifierAgent";
 
@@ -655,7 +657,7 @@ export async function bridgeReplan(params: {
       message: result.message,
     };
   } catch (err) {
-    console.error(`[bridgeReplan] replan 失败 collabRunId=${collabRunId}:`, err);
+    _logger.error("bridgeReplan failed", { collabRunId, error: (err as Error)?.message ?? err });
     return {
       replanned: false,
       escalated: false,

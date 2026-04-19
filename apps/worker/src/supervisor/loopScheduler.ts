@@ -13,6 +13,9 @@
  * - 节点心跳过期自动清理
  */
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:loopScheduler" });
 import type { Redis } from "ioredis";
 
 /* ================================================================== */
@@ -329,9 +332,7 @@ export async function executeMigration(
   );
 
   if ((res.rowCount ?? 0) > 0) {
-    console.log(
-      `[loopScheduler] migrating loop ${task.loopId}: ${task.fromNodeId} → ${task.toNodeId ?? "auto"} (${task.reason})`,
-    );
+    _logger.info("migrating loop", { loopId: task.loopId, from: task.fromNodeId, to: task.toNodeId ?? "auto", reason: task.reason });
     return true;
   }
   return false;
@@ -355,7 +356,7 @@ export async function tickLoopScheduler(deps: {
   const candidates = await detectMigrationCandidates(pool, redis);
   if (candidates.length === 0) return { migratedCount: 0 };
 
-  console.log(`[loopScheduler] ${candidates.length} migration candidates detected`);
+  _logger.info("migration candidates detected", { count: candidates.length });
 
   // 2. 执行迁移
   let migratedCount = 0;
@@ -364,12 +365,12 @@ export async function tickLoopScheduler(deps: {
       const migrated = await executeMigration(pool, task);
       if (migrated) migratedCount++;
     } catch (e: any) {
-      console.error(`[loopScheduler] migration failed for loop ${task.loopId}: ${e?.message}`);
+      _logger.error("migration failed", { loopId: task.loopId, err: e?.message });
     }
   }
 
   if (migratedCount > 0) {
-    console.log(`[loopScheduler] ${migratedCount} loops migrated`);
+    _logger.info("loops migrated", { count: migratedCount });
   }
 
   return { migratedCount };

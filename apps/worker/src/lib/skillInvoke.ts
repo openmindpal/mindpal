@@ -1,17 +1,53 @@
-import Module from "node:module";
 import crypto from "node:crypto";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { executeDynamicSkillSandboxed } from "../workflow/processor/dynamicSkillSandbox";
 import type { RuntimeLimits, NetworkPolicy } from "@openslin/shared";
+import { StructuredLogger, resolveString, resolveBoolean } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:skillInvoke" });
+
+/* ── Manifest 缓存 ──────────────────────────────────────────── */
+interface CachedManifest {
+  manifest: any;
+  entryRel: string;
+}
+const _manifestCache = new Map<string, CachedManifest>();
+
+/**
+ * 从缓存中获取 manifest，首次调用时从磁盘加载并缓存。
+ */
+async function getCachedManifest(artifactDir: string): Promise<CachedManifest> {
+  const cached = _manifestCache.get(artifactDir);
+  if (cached) return cached;
+  const manifestPath = path.join(artifactDir, "manifest.json");
+  const manifestRaw = await fs.readFile(manifestPath, "utf8");
+  const manifest = JSON.parse(manifestRaw);
+  const entryRel = String(manifest?.entry ?? "");
+  const entry: CachedManifest = { manifest, entryRel };
+  _manifestCache.set(artifactDir, entry);
+  _logger.info("manifest cached", { artifactDir });
+  return entry;
+}
+
+/**
+ * 清除 manifest 缓存。不传参数时清除全部。
+ */
+export function invalidateManifestCache(skillDir?: string): void {
+  if (skillDir) {
+    _manifestCache.delete(skillDir);
+  } else {
+    _manifestCache.clear();
+  }
+}
 
 /**
  * 获取 skill 包的搜索根目录列表。
  * 与 dynamicSkill.ts 中 getSkillRoots 保持一致。
  */
 function getSkillRoots(): string[] {
-  const raw = String(process.env.SKILL_PACKAGE_ROOTS ?? "");
+  const raw = resolveString("SKILL_PACKAGE_ROOTS").value;
   const parts = raw.split(/[;,]/g).map((x) => x.trim()).filter(Boolean);
   if (parts.length) return parts.map((p) => path.resolve(p));
   const defaults = [
@@ -38,7 +74,7 @@ const FIRST_PARTY_LIMITS: RuntimeLimits = {
  * 设置环境变量 SKILL_NETWORK_ALLOW_ALL=1 可恢复开发模式（仅用于本地调试）。
  */
 const FIRST_PARTY_NETWORK_POLICY: NetworkPolicy = {
-  allowedDomains: process.env.SKILL_NETWORK_ALLOW_ALL === "1" ? ["*"] : [],
+  allowedDomains: resolveBoolean("SKILL_NETWORK_ALLOW_ALL").value ? ["*"] : [],
   rules: [],
 };
 
@@ -76,13 +112,10 @@ export async function invokeFirstPartySkill<TInput = any, TOutput = any>(params:
   }
   if (!artifactDir) throw new Error(`skill_not_found:${params.skillDir}`);
 
-  const manifestPath = path.join(artifactDir, "manifest.json");
-  const manifestRaw = await fs.readFile(manifestPath, "utf8");
-  const manifest = JSON.parse(manifestRaw);
-  const entryRel = String(manifest?.entry ?? "");
-  if (!entryRel) throw new Error(`skill_missing_entry:${params.skillDir}`);
+  const cached = await getCachedManifest(artifactDir);
+  if (!cached.entryRel) throw new Error(`skill_missing_entry:${params.skillDir}`);
 
-  const entryPath = path.resolve(artifactDir, entryRel);
+  const entryPath = path.resolve(artifactDir, cached.entryRel);
   const traceId = params.traceId || crypto.randomUUID();
   const toolRef = `${params.skillDir}@first-party`;
   const depsDigest = `first-party:${params.skillDir}`;
@@ -118,7 +151,8 @@ export async function invokeFirstPartySkill<TInput = any, TOutput = any>(params:
     });
     return result.output as TOutput;
   } catch (e: any) {
-    console.warn(`[invokeFirstPartySkill] sandbox execution failed for ${params.skillDir}`, {
+    _logger.warn("sandbox execution failed", {
+      skillDir: params.skillDir,
       traceId,
       error: String(e?.message ?? e),
     });
@@ -128,3 +162,29 @@ export async function invokeFirstPartySkill<TInput = any, TOutput = any>(params:
   }
 }
 
+/**
+ * 预热高频 Skill：预加载 manifest 到缓存。
+ * 建议在服务启动时调用，传入常用 Skill 目录名列表。
+ */
+export async function warmupSkills(skillDirs: string[]): Promise<void> {
+  const roots = getSkillRoots();
+  let loaded = 0;
+  for (const dir of skillDirs) {
+    for (const root of roots) {
+      const candidate = path.resolve(root, dir);
+      if (existsSync(candidate)) {
+        try {
+          await getCachedManifest(candidate);
+          loaded++;
+        } catch (e: unknown) {
+          _logger.warn("warmup manifest load failed", {
+            skillDir: dir,
+            error: String((e as Error)?.message ?? e),
+          });
+        }
+        break;
+      }
+    }
+  }
+  _logger.info("skill warmup complete", { requested: skillDirs.length, loaded });
+}

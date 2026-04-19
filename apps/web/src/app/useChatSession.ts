@@ -8,47 +8,26 @@ import type { ChatFlowItem, ToolExecState, FrontendTaskQueueEntry, FrontendTaskD
 
 const SESSION_KEY = "openslin_chat_session";
 const TASK_QUEUE_KEY = "openslin_task_queue_state";
+const MODEL_KEY = "openslin_selected_model";
 
-function readSavedSession(): { conversationId: string; flow: ChatFlowItem[]; toolExecStates: Record<string, ToolExecState> } {
-  if (typeof window === "undefined") {
-    return { conversationId: "", flow: [], toolExecStates: {} };
-  }
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return { conversationId: "", flow: [], toolExecStates: {} };
-    const saved = JSON.parse(raw) as { conversationId?: string; flow?: ChatFlowItem[]; toolExecStates?: Record<string, ToolExecState> };
-    const restored: Record<string, ToolExecState> = {};
-    if (saved.toolExecStates && typeof saved.toolExecStates === "object") {
-      for (const [k, v] of Object.entries(saved.toolExecStates)) {
-        if (v && (v.status === "done" || v.status === "error")) restored[k] = v;
-      }
-    }
-    return {
-      conversationId: saved.conversationId ?? "",
-      flow: Array.isArray(saved.flow) ? saved.flow : [],
-      toolExecStates: restored,
-    };
-  } catch {
-    return { conversationId: "", flow: [], toolExecStates: {} };
-  }
-}
+const EMPTY_SESSION = { conversationId: "", flow: [] as ChatFlowItem[], toolExecStates: {} as Record<string, ToolExecState> };
+const EMPTY_TASK_QUEUE = { pendingEntries: [] as FrontendTaskQueueEntry[], dependencies: [] as FrontendTaskDependency[] };
 
 /** P3-13: 读取保存的任务队列状态 */
-function readSavedTaskQueueState(): {
+export function readSavedTaskQueueState(): {
   pendingEntries: FrontendTaskQueueEntry[];
   dependencies: FrontendTaskDependency[];
 } {
-  if (typeof window === "undefined") return { pendingEntries: [], dependencies: [] };
   try {
     const raw = localStorage.getItem(TASK_QUEUE_KEY);
-    if (!raw) return { pendingEntries: [], dependencies: [] };
+    if (!raw) return EMPTY_TASK_QUEUE;
     const saved = JSON.parse(raw);
     return {
       pendingEntries: Array.isArray(saved.pendingEntries) ? saved.pendingEntries : [],
       dependencies: Array.isArray(saved.dependencies) ? saved.dependencies : [],
     };
   } catch {
-    return { pendingEntries: [], dependencies: [] };
+    return EMPTY_TASK_QUEUE; // expected: JSON.parse may throw
   }
 }
 
@@ -64,10 +43,37 @@ export interface ModelBinding {
  * model bindings, and startNew.
  */
 export default function useChatSession({ locale }: { locale: string }) {
-  const [initialSession] = useState(() => readSavedSession());
-  const [conversationId, setConversationId] = useState(initialSession.conversationId);
-  const [flow, setFlow] = useState<ChatFlowItem[]>(initialSession.flow);
-  const [toolExecStates, setToolExecStates] = useState<Record<string, ToolExecState>>(initialSession.toolExecStates);
+  // 同步从 localStorage 恢复会话状态
+  const [conversationId, setConversationId] = useState(() => {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (raw) { const s = JSON.parse(raw); return s.conversationId ?? ""; }
+    } catch { /* ignore */ }
+    return "";
+  });
+  const [flow, setFlow] = useState<ChatFlowItem[]>(() => {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (raw) { const s = JSON.parse(raw); return Array.isArray(s.flow) ? s.flow : []; }
+    } catch { /* ignore */ }
+    return [];
+  });
+  const [toolExecStates, setToolExecStates] = useState<Record<string, ToolExecState>>(() => {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        const restored: Record<string, ToolExecState> = {};
+        if (s.toolExecStates && typeof s.toolExecStates === "object") {
+          for (const [k, v] of Object.entries(s.toolExecStates)) {
+            if (v && ((v as ToolExecState).status === "done" || (v as ToolExecState).status === "error")) restored[k] = v as ToolExecState;
+          }
+        }
+        return restored;
+      }
+    } catch { /* ignore */ }
+    return {};
+  });
   const [bindings, setBindings] = useState<ModelBinding[]>([]);
   const [selectedModelRef, setSelectedModelRef] = useState<string>("");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -75,8 +81,6 @@ export default function useChatSession({ locale }: { locale: string }) {
   const abortRef = useRef<AbortController | null>(null);
   const lastRetryMsgRef = useRef<string | null>(null);
   const retryCountRef = useRef<Map<string, number>>(new Map());
-
-  const [sessionRestored] = useState(true);
 
   const selectedBinding = useMemo(
     () => bindings.find((b) => b.modelRef === selectedModelRef) ?? bindings[0] ?? null,
@@ -87,6 +91,7 @@ export default function useChatSession({ locale }: { locale: string }) {
     ? `${t(locale, "home.modelPicker")}: ${selectedBinding.provider}:${selectedBinding.model}`
     : t(locale, "home.modelPicker");
 
+  /* ─── Backend session validation ─── */
   useEffect(() => {
     if (!conversationId) return;
     let cancelled = false;
@@ -104,8 +109,8 @@ export default function useChatSession({ locale }: { locale: string }) {
     return () => { cancelled = true; };
   }, [conversationId, locale]);
 
+  /* ─── 持久化会话状态 ─── */
   useEffect(() => {
-    if (!sessionRestored) return;
     try {
       if (flow.length || conversationId) {
         const persistable: Record<string, ToolExecState> = {};
@@ -116,8 +121,8 @@ export default function useChatSession({ locale }: { locale: string }) {
       } else {
         localStorage.removeItem(SESSION_KEY);
       }
-    } catch { /* ignore */ }
-  }, [flow, conversationId, toolExecStates, sessionRestored]);
+    } catch { /* expected: storage may fail silently */ }
+  }, [flow, conversationId, toolExecStates]);
 
   /* ─── Sync html lang attribute on mount ─── */
   useEffect(() => { setLocale(locale); }, [locale]);
@@ -131,7 +136,7 @@ export default function useChatSession({ locale }: { locale: string }) {
           const data = await res.json();
           const list = Array.isArray(data.bindings) ? data.bindings : [];
           setBindings(list);
-          const savedModelRef = localStorage.getItem("openslin_selected_model");
+          const savedModelRef = localStorage.getItem(MODEL_KEY);
           if (savedModelRef && list.some((b: any) => b.modelRef === savedModelRef)) {
             setSelectedModelRef(savedModelRef);
           } else if (list.length > 0) {
@@ -148,7 +153,7 @@ export default function useChatSession({ locale }: { locale: string }) {
   /* ─── Persist selected model ─── */
   useEffect(() => {
     if (selectedModelRef) {
-      localStorage.setItem("openslin_selected_model", selectedModelRef);
+      try { localStorage.setItem(MODEL_KEY, selectedModelRef); } catch { /* ignore */ }
     }
   }, [selectedModelRef]);
 
@@ -176,11 +181,11 @@ export default function useChatSession({ locale }: { locale: string }) {
     setConversationId("");
     setFlow([]);
     setToolExecStates({});
-    try { localStorage.removeItem(SESSION_KEY); } catch {}
-    try { localStorage.removeItem(TASK_QUEUE_KEY); } catch {}
+    try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(TASK_QUEUE_KEY); } catch { /* ignore */ }
   }, []);
 
-  /** P3-13: 从后端拉取任务队列状态并保存到 localStorage */
+  /** P3-13: 从后端拉取任务队列状态并保存 */
   const restoreTaskQueueState = useCallback(async (sessionId: string) => {
     try {
       const res = await apiFetch(

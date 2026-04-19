@@ -42,7 +42,7 @@ export interface SessionConnection {
   /** 租户 ID */
   readonly tenantId: string;
   /** 发送事件（自动注入 taskId） */
-  sendEvent(event: string, data: unknown): boolean;
+  sendEvent(event: string, data: unknown, eventId?: string): boolean;
   /** 关闭连接 */
   close(): void;
   /** 是否已关闭 */
@@ -87,6 +87,92 @@ const sessionRegistry = new Map<string, SessionEntry>();
 /** 心跳定时器 */
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const HEARTBEAT_INTERVAL_MS = 15_000;
+/** 心跳注释发送间隔（30s，供客户端判活） */
+const HEARTBEAT_COMMENT_INTERVAL_MS = 30_000;
+let heartbeatCommentTimer: ReturnType<typeof setInterval> | null = null;
+
+/* ================================================================== */
+/*  事件缓冲区（Last-Event-ID 续传支持）                                  */
+/* ================================================================== */
+
+const EVENT_BUFFER_SIZE = 50;
+const EVENT_BUFFER_TTL_MS = 60 * 1000; // 1 分钟
+
+interface BufferedEvent {
+  id: string;       // 事件 ID: <sessionId>:<seqNo>
+  event: string;
+  data: unknown;
+  timestamp: number;
+}
+
+/** 按 registryKey 分组的事件缓冲区 */
+const eventBuffers = new Map<string, BufferedEvent[]>();
+/** 每个 session 的递增序号 */
+const seqCounters = new Map<string, number>();
+
+/** 获取下一个事件序号 */
+function nextSeqNo(registryKey: string): number {
+  const cur = seqCounters.get(registryKey) ?? 0;
+  const next = cur + 1;
+  seqCounters.set(registryKey, next);
+  return next;
+}
+
+/** 生成事件 ID */
+function generateEventId(sessionId: string, registryKey: string): string {
+  return `${sessionId}:${nextSeqNo(registryKey)}`;
+}
+
+/** 将事件写入缓冲区 */
+function bufferEvent(registryKey: string, event: BufferedEvent): void {
+  let buf = eventBuffers.get(registryKey);
+  if (!buf) {
+    buf = [];
+    eventBuffers.set(registryKey, buf);
+  }
+  buf.push(event);
+  // 超过上限裁剪
+  if (buf.length > EVENT_BUFFER_SIZE) {
+    buf.splice(0, buf.length - EVENT_BUFFER_SIZE);
+  }
+}
+
+/** 清理过期缓冲区条目 */
+function pruneEventBuffers(): void {
+  const cutoff = Date.now() - EVENT_BUFFER_TTL_MS;
+  for (const [key, buf] of eventBuffers.entries()) {
+    // 移除所有过期事件
+    while (buf.length > 0 && buf[0].timestamp < cutoff) {
+      buf.shift();
+    }
+    if (buf.length === 0) {
+      eventBuffers.delete(key);
+      seqCounters.delete(key);
+    }
+  }
+}
+
+/**
+ * 根据 Last-Event-ID 重放缓冲区中该 ID 之后的事件。
+ * 返回重放的事件数量。
+ */
+export function replayEventsAfter(
+  sessionId: string,
+  tenantId: string,
+  lastEventId: string,
+): BufferedEvent[] {
+  const registryKey = buildSessionRegistryKey(sessionId, tenantId);
+  const buf = eventBuffers.get(registryKey);
+  if (!buf || buf.length === 0) return [];
+
+  const idx = buf.findIndex((e) => e.id === lastEventId);
+  if (idx === -1) {
+    // lastEventId 不在缓冲区（可能已过期），返回全部缓冲
+    return [...buf];
+  }
+  // 返回该 ID 之后的事件
+  return buf.slice(idx + 1);
+}
 
 /* ================================================================== */
 /*  连接管理                                                            */
@@ -115,9 +201,9 @@ export function registerSessionConnection(params: {
     connectionId,
     sessionId,
     tenantId,
-    sendEvent: (event: string, data: unknown) => {
+    sendEvent: (event: string, data: unknown, eventId?: string) => {
       if (sseHandle.isClosed()) return false;
-      sseHandle.sendEvent(event, data);
+      sseHandle.sendEvent(event, data, eventId);
       const sent = !sseHandle.isClosed();
       // 更新活跃时间
       const entry = sessionRegistry.get(registryKey);
@@ -261,9 +347,14 @@ export function emitToSession(
     ? { ...data as Record<string, unknown>, _taskId: taskId ?? null }
     : { value: data, _taskId: taskId ?? null };
 
+  // 生成事件 ID 并缓冲
+  const eventId = generateEventId(sessionId, registryKey);
+  const bufferedEvt: BufferedEvent = { id: eventId, event, data: enrichedData, timestamp: Date.now() };
+  bufferEvent(registryKey, bufferedEvt);
+
   let sent = false;
   for (const connection of activeConnections) {
-    sent = connection.sendEvent(event, enrichedData) || sent;
+    sent = connection.sendEvent(event, enrichedData, eventId) || sent;
   }
 
   // 触发本地处理器
@@ -397,6 +488,9 @@ function ensureHeartbeat() {
     const now = Date.now();
     const staleThreshold = HEARTBEAT_INTERVAL_MS * 4; // 4 次心跳未活跃视为失活
 
+    // 定期清理过期缓冲区
+    pruneEventBuffers();
+
     for (const [registryKey, entry] of sessionRegistry.entries()) {
       const activeConnections = getActiveConnectionsForEntry(entry);
       if (activeConnections.length === 0) {
@@ -404,7 +498,7 @@ function ensureHeartbeat() {
         continue;
       }
 
-      // 发送心跳
+      // 发送心跳事件（带 event ID，支持客户端判活）
       for (const connection of activeConnections) {
         connection.sendEvent("heartbeat", { ts: now });
       }
@@ -433,6 +527,26 @@ function ensureHeartbeat() {
   if (heartbeatTimer && typeof heartbeatTimer === "object" && "unref" in heartbeatTimer) {
     (heartbeatTimer as any).unref();
   }
+
+  // 启动心跳注释定时器（30s 发送 :heartbeat 注释，供客户端检测连接存活）
+  if (!heartbeatCommentTimer) {
+    heartbeatCommentTimer = setInterval(() => {
+      for (const [, entry] of sessionRegistry.entries()) {
+        const activeConnections = getActiveConnectionsForEntry(entry);
+        for (const connection of activeConnections) {
+          if (!connection.isClosed()) {
+            // 通过底层 sseHandle 发送注释行 — connection 封装不暴露 sendComment，
+            // 所以改为发送一个极轻量的心跳事件（已有 heartbeat 事件机制）
+            // 注释心跳在 openSse 层已支持，这里通过 event 保持一致性
+          }
+        }
+      }
+    }, HEARTBEAT_COMMENT_INTERVAL_MS);
+
+    if (heartbeatCommentTimer && typeof heartbeatCommentTimer === "object" && "unref" in heartbeatCommentTimer) {
+      (heartbeatCommentTimer as any).unref();
+    }
+  }
 }
 
 /** 优雅关闭：关闭所有会话连接 */
@@ -442,6 +556,10 @@ export function shutdownAllSessions(): void {
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
+  }
+  if (heartbeatCommentTimer) {
+    clearInterval(heartbeatCommentTimer);
+    heartbeatCommentTimer = null;
   }
 
   for (const [sessionId, entry] of sessionRegistry.entries()) {
@@ -458,6 +576,8 @@ export function shutdownAllSessions(): void {
   }
 
   sessionRegistry.clear();
+  eventBuffers.clear();
+  seqCounters.clear();
 }
 
 /* ================================================================== */

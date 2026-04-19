@@ -7,7 +7,7 @@ import { Errors } from "../lib/errors";
 import { setAuditContext } from "../modules/audit/context";
 import { requirePermission } from "../modules/auth/guard";
 import { PERM } from "@openslin/shared";
-import { authorize } from "../modules/auth/authz";
+import { authorize, invalidateRbacCache } from "../modules/auth/authz";
 import { bumpPolicyCacheEpoch } from "../modules/auth/policyCacheEpochRepo";
 
 function isSafeFieldName(name: string) {
@@ -16,28 +16,41 @@ function isSafeFieldName(name: string) {
   return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
 }
 
-function normalizeRowFilters(input: any): { normalized: any | null; usedPayloadPaths: string[] } {
+/** 行级过滤器输入（未验证，由 normalizeRowFilters 归一化） */
+interface RowFilterInput {
+  kind?: string;
+  field?: string;
+  value?: string | number | boolean;
+  rules?: RowFilterInput[];
+  rule?: RowFilterInput;
+  roles?: string[];
+  orgField?: string;
+  includeDescendants?: boolean;
+  expr?: unknown;
+}
+
+function normalizeRowFilters(input: RowFilterInput | null | undefined): { normalized: RowFilterInput | null; usedPayloadPaths: string[] } {
   if (input === null || input === undefined) return { normalized: null, usedPayloadPaths: [] };
   if (!input || typeof input !== "object" || Array.isArray(input)) throw Errors.policyExprInvalid("rowFilters 必须是对象");
-  const kind = String((input as any).kind ?? "");
+  const kind = String(input.kind ?? "");
   if (kind === "owner_only") return { normalized: { kind: "owner_only" }, usedPayloadPaths: [] };
   if (kind === "payload_field_eq_subject") {
-    const field = String((input as any).field ?? "");
+    const field = String(input.field ?? "");
     if (!isSafeFieldName(field)) throw Errors.policyExprInvalid("rowFilters.field 非法");
     return { normalized: { kind: "payload_field_eq_subject", field }, usedPayloadPaths: [field] };
   }
   if (kind === "payload_field_eq_literal") {
-    const field = String((input as any).field ?? "");
+    const field = String(input.field ?? "");
     if (!isSafeFieldName(field)) throw Errors.policyExprInvalid("rowFilters.field 非法");
-    const value = (input as any).value;
+    const value = input.value;
     const t = typeof value;
     if (t !== "string" && t !== "number" && t !== "boolean") throw Errors.policyExprInvalid("rowFilters.value 类型非法");
     return { normalized: { kind: "payload_field_eq_literal", field, value }, usedPayloadPaths: [field] };
   }
   if (kind === "or") {
-    const rules = (input as any).rules;
+    const rules = input.rules;
     if (!Array.isArray(rules) || rules.length === 0) throw Errors.policyExprInvalid("rowFilters.or.rules 不能为空");
-    const out: any[] = [];
+    const out: RowFilterInput[] = [];
     const paths = new Set<string>();
     for (const r of rules) {
       const sub = normalizeRowFilters(r);
@@ -47,9 +60,9 @@ function normalizeRowFilters(input: any): { normalized: any | null; usedPayloadP
     return { normalized: { kind: "or", rules: out }, usedPayloadPaths: Array.from(paths) };
   }
   if (kind === "and") {
-    const rules = (input as any).rules;
+    const rules = input.rules;
     if (!Array.isArray(rules) || rules.length === 0) throw Errors.policyExprInvalid("rowFilters.and.rules 不能为空");
-    const out: any[] = [];
+    const out: RowFilterInput[] = [];
     const paths = new Set<string>();
     for (const r of rules) {
       const sub = normalizeRowFilters(r);
@@ -59,28 +72,28 @@ function normalizeRowFilters(input: any): { normalized: any | null; usedPayloadP
     return { normalized: { kind: "and", rules: out }, usedPayloadPaths: Array.from(paths) };
   }
   if (kind === "not") {
-    const rule = (input as any).rule;
+    const rule = input.rule;
     if (!rule || typeof rule !== "object") throw Errors.policyExprInvalid("rowFilters.not.rule 必须是对象");
     const sub = normalizeRowFilters(rule);
     if (!sub.normalized) throw Errors.policyExprInvalid("rowFilters.not.rule 无效");
     return { normalized: { kind: "not", rule: sub.normalized }, usedPayloadPaths: sub.usedPayloadPaths };
   }
   if (kind === "space_member") {
-    const roles = (input as any).roles;
-    const normalized: any = { kind: "space_member" };
+    const roles = input.roles;
+    const normalized: RowFilterInput = { kind: "space_member" };
     if (Array.isArray(roles) && roles.length > 0) {
       normalized.roles = roles.map(String).filter(Boolean);
     }
     return { normalized, usedPayloadPaths: [] };
   }
   if (kind === "org_hierarchy") {
-    const orgField = String((input as any).orgField ?? "orgUnitId");
+    const orgField = String(input.orgField ?? "orgUnitId");
     if (!isSafeFieldName(orgField)) throw Errors.policyExprInvalid("rowFilters.orgField 非法");
-    const includeDescendants = Boolean((input as any).includeDescendants ?? true);
+    const includeDescendants = Boolean(input.includeDescendants ?? true);
     return { normalized: { kind: "org_hierarchy", orgField, includeDescendants }, usedPayloadPaths: [orgField] };
   }
   if (kind === "expr") {
-    const v = validatePolicyExpr((input as any).expr);
+    const v = validatePolicyExpr(input.expr);
     if (!v.ok) throw Errors.policyExprInvalid(v.message);
     return { normalized: { kind: "expr", expr: v.expr }, usedPayloadPaths: v.usedPayloadPaths };
   }
@@ -143,6 +156,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
       body.name,
     ]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "role_created" });
     req.ctx.audit!.outputDigest = { roleId: id, policyCacheEpochBumped: true, ...epoch };
     return { role: { id, tenantId: subject.tenantId, name: body.name } };
   });
@@ -210,6 +224,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     await app.db.query("DELETE FROM role_bindings WHERE role_id = $1", [params.roleId]);
     await app.db.query("DELETE FROM roles WHERE tenant_id = $1 AND id = $2", [subject.tenantId, params.roleId]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "role_deleted" });
     req.ctx.audit!.outputDigest = { roleId: params.roleId, policyCacheEpochBumped: true, ...epoch };
     return { ok: true };
   });
@@ -243,6 +258,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     );
     const actor = req.ctx.subject!;
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: actor.tenantId, scopeType: "tenant", scopeId: actor.tenantId });
+    await invalidateRbacCache({ tenantId: actor.tenantId, scope: "tenant", reason: "permission_registered" });
     req.ctx.audit!.outputDigest = { permissionId: res.rows[0].id, policyCacheEpochBumped: true, ...epoch };
     return { permissionId: res.rows[0].id };
   });
@@ -310,6 +326,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
       ],
     );
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "permission_granted" });
     req.ctx.audit!.outputDigest = {
       roleId: params.roleId,
       permissionId: permRes.rows[0].id,
@@ -333,6 +350,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     if (!perm.rowCount) return { ok: true };
     await app.db.query("DELETE FROM role_permissions WHERE role_id = $1 AND permission_id = $2", [params.roleId, perm.rows[0].id]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "permission_revoked" });
     req.ctx.audit!.outputDigest = { roleId: params.roleId, permissionId: perm.rows[0].id, policyCacheEpochBumped: true, ...epoch };
     return { ok: true };
   });
@@ -382,6 +400,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
       [body.subjectId, body.roleId, body.scopeType, body.scopeId],
     );
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: actor.tenantId, scopeType: body.scopeType, scopeId: body.scopeId });
+    await invalidateRbacCache({ tenantId: actor.tenantId, subjectId: body.subjectId, scope: "subject", reason: "binding_created" });
     req.ctx.audit!.outputDigest = { bindingId: insert.rows[0].id, subjectId: body.subjectId, roleId: body.roleId, scopeType: body.scopeType, policyCacheEpochBumped: true, ...epoch };
     return { bindingId: insert.rows[0].id };
   });
@@ -450,6 +469,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     const scopeType = String(existing.rows[0].scope_type ?? "");
     const scopeId = String(existing.rows[0].scope_id ?? "");
     const epoch = scopeType === "tenant" || scopeType === "space" ? await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: actor.tenantId, scopeType: scopeType as any, scopeId }) : null;
+    await invalidateRbacCache({ tenantId: actor.tenantId, scope: "tenant", reason: "binding_deleted" });
     req.ctx.audit!.outputDigest = { bindingId: params.bindingId, policyCacheEpochBumped: Boolean(epoch), ...(epoch ?? {}) };
     return { ok: true };
   });
@@ -582,6 +602,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
       [subject.tenantId, body.name, body.resourceType, body.combiningAlgorithm ?? "deny_overrides", body.status ?? "draft", body.description ?? ""],
     );
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "abac_policy_set_created" });
     req.ctx.audit!.outputDigest = { policySetId: res.rows[0].policy_set_id, policyCacheEpochBumped: true, ...epoch };
     return { policySetId: res.rows[0].policy_set_id };
   });
@@ -627,6 +648,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
     await app.db.query(`UPDATE abac_policy_sets SET ${sets.join(", ")} WHERE tenant_id = $1 AND policy_set_id = $2`, args);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "abac_policy_set_updated" });
     req.ctx.audit!.outputDigest = { policySetId: params.policySetId, policyCacheEpochBumped: true, ...epoch };
     return { ok: true };
   });
@@ -638,6 +660,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     const subject = req.ctx.subject!;
     await app.db.query("DELETE FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2", [subject.tenantId, params.policySetId]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "abac_policy_set_deleted" });
     req.ctx.audit!.outputDigest = { policySetId: params.policySetId, policyCacheEpochBumped: true, ...epoch };
     return { ok: true };
   });
@@ -675,6 +698,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
       [params.policySetId, subject.tenantId, body.name, body.description ?? "", body.resourceType, JSON.stringify(body.actions), body.priority ?? 100, body.effect, JSON.stringify(body.conditionExpr), body.enabled ?? true, body.spaceId ?? null],
     );
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "abac_rule_created" });
     req.ctx.audit!.outputDigest = { ruleId: res.rows[0].rule_id, policyCacheEpochBumped: true, ...epoch };
     return { ruleId: res.rows[0].rule_id };
   });
@@ -715,6 +739,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
     await app.db.query(`UPDATE abac_policy_rules SET ${sets.join(", ")} WHERE tenant_id = $1 AND rule_id = $2`, args);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "abac_rule_updated" });
     req.ctx.audit!.outputDigest = { ruleId: params.ruleId, policyCacheEpochBumped: true, ...epoch };
     return { ok: true };
   });
@@ -726,6 +751,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     const subject = req.ctx.subject!;
     await app.db.query("DELETE FROM abac_policy_rules WHERE tenant_id = $1 AND rule_id = $2", [subject.tenantId, params.ruleId]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
+    await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "abac_rule_deleted" });
     req.ctx.audit!.outputDigest = { ruleId: params.ruleId, policyCacheEpochBumped: true, ...epoch };
     return { ok: true };
   });

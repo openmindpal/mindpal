@@ -27,6 +27,7 @@ import { decryptStepInputIfNeeded as decryptStepInputIfNeededWorker } from "../.
 import { decryptSecretPayload, encryptSecretEnvelope } from "../../modules/secrets/envelope";
 import { dispatchAuditOutboxBatch } from "../../modules/audit/outboxRepo";
 import { clearAuthzCache } from "../../modules/auth/authz";
+import { invalidateToolCatalogQueryCache } from "../../modules/agentContext";
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
 
@@ -48,6 +49,7 @@ export {
   describe, expect, it, beforeAll, afterAll, vi,
   redactString,
   clearAuthzCache,
+  invalidateToolCatalogQueryCache,
   processAuditExport,
   processKnowledgeEmbeddingJob,
   processKnowledgeIngestJob,
@@ -101,8 +103,9 @@ export function capabilityEnvelopeV1(params: {
 
 // ─── 种子数据 ─────────────────────────────────────────────────────────
 export async function seed() {
-  // 清除授权缓存，确保测试使用最新的角色绑定
+  // 清除授权缓存和工具目录缓存，确保测试使用最新的角色绑定和工具配置
   clearAuthzCache();
+  invalidateToolCatalogQueryCache();
   
   await pool.query("INSERT INTO tenants (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", ["tenant_dev"]);
   await pool.query(
@@ -273,13 +276,13 @@ export async function seed() {
 
   await pool.query(
     `
-      INSERT INTO tool_definitions (tenant_id, name, display_name, scope, resource_type, action, idempotency_required, risk_level, approval_required)
+      INSERT INTO tool_definitions (tenant_id, name, display_name, scope, resource_type, action, idempotency_required, risk_level, approval_required, source_layer)
       VALUES
-        ($1, 'entity.create', $2, 'write', 'entity', 'create', true, 'high', true),
-        ($1, 'entity.update', $3, 'write', 'entity', 'update', true, 'high', true),
-        ($1, 'entity.delete', $4, 'write', 'entity', 'delete', true, 'high', true),
-        ($1, 'collab.guard', $5, 'read', 'agent_runtime', 'collab.guard', false, 'low', false),
-        ($1, 'collab.review', $6, 'write', 'agent_runtime', 'collab.review', true, 'low', false)
+        ($1, 'entity.create', $2, 'write', 'entity', 'create', true, 'high', true, 'builtin'),
+        ($1, 'entity.update', $3, 'write', 'entity', 'update', true, 'high', true, 'builtin'),
+        ($1, 'entity.delete', $4, 'write', 'entity', 'delete', true, 'high', true, 'builtin'),
+        ($1, 'collab.guard', $5, 'read', 'agent_runtime', 'collab.guard', false, 'low', false, 'builtin'),
+        ($1, 'collab.review', $6, 'write', 'agent_runtime', 'collab.review', true, 'low', false, 'builtin')
       ON CONFLICT (tenant_id, name) DO UPDATE
       SET display_name = COALESCE(tool_definitions.display_name, EXCLUDED.display_name),
           scope = COALESCE(tool_definitions.scope, EXCLUDED.scope),
@@ -288,6 +291,7 @@ export async function seed() {
           idempotency_required = COALESCE(tool_definitions.idempotency_required, EXCLUDED.idempotency_required),
           risk_level = COALESCE(tool_definitions.risk_level, EXCLUDED.risk_level),
           approval_required = COALESCE(tool_definitions.approval_required, EXCLUDED.approval_required),
+          source_layer = EXCLUDED.source_layer,
           updated_at = now()
     `,
     [
@@ -324,6 +328,62 @@ export async function seed() {
       { fields: { finalAnswer: { type: "string" }, citationsCount: { type: "number" }, nextActions: { type: "json" } } },
     ],
   );
+
+  // ── 启用工具（tool_rollouts）——discoverEnabledTools 需要此表才能识别已启用工具 ──
+  await pool.query(
+    `
+      INSERT INTO tool_rollouts (tenant_id, scope_type, scope_id, tool_ref, enabled)
+      VALUES
+        ($1, 'space', $2, 'entity.create@1', true),
+        ($1, 'space', $2, 'entity.update@1', true),
+        ($1, 'space', $2, 'entity.delete@1', true),
+        ($1, 'space', $2, 'collab.guard@1', true),
+        ($1, 'space', $2, 'collab.review@1', true)
+      ON CONFLICT (tenant_id, scope_type, scope_id, tool_ref) DO UPDATE SET enabled = true, updated_at = now()
+    `,
+    ["tenant_dev", "space_dev"],
+  );
+
+  // ── 重新插入路由策略（上方 DELETE FROM routing_policies 会清除之前的 INSERT）──
+  // 覆盖所有可能用到的 purpose，确保内部 LLM 调用都能路由到 mock 模型
+  const routingPurposes = [
+    "orchestrator.turn",
+    "orchestrator.turn.retry",
+    "orchestrator.turn.validation",
+    "agent-runtime.plan",
+    "collab-runtime.plan",
+    "dispatch.stream.execute",
+    "dispatch.stream.classify",
+    "orchestrator.safety_pre_check",
+    "orchestrator.intent_classify",
+  ];
+  for (const purpose of routingPurposes) {
+    await pool.query(
+      `
+        INSERT INTO routing_policies (tenant_id, purpose, primary_model_ref, fallback_model_refs, enabled)
+        VALUES ($1, $2, $3, '[]'::jsonb, true)
+        ON CONFLICT (tenant_id, purpose)
+        DO UPDATE SET primary_model_ref = EXCLUDED.primary_model_ref, fallback_model_refs = EXCLUDED.fallback_model_refs, enabled = true, updated_at = now()
+      `,
+      ["tenant_dev", purpose, mockModelRef],
+    );
+  }
+
+  // ── 确保 __default__ 租户和审批规则存在（迁移可能已跳过）──────────
+  await pool.query("INSERT INTO tenants (id) VALUES ('__default__') ON CONFLICT (id) DO NOTHING");
+  // 确保 schema 变更的 changeset_gate 规则存在（requiredApprovals=2）
+  const existingSchemaGate = await pool.query(
+    "SELECT rule_id FROM approval_rules WHERE tenant_id = '__default__' AND rule_type = 'changeset_gate' AND name = 'Schema 变更' AND enabled = true LIMIT 1",
+  );
+  if (!existingSchemaGate.rowCount) {
+    await pool.query(
+      `INSERT INTO approval_rules (tenant_id, rule_type, name, description, priority, match_condition, effect)
+       VALUES ('__default__', 'changeset_gate', 'Schema 变更', '涉及 Schema 发布/回滚时标记为高风险，需双人审批', 11,
+         '{"match":"item_kind_prefix","pattern":"schema."}',
+         '{"riskLevel":"high","requiredApprovals":2}')
+       ON CONFLICT DO NOTHING`,
+    );
+  }
 }
 
 // ─── 测试环境接口 ─────────────────────────────────────────────────────
@@ -374,7 +434,11 @@ export async function getTestContext(): Promise<TestContext> {
 export async function releaseTestContext(): Promise<void> {
   refCount--;
   if (refCount <= 0 && sharedContext) {
-    await sharedContext.app.close();
+    // 先强制断开 Redis 以阻止 ioredis 无限重连，避免 app.close() 中 quit() 挂起
+    try { (sharedContext.app as any).redis?.disconnect(); } catch {}
+    // 带超时的 close —— 即使 onClose hook 中仍有操作挂起也不会阻塞测试套件
+    const closeP = sharedContext.app.close().catch(() => {});
+    await Promise.race([closeP, new Promise<void>((r) => setTimeout(r, 5_000))]);
     if (prevWorkerApiBase === undefined) delete process.env.WORKER_API_BASE;
     else process.env.WORKER_API_BASE = prevWorkerApiBase;
     if (prevApiBase === undefined) delete process.env.API_BASE;

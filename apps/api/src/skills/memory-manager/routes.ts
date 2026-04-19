@@ -444,7 +444,7 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
     const body = z
       .object({
         context: z.object({
-          v: z.literal(1),
+          v: z.literal(2),
           messages: z
             .array(
               z.object({
@@ -454,6 +454,17 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
               }),
             )
             .max(200),
+          summary: z.string().optional(),
+          totalTurnCount: z.number().int().nonnegative().optional(),
+          sessionState: z.object({
+            activeTopic: z.string().optional(),
+            userIntent: z.string().optional(),
+            entitiesInFocus: z.array(z.string()).optional(),
+            constraints: z.array(z.string()).optional(),
+            pendingQuestions: z.array(z.string()).optional(),
+            riskPoints: z.array(z.string()).optional(),
+            lastUpdatedAt: z.string().optional(),
+          }).optional(),
         }),
         expiresAt: z.string().min(1).optional(),
         retentionDays: z.number().int().positive().max(365).optional(),

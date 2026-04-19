@@ -5,8 +5,10 @@
  * 仅处理对话与即时动作，不在前端/answer 层自动升级为 workflow
  */
 import crypto from "node:crypto";
-import { redactValue, parseDocument, dataUrlToBuffer } from "@openslin/shared";
-import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, buildLightChatPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRelevantMemory, recallRecentTasks, type ContextMeta, shouldTriggerEventDrivenSummary } from "./modules/orchestrator";
+import { redactValue, parseDocument, dataUrlToBuffer, StructuredLogger, resolveNumber } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:dispatch.streamAnswer" });
+import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, buildLightChatPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, type ContextMeta, shouldTriggerEventDrivenSummary } from "./modules/orchestrator";
 import { createOrchestratorTurn } from "./modules/turnRepo";
 import { getSessionContext, upsertSessionContext, type SessionMessage } from "../../modules/memory/sessionContextRepo";
 import { digestParams, sha256Hex } from "../../lib/digest";
@@ -33,6 +35,7 @@ export async function handleStreamAnswerMode(params: {
   message: string;
   conversationId: string;
   piSummary: any;
+  classification?: import("./modules/intentClassifier").IntentClassification;
 }): Promise<void> {
   const { app, req, sse: rawSse, subject, body, locale, message, conversationId, piSummary } = params;
   const authorization = (req.headers.authorization as string | undefined) ?? null;
@@ -50,14 +53,18 @@ export async function handleStreamAnswerMode(params: {
   const auditCtx = traceId ? { traceId, requestId: req.ctx.requestId } : undefined;
   const redactedMsg = redactValue(message);
   const userContent = String(redactedMsg.value ?? "");
-  const historyLimit = Math.max(4, Math.min(64, Number(process.env.ORCHESTRATOR_CONVERSATION_WINDOW ?? "30") || 30));
+  const historyLimit = Math.max(4, Math.min(64, resolveNumber("ORCHESTRATOR_CONVERSATION_WINDOW").value));
 
-  const [memoryRecall, taskRecall, toolDiscovery, prevSession] = await Promise.all([
+  const [memoryRecall, taskRecall, knowledgeRecall, toolDiscovery, prevSession] = await Promise.all([
     recallRelevantMemory({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, message, auditContext: auditCtx }),
     recallRecentTasks({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, auditContext: auditCtx }),
+    recallRelevantKnowledge({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, message, auditContext: auditCtx }),
     discoverEnabledTools({ pool: app.db, tenantId: subject.tenantId, spaceId, locale }),
     getSessionContext({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, sessionId: conversationId }),
   ]);
+  const knowledgeContext = knowledgeRecall.text;
+
+  sse.sendEvent("status", { phase: "context_ready" });
 
   const prevMsgs = Array.isArray(prevSession?.context?.messages) ? prevSession!.context.messages : [];
   const droppedCount = Math.max(0, prevMsgs.length - (historyLimit - 2));
@@ -121,38 +128,20 @@ export async function handleStreamAnswerMode(params: {
   }, "[context-debug] 对话上下文组装详情");
 
   // 2. 构建系统提示词
-  // 关键修复：answer 模式优先使用轻量 prompt，避免工具目录噎声干扰纯对话
-  // 只有当用户消息明确含有工具调用意图时才使用完整版 prompt
+  // answer 模式始终提供完整工具目录，由 LLM 自主决定是否调用工具
   const contextMeta: ContextMeta = {
     totalTurnCount,
     windowMessageCount: clippedPrev.length,
     summary: newSummary || undefined,
   };
-  // 检测是否有明确的工具调用意图（全文匹配请求前缀/动词，或明确提及工具名）
-  const hasToolIntent = (() => {
-    if (!toolDiscovery.catalog) return false;
-    // 中文请求前缀：全文匹配（不仅检查开头，也检查中间位置）
-    const toolActionPatterns = /(帮我|请帮|我要|我想|麻烦|帮忙|请你|能否|能不能|可以帮|请给我|给我|把|帮我查|帮我找|帮我看).*(创建|删除|修改|更新|查询|搜索|发送|打开|关闭|生成|执行|运行|导出|导入|下载|上传)|(创建|删除|修改|更新|查询|搜索|发送|打开|关闭|生成|执行|运行|导出|导入|下载|上传).*(一下|一个|这个)/;
-    const hasZhIntent = toolActionPatterns.test(message);
-    // 记忆写入意图：用户明确要求记住/保存/记录信息
-    const memoryWritePatterns = /记住|保存|记录|记下来|存储|备忘|remember|save|store|memorize/i;
-    const hasMemoryWriteIntent = memoryWritePatterns.test(message);
-    // 英文请求模式
-    const enActionPatterns = /\b(create|delete|update|search|find|send|open|close|generate|run|export|import|download|upload|help me|please)\b/i;
-    const hasEnIntent = enActionPatterns.test(message);
-    // 工具名称提及
-    const toolNames = toolDiscovery.tools.map(t => t.name);
-    const mentionsTool = toolNames.some(name => message.includes(name));
-    return hasZhIntent || hasEnIntent || mentionsTool || hasMemoryWriteIntent;
-  })();
-  const systemPrompt = hasToolIntent && toolDiscovery.catalog
-    ? buildSystemPrompt(locale, memoryRecall.text, taskRecall.text, toolDiscovery.catalog, contextMeta)
-    : buildLightChatPrompt(locale, memoryRecall.text, contextMeta, toolDiscovery.tools);  // 传递工具列表，动态感知能力
+  // answer 模式始终提供完整工具目录，让 LLM 自主决定是否调用工具
+  const systemPrompt = toolDiscovery.catalog
+    ? buildSystemPrompt(locale, memoryRecall.text, taskRecall.text, toolDiscovery.catalog, contextMeta, knowledgeContext)
+    : buildLightChatPrompt(locale, memoryRecall.text, contextMeta, toolDiscovery.tools, undefined, knowledgeContext);  // catalog 不可用时降级
   app.log.info({
     traceId, conversationId,
-    promptType: hasToolIntent ? "full_with_tools" : "light_chat",
+    promptType: toolDiscovery.catalog ? "full_with_tools" : "light_chat",
     hasToolDiscovery: !!toolDiscovery.catalog,
-    hasToolIntent,
   }, "[dispatch.streamAnswer] 系统提示词类型选择");
   const modelMessages: { role: string; content: string | Array<{type: string; [k: string]: any}> }[] = [
     { role: "system", content: systemPrompt },
@@ -189,7 +178,7 @@ export async function handleStreamAnswerMode(params: {
           const metaLine = [meta.title && `标题: ${meta.title}`, meta.pageCount && `页数: ${meta.pageCount}`, meta.wordCount && `字数: ${meta.wordCount}`].filter(Boolean).join(" | ");
           docParts.push(`─── 文件: ${doc.name ?? "未命名"} (解析方式: ${parseResult.stats.parseMethod}) ───${metaLine ? "\n" + metaLine : ""}\n${extractedText}`);
         } catch (parseErr: any) {
-          console.warn(`[dispatch.streamAnswer] 文档解析失败: ${doc.name} (${doc.mimeType}):`, parseErr?.message ?? parseErr);
+          _logger.warn("document parse failed", { fileName: doc.name, mimeType: doc.mimeType, error: parseErr?.message ?? parseErr });
           docParts.push(`[用户上传了文件: ${doc.name ?? "未命名"} (${doc.mimeType})，解析失败: ${String(parseErr?.message ?? "").slice(0, 200)}]`);
         }
       } else {
@@ -223,6 +212,8 @@ export async function handleStreamAnswerMode(params: {
   let fullText = "";
   let streamError = false;
   const filter = new ToolCallFilter((text) => sse.sendEvent("delta", { text }));
+
+  sse.sendEvent("status", { phase: "model_calling" });
 
   try {
     await invokeModelChatUpstreamStream({
@@ -278,7 +269,7 @@ export async function handleStreamAnswerMode(params: {
       const persistDroppedCount = Math.max(0, nextMsgs.length - historyLimit);
       const persistSummary = newSummary;
       const persistSessionState = newSessionState;
-      const ttlDays = Math.max(1, Math.min(30, Number(process.env.ORCHESTRATOR_CONVERSATION_TTL_DAYS ?? "14") || 14));
+      const ttlDays = Math.max(1, Math.min(30, resolveNumber("ORCHESTRATOR_CONVERSATION_TTL_DAYS").value));
       const expiresAt = new Date(Date.now() + ttlDays * 86400000).toISOString();
       await upsertSessionContext({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, sessionId: conversationId, context: { v: 2, messages: trimmed, summary: persistSummary || undefined, sessionState: persistSessionState, totalTurnCount }, expiresAt });
       // 带超时保护的 LLM 摘要
@@ -372,12 +363,12 @@ export async function handleStreamAnswerMode(params: {
       }
     }
     
-    // 场景 2：回复包含行动意图但未生成 tool_call → 二次 LLM 校验（带超时）
-    else if (/执行|(帮我.{0,8}创建)|(帮我.{0,8}删除)|(帮我.{0,8}更新)|(帮我.{0,8}发送)|(帮我.{0,8}关闭)|(请.{0,8}创建)|(请.{0,8}删除)/i.test(fullText)) {
+    // 场景 2：上游分类器检测到工具意图但 LLM 回复未包含 tool_call → 二次 LLM 校验（带超时）
+    else if (params.classification?.hasToolIntent && parsed.toolCalls.length === 0) {
       app.log.warn({ 
         traceId, 
         replyTextPreview: fullText.slice(0, 100) 
-      }, "[P2-3] 检测到行动意图但缺少 tool_call 代码块，触发二次校验");
+      }, "[P2-3] 上游分类器检测到工具意图但缺少 tool_call 代码块，触发二次校验");
       
       const validationAbort = new AbortController();
       const validationTimer = setTimeout(() => validationAbort.abort(), toolRetryTimeoutMs);
@@ -423,6 +414,50 @@ export async function handleStreamAnswerMode(params: {
   
   const enabledTools = toolDiscovery.tools ?? [];
   const enabledToolMap = new Map(enabledTools.map((tool) => [tool.toolRef, tool]));
+
+  // ━━━ 输入补全：为缺少 entityName 的 entity 工具调用自动推断 ━━━
+  for (const tc of validatedToolCalls) {
+    const tool = enabledToolMap.get(tc.toolRef);
+    if (!tool) continue;
+
+    // 仅对 entity 资源类型的工具做补全
+    if (tool.def.resourceType !== "entity") continue;
+
+    // 字段归一化：payload/data → patch（entity.update schema 期望 patch）
+    if (tool.def.action === "update") {
+      if (!tc.inputDraft.patch && (tc.inputDraft.payload || tc.inputDraft.data)) {
+        tc.inputDraft.patch = tc.inputDraft.payload ?? tc.inputDraft.data;
+        delete tc.inputDraft.payload;
+        delete tc.inputDraft.data;
+      }
+    }
+
+    // entityName 推断：如果缺失但有 id，从 DB 查找
+    if (!tc.inputDraft.entityName && tc.inputDraft.id) {
+      try {
+        const { lookupEntityNameByRecordId } = await import("../../modules/data/dataRepo");
+        const inferred = await lookupEntityNameByRecordId({
+          pool: app.db,
+          tenantId: subject.tenantId,
+          spaceId: subject.spaceId,
+          id: String(tc.inputDraft.id),
+        });
+        if (inferred) {
+          tc.inputDraft.entityName = inferred;
+          app.log.info(
+            { traceId, toolRef: tc.toolRef, id: tc.inputDraft.id, entityName: inferred },
+            "[dispatch.stream] 自动补全 entityName 成功",
+          );
+        }
+      } catch (e: any) {
+        app.log.warn(
+          { traceId, toolRef: tc.toolRef, id: tc.inputDraft.id, error: e?.message },
+          "[dispatch.stream] 自动补全 entityName 失败",
+        );
+      }
+    }
+  }
+
   const inlineWritableEntities = await loadInlineWritableEntities(app.db);
   const resolution = resolveExecutionClassFromSuggestions({
     toolCalls: validatedToolCalls,
@@ -482,10 +517,54 @@ export async function handleStreamAnswerMode(params: {
         });
         followUpFilter.flush();
       } catch (followUpErr: any) {
-        app.log.warn({ err: followUpErr, traceId }, "[dispatch.stream] 内联工具二次回复失败");
-        // 降级：直接输出工具结果摘要
-        const fallback = locale !== "en-US" ? "工具已执行但结果格式化失败，请重试。" : "Tool executed but formatting failed. Please retry.";
-        sse.sendEvent("delta", { text: "\n\n" + fallback });
+        // ── 降级：基于 error 对象属性动态构造具体错误描述 ──
+        const errName = String(followUpErr?.name ?? "");
+        const errCode = String(followUpErr?.code ?? followUpErr?.statusCode ?? "");
+        const errMessage = String(followUpErr?.message ?? "");
+        app.log.warn({ err: followUpErr, traceId, errName, errCode, errMessage }, "[dispatch.stream] 内联工具二次回复失败");
+
+        // 1. 生成工具结果摘要（工具已执行成功，应向用户展示结果要点）
+        const zh = locale !== "en-US";
+        const resultSummaryParts: string[] = [];
+        for (const r of inlineResults) {
+          const toolName = r.toolRef.replace(/@.*$/, "");
+          if (r.ok) {
+            // 提取摘要：优先取 output 中的关键字段，否则截断前 200 字符
+            const raw = typeof r.output === "string" ? r.output
+              : (r.output && typeof r.output === "object" ? JSON.stringify(r.output) : "");
+            const brief = raw.length > 200 ? raw.slice(0, 200) + "…" : raw;
+            resultSummaryParts.push(`[${toolName}] ${zh ? "执行成功" : "OK"}${brief ? ": " + brief : ""}`);
+          } else {
+            resultSummaryParts.push(`[${toolName}] ${zh ? "执行失败" : "Failed"}: ${r.error ?? ""}`);
+          }
+        }
+
+        // 2. 根据 error 属性动态判断错误类别
+        const isTimeout = errCode === "ETIMEDOUT" || errCode === "ESOCKETTIMEDOUT"
+          || errName === "AbortError" || errCode === "UND_ERR_CONNECT_TIMEOUT";
+        const isStreamDisconnect = errCode === "ECONNRESET" || errCode === "ERR_STREAM_PREMATURE_CLOSE"
+          || errName === "ERR_STREAM_DESTROYED";
+
+        let reason: string;
+        if (isTimeout) {
+          reason = zh ? "模型调用超时" : "model call timed out";
+        } else if (isStreamDisconnect) {
+          reason = zh ? "响应流中断" : "response stream interrupted";
+        } else {
+          // 兜底：用 error 自身属性描述，不硬编码关键词
+          const detail = errCode ? `${errName || "Error"}/${errCode}` : (errName || errMessage.slice(0, 80) || "unknown");
+          reason = zh ? `模型调用异常（${detail}）` : `model call error (${detail})`;
+        }
+
+        const header = zh
+          ? `工具已执行成功，但结果总结生成失败（${reason}）。以下是工具原始结果摘要：`
+          : `Tool executed successfully but summary generation failed (${reason}). Raw result summary:`;
+
+        const fallbackText = resultSummaryParts.length > 0
+          ? header + "\n" + resultSummaryParts.join("\n")
+          : (zh ? `工具已执行但结果格式化失败（${reason}），请重试。` : `Tool executed but formatting failed (${reason}). Please retry.`);
+
+        sse.sendEvent("delta", { text: "\n\n" + fallbackText });
       }
     }
   }
@@ -496,14 +575,14 @@ export async function handleStreamAnswerMode(params: {
     });
   }
 
-  if (resolution.nl2uiTool) {
+  if (resolution.separatePipelineTool) {
     sse.sendEvent("nl2uiStatus", { phase: "started" });
     const keepaliveTimer = setInterval(() => {
       try { sse.sendEvent("keepalive", { ts: Date.now() }); } catch {}
     }, 8_000);
     try {
       const nl2uiPrefetched = await prefetchNl2UiContext(app.db, { userId: subject.subjectId || "anonymous", tenantId: subject.tenantId }, message);
-      const nl2uiUserInput = typeof resolution.nl2uiTool.inputDraft?.userInput === "string" ? resolution.nl2uiTool.inputDraft.userInput : message;
+      const nl2uiUserInput = typeof resolution.separatePipelineTool.inputDraft?.userInput === "string" ? resolution.separatePipelineTool.inputDraft.userInput : message;
       const cfg = await generateUiFromNaturalLanguage(
         app.db,
         { userInput: nl2uiUserInput, context: { userId: subject.subjectId || "anonymous", tenantId: subject.tenantId, spaceId: subject.spaceId || undefined } },
@@ -520,22 +599,25 @@ export async function handleStreamAnswerMode(params: {
           traceId,
         });
       }
-    } catch (err: any) {
-      if (err && typeof err === "object" && err.statusCode === 429) {
-        sse.sendEvent("nl2uiError", err.payload ?? { errorCode: "RATE_LIMITED", message: { "zh-CN": "请求过于频繁，请稍后重试", "en-US": "Too many requests" }, traceId });
+    } catch (err: unknown) {
+      const errObj = err as Record<string, unknown> | null;
+      if (errObj && typeof errObj === "object" && errObj.statusCode === 429) {
+        sse.sendEvent("nl2uiError", (errObj.payload as Record<string, unknown>) ?? { errorCode: "RATE_LIMITED", message: { "zh-CN": "请求过于频繁，请稍后重试", "en-US": "Too many requests" }, traceId });
       } else {
         // 提取具体错误码和详细信息，避免吞掉诊断线索
-        const payload = err && typeof err === "object" ? (err as any).payload : null;
-        const specificErrorCode = payload?.errorCode ?? (err?.errorCode ? String(err.errorCode) : "NL2UI_ERROR");
-        const specificMsgZh = payload?.message?.["zh-CN"] ?? payload?.message ?? err?.message ?? "界面生成异常";
-        const specificMsgEn = payload?.message?.["en-US"] ?? "UI generation error";
+        const payload = errObj && typeof errObj === "object" ? (errObj.payload as Record<string, unknown> | null) : null;
+        const errMessage = err instanceof Error ? err.message : String(err ?? "");
+        const errErrorCode = errObj && typeof errObj === "object" ? String(errObj.errorCode ?? "") : "";
+        const specificErrorCode = payload?.errorCode ?? (errErrorCode ? String(errErrorCode) : "NL2UI_ERROR");
+        const specificMsgZh = (payload?.message as Record<string, string> | undefined)?.["zh-CN"] ?? payload?.message ?? errMessage ?? "界面生成异常";
+        const specificMsgEn = (payload?.message as Record<string, string> | undefined)?.["en-US"] ?? "UI generation error";
         app.log.error({
           traceId,
           errorCode: specificErrorCode,
-          statusCode: (err as any)?.statusCode ?? null,
-          errMessage: err?.message ?? null,
+          statusCode: errObj && typeof errObj === "object" ? (errObj.statusCode as number | null) ?? null : null,
+          errMessage: errMessage ?? null,
           payloadMessage: typeof specificMsgZh === "string" ? specificMsgZh : JSON.stringify(specificMsgZh),
-          stack: err?.stack?.split?.("\n")?.slice(0, 3)?.join(" | ") ?? null,
+          stack: err instanceof Error ? err.stack?.split?.("\n")?.slice(0, 3)?.join(" | ") ?? null : null,
         }, "[NL2UI] 界面生成异常 — 详细诊断");
         sse.sendEvent("nl2uiError", {
           errorCode: specificErrorCode,

@@ -1,4 +1,4 @@
-import { Errors } from "../../lib/errors";
+import { Errors, type ModelUpstreamError, isModelUpstreamError } from "../../lib/errors";
 
 export type OpenAiChatMessage = { role: string; content: string };
 
@@ -13,7 +13,7 @@ export async function openAiChatWithSecretRotation(params: {
   const apiKeys = params.apiKeys.map((k) => String(k)).filter(Boolean);
   if (!apiKeys.length) throw Errors.badRequest("缺少 apiKey");
 
-  let lastErr: any = null;
+  let lastErr: ModelUpstreamError | Error | null = null;
   for (let i = 0; i < apiKeys.length; i++) {
     const apiKey = apiKeys[i]!;
     const ctrl = new AbortController();
@@ -35,7 +35,7 @@ export async function openAiChatWithSecretRotation(params: {
       const json: any = await res.json().catch(() => null);
       if (!res.ok) {
         const err = Errors.modelUpstreamFailed(`status=${res.status}`);
-        (err as any).upstreamStatus = res.status;
+        err.upstreamStatus = res.status;
         throw err;
       }
 
@@ -46,17 +46,15 @@ export async function openAiChatWithSecretRotation(params: {
     } catch (e: any) {
       const isAbort = String(e?.name ?? "") === "AbortError";
       if (isAbort) {
-        lastErr = Errors.modelUpstreamFailed("timeout");
-        (lastErr as any).upstreamTimeout = true;
+        const timeoutErr = Errors.modelUpstreamFailed("timeout");
+        timeoutErr.upstreamTimeout = true;
+        lastErr = timeoutErr;
       } else {
         lastErr = e;
       }
       const retryable = Boolean(
-        lastErr &&
-          typeof lastErr === "object" &&
-          "errorCode" in lastErr &&
-          (lastErr as any).errorCode === "MODEL_UPSTREAM_FAILED" &&
-          (((lastErr as any).upstreamStatus ?? null) === 429 || Boolean((lastErr as any).upstreamTimeout)),
+        isModelUpstreamError(lastErr) &&
+          (lastErr.upstreamStatus === 429 || Boolean(lastErr.upstreamTimeout)),
       );
       if (retryable && i < apiKeys.length - 1) continue;
       throw lastErr;

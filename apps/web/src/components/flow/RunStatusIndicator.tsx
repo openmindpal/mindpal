@@ -364,7 +364,7 @@ export function ModeSelector({ mode, onChange, locale, disabled }: ModeSelectorP
   ] as const;
 
   return (
-    <div className={styles.modeSelector}>
+    <div className={styles.modeSelector} role="radiogroup" aria-label="执行模式">
       {modes.map((m) => (
         <button
           key={m.value}
@@ -376,6 +376,8 @@ export function ModeSelector({ mode, onChange, locale, disabled }: ModeSelectorP
             disabled ? styles.modeButtonDisabled : "",
           ].filter(Boolean).join(" ")}
           title={m.label}
+          role="radio"
+          aria-checked={mode === m.value}
         >
           <span className={styles.modeIcon}>{m.icon}</span>
           {m.label}

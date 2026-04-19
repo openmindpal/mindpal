@@ -13,6 +13,9 @@ import {
   type DeliveryContext,
   type NotificationPayload,
 } from "./channelAdapterRegistry";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:builtinAdapters" });
 
 // ── Redis Pub/Sub 频道（与 API realtimeNotification.ts 保持一致） ──
 const NOTIF_PUSH_CHANNEL = "notification:ws:push";
@@ -41,7 +44,7 @@ const inappAdapter: ChannelDeliveryAdapter = {
         });
         await ctx.redis.publish(NOTIF_PUSH_CHANNEL, payload);
       } catch (e: any) {
-        console.warn("[inappAdapter] WS push failed", { error: String(e?.message ?? e) });
+        _logger.warn("WS push failed", { error: String(e?.message ?? e) });
       }
     }
   },

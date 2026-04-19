@@ -34,6 +34,7 @@ import { insertAuditEvent } from "../modules/audit/auditRepo";
 import { resolveConfig } from "../modules/governance/configGovernanceRepo";
 import { runPreExecutionChecks, type CheckpointContext, type GovernanceCheckpoint } from "./governanceCheckpoint";
 import { assessToolExecutionRisk } from "./approvalRuleEngine";
+import { markStepNeedsApproval, updateInputDigest } from "./stepRepo";
 
 /* ================================================================== */
 /*  Phase 1 — Resolve & Validate Tool                                  */
@@ -56,6 +57,8 @@ export interface ResolvedTool {
   resourceType: string;
   action: string;
   idempotencyRequired: boolean;
+  /** 工具执行超时时间(毫秒)，来自 tool_definitions.execution_timeout_ms */
+  executionTimeoutMs: number;
 }
 
 /**
@@ -128,6 +131,7 @@ export async function resolveAndValidateTool(params: ResolveToolParams): Promise
     resourceType,
     action,
     idempotencyRequired: Boolean(idempotencyRequired),
+    executionTimeoutMs: definition.executionTimeoutMs ?? 120_000,
   };
 }
 
@@ -149,6 +153,8 @@ export interface AdmitToolParams {
   requestedCapabilityEnvelope?: any;
   /** Whether the caller must provide a capability envelope. */
   requireRequestedEnvelope?: boolean;
+  /** 若调用方已完成统一权限检查（authorizeToolExecution），跳过重复治理检查 */
+  preAuthorized?: boolean;
 }
 
 export interface AdmittedTool {
@@ -169,8 +175,8 @@ export async function admitAndBuildStepEnvelope(params: AdmitToolParams): Promis
   const { pool, tenantId, spaceId, subjectId, resolved, opDecision } = params;
 
   // ── P0-2: 运行时治理检查点（准入阶段） ──
-  // 在 admission 之前执行策略、安全检查
-  if (spaceId && subjectId) {
+  // 当调用来源已完成统一权限检查时（preAuthorized），跳过重复治理检查
+  if (!params.preAuthorized && spaceId && subjectId) {
     const govCtx: CheckpointContext = {
       tenantId,
       spaceId,
@@ -440,7 +446,7 @@ export async function submitStepToExistingRun(params: SubmitStepToRunParams): Pr
   });
 
   return await _handleApprovalOrEnqueue({
-    pool, queue, tenantId, resolved, opDecision, step, run: { runId } as any, job: { jobId } as any,
+    pool, queue, tenantId, resolved, opDecision, step, run: { runId }, job: { jobId },
     idempotencyKey: stepInput.idempotencyKey ?? null,
     spaceId: stepInput.spaceId ?? null,
     subjectId: stepInput.subjectId ?? null,
@@ -484,10 +490,9 @@ async function _handleApprovalOrEnqueue(params: {
   });
 
   if (approvalRequired) {
-    await pool.query("UPDATE steps SET status = 'needs_approval', updated_at = now() WHERE step_id = $1", [stepId]);
+    await markStepNeedsApproval(pool, stepId);
     if (JSON.stringify(step.inputDigest ?? null) !== JSON.stringify(approvalInputDigest ?? null)) {
-      await pool.query("UPDATE steps SET input_digest = $2 WHERE step_id = $1", [stepId, approvalInputDigest]);
-      await pool.query("UPDATE runs SET input_digest = $2 WHERE run_id = $1", [runId, approvalInputDigest]);
+      await updateInputDigest(pool, { stepId, runId, inputDigest: approvalInputDigest });
       step.inputDigest = approvalInputDigest;
       run.inputDigest = approvalInputDigest;
     }
@@ -508,7 +513,7 @@ async function _handleApprovalOrEnqueue(params: {
         toolRef: resolved.toolRef,
         inputDraft: (typeof step.inputDigest === "object" && step.inputDigest) ? step.inputDigest : {},
         toolDefinition: resolved.definition ? {
-          riskLevel: resolved.definition.riskLevel as any,
+          riskLevel: resolved.definition.riskLevel,
           approvalRequired: resolved.definition.approvalRequired,
           scope: resolved.definition.scope ?? undefined,
         } : undefined,
@@ -536,6 +541,95 @@ async function _handleApprovalOrEnqueue(params: {
   await setRunAndJobStatus({ pool, tenantId, runId, jobId, runStatus: "queued", jobStatus: "queued" });
   await enqueueWorkflowStep({ queue, pool, jobId, runId, stepId });
   return { outcome: "queued", jobId, runId, stepId, idempotencyKey };
+}
+
+/* ================================================================== */
+/*  Convenience: prepareToolStep — resolve + validate + admit + build  */
+/* ================================================================== */
+
+export interface PrepareToolStepParams {
+  pool: Pool;
+  tenantId: string;
+  spaceId: string;
+  subjectId: string | null;
+  rawToolRef: string;
+  inputDraft: any;
+  /** Wraps the caller's permission check — returns opDecision-like object. */
+  checkPermission: (p: { resourceType: string; action: string }) => Promise<{
+    snapshotRef?: string;
+    fieldRules?: any;
+    rowFilters?: any;
+    [k: string]: any;
+  }>;
+  kind: string;
+  traceId: string;
+  extra?: Record<string, any>;
+  idempotencyKeyPrefix?: string;
+  runId?: string;
+  seq?: number;
+  limits?: any;
+  preAuthorized?: boolean;
+}
+
+export interface PreparedToolStep {
+  resolved: ResolvedTool;
+  opDecision: { snapshotRef?: string; fieldRules?: any; rowFilters?: any; [k: string]: any };
+  admitted: AdmittedTool;
+  stepInput: Record<string, any>;
+  idempotencyKey: string | null;
+}
+
+/**
+ * Convenience: resolve → validate input → permission check → admit → build step input.
+ *
+ * Consolidates the 5-step pattern repeated across dispatch.handleExecute,
+ * dispatch.handleCollab, agent-runtime/routes, and collabExecutor into
+ * a single kernel call. Callers only need to pass the result to
+ * submitStepToExistingRun / submitNewToolRun / appendStepToRun afterwards.
+ */
+export async function prepareToolStep(params: PrepareToolStepParams): Promise<PreparedToolStep> {
+  const {
+    pool, tenantId, spaceId, subjectId,
+    rawToolRef, inputDraft, checkPermission,
+    kind, traceId, extra,
+    idempotencyKeyPrefix, runId, seq,
+    limits, preAuthorized,
+  } = params;
+
+  // Phase 1: resolve tool ref (name → version → enabled → contract)
+  const resolved = await resolveAndValidateTool({ pool, tenantId, spaceId, rawToolRef });
+
+  // Validate input against schema
+  validateToolInput(resolved.version.inputSchema, inputDraft);
+
+  // Permission check
+  const opDecision = await checkPermission({ resourceType: resolved.resourceType, action: resolved.action });
+
+  // Phase 2: admit & build envelope
+  const admitted = await admitAndBuildStepEnvelope({
+    pool, tenantId, spaceId, subjectId,
+    resolved, opDecision,
+    limits: limits ?? {},
+    preAuthorized,
+  });
+
+  // Idempotency key
+  const idempotencyKey = generateIdempotencyKey({
+    resolved,
+    prefix: idempotencyKeyPrefix ?? "prep",
+    runId,
+    seq,
+  });
+
+  // Build step input payload
+  const stepInput = buildStepInputPayload({
+    kind, resolved, admitted,
+    input: inputDraft, idempotencyKey,
+    tenantId, spaceId, subjectId, traceId,
+    extra,
+  });
+
+  return { resolved, opDecision, admitted, stepInput, idempotencyKey };
 }
 
 /* ================================================================== */

@@ -7,6 +7,9 @@
 import type { Pool } from 'pg';
 import type { ResumeEvent, ResumeResult } from './eventDrivenResume';
 import { writeAudit } from './processor/audit';
+import { StructuredLogger } from '@openslin/shared';
+
+const _logger = new StructuredLogger({ module: 'worker:fastEventHandlers' });
 
 // ────────────────────────────────────────────────────────────────
 // 结构化日志工具（替代裸 console，便于日志采集与告警联动）
@@ -17,11 +20,9 @@ function structuredLog(
   tag: string,
   data: Record<string, unknown>,
 ): void {
-  const entry = { ts: new Date().toISOString(), level, tag, ...data };
-  const line = JSON.stringify(entry);
-  if (level === 'error') console.error(line);
-  else if (level === 'warn') console.warn(line);
-  else console.log(line);
+  if (level === 'error') _logger.error(tag, data);
+  else if (level === 'warn') _logger.warn(tag, data);
+  else _logger.info(tag, data);
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -195,6 +196,6 @@ async function writeFastEventAudit(
       outputDigest: { previousStatus, newStatus, message },
     });
   } catch (e) {
-    console.warn(`[fastEventAudit] 审计记录写入失败:`, (e as Error)?.message ?? e);
+    _logger.warn("audit write failed", { err: (e as Error)?.message ?? e });
   }
 }

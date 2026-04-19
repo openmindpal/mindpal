@@ -160,7 +160,7 @@ Modeling      ──  Schema + Metadata + Universal CRUD                       �
 | Backend | Fastify 5 + WebSocket |
 | Frontend | Next.js 16 + React 19 |
 | UI Libraries | @xyflow/react (flowchart) + framer-motion + react-markdown |
-| Database | PostgreSQL 16 (26 migration files) |
+| Database | PostgreSQL 16 (28 migration files) |
 | Cache / Message | Redis 7 + ioredis |
 | Task Queue | BullMQ 5.58 |
 | Object Storage | MinIO |
@@ -249,18 +249,18 @@ openslin/
 ├── apps/
 │   ├── api/            # Fastify API server (Agent OS Brain)
 │   │   ├── kernel/     # Kernel: Agent Loop/Goal Decomposition/Planning/Execution/Scheduling/Collaboration
-│   │   ├── routes/     # 30 routes (with /v1 versioning)
-│   │   ├── modules/    # 30 domain modules (auth/governance/model/knowledge/memory)
-│   │   ├── skills/     # 42 built-in skills (4 tiers: kernel/core/optional/extension)
-│   │   ├── plugins/    # 16 middlewares (logging/tracing/versioning/notifications/DLP/audit)
-│   │   └── migrations/ # 26 SQL migration files
+│   │   ├── routes/     # 43 routes (with /v1 versioning)
+│   │   ├── modules/    # 28 domain modules (auth/governance/model/knowledge/memory)
+│   │   ├── skills/     # 39 built-in skills (4 tiers: kernel/core/optional/extension)
+│   │   ├── plugins/    # 15 middlewares (logging/tracing/versioning/notifications/DLP/audit)
+│   │   └── migrations/ # 28 SQL migration files
 │   ├── web/            # Next.js frontend (React 19 + ReactFlow + i18n)
 │   ├── worker/         # BullMQ async worker node (knowledge/memory/governance/notifications)
 │   ├── device-agent/   # Desktop Agent (Playwright + GUI automation + visual perception)
 │   ├── runner/         # Skill sandbox runtime (Fastify + RPC protocol + subprocess isolation)
 │   └── admin-cli/      # Ops CLI tool
 ├── packages/
-│   └── shared/         # Shared library (537-line index, 200+ exported symbols)
+│   └── shared/         # Shared library (587-line index, 250+ exported symbols)
 │                         Multimodal types/ABAC policy engine/Prompt injection detection/DLP/
 │                         State machine/GoalGraph/WorldState/Circuit breaker/Event bus/
 │                         Collab protocol/Skill RPC/Structured logging/Supply chain security/

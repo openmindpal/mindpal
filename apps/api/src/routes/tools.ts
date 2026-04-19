@@ -105,14 +105,14 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
         });
         if (!depsDigest) depsDigest = await computeDepsDigest({ artifactDir, manifest: loaded.manifest });
         if (depsDigest && publish.depsDigest && depsDigest !== publish.depsDigest) throw new Error("depsDigest 不匹配");
-        const activeKeys = await listActiveSkillTrustedKeys({ pool: app.db as any, tenantId: subject.tenantId });
+        const activeKeys = await listActiveSkillTrustedKeys({ pool: app.db, tenantId: subject.tenantId });
         const keyIdToPem: Record<string, string> = {};
         for (const k of activeKeys) keyIdToPem[k.keyId] = k.publicKeyPem;
         const trustedKeys = parseTrustedSkillPublicKeys({ keyIdToPem });
         const trust = verifySkillManifestTrustWithKeys({ toolName: params.name, depsDigest, manifest: loaded.manifest, trustedKeys });
         trustSummary = {
           status: trust.status,
-          reason: (trust as any).reason ?? null,
+          reason: 'reason' in trust ? trust.reason : null,
           signature: loaded.manifest?.signature ? { alg: loaded.manifest.signature.alg, keyId: loaded.manifest.signature.keyId, signedDigest: loaded.manifest.signature.signedDigest } : null,
           verifiedAt: new Date().toISOString(),
         };
@@ -220,7 +220,7 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
     req.ctx.audit!.policyDecision = decision;
 
     // 基于 tool_definitions.source_layer 元数据动态判定，不再硬编码工具名称
-    const sourceLayer = (resolved.definition as any)?.sourceLayer ?? "";
+    const sourceLayer = resolved.definition.sourceLayer ?? "";
     if (sourceLayer !== "kernel" && sourceLayer !== "builtin") {
       if (!ver.artifactRef) {
         req.ctx.audit!.errorCategory = "policy_violation";
@@ -240,15 +240,15 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
       const policy = resolveSupplyChainPolicy();
       const override = String(process.env.SKILL_RUNTIME_REMOTE_ENDPOINT ?? "").trim();
       const envRunnerOk = override ? isValidUrl(override) : false;
-      const dbRunner = policy.minIsolation === "remote" && !envRunnerOk ? await getEnabledSkillRuntimeRunner({ pool: app.db as any, tenantId: subject.tenantId }) : null;
+      const dbRunner = policy.minIsolation === "remote" && !envRunnerOk ? await getEnabledSkillRuntimeRunner({ pool: app.db, tenantId: subject.tenantId }) : null;
       const remoteRunnerOk = policy.minIsolation !== "remote" ? true : Boolean(envRunnerOk || dbRunner);
       const available: ("process" | "container" | "remote")[] = remoteRunnerOk ? ["process", "container", "remote"] : ["process", "container"];
       const gate = runSupplyChainGate({
         policy,
-        trustSummary: (ver as any).trustSummary,
-        scanSummary: (ver as any).scanSummary,
-        sbomSummary: (ver as any).sbomSummary,
-        sbomDigest: (ver as any).sbomDigest,
+        trustSummary: ver.trustSummary,
+        scanSummary: ver.scanSummary,
+        sbomSummary: ver.sbomSummary,
+        sbomDigest: ver.sbomDigest,
         requestedIsolation: "auto",
         availableRuntimes: available,
       });
@@ -280,21 +280,19 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const body = req.body as any;
-    let input = body;
-    let limits: any = null;
-    let capabilityEnvelope: any = null;
-    if (body && typeof body === "object" && !Array.isArray(body)) {
-      limits = body.limits ?? null;
-      capabilityEnvelope = body.capabilityEnvelope ?? null;
-      input = { ...body };
-      delete (input as any).limits;
-      delete (input as any).networkPolicy;
-      delete (input as any).capabilityEnvelope;
+    const rawBody = req.body as Record<string, unknown> | null;
+    let input: unknown = rawBody;
+    let limits: unknown = null;
+    let capabilityEnvelope: unknown = null;
+    if (rawBody && typeof rawBody === "object" && !Array.isArray(rawBody)) {
+      limits = rawBody.limits ?? null;
+      capabilityEnvelope = rawBody.capabilityEnvelope ?? null;
+      const { limits: _l, networkPolicy: _np, capabilityEnvelope: _ce, ...rest } = rawBody;
+      input = rest;
     }
 
     const injEff = await getEffectiveSafetyPolicyVersion({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, policyType: "injection" });
-    const piPolicy = injEff?.policyJson ? resolvePromptInjectionPolicy(injEff.policyJson as any) : getPromptInjectionPolicyFromEnv();
+    const piPolicy = injEff?.policyJson ? resolvePromptInjectionPolicy(injEff.policyJson) : getPromptInjectionPolicyFromEnv();
     const piMode = piPolicy.mode;
     const piTarget = "tool:execute";
     const piText = extractTextForPromptInjectionScan(input);

@@ -45,19 +45,19 @@ export const structuredLoggingPlugin: FastifyPluginAsync<{
 
   // ── 请求开始：注入时间戳 ──────────────────────────────
   app.addHook("onRequest", async (req) => {
-    (req as any)._startTime = Date.now();
+    req._startTime = Date.now();
   });
 
   // ── 请求完成：输出访问日志 ──────────────────────────────
   app.addHook("onResponse", async (req, reply) => {
-    const startTime = (req as any)._startTime ?? Date.now();
+    const startTime = req._startTime ?? Date.now();
     const durationMs = Date.now() - startTime;
     const statusCode = reply.statusCode;
     const method = req.method;
     const url = req.url;
     const path = url.split("?")[0] ?? url;
 
-    const logCtx = createRequestLogContext(req as any);
+    const logCtx = createRequestLogContext(req);
     const reqLogger = accessLog.child(logCtx);
 
     const extra = {
@@ -79,15 +79,15 @@ export const structuredLoggingPlugin: FastifyPluginAsync<{
 
   // ── 错误处理日志 ──────────────────────────────────────
   app.addHook("onError", async (req, _reply, error) => {
-    const logCtx = createRequestLogContext(req as any);
+    const logCtx = createRequestLogContext(req);
     const errLogger = rootLogger.child({ ...logCtx, module: "api:error" });
 
     errLogger.error(`Request error: ${error.message}`, {
-      errorCode: (error as any).errorCode ?? (error as any).code,
+      errorCode: 'errorCode' in error ? String(error.errorCode) : ('code' in error ? String(error.code) : undefined),
       error: {
         message: error.message,
         stack: error.stack,
-        code: (error as any).code,
+        code: 'code' in error ? String(error.code) : undefined,
       },
       method: req.method,
       path: req.url?.split("?")[0],

@@ -15,6 +15,9 @@
  */
 
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:memoryEncryption" });
 import {
   encryptColumn,
   decryptColumn,
@@ -84,7 +87,7 @@ export async function getActiveKeyMaterial(params: {
       kRef: { scopeType, scopeId, keyVersion },
     };
   } catch (err) {
-    console.error("[memory-encryption] getActiveKeyMaterial failed", err);
+        _logger.error("getActiveKeyMaterial failed", { err: (err as Error)?.message });
     return null;
   }
 }
@@ -150,9 +153,7 @@ export async function encryptMemoryContent(params: {
 
   if (!keyMaterial) {
     // 无可用密钥 → 回退到明文存储并告警
-    console.warn(
-      `[memory-encryption] No active key for tenant=${params.tenantId}, storing plaintext`,
-    );
+    _logger.warn("No active key, storing plaintext", { tenantId: params.tenantId });
     return params.plaintext;
   }
 
@@ -234,7 +235,7 @@ export async function migrateMemoryEncryption(params: {
   });
 
   if (!keyMaterial) {
-    console.warn(`[memory-encryption] migration: no active key for tenant=${params.tenantId}`);
+        _logger.warn("migration: no active key", { tenantId: params.tenantId });
     return { encrypted: 0, failed: 0, skipped: 0 };
   }
 

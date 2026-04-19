@@ -2,7 +2,9 @@ import type { Queue } from "bullmq";
 import type Redis from "ioredis";
 import type { Pool } from "pg";
 import crypto from "node:crypto";
-import { isToolAllowedForPolicy, tryTransitionRun, type RunStatus } from "@openslin/shared";
+import { isToolAllowedForPolicy, tryTransitionRun, type RunStatus, StructuredLogger, resolveNumber } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:agentRunScheduler" });
 
 import { appendCollabEventOnce } from "../lib/collabEvents";
 import { applyWorkerCollabState } from "./collabStateSync";
@@ -44,7 +46,7 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
     const tid = p.tenantId || String(runRes.rows[0].tenant_id ?? "");
     const transition = tryTransitionRun(currentStatus, "stopped");
     if (!transition.ok) {
-      console.warn(`[stopRunWithBudget] 状态转换被拒绝: ${currentStatus} → stopped, runId=${p.runId}`);
+      _logger.warn("state transition rejected", { currentStatus, target: "stopped", runId: p.runId });
       return;
     }
     const client = await pool.connect();
@@ -82,10 +84,7 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
       await client.query("COMMIT");
     } catch (txErr: any) {
       await client.query("ROLLBACK").catch(() => {});
-      console.error(
-        { runId: p.runId, jobId: p.jobId, phase: p.phase, error: txErr?.message ?? String(txErr) },
-        "[stopRunWithBudget] 事务回滚 — 多表状态更新失败",
-      );
+      _logger.error("stopRunWithBudget tx rollback", { runId: p.runId, jobId: p.jobId, phase: p.phase, error: txErr?.message ?? String(txErr) });
       throw txErr;
     } finally {
       client.release();
@@ -204,7 +203,7 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
       }
 
       if (maxCostUsd) {
-        const usdPer1kTokens = Number(String(process.env.MODEL_USD_PER_1K_TOKENS ?? "").trim());
+        const usdPer1kTokens = resolveNumber("MODEL_USD_PER_1K_TOKENS").value;
         if (Number.isFinite(usdPer1kTokens) && usdPer1kTokens > 0) {
           const usedCostUsd = (usedTokens / 1000) * usdPer1kTokens;
           if (usedCostUsd >= maxCostUsd) {
@@ -361,10 +360,7 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
         await apClient.query("COMMIT");
       } catch (txErr: any) {
         await apClient.query("ROLLBACK").catch(() => {});
-        console.error(
-          { runId: params.runId, jobId: params.jobId, stepId: first.stepId, error: txErr?.message ?? String(txErr) },
-          "[scheduleNextAgentRunStep] approval 事务回滚 — 多表状态更新失败",
-        );
+        _logger.error("approval tx rollback", { runId: params.runId, jobId: params.jobId, stepId: first.stepId, error: txErr?.message ?? String(txErr) });
         throw txErr;
       } finally {
         apClient.release();
@@ -432,10 +428,7 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
       await eqClient.query("COMMIT");
     } catch (txErr: any) {
       await eqClient.query("ROLLBACK").catch(() => {});
-      console.error(
-        { runId: params.runId, jobId: params.jobId, stepCount: enqueueSlice.length, error: txErr?.message ?? String(txErr) },
-        "[scheduleNextAgentRunStep] enqueue 事务回滚 — steps queue_job_id 更新失败",
-      );
+      _logger.error("enqueue tx rollback", { runId: params.runId, jobId: params.jobId, stepCount: enqueueSlice.length, error: txErr?.message ?? String(txErr) });
       throw txErr;
     } finally {
       eqClient.release();
@@ -461,10 +454,7 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
           "UPDATE steps SET queue_job_id = NULL, updated_at = now() WHERE step_id = $1 AND queue_job_id = $2",
           [n.stepId, claimToken],
         ).catch(() => undefined);
-        console.error(
-          { runId: params.runId, jobId: params.jobId, stepId: n.stepId, error: enqueueErr?.message ?? String(enqueueErr) },
-          "[scheduleNextAgentRunStep] enqueue failed after claim commit",
-        );
+        _logger.error("enqueue failed after claim commit", { runId: params.runId, jobId: params.jobId, stepId: n.stepId, error: enqueueErr?.message ?? String(enqueueErr) });
         throw enqueueErr;
       }
     }

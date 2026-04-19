@@ -8,7 +8,7 @@ describe("memoryWrite merge", () => {
         return { rows: [{ id: "11111111-1111-1111-1111-111111111111", embedding_minhash: new Array(16).fill(0) }], rowCount: 1 } as any;
       }
       if (sql.includes("UPDATE memory_entries")) {
-        return { rows: [{ id: "11111111-1111-1111-1111-111111111111", scope: "user", type: "other", title: null, created_at: new Date().toISOString() }], rowCount: 1 } as any;
+        return { rows: [{ id: "11111111-1111-1111-1111-111111111111", scope: "user", type: "other", title: null, content_text: "a", created_at: new Date().toISOString(), fact_version: 2, updated_at: new Date().toISOString() }], rowCount: 1 } as any;
       }
       throw new Error(`unexpected query: ${sql.slice(0, 40)}`);
     });

@@ -8,9 +8,11 @@
     "build": "node --max-old-space-size=4096 ../../node_modules/next/dist/bin/next build",
     "start": "next start",
     "lint": "node scripts/check-no-zh.mjs && eslint --max-warnings 0",
-    "test": "node scripts/e2e-console-mode.mjs"
+    "test": "node scripts/e2e-console-mode.mjs",
+    "test:unit": "vitest run"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.24",
     "@xyflow/react": "^12.10.2",
     "framer-motion": "^12.38.0",
     "highlight.js": "^11.11.1",
@@ -29,6 +31,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

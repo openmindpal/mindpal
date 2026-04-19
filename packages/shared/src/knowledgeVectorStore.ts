@@ -41,7 +41,23 @@ export type VectorStoreQueryResponseV1 = {
 // ─── V2 类型（专业向量数据库集成） ────────────────────────────────
 
 /** 向量存储提供者类型 */
-export type VectorStoreProvider = "qdrant" | "milvus" | "external" | "fallback";
+export type VectorStoreProvider = "qdrant" | "milvus" | "external" | "pgvector" | "fallback";
+
+/** pgvector 配置接口 */
+export interface PgVectorConfig {
+  /** 向量维度（如 1536 for OpenAI ada-002） */
+  dimensions: number;
+  /** 距离度量方式 */
+  distanceMetric: "cosine" | "l2" | "inner_product";
+  /** 索引类型 */
+  indexType: "ivfflat" | "hnsw";
+  /** HNSW 构建参数 ef_construction */
+  efConstruction?: number;
+  /** HNSW 连接数 m */
+  m?: number;
+  /** IVFFlat 聚类数 lists */
+  lists?: number;
+}
 
 /** V2 向量存储引用 */
 export type VectorStoreRefV2 = {
@@ -200,6 +216,7 @@ export type VectorStoreConfigV2 =
   | { provider: "qdrant"; endpoint: string; apiKey: string | null; timeoutMs: number; collectionPrefix?: string }
   | { provider: "milvus"; endpoint: string; token: string | null; timeoutMs: number; dbName?: string }
   | { provider: "external"; endpoint: string; bearerToken: string | null; timeoutMs: number }
+  | { provider: "pgvector"; connectionString: string; config: PgVectorConfig; timeoutMs: number }
   | { provider: "fallback" };
 
 /** 降级事件记录 */

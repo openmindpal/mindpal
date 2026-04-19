@@ -1,21 +1,36 @@
--- 026: Session Task Queue & Task Dependencies
+-- 025: Session Task Queue & Task Dependencies & Checkpoints
+-- Consolidated from: 026, 027(checkpoint_data), 030(task_queue_partition)
 -- Multi-task concurrent execution queue with dependency management
 --
 -- OS 级进程管理模型：
 -- - session_task_queue: 会话级任务队列（类比 OS 的进程就绪队列）
 -- - task_dependencies: 任务间依赖关系（类比进程间依赖 / IPC）
+-- - task_checkpoints: 检查点持久化（类比进程检查点/快照）
 -- - 支持 FIFO / 优先级 / 依赖感知 / SJF 等调度策略
 -- - 无硬编码并发上限，由运行时动态决定
+--
+-- 分区策略：PARTITION BY HASH(tenant_id)，16 个分区
+-- 设计决策：
+--   - 选择 tenant_id 而非 session_id 做分区键：
+--     ① 基数适中（几十到几百），HASH(16) 分布均匀
+--     ② 所有核心查询均以 tenant_id 开头，分区裁剪效率最高
+--     ③ 避免 session_id 高基数导致的分区管理复杂度
+--   - PRIMARY KEY 变为 (entry_id, tenant_id)：
+--     PostgreSQL 分区表要求分区键包含在 PK 中
+--     entry_id 为 UUID（全局唯一），不影响唯一性语义
+--   - FK 处理：task_dependencies 和 task_checkpoints 不使用外键引用
+--     分区表的 PK 为复合键，PostgreSQL 不支持跨分区的单列 FK 引用
+--     entry_id 为 UUID（全局唯一），数据一致性由应用层保证
 
--- ── session_task_queue ───────────────────────────────────────
+-- ── session_task_queue（HASH 分区主表）────────────────────────
 -- 会话级任务队列：每个会话维护独立的任务执行队列
 CREATE TABLE IF NOT EXISTS session_task_queue (
-  entry_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id    TEXT NOT NULL REFERENCES tenants(id),
-  space_id     TEXT NULL REFERENCES spaces(id),
+  entry_id     UUID NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id    TEXT NOT NULL,
+  space_id     TEXT NULL,
   session_id   TEXT NOT NULL,                          -- conversationId / sessionId
-  task_id      UUID NULL REFERENCES tasks(task_id),    -- 关联的 task（answer 模式为 NULL）
-  run_id       UUID NULL REFERENCES runs(run_id),      -- 关联的 run（answer 模式为 NULL）
+  task_id      UUID NULL,                              -- 关联的 task（answer 模式为 NULL）
+  run_id       UUID NULL,                              -- 关联的 run（answer 模式为 NULL）
   job_id       UUID NULL,                              -- 关联的 job（execute 模式）
 
   -- 队列元数据
@@ -55,8 +70,31 @@ CREATE TABLE IF NOT EXISTS session_task_queue (
   metadata         JSONB NULL,                         -- 扩展元数据（工具建议、约束等）
 
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- 分区表要求：分区键必须包含在 PK 中
+  PRIMARY KEY (entry_id, tenant_id)
+) PARTITION BY HASH (tenant_id);
+
+-- ── 创建 16 个 HASH 分区 ─────────────────────────────────────
+CREATE TABLE session_task_queue_p0  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 0);
+CREATE TABLE session_task_queue_p1  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 1);
+CREATE TABLE session_task_queue_p2  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 2);
+CREATE TABLE session_task_queue_p3  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 3);
+CREATE TABLE session_task_queue_p4  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 4);
+CREATE TABLE session_task_queue_p5  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 5);
+CREATE TABLE session_task_queue_p6  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 6);
+CREATE TABLE session_task_queue_p7  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 7);
+CREATE TABLE session_task_queue_p8  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 8);
+CREATE TABLE session_task_queue_p9  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 9);
+CREATE TABLE session_task_queue_p10 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 10);
+CREATE TABLE session_task_queue_p11 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 11);
+CREATE TABLE session_task_queue_p12 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 12);
+CREATE TABLE session_task_queue_p13 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 13);
+CREATE TABLE session_task_queue_p14 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 14);
+CREATE TABLE session_task_queue_p15 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 15);
+
+-- ── 索引（自动在每个分区上创建）──────────────────────────────
 
 -- 按会话+状态查询（最常用：获取某会话的活跃队列）
 CREATE INDEX IF NOT EXISTS stq_session_status_pos_idx
@@ -85,8 +123,14 @@ CREATE INDEX IF NOT EXISTS stq_run_id_idx
 CREATE INDEX IF NOT EXISTS stq_tenant_status_idx
   ON session_task_queue (tenant_id, status);
 
--- ── task_dependencies ───────────────────────────────────────
+-- entry_id 唯一索引：用于不携带 tenant_id 的单条查询
+-- 注意：分区表上的 UNIQUE INDEX 必须包含分区键
+CREATE UNIQUE INDEX stq_entry_id_tenant_idx
+  ON session_task_queue (entry_id, tenant_id);
+
+-- ── task_dependencies ────────────────────────────────────────
 -- 任务间依赖关系：DAG 结构，支持三种依赖类型
+-- 注意：不使用 FK 引用 session_task_queue（分区表限制），应用层保证一致性
 CREATE TABLE IF NOT EXISTS task_dependencies (
   dep_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id    TEXT NOT NULL REFERENCES tenants(id),
@@ -94,8 +138,8 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
 
   -- 依赖方向：from_entry_id 依赖于 to_entry_id
   -- 即 to_entry_id 必须先完成/产出，from_entry_id 才能执行
-  from_entry_id UUID NOT NULL REFERENCES session_task_queue(entry_id) ON DELETE CASCADE,
-  to_entry_id   UUID NOT NULL REFERENCES session_task_queue(entry_id) ON DELETE CASCADE,
+  from_entry_id UUID NOT NULL,
+  to_entry_id   UUID NOT NULL,
 
   -- 依赖类型
   dep_type     TEXT NOT NULL DEFAULT 'finish_to_start',
@@ -144,7 +188,20 @@ CREATE INDEX IF NOT EXISTS td_to_entry_idx
 CREATE INDEX IF NOT EXISTS td_session_idx
   ON task_dependencies (tenant_id, session_id);
 
--- ── 触发器：自动更新 updated_at ────────────────────────────
+-- ── task_checkpoints ─────────────────────────────────────────
+-- 检查点持久化存储：用于宕机后从检查点恢复 executing 状态的任务
+-- 注意：不使用 FK 引用 session_task_queue（分区表限制），应用层保证一致性
+CREATE TABLE IF NOT EXISTS task_checkpoints (
+  entry_id         UUID PRIMARY KEY,
+  checkpoint_data  JSONB NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_checkpoints_updated
+  ON task_checkpoints(updated_at);
+
+-- ── 触发器：自动更新 updated_at ─────────────────────────────
 CREATE OR REPLACE FUNCTION update_stq_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -163,8 +220,13 @@ CREATE OR REPLACE TRIGGER trg_td_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION update_stq_updated_at();
 
--- ── 注释 ────────────────────────────────────────────────────
-COMMENT ON TABLE session_task_queue IS '会话级任务队列 — 每个会话维护独立的多任务执行队列，支持并发执行、优先级调度、前后台切换';
+CREATE OR REPLACE TRIGGER trg_task_checkpoints_updated_at
+  BEFORE UPDATE ON task_checkpoints
+  FOR EACH ROW
+  EXECUTE FUNCTION update_stq_updated_at();
+
+-- ── 注释 ─────────────────────────────────────────────────────
+COMMENT ON TABLE session_task_queue IS '会话级任务队列（HASH 分区 × 16，按 tenant_id）— 每个会话维护独立的多任务执行队列，支持并发执行、优先级调度、前后台切换';
 COMMENT ON COLUMN session_task_queue.priority IS '优先级权重 0-100，0 为最高优先级，支持 LLM 动态推断和运行时调整，无硬编码上限';
 COMMENT ON COLUMN session_task_queue.foreground IS '前台任务获得更高的 SSE 事件推送频率和 UI 焦点';
 COMMENT ON COLUMN session_task_queue.status IS '队列状态机：queued → ready → executing → completed/failed/cancelled，支持 paused/preempted 中间态';
@@ -173,3 +235,6 @@ COMMENT ON TABLE task_dependencies IS '任务间依赖关系 DAG — 支持 fini
 COMMENT ON COLUMN task_dependencies.dep_type IS '依赖类型：finish_to_start(完成后执行)/output_to_input(输出注入输入)/cancel_cascade(级联取消)';
 COMMENT ON COLUMN task_dependencies.output_mapping IS '输出映射 JSON — 定义上游输出字段到下游输入字段的映射关系';
 COMMENT ON COLUMN task_dependencies.source IS '依赖来源：auto(LLM推断)/manual(用户手动)/system(系统规则)';
+
+COMMENT ON TABLE task_checkpoints IS '任务检查点持久化存储 — 记录任务执行的中间状态，用于宕机恢复';
+COMMENT ON COLUMN task_checkpoints.checkpoint_data IS '检查点数据 JSON — 包含当前步骤、中间结果、执行上下文等';

@@ -1,0 +1,236 @@
+[
+  {
+    "key": "entity.kernel",
+    "module": "__inline__",
+    "tier": "kernel",
+    "description": "Entity CRUD operations"
+  },
+  {
+    "key": "system.tool.governance",
+    "module": "__inline__",
+    "tier": "kernel",
+    "description": "Tool whitelist management"
+  },
+  {
+    "key": "orchestrator",
+    "module": "./orchestrator",
+    "tier": "core",
+    "description": "Conversation orchestration"
+  },
+  {
+    "key": "model.gateway",
+    "module": "./model-gateway",
+    "tier": "core",
+    "description": "Model routing gateway"
+  },
+  {
+    "key": "knowledge.rag",
+    "module": "./knowledge-rag",
+    "tier": "core",
+    "description": "Knowledge retrieval augmented generation"
+  },
+  {
+    "key": "memory.manager",
+    "module": "./memory-manager",
+    "tier": "core",
+    "description": "Conversation memory management"
+  },
+  {
+    "key": "safety.policy",
+    "module": "./safety-policy",
+    "tier": "core",
+    "description": "Safety and content policy enforcement"
+  },
+  {
+    "key": "connector.manager",
+    "module": "./connector-manager",
+    "tier": "core",
+    "description": "External connector management"
+  },
+  {
+    "key": "task.manager",
+    "module": "./task-manager",
+    "tier": "core",
+    "description": "Task lifecycle management"
+  },
+  {
+    "key": "channel.gateway",
+    "module": "./channel-gateway",
+    "tier": "core",
+    "description": "Multi-channel message gateway"
+  },
+  {
+    "key": "trigger.engine",
+    "module": "./trigger-engine",
+    "tier": "core",
+    "description": "Event trigger engine"
+  },
+  {
+    "key": "nl2ui.generator",
+    "module": "./nl2ui-generator",
+    "tier": "optional",
+    "description": "Natural language to UI generation"
+  },
+  {
+    "key": "intent.analyzer",
+    "module": "./intent-analyzer",
+    "tier": "optional",
+    "description": "User intent analysis"
+  },
+  {
+    "key": "ui.page.config",
+    "module": "./ui-page-config",
+    "tier": "optional",
+    "description": "UI page configuration management"
+  },
+  {
+    "key": "workbench.manager",
+    "module": "./workbench-manager",
+    "tier": "optional",
+    "description": "Workbench version management"
+  },
+  {
+    "key": "oauth.provider",
+    "module": "./oauth-provider",
+    "tier": "optional",
+    "description": "OAuth authentication provider"
+  },
+  {
+    "key": "sso.provider",
+    "module": "./sso-provider",
+    "tier": "optional",
+    "description": "Single sign-on provider"
+  },
+  {
+    "key": "notification.outbox",
+    "module": "./notification-outbox",
+    "tier": "optional",
+    "description": "Notification outbox processing"
+  },
+  {
+    "key": "subscription.runner",
+    "module": "./subscription-runner",
+    "tier": "optional",
+    "description": "Subscription event runner"
+  },
+  {
+    "key": "device.runtime",
+    "module": "./device-runtime",
+    "tier": "optional",
+    "description": "Device agent runtime"
+  },
+  {
+    "key": "collab.runtime",
+    "module": "./collab-runtime",
+    "tier": "optional",
+    "description": "Collaboration runtime"
+  },
+  {
+    "key": "sync.engine",
+    "module": "./sync-engine",
+    "tier": "optional",
+    "description": "Offline sync engine"
+  },
+  {
+    "key": "agent.runtime",
+    "module": "./agent-runtime",
+    "tier": "optional",
+    "description": "Multi-agent runtime"
+  },
+  {
+    "key": "yjs.collab",
+    "module": "./yjs-collab",
+    "tier": "optional",
+    "description": "Yjs collaborative editing"
+  },
+  {
+    "key": "skill.manager",
+    "module": "./skill-manager",
+    "tier": "optional",
+    "description": "Skill lifecycle management"
+  },
+  {
+    "key": "rbac.manager",
+    "module": "./rbac-manager",
+    "tier": "optional",
+    "description": "Role-based access control"
+  },
+  {
+    "key": "federation.gateway",
+    "module": "./federation-gateway",
+    "tier": "optional",
+    "description": "Federation gateway"
+  },
+  {
+    "key": "observability.dashboard",
+    "module": "./observability-dashboard",
+    "tier": "optional",
+    "description": "Observability dashboard"
+  },
+  {
+    "key": "media.pipeline",
+    "module": "./media-pipeline",
+    "tier": "extension",
+    "description": "Media processing pipeline"
+  },
+  {
+    "key": "backup.manager",
+    "module": "./backup-manager",
+    "tier": "extension",
+    "description": "Backup and restore management"
+  },
+  {
+    "key": "replay.viewer",
+    "module": "./replay-viewer",
+    "tier": "extension",
+    "description": "Session replay viewer"
+  },
+  {
+    "key": "artifact.manager",
+    "module": "./artifact-manager",
+    "tier": "extension",
+    "description": "Artifact storage management"
+  },
+  {
+    "key": "analytics.engine",
+    "module": "./analytics-engine",
+    "tier": "extension",
+    "description": "Analytics and reporting engine"
+  },
+  {
+    "key": "identity.link",
+    "module": "./identity-link",
+    "tier": "extension",
+    "description": "External identity linking"
+  },
+  {
+    "key": "user.view.prefs",
+    "module": "./user-view-prefs",
+    "tier": "extension",
+    "description": "User view preferences"
+  },
+  {
+    "key": "ai.event.reasoning",
+    "module": "./ai-event-reasoning",
+    "tier": "extension",
+    "description": "AI event reasoning"
+  },
+  {
+    "key": "embedding.provider",
+    "module": "./embedding-provider",
+    "tier": "extension",
+    "description": "Embedding vector provider"
+  },
+  {
+    "key": "browser.automation",
+    "module": "./browser-automation",
+    "tier": "extension",
+    "description": "Browser automation control"
+  },
+  {
+    "key": "desktop.automation",
+    "module": "./desktop-automation",
+    "tier": "extension",
+    "description": "Desktop automation control"
+  }
+]

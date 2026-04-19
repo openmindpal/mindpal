@@ -1,6 +1,7 @@
 import "fastify";
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
+import type { Span, Context as OtelContext } from "@opentelemetry/api";
 import type { RedisClient } from "../modules/redis/client";
 import type { ApiConfig } from "../config";
 import type { MetricsRegistry } from "../modules/metrics/metrics";
@@ -15,6 +16,12 @@ declare module "fastify" {
   }
 
   interface FastifyRequest {
+    /** OTel: 当前请求的 Span（distributedTracing 插件设置） */
+    _otelSpan?: Span;
+    /** OTel: 当前请求的 Context（distributedTracing 插件设置） */
+    _otelContext?: OtelContext;
+    /** 请求开始时间戳（structuredLogging 插件设置） */
+    _startTime?: number;
     ctx: {
       traceId: string;
       requestId: string;
@@ -39,6 +46,10 @@ declare module "fastify" {
         skipAuditWrite?: boolean;
         requireOutbox?: boolean;
         outboxEnqueued?: boolean;
+        auditWritten?: boolean;
+        runId?: string;
+        stepId?: string;
+        policySnapshotRef?: string;
       };
     };
   }

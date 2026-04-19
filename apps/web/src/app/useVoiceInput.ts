@@ -2,6 +2,32 @@
 
 import { useCallback, useRef, useState } from "react";
 
+/* Web Speech API type shims — avoids (window as any) */
+interface SpeechRecognitionEvent {
+  resultIndex: number;
+  results: { length: number; [index: number]: { isFinal: boolean; 0: { transcript: string } } };
+}
+interface SpeechRecognitionInstance {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionCtor;
+    webkitSpeechRecognition?: SpeechRecognitionCtor;
+  }
+}
+
 export interface VoiceInputState {
   voiceListening: boolean;
   voiceInterim: string;
@@ -28,25 +54,50 @@ export default function useVoiceInput(opts: {
   const accumulatedTextRef = useRef("");
 
   const transcribeViaServer = useCallback(async (audioBlob: Blob): Promise<string | null> => {
+    const WHISPER_TIMEOUT_MS = parseInt(
+      process.env.NEXT_PUBLIC_WHISPER_TIMEOUT_MS ?? "15000",
+      10,
+    );
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WHISPER_TIMEOUT_MS);
+
     try {
       const formData = new FormData();
       formData.append("file", audioBlob, "recording.webm");
       formData.append("language", locale.startsWith("en") ? "en" : "zh");
-      const res = await fetch("/api/voice", { method: "POST", body: formData });
-      if (!res.ok) return null;
+      const res = await fetch("/api/voice", {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        console.warn("[VoiceInput] Whisper API error:", res.status);
+        return null;
+      }
       const data = await res.json();
       return data.transcript || null;
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        console.warn(
+          "[VoiceInput] Whisper request timed out after",
+          WHISPER_TIMEOUT_MS,
+          "ms — falling back",
+        );
+      } else {
+        console.warn("[VoiceInput] Whisper request failed:", err);
+      }
       return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }, [locale]);
 
   const startVoice = useCallback(() => {
     accumulatedTextRef.current = "";
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (SR) {
-      const recognition = new SR() as any;
+      const recognition = new SR();
       recognition.lang = locale.startsWith("en") ? "en-US" : "zh-CN";
       recognition.continuous = true;
       recognition.interimResults = true;
@@ -57,7 +108,7 @@ export default function useVoiceInput(opts: {
         setVoiceListening(true);
         setVoiceInterim("");
       };
-      recognition.onresult = (event: any) => {
+      recognition.onresult = (event) => {
         let interim = "";
         let finalText = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -124,6 +175,46 @@ export default function useVoiceInput(opts: {
               onAutoSend?.(transcript);
             } else {
               setDraft((prev) => prev + transcript);
+            }
+          } else {
+            /* Whisper timed-out or failed — attempt browser SpeechRecognition fallback */
+            const SRFallback =
+              typeof window !== "undefined"
+                ? window.SpeechRecognition || window.webkitSpeechRecognition
+                : undefined;
+            if (SRFallback) {
+              console.info(
+                "[VoiceInput] Falling back to browser SpeechRecognition",
+              );
+              setVoiceInterim("语音识别超时，已切换到本地识别");
+              const fallback = new SRFallback();
+              fallback.lang = locale.startsWith("en") ? "en-US" : "zh-CN";
+              fallback.continuous = false;
+              fallback.interimResults = false;
+              fallback.maxAlternatives = 1;
+
+              fallback.onresult = (evt: any) => {
+                const text: string =
+                  evt.results?.[0]?.[0]?.transcript ?? "";
+                if (text) {
+                  if (conversationRef.current) {
+                    onAutoSend?.(text);
+                  } else {
+                    setDraft((prev) => prev + text);
+                  }
+                }
+              };
+              fallback.onerror = () => {
+                console.warn("[VoiceInput] Browser fallback recognition failed");
+              };
+              fallback.onend = () => {
+                setVoiceInterim("");
+              };
+              fallback.start();
+            } else {
+              console.warn(
+                "[VoiceInput] Whisper failed and browser SpeechRecognition unavailable",
+              );
             }
           }
         };

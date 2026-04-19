@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:channelGateway" });
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
@@ -901,7 +904,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     const credentials = resolveBindingCredentials({ provider: body.provider, secretPayload, providerConfig });
 
     if (!credentials.appId) {
-      console.error(`[channelBinding] provider=${body.provider} 缺少 appId/clientId 凭据`);
+      _logger.error("provider missing appId/clientId credentials", { provider: body.provider });
       throw Errors.channelConfigMissing();
     }
 
@@ -964,11 +967,11 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     // 1. 查找并校验 binding state
     const bindingState = await getBindingStateByState({ pool: app.db, state: q.state });
     if (!bindingState) {
-      console.error(`[channelBinding] callback state 无效: provider=${params.provider}`);
+      _logger.error("callback state invalid", { provider: params.provider });
       return reply.status(400).send(htmlResult("绑定失败", "授权链接无效或已过期，请重新获取绑定二维码。"));
     }
     if (bindingState.provider !== params.provider) {
-      console.error(`[channelBinding] callback provider 不匹配: expected=${bindingState.provider} actual=${params.provider}`);
+      _logger.error("callback provider mismatch", { expected: bindingState.provider, actual: params.provider });
       return reply.status(400).send(htmlResult("绑定失败", "授权链接与渠道不匹配。"));
     }
     if (bindingState.status !== "pending") {
@@ -983,7 +986,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     const tenantId = bindingState.tenantId;
     const cfg = await getWebhookConfig({ pool: app.db, tenantId, provider: bindingState.provider, workspaceId: bindingState.workspaceId });
     if (!cfg) {
-      console.error(`[channelBinding] callback 找不到 webhookConfig: provider=${bindingState.provider}, workspaceId=${bindingState.workspaceId}`);
+      _logger.error("callback webhookConfig not found", { provider: bindingState.provider, workspaceId: bindingState.workspaceId });
       return reply.status(500).send(htmlResult("绑定失败", "渠道配置缺失，请联系管理员。"));
     }
 
@@ -1008,11 +1011,11 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
         redirectUri,
       });
     } catch (e: any) {
-      console.error(`[channelBinding] code 换取用户身份失败: provider=${bindingState.provider} error=${e?.message ?? e}`, e?.stack);
+      _logger.error("code exchange for user identity failed", { provider: bindingState.provider, error: e?.message ?? e });
       return reply.status(500).send(htmlResult("绑定失败", `获取您的 ${bindingState.provider} 身份信息失败：${e?.message ?? "未知错误"}`));
     }
 
-    console.log(`[channelBinding] 成功获取渠道用户身份: provider=${bindingState.provider} channelUserId=${channelUser.channelUserId} displayName=${channelUser.displayName}`);
+    _logger.info("channel user identity obtained", { provider: bindingState.provider, channelUserId: channelUser.channelUserId, displayName: channelUser.displayName });
 
     // 4. 消费 state
     const consumed = await consumeBindingState({
@@ -1037,7 +1040,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
       status: "active",
     });
 
-    console.log(`[channelBinding] 渠道账号绑定成功: provider=${account.provider} channelUserId=${account.channelUserId} → subjectId=${account.subjectId} spaceId=${account.spaceId}`);
+    _logger.info("channel account bound", { provider: account.provider, channelUserId: account.channelUserId, subjectId: account.subjectId, spaceId: account.spaceId });
 
     req.ctx.audit!.outputDigest = {
       bindingId: consumed.id,

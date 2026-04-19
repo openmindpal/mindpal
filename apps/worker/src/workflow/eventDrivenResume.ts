@@ -19,7 +19,9 @@
  *   - manual.resume       → 手动恢复
  */
 import type { Pool } from "pg";
-import { tryTransitionRun, type RunStatus } from "@openslin/shared";
+import { tryTransitionRun, type RunStatus, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: 'worker:eventDrivenResume' });
 import { writeAudit } from "./processor/audit";
 import { 
   handleEmergencyStop, 
@@ -333,6 +335,6 @@ async function writeResumeAudit(
       outputDigest: { newStatus, message },
     });
   } catch (e) {
-    console.warn(`[eventDrivenResume] 审计记录写入失败:`, e);
+    _logger.warn("audit write failed", { err: (e as Error)?.message ?? e });
   }
 }

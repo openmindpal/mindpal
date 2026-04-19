@@ -95,6 +95,7 @@ export async function createApproval(params: {
   toolRef?: string | null;
   policySnapshotRef?: string | null;
   inputDigest?: any;
+  expiresAt?: string | null;
   /** 规则引擎评估上下文（完全动态，由规则引擎生成） */
   assessmentContext?: any;
 }) {
@@ -132,9 +133,9 @@ export async function createApproval(params: {
     `
       INSERT INTO approvals (
         tenant_id, space_id, run_id, step_id, status, requested_by_subject_id,
-        tool_ref, policy_snapshot_ref, input_digest, assessment_context
+        tool_ref, policy_snapshot_ref, input_digest, assessment_context, expires_at
       )
-      VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9)
+      VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10)
       RETURNING *
     `,
     [
@@ -147,6 +148,7 @@ export async function createApproval(params: {
       params.policySnapshotRef ?? null,
       params.inputDigest ?? null,
       params.assessmentContext ? JSON.stringify(params.assessmentContext) : null,
+      params.expiresAt ?? null,
     ],
   );
   return toApproval(res.rows[0]);

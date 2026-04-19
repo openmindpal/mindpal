@@ -41,6 +41,7 @@ Desktop.ini
 
 # ── IDE / 编辑器 ──
 .trae/
+.qoder/
 .vscode/
 .idea/
 *.swp
@@ -54,7 +55,6 @@ Desktop.ini
 
 # ── 项目特定忽略 ──
 specs/
-社会价值治理机制-透明底线与市场自发调节.md
 docs/
 原始架构设计/
 skills/personal-twin/

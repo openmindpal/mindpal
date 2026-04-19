@@ -5,8 +5,10 @@
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { AppError } from "./errors";
-import { getOrCreateBreaker, type CircuitBreakerOptions } from "@openslin/shared";
+import { getOrCreateBreaker, type CircuitBreakerOptions, StructuredLogger } from "@openslin/shared";
 import { createDeltaIterable } from "./streamingPipeline";
+
+const _logger = new StructuredLogger({ module: "llm" });
 
 /** LLM 熔断器默认配置（按候选模型集/purpose 维度熔断） */
 const LLM_BREAKER_DEFAULTS: Omit<CircuitBreakerOptions, "name"> = {
@@ -14,11 +16,11 @@ const LLM_BREAKER_DEFAULTS: Omit<CircuitBreakerOptions, "name"> = {
   resetTimeoutMs: 30_000,
   halfOpenMaxAttempts: 2,
   onStateChange: (e) => {
-    console.warn(`[llm:circuit-breaker] ${e.name}: ${e.from} → ${e.to} (failures=${e.consecutiveFailures})`);
+    _logger.warn("circuit-breaker state change", { name: e.name, from: e.from, to: e.to, failures: e.consecutiveFailures });
   },
 };
 
-export type LlmSubject = { tenantId: string; spaceId?: string; subjectId: string };
+export type LlmSubject = { tenantId: string; spaceId?: string; subjectId: string; roles?: string[] };
 
 type ModelChatMessage = { role: string; content: string | Array<{type: string; [k: string]: any}> };
 type ModelChatConstraints = { candidates?: string[] };
@@ -57,12 +59,12 @@ export function makeInternalAuthHeader(subject: LlmSubject): string {
   const mode = process.env.AUTHN_MODE ?? "dev";
   if (mode === "dev") {
     // 回退：dev 模式且无 HMAC secret，生成 dev token（仅限本地开发）
-    console.warn(`[makeInternalAuthHeader] HMAC secret not configured, falling back to dev token for subject: ${subject.subjectId}. Configure AUTHN_HMAC_SECRET for production.`);
+        _logger.warn("HMAC secret not configured, falling back to dev token", { subjectId: subject.subjectId });
     const space = subject.spaceId ?? "space_dev";
     return `Bearer ${subject.subjectId}@${space}`;
   }
 
-  console.error(`[makeInternalAuthHeader] Cannot construct internal auth header: AUTHN_MODE=${mode} but no HMAC secret configured.`);
+    _logger.error("Cannot construct internal auth header", { mode });
   return "";
 }
 
@@ -113,7 +115,7 @@ export async function invokeModelChat(params: ModelChatRequestParams & {
     payload: invocation.payload,
   });
   const body = res.body ? JSON.parse(res.body) : null;
-  if (res.statusCode >= 200 && res.statusCode < 300) return body as any;
+  if (res.statusCode >= 200 && res.statusCode < 300) return body;
   const errorCode = typeof body?.errorCode === "string" ? body.errorCode : "MODEL_CHAT_FAILED";
   const message =
     body?.message && typeof body.message === "object"
@@ -121,9 +123,9 @@ export async function invokeModelChat(params: ModelChatRequestParams & {
       : { "zh-CN": String(body?.message ?? "模型调用失败"), "en-US": String(body?.message ?? "Model invocation failed") };
   const appErr = new AppError({ errorCode, httpStatus: res.statusCode || 500, message });
   if (appErr.httpStatus === 429) {
-    const retryAfterHeader = (res.headers as any)?.["retry-after"];
+    const retryAfterHeader = res.headers["retry-after"];
     const retryAfterSec = Number(body?.retryAfterSec ?? retryAfterHeader);
-    if (Number.isFinite(retryAfterSec) && retryAfterSec > 0) (appErr as any).retryAfterSec = retryAfterSec;
+    if (Number.isFinite(retryAfterSec) && retryAfterSec > 0) appErr.retryAfterSec = retryAfterSec;
   }
   throw appErr;
   }); // end breaker.call
@@ -216,9 +218,11 @@ export function parseToolCallsFromOutput(text: string): {
 } {
   const toolCalls: Array<{ toolRef: string; inputDraft: Record<string, unknown> }> = [];
   let parseErrorCount = 0;
-  const regex = /```tool_call\s*\n([\s\S]*?)```/g;
+
+  /* ── Pass 1: Markdown ```tool_* ... ``` blocks (tool_call, tool_code, etc.) ── */
+  const mdRegex = /```tool_\w+\s*\n([\s\S]*?)```/g;
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = mdRegex.exec(text)) !== null) {
     try {
       const parsed = JSON.parse(match[1].trim());
       const arr = Array.isArray(parsed) ? parsed : [parsed];
@@ -237,8 +241,133 @@ export function parseToolCallsFromOutput(text: string): {
       parseErrorCount += 1;
     }
   }
-  const cleanText = text.replace(/\n?```tool_call\s*\n[\s\S]*?```\n?/g, "").trim();
+
+  /* ── Pass 2 (fallback): XML <tool_*>...</tool_*> or <function_call> blocks ── */
+  if (toolCalls.length === 0) {
+    const xmlBlockRegex = /<(tool_\w+|function_call)[^>]*>([\s\S]*?)<\/\1>/gi;
+    let xmlMatch: RegExpExecArray | null;
+    while ((xmlMatch = xmlBlockRegex.exec(text)) !== null) {
+      try {
+        const body = xmlMatch[2];
+        // Try XML-structured content first: extract tool name from <name>...</name>
+        const nameMatch = body.match(/<name>\s*([\s\S]*?)\s*<\/name>/i);
+
+        if (nameMatch) {
+          // ── XML parameter format ──
+          const toolName = nameMatch[1].trim();
+          if (!toolName) { parseErrorCount += 1; continue; }
+
+          const inputDraft: Record<string, unknown> = {};
+          const paramRegex = /<parameter[=\s]*([^>]*)>([\s\S]*?)<\/parameter>/gi;
+          let pm: RegExpExecArray | null;
+          while ((pm = paramRegex.exec(body)) !== null) {
+            let key = pm[1].trim();
+            let val: string = pm[2];
+
+            if (key.startsWith("=")) key = key.slice(1).trim();
+            const nameAttr = key.match(/name\s*=\s*["']?([\w.\-]+)["']?/i);
+            if (nameAttr) key = nameAttr[1];
+
+            if (!key && val.includes(">")) {
+              const gt = val.indexOf(">");
+              key = val.slice(0, gt).trim();
+              val = val.slice(gt + 1).trim();
+            }
+
+            if (!key) { parseErrorCount += 1; continue; }
+
+            let parsed: unknown = val;
+            if (val.startsWith("{") || val.startsWith("[")) {
+              try { parsed = JSON.parse(val); } catch { /* keep as string */ }
+            }
+            inputDraft[key] = parsed;
+          }
+
+          const normalised = normaliseInputDraft(inputDraft);
+          const toolRef = toolName.includes("@") ? toolName : `${toolName}@1`;
+          toolCalls.push({ toolRef, inputDraft: normalised });
+        } else {
+          // ── Python-style function call: entity.update(key="val", ...) ──
+          const pyMatch = body.trim().match(/^([\w.]+)\s*\(([\s\S]*)\)\s*$/);
+          if (pyMatch) {
+            const toolName = pyMatch[1];
+            const rawArgs = pyMatch[2].trim();
+            const inputDraft = rawArgs ? parsePythonKwargs(rawArgs) : {};
+            const normalised = normaliseInputDraft(inputDraft);
+            const toolRef = toolName.includes("@") ? toolName : `${toolName}@1`;
+            toolCalls.push({ toolRef, inputDraft: normalised });
+          } else {
+            // Try JSON fallback inside XML body
+            try {
+              const parsed = JSON.parse(body.trim());
+              const arr = Array.isArray(parsed) ? parsed : [parsed];
+              for (const item of arr) {
+                if (typeof item?.toolRef === "string" && item.toolRef.trim()) {
+                  toolCalls.push({
+                    toolRef: item.toolRef.trim(),
+                    inputDraft: item.inputDraft && typeof item.inputDraft === "object" && !Array.isArray(item.inputDraft) ? item.inputDraft : {},
+                  });
+                }
+              }
+            } catch {
+              parseErrorCount += 1;
+            }
+          }
+        }
+      } catch {
+        parseErrorCount += 1;
+      }
+    }
+  }
+
+  /* ── Clean output text: strip both markdown and XML tool_* blocks ── */
+  const cleanText = text
+    .replace(/\n?```tool_\w+\s*\n[\s\S]*?```\n?/g, "")
+    .replace(/\n?<(?:tool_\w+|function_call)[^>]*>[\s\S]*?<\/(?:tool_\w+|function_call)>\n?/gi, "")
+    .trim();
   return { cleanText, toolCalls, parseErrorCount };
+}
+
+/* ── Helper: normalise well-known field names for entity tools ── */
+function normaliseInputDraft(inputDraft: Record<string, unknown>): Record<string, unknown> {
+  const normalised: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(inputDraft)) {
+    if (k === "type") normalised["entityName"] = v;
+    else if (k === "entity_id" || k === "entityId") normalised["id"] = v;
+    else if (k === "data" || k === "payload") {
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        normalised["payload"] = v;
+      } else {
+        normalised[k] = v;
+      }
+    } else {
+      normalised[k] = v;
+    }
+  }
+  return normalised;
+}
+
+/* ── Helper: parse Python-style kwargs string into Record ── */
+function parsePythonKwargs(argsStr: string): Record<string, unknown> {
+  // Approach 1: convert to JSON and parse
+  try {
+    const jsonStr = "{" + argsStr.replace(/(\w+)\s*=/g, '"$1":') + "}";
+    return JSON.parse(jsonStr);
+  } catch { /* fall through */ }
+
+  // Approach 2: regex extraction of key=value pairs
+  const result: Record<string, unknown> = {};
+  const kvRegex = /(\w+)\s*=\s*(?:"([^"]*?)"|'([^']*?)'|(\{[\s\S]*?\}|\[[\s\S]*?\])|([^,)\s]+))/g;
+  let m: RegExpExecArray | null;
+  while ((m = kvRegex.exec(argsStr)) !== null) {
+    const key = m[1];
+    const val = m[2] ?? m[3] ?? m[4] ?? m[5] ?? "";
+    if (typeof val === "string" && (val.startsWith("{") || val.startsWith("["))) {
+      try { result[key] = JSON.parse(val); continue; } catch { /* keep as string */ }
+    }
+    result[key] = val;
+  }
+  return result;
 }
 
 /**

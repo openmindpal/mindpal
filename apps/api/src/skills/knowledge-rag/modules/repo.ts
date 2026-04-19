@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { computeMinhash, minhashOverlapScore } from "@openslin/shared";
+import { computeMinhash, minhashOverlapScore, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:knowledgeRepo" });
 import { createVectorStore, resolveVectorStoreConfigFromEnv } from "./vectorStore";
 import { getRerankConfig, rerank } from "./rerank";
 
@@ -599,7 +601,7 @@ export async function searchChunksHybrid(params: {
       scored = preRanked.slice(0, params.limit);
     }
   } catch (e: any) {
-    console.error(`[knowledge:searchChunksHybrid] rerank 阶段异常: ${e?.message ?? e}`);
+    _logger.error("rerank stage failed", { error: e?.message ?? e });
     scored = preRanked.slice(0, params.limit);
     rerankStats.degraded = true;
     rerankStats.degradeReason = `rerank_exception: ${e?.message ?? e}`;

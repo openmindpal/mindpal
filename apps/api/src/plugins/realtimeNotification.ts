@@ -16,6 +16,9 @@
  */
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import crypto from "node:crypto";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "realtimeNotification" });
 
 // ────────────────────────────────────────────────────────────────
 // 最小 WS 接口（避免引入 @types/ws）
@@ -150,9 +153,9 @@ async function startNotifCrossNodeSubscriber(): Promise<void> {
         pushToLocalSubject(payload.targetSubjectId, payload.notification);
       } catch { /* ignore malformed */ }
     });
-    console.log(`[realtimeNotification] cross-node subscriber started, nodeId=${NODE_ID}`);
+        _logger.info("cross-node subscriber started", { nodeId: NODE_ID });
   } catch (err: any) {
-    console.warn(`[realtimeNotification] cross-node subscriber failed: ${err?.message}`);
+        _logger.warn("cross-node subscriber failed", { err: err?.message });
     _crossNodeSetup = false;
   }
 }
@@ -295,7 +298,7 @@ function startHeartbeatCleanup(): void {
       }
       // 超时检测
       if (now - conn.lastPongAt > HEARTBEAT_TIMEOUT_MS) {
-        console.log(`[realtimeNotification] heartbeat timeout: subject=${conn.subjectId}, connectionId=${conn.connectionId}`);
+                _logger.info("heartbeat timeout", { subjectId: conn.subjectId, connectionId: conn.connectionId });
         try { conn.socket.close(1000, "heartbeat_timeout"); } catch { /* ignore */ }
         removeConnection(conn);
       }
@@ -357,7 +360,7 @@ export async function cleanupNotifConnections(): Promise<void> {
 // ────────────────────────────────────────────────────────────────
 
 function extractSubjectFromReq(req: FastifyRequest): { tenantId: string; subjectId: string } | null {
-  const subject = (req as any).ctx?.subject;
+  const subject = req.ctx?.subject;
   if (!subject) return null;
   const tenantId = subject.tenantId as string | undefined;
   const subjectId = subject.subjectId as string | undefined;
@@ -368,7 +371,7 @@ function extractSubjectFromReq(req: FastifyRequest): { tenantId: string; subject
 export const realtimeNotificationPlugin: FastifyPluginAsync = async (app) => {
   // 注入 Redis + 启动跨节点订阅
   try {
-    setNotifRedis((app as any).redis);
+    setNotifRedis(app.redis);
     startNotifCrossNodeSubscriber().catch(() => {});
   } catch { /* ignore */ }
 
@@ -407,7 +410,7 @@ export const realtimeNotificationPlugin: FastifyPluginAsync = async (app) => {
     } catch { /* ignore */ }
 
     // 记录连接到 DB（fire-and-forget）
-    const db = (app as any).db;
+    const db = app.db;
     if (db) {
       db.query(
         `INSERT INTO notification_ws_connections (connection_id, tenant_id, subject_id, node_id, connected_at, user_agent, ip_address)

@@ -7,6 +7,9 @@
  * 3. 将 run/step 挂起为 needs_device 状态，等待设备回传
  */
 import type { Pool } from "pg";
+import { StructuredLogger, resolveNumber } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:deviceDispatch" });
 
 export type DeviceExecutionRow = {
   deviceExecutionId: string;
@@ -42,8 +45,8 @@ function toRow(r: any): DeviceExecutionRow {
   };
 }
 
-const ACTIVE_DEVICE_MAX_STALENESS_MS = Number(process.env.DEVICE_ACTIVE_MAX_STALENESS_MS ?? 90_000);
-const DEVICE_EXECUTION_PENDING_TIMEOUT_MS = Number(process.env.DEVICE_EXECUTION_PENDING_TIMEOUT_MS ?? 45_000);
+const ACTIVE_DEVICE_MAX_STALENESS_MS = resolveNumber("DEVICE_ACTIVE_MAX_STALENESS_MS").value;
+const DEVICE_EXECUTION_PENDING_TIMEOUT_MS = resolveNumber("DEVICE_EXECUTION_PENDING_TIMEOUT_MS").value;
 
 const DEVICE_TOOL_ALIAS_MAP: Record<string, string> = {
   "browser.navigate": "device.browser.open",
@@ -283,11 +286,11 @@ export async function executeDeviceToolDispatch(params: {
   if (completed) {
     if (completed.status === "failed") {
       const msg = completed.errorCategory ?? "device_execution_failed";
-      console.error(`[device-dispatch] device execution failed: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${completed.deviceExecutionId} errorCategory=${msg}`);
+      _logger.error("device execution failed", { runId: params.runId, stepId: params.stepId, deviceExecutionId: completed.deviceExecutionId, errorCategory: msg });
       throw new Error(`device_execution_failed:${msg}`);
     }
     // 成功：返回设备执行结果，展开 outputDigest 使其匹配工具 outputSchema
-    console.log(`[device-dispatch] device execution completed: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${completed.deviceExecutionId}`);
+    _logger.info("device execution completed", { runId: params.runId, stepId: params.stepId, deviceExecutionId: completed.deviceExecutionId });
     const deviceOutputDigest = completed.outputDigest && typeof completed.outputDigest === "object" && !Array.isArray(completed.outputDigest) ? completed.outputDigest : {};
     return {
       success: completed.status === "succeeded",
@@ -322,12 +325,13 @@ export async function executeDeviceToolDispatch(params: {
         tenantId: params.tenantId,
         deviceExecutionId: pending.deviceExecutionId,
       });
-      console.error(
-        `[device-dispatch] stale device execution canceled: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${pending.deviceExecutionId} deviceId=${pending.deviceId} deviceStatus=${deviceLiveness?.status ?? "unknown"} lastSeenAt=${deviceLiveness?.lastSeenAt ?? "null"}`,
-      );
+      _logger.error("stale device execution canceled", {
+        runId: params.runId, stepId: params.stepId, deviceExecutionId: pending.deviceExecutionId,
+        deviceId: pending.deviceId, deviceStatus: deviceLiveness?.status ?? "unknown", lastSeenAt: deviceLiveness?.lastSeenAt ?? null,
+      });
       throw new Error("timeout");
     }
-    console.log(`[device-dispatch] existing pending device execution: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${pending.deviceExecutionId} status=${pending.status}`);
+    _logger.info("existing pending device execution", { runId: params.runId, stepId: params.stepId, deviceExecutionId: pending.deviceExecutionId, status: pending.status });
     const e: any = new Error("needs_device");
     e.deviceExecutionId = pending.deviceExecutionId;
     e.deviceId = pending.deviceId;
@@ -347,7 +351,7 @@ export async function executeDeviceToolDispatch(params: {
   });
 
   if (!device) {
-    console.error(`[device-dispatch] no active device found: tenantId=${params.tenantId} spaceId=${params.spaceId} toolName=${params.toolName}`);
+    _logger.error("no active device found", { tenantId: params.tenantId, spaceId: params.spaceId, toolName: params.toolName });
     throw new Error("policy_violation:no_active_device_for_tool");
   }
 
@@ -369,7 +373,7 @@ export async function executeDeviceToolDispatch(params: {
     stepId: params.stepId,
   });
 
-  console.log(`[device-dispatch] created device execution: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${created.deviceExecutionId} deviceId=${device.deviceId} toolRef=${params.toolRef}`);
+  _logger.info("created device execution", { runId: params.runId, stepId: params.stepId, deviceExecutionId: created.deviceExecutionId, deviceId: device.deviceId, toolRef: params.toolRef });
 
   // 抛出 needs_device 信号，由 processStep 捕获并挂起 run
   const e: any = new Error("needs_device");

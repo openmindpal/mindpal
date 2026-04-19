@@ -14,12 +14,119 @@
 export type SandboxMode = "strict" | "compat";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 模块封禁列表
+// 风险等级
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type RiskLevel = "high" | "medium" | "low";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 按风险等级分类的封禁模块
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 高危模块 — 进程/系统级，可直接逃逸沙箱或执行任意命令
+ */
+export const SANDBOX_BLOCKED_HIGH_RISK = [
+  "child_process",  // 子进程创建（可执行任意命令）
+  "cluster",        // 集群进程 fork
+  "worker_threads", // 工作线程（可绕过沙箱）
+  "vm",             // V8 虚拟机（可逃逸沙箱）
+  "v8",             // V8 引擎内部接口
+  "process",        // 进程控制
+] as const;
+
+/**
+ * 中危模块 — 网络/文件，可绕过 NetworkPolicy 或泄露数据
+ */
+export const SANDBOX_BLOCKED_MEDIUM_RISK = [
+  "dgram",  // UDP 套接字（绕过 NetworkPolicy）
+  "net",    // TCP 套接字（绕过 NetworkPolicy）
+  "tls",    // TLS 套接字
+  "dns",    // DNS 查询（可用于数据外泄）
+  "http2",  // HTTP/2 客户端（绕过出站控制）
+] as const;
+
+/**
+ * 低危但需限制的模块 — 信息泄露/侧信道/调试接口
+ */
+export const SANDBOX_BLOCKED_LOW_RISK = [
+  "os",                  // 操作系统信息泄露
+  "perf_hooks",          // 性能计时（侧信道攻击）
+  "trace_events",        // 追踪事件
+  "inspector",           // 调试器接口
+  "repl",                // REPL 交互式环境
+  "async_hooks",         // 异步钩子（可监控系统行为）
+  "diagnostics_channel", // 诊断通道
+] as const;
+
+/**
+ * 全量封禁模块（去重、含 node: 前缀变体）
+ * 合并高/中/低三个等级，同时保留向后兼容的 http/https 封禁
+ */
+function buildBlockedModulesArray(): readonly string[] {
+  const bareNames = new Set<string>([
+    ...SANDBOX_BLOCKED_HIGH_RISK,
+    ...SANDBOX_BLOCKED_MEDIUM_RISK,
+    ...SANDBOX_BLOCKED_LOW_RISK,
+    // 向后兼容：http/https 由 NetworkPolicy 控制，但 BASE 已包含，继续封禁
+    "http",
+    "https",
+  ]);
+  const result: string[] = [];
+  for (const m of bareNames) {
+    result.push(m, `node:${m}`);
+  }
+  return Object.freeze(result);
+}
+
+/** 完整的沙箱模块黑名单（含 node: 前缀变体） */
+export const SANDBOX_BLOCKED_MODULES: readonly string[] = buildBlockedModulesArray();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 风险等级查询
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _riskMap = new Map<string, RiskLevel>();
+for (const m of SANDBOX_BLOCKED_HIGH_RISK) _riskMap.set(m, "high");
+for (const m of SANDBOX_BLOCKED_MEDIUM_RISK) _riskMap.set(m, "medium");
+for (const m of SANDBOX_BLOCKED_LOW_RISK) _riskMap.set(m, "low");
+
+/**
+ * 获取模块的风险等级
+ * @returns 风险等级或 undefined（如果不在黑名单中）
+ */
+export function getRiskLevel(moduleName: string): RiskLevel | undefined {
+  const bare = moduleName.startsWith("node:") ? moduleName.slice(5) : moduleName;
+  return _riskMap.get(bare);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 黑名单校验函数
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _blockedSet = new Set<string>(SANDBOX_BLOCKED_MODULES);
+
+/** 检查模块是否在黑名单中 */
+export function isModuleBlocked(moduleName: string): boolean {
+  const bare = moduleName.startsWith("node:") ? moduleName.slice(5) : moduleName;
+  return _blockedSet.has(bare) || _blockedSet.has(`node:${bare}`);
+}
+
+/** 如果模块在黑名单中则抛出异常 */
+export function assertModuleAllowed(moduleName: string): void {
+  if (isModuleBlocked(moduleName)) {
+    const bare = moduleName.startsWith("node:") ? moduleName.slice(5) : moduleName;
+    throw new Error(`policy_violation:skill_forbidden_import:${bare}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 旧版模块封禁列表（向后兼容）
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * 基线封禁模块 — 所有沙箱模式下都禁止
- * 包含网络、子进程等高危模块
+ * @deprecated 使用 SANDBOX_BLOCKED_MODULES 代替
  */
 export const SANDBOX_FORBIDDEN_MODULES_BASE = Object.freeze([
   "node:child_process",
@@ -36,25 +143,46 @@ export const SANDBOX_FORBIDDEN_MODULES_BASE = Object.freeze([
   "https",
   "node:dgram",
   "dgram",
+  // 新增高危模块
+  "node:cluster",
+  "cluster",
+  "node:v8",
+  "v8",
+  "node:process",
+  "process",
+  "node:vm",
+  "vm",
+  "node:worker_threads",
+  "worker_threads",
+  // 新增中危模块
+  "node:http2",
+  "http2",
+  // 新增低危模块
+  "node:os",
+  "os",
+  "node:perf_hooks",
+  "perf_hooks",
+  "node:trace_events",
+  "trace_events",
+  "node:inspector",
+  "inspector",
+  "node:repl",
+  "repl",
+  "node:async_hooks",
+  "async_hooks",
+  "node:diagnostics_channel",
+  "diagnostics_channel",
 ] as const);
 
 /**
  * 严格模式额外封禁模块 — 仅 strict 模式下禁止
- * 包含文件系统、Worker、VM 等
+ * @deprecated 使用 SANDBOX_BLOCKED_MODULES 代替（所有模块在所有模式下均封禁）
  */
 export const SANDBOX_FORBIDDEN_MODULES_STRICT = Object.freeze([
   "node:fs",
   "fs",
   "node:fs/promises",
   "fs/promises",
-  "node:worker_threads",
-  "worker_threads",
-  "node:vm",
-  "vm",
-  "node:inspector",
-  "inspector",
-  "node:async_hooks",
-  "async_hooks",
 ] as const);
 
 /**

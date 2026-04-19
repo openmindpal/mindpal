@@ -124,7 +124,9 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
     }
   }
 
-  await writeDebateEnvelope({ pool, subject, collabRunId, taskId, session }).catch(() => {});
+  await writeDebateEnvelope({ pool, subject, collabRunId, taskId, session }).catch((e: unknown) => {
+    app.log.warn({ err: (e as Error)?.message, collabRunId, taskId }, "[CollabDebateV2] writeDebateEnvelope failed");
+  });
   return session;
 }
 

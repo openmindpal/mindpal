@@ -8,6 +8,9 @@
  *
  * 直接调用 toolGovernanceRepo 和 toolRepo 中的已有仓库函数。
  */
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:systemToolGovernance" });
 import type { Pool } from "pg";
 
 // ── 仓库函数：直接写 SQL，避免跨 workspace 导入问题 ──
@@ -154,7 +157,7 @@ export async function executeSystemToolEnable(params: {
   const scopeId = scopeType === "space" ? (params.spaceId ?? params.tenantId) : params.tenantId;
 
   const result = await enableToolRollout(params.pool, params.tenantId, scopeType, scopeId, toolRef);
-  console.log(`[system.tool.enable] ${toolRef} enabled for ${scopeType}:${scopeId} (was: ${result.previousEnabled})`);
+  _logger.info("tool enabled", { toolRef, scopeType, scopeId, previousEnabled: result.previousEnabled });
   return result;
 }
 
@@ -190,13 +193,13 @@ export async function executeSystemToolDisable(params: {
     const activeRunCount = parseInt(runRes.rows[0]?.count ?? "0", 10);
     if (activeRunCount > 0) {
       impactWarning = `注意：当前有 ${activeRunCount} 个活跃任务正在使用工具 ${toolName}，停用后这些任务可能失败`;
-      console.warn(`[system.tool.disable] 影响分析: ${impactWarning}`);
+      _logger.warn("active runs impacted by disable", { toolName, activeRunCount, impactWarning });
     }
   } catch (err: any) {
-    console.warn(`[system.tool.disable] 影响分析查询失败: ${err?.message}`);
+    _logger.warn("impact analysis query failed", { err: err?.message });
   }
 
   const result = await disableToolRollout(params.pool, params.tenantId, scopeType, scopeId, toolRef, disableMode, graceMinutes);
-  console.log(`[system.tool.disable] ${toolRef} disabled (mode=${disableMode}) for ${scopeType}:${scopeId} (was: ${result.previousEnabled})`);
+  _logger.info("tool disabled", { toolRef, disableMode, scopeType, scopeId, previousEnabled: result.previousEnabled });
   return { ...result, impactWarning };
 }

@@ -4,7 +4,9 @@
  */
 
 import type { Pool } from "pg";
-import { normalizeStepStatus, normalizeRunStatus, tryTransitionStep, tryTransitionRun } from "@openslin/shared";
+import { normalizeStepStatus, normalizeRunStatus, tryTransitionStep, tryTransitionRun, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:stepSealing" });
 import { computeSealedDigestV1 } from "./sealed";
 
 // ────────────────────────────────────────────────────────────────
@@ -21,7 +23,7 @@ export function validateStepTransition(stepId: string, fromRaw: string, toRaw: s
   if (!from || !to) return true;
   const result = tryTransitionStep(from, to);
   if (!result.ok) {
-    console.warn(`[state-machine] ${result.violation?.message ?? "unknown"} (stepId=${stepId})`);
+    _logger.warn("step transition violation", { stepId, message: result.violation?.message ?? "unknown" });
     return false;
   }
   return true;
@@ -37,7 +39,7 @@ export function validateRunTransition(runId: string, fromRaw: string, toRaw: str
   if (!from || !to) return true;
   const result = tryTransitionRun(from, to);
   if (!result.ok) {
-    console.warn(`[state-machine] ${result.violation?.message ?? "unknown"} (runId=${runId})`);
+    _logger.warn("run transition violation", { runId, message: result.violation?.message ?? "unknown" });
     return false;
   }
   return true;

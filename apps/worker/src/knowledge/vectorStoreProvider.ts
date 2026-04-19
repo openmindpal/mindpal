@@ -13,6 +13,9 @@
  */
 
 import crypto from "node:crypto";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:vectorStoreProvider" });
 import type {
   VectorStoreProvider,
   VectorStoreRefV2,
@@ -27,6 +30,7 @@ import type {
   VectorStoreFilter,
   VectorStoreFilterCondition,
   VectorStoreDegradeEvent,
+  PgVectorConfig,
 } from "@openslin/shared";
 
 // ─── 工具函数 ──────────────────────────────────────────────────
@@ -683,6 +687,295 @@ function filterConditionToMilvus(c: VectorStoreFilterCondition): string {
   return "true";
 }
 
+// ─── pgvector (PostgreSQL) 适配器 ─────────────────────────────────
+
+type PgVectorStoreConfig = Extract<VectorStoreConfigV2, { provider: "pgvector" }>;
+
+/**
+ * pgvector 适配器
+ * 通过 PostgreSQL pgvector 扩展实现 V2 向量存储接口。
+ * 使用 pg Pool 直连数据库，无需额外服务。
+ */
+export class PgVectorProvider implements VectorStoreV2 {
+  readonly ref: VectorStoreRefV2;
+  private readonly cfg: PgVectorStoreConfig;
+  private readonly pgConfig: PgVectorConfig;
+  /** 动态导入的 pg Pool，延迟初始化 */
+  private _pool: any | null = null;
+
+  constructor(cfg: PgVectorStoreConfig) {
+    this.cfg = cfg;
+    this.pgConfig = cfg.config;
+    this.ref = {
+      provider: "pgvector",
+      impl: "pgvector.pg.v1",
+      endpointDigest8: sha256Hex8(cfg.connectionString),
+    };
+  }
+
+  private async getPool(): Promise<any> {
+    if (this._pool) return this._pool;
+    try {
+      const pg = await import("pg");
+      const Pool = pg.default?.Pool ?? pg.Pool;
+      this._pool = new Pool({ connectionString: this.cfg.connectionString, max: 5 });
+      return this._pool;
+    } catch (e: any) {
+      throw new Error(`pgvector: failed to initialize pg Pool: ${e?.message}`);
+    }
+  }
+
+  capabilities(): VectorStoreCapabilitiesV2 {
+    return {
+      kind: "vectorStore.capabilities.v2",
+      provider: "pgvector",
+      supportsBatchUpsert: true,
+      supportsBatchDelete: true,
+      supportsFilteredQuery: true,
+      supportsMetadataFiltering: true,
+      supportsCollectionManagement: true,
+      supportsMultiVector: false,
+      vectorType: "float32",
+      distance: this.pgConfig.distanceMetric === "l2" ? "euclidean" : this.pgConfig.distanceMetric === "inner_product" ? "dot" : "cosine",
+      maxK: 10000,
+      maxBatchSize: 1000,
+      maxVectorDimension: 16000,
+    };
+  }
+
+  private distanceOp(): string {
+    switch (this.pgConfig.distanceMetric) {
+      case "l2": return "<->";
+      case "inner_product": return "<#>";
+      case "cosine":
+      default: return "<=>";
+    }
+  }
+
+  private indexOpsClass(): string {
+    switch (this.pgConfig.distanceMetric) {
+      case "l2": return "vector_l2_ops";
+      case "inner_product": return "vector_ip_ops";
+      case "cosine":
+      default: return "vector_cosine_ops";
+    }
+  }
+
+  // ── Collection 管理 ──
+
+  async ensureCollection(params: {
+    name: string;
+    dimension: number;
+    distance?: "cosine" | "dot" | "euclidean";
+  }): Promise<{ ok: boolean; created: boolean; error?: string }> {
+    const pool = await this.getPool();
+    const tableName = `${params.name}_vectors`;
+    const dim = params.dimension || this.pgConfig.dimensions;
+    try {
+      // 1. 启用 pgvector 扩展
+      await pool.query("CREATE EXTENSION IF NOT EXISTS vector");
+
+      // 2. 创建向量表
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${tableName} (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          content_ref UUID NOT NULL,
+          embedding vector(${dim}),
+          metadata JSONB,
+          created_at TIMESTAMPTZ DEFAULT now(),
+          updated_at TIMESTAMPTZ DEFAULT now()
+        )
+      `);
+
+      // 3. 创建索引
+      const opsClass = this.indexOpsClass();
+      if (this.pgConfig.indexType === "hnsw") {
+        const m = this.pgConfig.m ?? 16;
+        const efC = this.pgConfig.efConstruction ?? 64;
+        await pool.query(`
+          CREATE INDEX IF NOT EXISTS idx_${tableName}_hnsw
+          ON ${tableName} USING hnsw (embedding ${opsClass})
+          WITH (m = ${m}, ef_construction = ${efC})
+        `);
+      } else {
+        const lists = this.pgConfig.lists ?? 100;
+        await pool.query(`
+          CREATE INDEX IF NOT EXISTS idx_${tableName}_ivfflat
+          ON ${tableName} USING ivfflat (embedding ${opsClass})
+          WITH (lists = ${lists})
+        `);
+      }
+
+      // 4. content_ref 索引
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_${tableName}_content_ref ON ${tableName}(content_ref)`);
+
+      return { ok: true, created: true };
+    } catch (e: any) {
+      _logger.warn("pgvector ensureCollection failed", { table: tableName, error: e?.message });
+      return { ok: false, created: false, error: String(e?.message ?? e) };
+    }
+  }
+
+  async listCollections(): Promise<VectorStoreCollectionInfo[]> {
+    try {
+      const pool = await this.getPool();
+      const res = await pool.query(
+        `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '%_vectors'`
+      );
+      return (res.rows as any[]).map((r: any) => ({
+        name: String(r.tablename).replace(/_vectors$/, ""),
+        vectorDimension: this.pgConfig.dimensions,
+        distance: this.pgConfig.distanceMetric,
+        pointCount: 0,
+        status: "ready" as const,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  async deleteCollection(name: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const pool = await this.getPool();
+      await pool.query(`DROP TABLE IF EXISTS ${name}_vectors CASCADE`);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message ?? e) };
+    }
+  }
+
+  // ── 写入操作 ──
+
+  async batchUpsert(params: {
+    collection: string;
+    embeddings: VectorStoreEmbeddingV2[];
+  }): Promise<VectorStoreBatchResult> {
+    const startedAt = Date.now();
+    const tableName = `${params.collection}_vectors`;
+    const pool = await this.getPool();
+    let totalUpserted = 0;
+
+    try {
+      for (const e of params.embeddings) {
+        const vecStr = `[${e.vector.join(",")}]`;
+        await pool.query(
+          `INSERT INTO ${tableName} (id, content_ref, embedding, metadata, updated_at)
+           VALUES ($1::uuid, $2::uuid, $3::vector, $4::jsonb, now())
+           ON CONFLICT (id) DO UPDATE SET embedding = $3::vector, metadata = $4::jsonb, updated_at = now()`,
+          [e.id, e.metadata.documentId, vecStr, JSON.stringify(e.metadata)],
+        );
+        totalUpserted++;
+      }
+      _logger.info("pgvector batchUpsert completed", { collection: params.collection, count: totalUpserted, latencyMs: Date.now() - startedAt });
+      return { ok: true, count: totalUpserted, degraded: false, degradeReason: null, latencyMs: Date.now() - startedAt, provider: "pgvector" };
+    } catch (e: any) {
+      _logger.warn("pgvector batchUpsert failed", { collection: params.collection, error: e?.message, latencyMs: Date.now() - startedAt });
+      return { ok: false, count: totalUpserted, degraded: true, degradeReason: String(e?.message ?? e), latencyMs: Date.now() - startedAt, provider: "pgvector" };
+    }
+  }
+
+  async batchDelete(params: {
+    collection: string;
+    ids: string[];
+  }): Promise<VectorStoreBatchResult> {
+    const startedAt = Date.now();
+    const tableName = `${params.collection}_vectors`;
+    try {
+      const pool = await this.getPool();
+      await pool.query(`DELETE FROM ${tableName} WHERE id = ANY($1::uuid[])`, [params.ids]);
+      return { ok: true, count: params.ids.length, degraded: false, degradeReason: null, latencyMs: Date.now() - startedAt, provider: "pgvector" };
+    } catch (e: any) {
+      return { ok: false, count: 0, degraded: true, degradeReason: String(e?.message ?? e), latencyMs: Date.now() - startedAt, provider: "pgvector" };
+    }
+  }
+
+  // ── 查询操作 ──
+
+  async query(params: {
+    collection: string;
+    query: VectorStoreQueryV2;
+  }): Promise<VectorStoreQueryResponseV2> {
+    const startedAt = Date.now();
+    const tableName = `${params.collection}_vectors`;
+    const op = this.distanceOp();
+    const pool = await this.getPool();
+
+    try {
+      const vecStr = `[${params.query.vector.join(",")}]`;
+      const topK = Math.min(params.query.topK, 10000);
+
+      // 构建可选 metadata 过滤
+      let filterClause = "";
+      const filterArgs: any[] = [vecStr, topK];
+      let argIdx = 3;
+
+      if (params.query.filter?.must) {
+        for (const c of params.query.filter.must) {
+          if ("match" in c) {
+            filterClause += ` AND metadata->>'${c.field}' = $${argIdx}`;
+            filterArgs.push(String(c.match.value));
+            argIdx++;
+          }
+        }
+      }
+
+      // 构建分数表达式（cosine 距离转相似度）
+      const scoreExpr = op === "<=>" ? `1 - (embedding ${op} $1::vector)` : `-(embedding ${op} $1::vector)`;
+
+      const res = await pool.query(
+        `SELECT id, content_ref, ${scoreExpr} AS score, metadata
+         FROM ${tableName}
+         WHERE TRUE ${filterClause}
+         ORDER BY embedding ${op} $1::vector
+         LIMIT $2`,
+        filterArgs,
+      );
+
+      const results = (res.rows as any[]).map((r: any) => ({
+        id: String(r.id),
+        score: Number(r.score ?? 0),
+        metadata: r.metadata ? {
+          tenantId: String(r.metadata?.tenantId ?? ""),
+          spaceId: String(r.metadata?.spaceId ?? ""),
+          documentId: String(r.content_ref ?? r.metadata?.documentId ?? ""),
+          documentVersion: Number(r.metadata?.documentVersion ?? 0),
+          embeddingModelRef: String(r.metadata?.embeddingModelRef ?? ""),
+        } : undefined,
+      }));
+
+      // 应用 scoreThreshold 过滤
+      const filtered = params.query.scoreThreshold != null
+        ? results.filter(r => r.score >= params.query.scoreThreshold!)
+        : results;
+
+      _logger.info("pgvector query completed", { collection: params.collection, topK, resultCount: filtered.length, latencyMs: Date.now() - startedAt });
+      return {
+        results: filtered,
+        degraded: false,
+        degradeReason: null,
+        latencyMs: Date.now() - startedAt,
+        provider: "pgvector",
+      };
+    } catch (e: any) {
+      _logger.warn("pgvector query failed", { collection: params.collection, error: e?.message, latencyMs: Date.now() - startedAt });
+      return { results: [], degraded: true, degradeReason: String(e?.message ?? e), latencyMs: Date.now() - startedAt, provider: "pgvector" };
+    }
+  }
+
+  // ── 健康检查 ──
+
+  async healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+    const startedAt = Date.now();
+    try {
+      const pool = await this.getPool();
+      await pool.query("SELECT 1");
+      return { ok: true, latencyMs: Date.now() - startedAt };
+    } catch (e: any) {
+      return { ok: false, latencyMs: Date.now() - startedAt, error: String(e?.message ?? e) };
+    }
+  }
+}
+
 // ─── External HTTP 适配器 (V2 包装) ──────────────────────────────
 
 type ExternalConfig = Extract<VectorStoreConfigV2, { provider: "external" }>;
@@ -878,6 +1171,24 @@ export function resolveVectorStoreConfigV2FromEnv(): VectorStoreConfigV2 {
     };
   }
 
+  if (provider === "pgvector") {
+    const connStr = String(process.env.PGVECTOR_CONNECTION_STRING ?? process.env.DATABASE_URL ?? "").trim();
+    if (!connStr) return { provider: "fallback" };
+    return {
+      provider: "pgvector",
+      connectionString: connStr,
+      timeoutMs: Math.max(1000, Number(process.env.PGVECTOR_TIMEOUT_MS ?? 10000)),
+      config: {
+        dimensions: Math.max(64, Math.min(16000, Number(process.env.PGVECTOR_DIMENSIONS ?? 1536))),
+        distanceMetric: (String(process.env.PGVECTOR_DISTANCE_METRIC ?? "cosine").trim() as "cosine" | "l2" | "inner_product"),
+        indexType: (String(process.env.PGVECTOR_INDEX_TYPE ?? "hnsw").trim() as "ivfflat" | "hnsw"),
+        efConstruction: process.env.PGVECTOR_EF_CONSTRUCTION ? Number(process.env.PGVECTOR_EF_CONSTRUCTION) : undefined,
+        m: process.env.PGVECTOR_M ? Number(process.env.PGVECTOR_M) : undefined,
+        lists: process.env.PGVECTOR_LISTS ? Number(process.env.PGVECTOR_LISTS) : undefined,
+      },
+    };
+  }
+
   return { provider: "fallback" };
 }
 
@@ -887,6 +1198,7 @@ export function createVectorStoreV2(cfg: VectorStoreConfigV2): VectorStoreV2 | n
     case "qdrant": return new QdrantVectorStore(cfg);
     case "milvus": return new MilvusVectorStore(cfg);
     case "external": return new ExternalHttpVectorStore(cfg);
+    case "pgvector": return new PgVectorProvider(cfg);
     case "fallback": return null; // fallback 由降级链处理
   }
 }
@@ -932,7 +1244,7 @@ export class DegradingVectorStoreChain implements VectorStoreV2 {
     const event: VectorStoreDegradeEvent = { timestamp: nowIso(), fromProvider: from, toProvider: to, reason, latencyMs };
     this.degradeLog.push(event);
     if (this.degradeLog.length > this.maxDegradeLogSize) this.degradeLog.shift();
-    console.warn(`[vectorStore:degrade] ${from} → ${to}: ${reason} (${latencyMs}ms)`);
+    _logger.warn("vector store degraded", { from, to, reason, latencyMs });
   }
 
   async ensureCollection(params: { name: string; dimension: number; distance?: "cosine" | "dot" | "euclidean" }): Promise<{ ok: boolean; created: boolean; error?: string }> {

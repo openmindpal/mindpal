@@ -14,6 +14,7 @@
  */
 import crypto from "node:crypto";
 import type { GoalGraph, WorldState } from "@openslin/shared";
+import { ErrorCategory } from "@openslin/shared";
 import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, recallProceduralStrategies, type EnabledTool } from "../modules/agentContext";
 import { upsertTaskState } from "../modules/memory/repo";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
@@ -36,6 +37,8 @@ import { triggerAutoReflexion } from "./loopAutoReflexion";
 import { buildIterationContext, invokeLlmForDecision } from "./loopIterationHelpers";
 import { handleDoneAction, handleToolCallAction } from "./loopActHandlers";
 import { CACHE_CONFIG, cacheGet, cacheSet, prepareCacheKey, LIGHT_ITERATION_CONFIG, isLightIteration } from "./loopCacheConfig";
+import { getMaxStepSeq, upsertGoalGraph, deletePendingSteps } from "./agentLoopRepo";
+import { initializeLoopState, finalizeLoopProcess, type LoopState } from "./loopLifecycle";
 
 /* ── re-export（外部文件 import from "./agentLoop"） ── */
 export type { AgentDecisionAction, AgentDecision, StepObservation, AgentLoopParams, ExecutionConstraints, AgentLoopResult } from "./loopTypes";
@@ -49,15 +52,24 @@ export { CACHE_CONFIG, LIGHT_ITERATION_CONFIG, isLightIteration } from "./loopCa
 
 /* 缓存配置和轻迭代配置已提取到 loopCacheConfig.ts，经 configRegistry 注册 */
 
+export interface SettledResult<T> {
+  index: number;
+  status: "fulfilled" | "rejected";
+  value?: T;
+  error?: unknown;
+}
+
 /**
- * P1-5: O(n) 事件驱动版 —— 每个 promise resolve 时直接 push 到结果数组，
- * 无需 O(n²) 的 Promise.race 轮询。
+ * O(n) 事件驱动版 —— 按完成顺序收集所有 promise 的结果（含 rejected）。
  */
-export async function collectInCompletionOrder<T>(promises: Array<Promise<T>>): Promise<Array<{ index: number; value: T }>> {
-  const settled: Array<{ index: number; value: T }> = [];
-  await Promise.all(
+export async function collectInCompletionOrder<T>(promises: Array<Promise<T>>): Promise<Array<SettledResult<T>>> {
+  const settled: Array<SettledResult<T>> = [];
+  await Promise.allSettled(
     promises.map((p, index) =>
-      p.then((value) => { settled.push({ index, value }); }),
+      p.then(
+        (value) => { settled.push({ index, status: "fulfilled", value }); },
+        (error) => { settled.push({ index, status: "rejected", error }); },
+      ),
     ),
   );
   return settled;
@@ -72,17 +84,15 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     app, pool, queue, subject, locale, authorization, traceId,
     goal, runId, jobId, taskId,
     signal, userIntervention, onStepComplete, onLoopEnd,
-    defaultModelRef, executionConstraints: rawExecutionConstraints,
-    resumeLoopId, resumeState,
+    defaultModelRef, resumeLoopId, resumeState,
   } = params;
   const maxIterations = params.maxIterations ?? 15;
   const maxWallTimeMs = params.maxWallTimeMs ?? 10 * 60 * 1000;
-  const executionConstraints = normalizeExecutionConstraints(rawExecutionConstraints);
 
-  /* P1-05: 全局并发入口门 — 超限时排队等待，超时抛异常 */
+  /* P1-05: 全局并发入口门 */
   let releaseSlot: (() => void) | null = null;
   try {
-    releaseSlot = await acquireLoopSlot({ priority: (params as any).priority ?? 5, timeoutMs: 60_000 });
+    releaseSlot = await acquireLoopSlot({ priority: params.priority ?? 5, timeoutMs: 60_000 });
   } catch (gateErr: any) {
     app.log.warn({ err: gateErr?.message, runId }, "[AgentLoop] 全局并发入口门拒绝");
     const failResult: AgentLoopResult = {
@@ -94,182 +104,22 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     return failResult;
   }
 
-  const loopStartedAt = Date.now();
+  /* ── 初始化循环状态 ── */
+  const s = await initializeLoopState(params);
+  const { loopId, observations, subjectPayload } = s;
+  let { iterations, succeededSteps, failedSteps, lastDecision, currentSeq } = s;
+  let { memoryContext, taskHistory, knowledgeContext, strategyContext, goalGraph, worldState } = s;
+  const executionConstraints = s.executionConstraints ?? undefined;
+  const { toolDiscovery, auditCtx, loopStartedAt } = s;
 
-  // P0-1: 从 checkpoint 恢复或全新启动
-  const observations: StepObservation[] = resumeState?.observations ?? [];
-  let iterations = resumeState?.iteration ?? 0;
-  let succeededSteps = resumeState?.succeededSteps ?? 0;
-  let failedSteps = resumeState?.failedSteps ?? 0;
-  let lastDecision: AgentDecision | null = resumeState?.lastDecision ?? null;
-  let currentSeq = resumeState?.currentSeq ?? 1;
-
-  // P0-1: 生成或复用 loopId
-  const loopId = resumeLoopId ?? crypto.randomUUID();
-
-  if (!resumeState) {
-    // 全新启动：获取已有步骤数以确定起始 seq
-    const existingSteps = await pool.query<{ max_seq: number }>(
-      "SELECT COALESCE(MAX(seq), 0) as max_seq FROM steps WHERE run_id = $1",
-      [runId],
-    );
-    currentSeq = (existingSteps.rows[0]?.max_seq ?? 0) + 1;
-  }
-
-  // 并行：发现可用工具 + 召回记忆 + 召回任务历史 + 召回知识库 + P2:召回策略记忆
-  // P0-1: 如果从 checkpoint 恢复且有缓存，跳过重新发现
-  const auditCtx = traceId ? { traceId } : undefined;
-  let toolDiscovery: { catalog: string; tools: EnabledTool[] };
-  let memoryContext: string | undefined;
-  let taskHistory: string | undefined;
-  let knowledgeContext: string | undefined;
-  let strategyContext: string | undefined;
-
-  if (resumeState?.toolDiscoveryCache) {
-    // 恢复模式：使用缓存
-    toolDiscovery = resumeState.toolDiscoveryCache as any;
-    memoryContext = resumeState.memoryContext ?? undefined;
-    taskHistory = resumeState.taskHistory ?? undefined;
-    knowledgeContext = resumeState.knowledgeContext ?? undefined;
-    strategyContext = (resumeState as any).strategyContext ?? undefined;
-    app.log.info({ runId, loopId, resumeFrom: resumeLoopId }, "[AgentLoop] 从 checkpoint 恢复，使用缓存上下文");
-  } else {
-    // 全新启动：P1-8 缓存分层 + 并行发现
-    const cacheKeyTool = prepareCacheKey("tool", subject.tenantId, subject.spaceId);
-    const cacheKeyStrategy = prepareCacheKey("strategy", subject.tenantId, subject.spaceId);
-    const cachedTools = CACHE_CONFIG.ENABLED ? cacheGet<any>(cacheKeyTool) : undefined;
-    const cachedStrategy = CACHE_CONFIG.ENABLED ? cacheGet<string>(cacheKeyStrategy) : undefined;
-
-    const [td, memoryRecall, taskRecall, knowledgeRecall, strategyRecall] = await Promise.all([
-      cachedTools ?? discoverEnabledTools({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, locale }),
-      recallRelevantMemory({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, message: goal, auditContext: auditCtx }),
-      recallRecentTasks({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, auditContext: auditCtx }),
-      recallRelevantKnowledge({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, message: goal, auditContext: auditCtx }),
-      cachedStrategy !== undefined
-        ? { text: cachedStrategy, strategyCount: 0 }
-        : recallProceduralStrategies({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, goal, auditContext: { ...auditCtx, subjectId: subject.subjectId } }),
-    ]);
-    toolDiscovery = cachedTools ?? td;
-    // P1-8: 写入缓存
-    if (CACHE_CONFIG.ENABLED && !cachedTools) cacheSet(cacheKeyTool, td, CACHE_CONFIG.TOOL_DISCOVERY_TTL_MS);
-    if (CACHE_CONFIG.ENABLED && cachedStrategy === undefined && strategyRecall.text) cacheSet(cacheKeyStrategy, strategyRecall.text, CACHE_CONFIG.STRATEGY_RECALL_TTL_MS);
-    memoryContext = memoryRecall.text || undefined;
-    taskHistory = taskRecall.text || undefined;
-    knowledgeContext = knowledgeRecall.text || undefined;
-    strategyContext = strategyRecall.text || undefined;
-    if (strategyRecall.strategyCount > 0) {
-      app.log.info({ runId, strategyCount: strategyRecall.strategyCount }, "[AgentLoop] P2: 召回 procedural 策略记忆");
-    }
-  }
-  toolDiscovery = filterToolDiscoveryByConstraints(toolDiscovery, locale, executionConstraints);
-
-  let goalGraph: GoalGraph | null = null;
-  let worldState: WorldState | null = null;
-
-  const runPrepared = await prepareRunForExecution(pool, runId, { log: app.log });
-  if (!runPrepared) {
-    throw new Error("run_not_ready_for_execution");
-  }
-
-  await upsertTaskState({
-    pool,
-    tenantId: subject.tenantId,
-    spaceId: subject.spaceId,
-    runId,
-    phase: "executing",
-    clearBlockReason: true,
-    clearNextAction: true,
-  });
-
-  const subjectPayload = {
-    tenantId: subject.tenantId,
-    spaceId: subject.spaceId,
-    subjectId: subject.subjectId,
-    roles: (subject as any).roles ?? [],
-  };
-  await writeCheckpoint({
-    pool, loopId,
-    tenantId: subject.tenantId,
-    spaceId: subject.spaceId ?? null,
-    runId, jobId, taskId,
-    iteration: iterations,
-    currentSeq, succeededSteps, failedSteps,
-    observations,
-    lastDecision,
-    goal, maxIterations, maxWallTimeMs,
-    subjectPayload, locale,
-    authorization, traceId,
-    defaultModelRef: defaultModelRef ?? null,
-    decisionContext: { executionConstraints: executionConstraints ?? null },
-    toolDiscoveryCache: toolDiscovery as any,
-    memoryContext: memoryContext ?? null,
-    taskHistory: taskHistory ?? null,
-    knowledgeContext: knowledgeContext ?? null,
-    status: "running",
-  });
-
-  try {
-    const decompResult = await decomposeGoal({
-      app, pool, subject, locale, authorization, traceId,
-      goal, runId, toolCatalog: toolDiscovery.catalog,
-      defaultModelRef,
-    });
-    goalGraph = decompResult.graph;
-    app.log.info({
-      runId, loopId,
-      subGoalCount: goalGraph.subGoals.length,
-      decompositionOk: decompResult.ok,
-    }, "[AgentLoop] GoalGraph 目标分解完成");
-    await pool.query(
-      `INSERT INTO goal_graphs (graph_id, tenant_id, space_id, run_id, loop_id, main_goal, graph_json, decomposition_reasoning, decomposed_by_model, status, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       ON CONFLICT (graph_id) DO UPDATE SET graph_json=$7, status=$10, version=$11, updated_at=now()`,
-      [
-        goalGraph.graphId, subject.tenantId, subject.spaceId ?? null, runId, loopId,
-        goal, JSON.stringify(goalGraph),
-        goalGraph.decompositionReasoning ?? null, goalGraph.decomposedByModel ?? null,
-        goalGraph.status, goalGraph.version,
-      ],
-    ).catch((e: any) => {
-      app.log.error({ err: e?.message, runId, loopId, graphId: goalGraph?.graphId }, "[AgentLoop] GoalGraph 持久化失败（不阻塞主流程）");
-    });
-  } catch (e: any) {
-    app.log.warn({ err: e?.message, runId }, "[AgentLoop] GoalGraph 分解失败（降级为纯文本目标）");
-  }
-
-  worldState = buildWorldStateFromObservations(runId, observations);
-
-  let processId: string | null = null;
-  try {
-    processId = await registerProcess({
-      pool,
-      tenantId: subject.tenantId,
-      spaceId: subject.spaceId ?? null,
-      runId, loopId,
-    });
-  } catch (e: any) {
-    app.log.warn({ err: e?.message, runId, loopId }, "[AgentLoop] 注册 Agent 进程失败（不影响主流程）");
-  }
-
-  const heartbeat = startHeartbeat(pool, loopId);
-
-  /** 共享结果变量，用于 finally 块中的自动反思 */
   let _loopFinalResult: AgentLoopResult | null = null;
 
   function buildResult(endReason: AgentLoopResult["endReason"], message: string, verification?: VerificationResult): AgentLoopResult {
-    // P1-3 FIX: ok 语义修正 — ask_user 不是失败，而是暂停，也应视为 ok
     const r: AgentLoopResult = {
       ok: endReason === "done" || endReason === "ask_user",
-      endReason,
-      iterations,
-      succeededSteps,
-      failedSteps,
-      message,
-      observations,
-      lastDecision,
-      loopId,
-      verification,
-      goalGraph: goalGraph ?? undefined,
+      endReason, iterations, succeededSteps, failedSteps,
+      message, observations, lastDecision, loopId,
+      verification, goalGraph: goalGraph ?? undefined,
     };
     _loopFinalResult = r;
     return r;
@@ -279,7 +129,9 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     while (iterations < maxIterations) {
       // 检查中断信号
       if (signal?.aborted) {
-        await finalizeCheckpoint(pool, loopId, "interrupted").catch(() => {});
+        await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
+          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted) failed");
+        });
         const result = buildResult("interrupted", "用户中断了任务执行");
         onLoopEnd?.(result);
         return result;
@@ -287,7 +139,9 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
 
       // 检查超时
       if (Date.now() - loopStartedAt > maxWallTimeMs) {
-        await finalizeCheckpoint(pool, loopId, "failed").catch(() => {});
+        await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
+          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/timeout) failed");
+        });
         const result = buildResult("max_wall_time", `执行超时 (>${maxWallTimeMs}ms)`);
         onLoopEnd?.(result);
         return result;
@@ -381,7 +235,9 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             clearNextAction: true,
             clearApprovalStatus: true,
           });
-          await finalizeCheckpoint(pool, loopId, "failed").catch(() => {});
+          await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
+            app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/abort) failed");
+          });
           const result = buildResult("aborted", decision.abortReason ?? "任务无法完成");
           onLoopEnd?.(result);
           return result;
@@ -412,7 +268,9 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             taskHistory: taskHistory ?? null,
             knowledgeContext: knowledgeContext ?? null,
             status: "paused",
-          }).catch(() => {});
+          }).catch((e: unknown) => {
+            app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] writeCheckpoint(paused) failed");
+          });
           const result = buildResult("ask_user", decision.question ?? "需要更多信息");
           onLoopEnd?.(result);
           return result;
@@ -422,10 +280,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           // 重新规划：清除 pending 步骤，重新进入下一轮循环让 LLM 产出新的 tool_call
           app.log.info({ runId, iteration: iterations, reasoning: decision.reasoning }, "[AgentLoop] 重新规划");
           // steps 表主链路按 run_id 归属，pending 清理这里沿用同样口径
-          await pool.query(
-            "DELETE FROM steps WHERE run_id = $1 AND status = 'pending'",
-            [runId],
-          );
+          await deletePendingSteps(pool, runId);
           continue; // 继续循环，LLM 会在下一轮产出新的 tool_call
         }
 
@@ -437,9 +292,11 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             continue;
           }
 
+          const PARALLEL_TOTAL_TIMEOUT_MS = Number(process.env.AGENT_LOOP_PARALLEL_TOTAL_TIMEOUT_MS ?? "300000"); // 默认5分钟
+
           app.log.info({ runId, iteration: iterations, callCount: calls.length }, "[AgentLoop] 并行执行");
 
-          // 并行下发所有工具调用
+          // 3a: 并行下发所有工具调用（Promise.allSettled 防止单工具 head-of-line blocking）
           const execPromises = calls.map((call, i) =>
             executeToolCall({
               app, pool, queue,
@@ -453,36 +310,68 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
               executionConstraints,
             })
           );
-          const execResults = await Promise.all(execPromises);
+          const execSettled = await Promise.allSettled(execPromises);
+          const execResults = execSettled.map((s, i) =>
+            s.status === "fulfilled"
+              ? s.value
+              : { stepId: "", ok: false as const, error: String(s.reason), executionTimeoutMs: 120_000 }
+          );
 
           // 并行等待所有步骤完成
           const stepPromises = execResults.map((r) =>
-            r.ok ? waitForStepCompletion(pool, r.stepId, signal) : Promise.resolve({ status: "failed" as const, outputDigest: { error: r.error }, output: null as any, errorCategory: "tool_validation_failed" as string | null })
+            r.ok ? waitForStepCompletion(pool, r.stepId, signal, r.executionTimeoutMs) : Promise.resolve({ status: "failed" as const, outputDigest: { error: r.error }, output: null as any, errorCategory: ErrorCategory.INPUT_VALIDATION_FAILED as string | null })
           );
-          const stepResults = await collectInCompletionOrder(stepPromises);
 
-          // 收集所有观察
+          // 3b: 并行执行总超时 gate
+          let totalTimeoutId: ReturnType<typeof setTimeout> | undefined;
+          const totalTimeoutPromise = new Promise<never>((_, reject) => {
+            totalTimeoutId = setTimeout(() => reject(new Error("parallel_total_timeout")), PARALLEL_TOTAL_TIMEOUT_MS);
+          });
+
+          let stepResults: Array<SettledResult<any>>;
+          try {
+            stepResults = await Promise.race([
+              collectInCompletionOrder(stepPromises),
+              totalTimeoutPromise,
+            ]);
+          } catch (err: any) {
+            if (err?.message === "parallel_total_timeout") {
+              app.log.warn({ runId, callCount: calls.length }, "[AgentLoop] 并行执行总超时");
+              stepResults = stepPromises.map((_, i) => ({
+                index: i,
+                status: "rejected" as const,
+                error: "parallel_total_timeout",
+              }));
+            } else {
+              throw err;
+            }
+          } finally {
+            if (totalTimeoutId) clearTimeout(totalTimeoutId);
+          }
+
+          // 3c: 收集所有观察（支持 rejected）
           for (const settled of stepResults) {
             const i = settled.index;
+            const isRejected = settled.status === "rejected";
             const obs: StepObservation = {
-              stepId: execResults[i].stepId ?? "",
+              stepId: isRejected ? "" : (execResults[i].stepId ?? ""),
               seq: currentSeq + i,
               toolRef: calls[i].toolRef,
-              status: settled.value.status,
-              outputDigest: settled.value.outputDigest,
-              output: settled.value.output ?? null,
-              errorCategory: settled.value.errorCategory,
+              status: isRejected ? "failed" : (settled.value?.status ?? "failed"),
+              outputDigest: isRejected ? { error: String(settled.error) } : (settled.value?.outputDigest ?? null),
+              output: isRejected ? null : (settled.value?.output ?? null),
+              errorCategory: isRejected ? ErrorCategory.TOOL_EXECUTION_FAILED : (settled.value?.errorCategory ?? null),
               durationMs: null,
             };
             observations.push(obs);
-            if (settled.value.status === "succeeded") succeededSteps++;
+            if (!isRejected && settled.value?.status === "succeeded") succeededSteps++;
             else failedSteps++;
             if (onStepComplete) await onStepComplete(obs, decision);
           }
           currentSeq += calls.length;
 
           // P0-2: 并行工具调用打点
-          const parallelSuccessCount = stepResults.filter(s => s.value.status === "succeeded").length;
+          const parallelSuccessCount = stepResults.filter(s => s.status === "fulfilled" && s.value?.status === "succeeded").length;
           const parallelFailedCount = stepResults.length - parallelSuccessCount;
           app.metrics.observeParallelToolCalls({
             result: parallelFailedCount === 0 ? "ok" : parallelSuccessCount > 0 ? "partial" : "error",
@@ -532,8 +421,10 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
 
         default: {
           // 未知决策，安全终止
-          await finalizeCheckpoint(pool, loopId, "failed").catch(() => {});
-          const result = buildResult("error", `Unknown decision action: ${(decision as any).action}`);
+          await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
+            app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/unknown) failed");
+          });
+          const result = buildResult("error", `Unknown decision action: ${(decision as unknown as Record<string, unknown>).action}`);
           onLoopEnd?.(result);
           return result;
         }
@@ -556,53 +447,35 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         taskHistory: taskHistory ?? null,
         knowledgeContext: knowledgeContext ?? null,
         status: "running",
-      }).catch((e: any) => {
-        app.log.warn({ err: e?.message, runId, loopId, iteration: iterations }, "[AgentLoop] checkpoint 写入失败（不阻塞主循环）");
+      }).catch((e: unknown) => {
+        app.log.warn({ err: (e as Error)?.message, runId, loopId, iteration: iterations }, "[AgentLoop] checkpoint 写入失败（不阻塞主循环）");
       });
     }
 
     // 达到最大迭代次数
     await safeTransitionRun(pool, runId, "stopped", { log: app.log });
-    await finalizeCheckpoint(pool, loopId, "failed").catch(() => {});
+    await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
+      app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/maxIter) failed");
+    });
     const result = buildResult("max_iterations", `达到最大迭代次数 (${maxIterations})`);
     onLoopEnd?.(result);
     return result;
   } catch (err: any) {
     app.log.error({ err, runId, iteration: iterations }, "[AgentLoop] 循环异常");
-    await safeTransitionRun(pool, runId, "failed", { finishedAt: true, log: app.log }).catch(() => {});
-    await finalizeCheckpoint(pool, loopId, "failed").catch(() => {});
+    await safeTransitionRun(pool, runId, "failed", { finishedAt: true, log: app.log }).catch((e: unknown) => {
+      app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] safeTransitionRun(failed) failed");
+    });
+    await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
+      app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/error) failed");
+    });
     const result = buildResult("error", `Agent Loop 异常: ${err?.message ?? "unknown"}`);
     onLoopEnd?.(result);
     return result;
   } finally {
-    // P0-1: 停止心跳 + 终结进程
-    heartbeat.stop();
-    if (processId) {
-      // P0-6 FIX: ask_user 返回 ok=false 但实际是 paused，不应标记为 failed
-      const loopResult = _loopFinalResult as AgentLoopResult | null;
-      let finalStatus: string;
-      if (loopResult?.ok) {
-        finalStatus = "succeeded";
-      } else if (loopResult?.endReason === "ask_user") {
-        finalStatus = "paused";
-      } else {
-        finalStatus = "failed";
-      }
-      updateProcessStatus(pool, processId, finalStatus).catch(() => {});
-    }
-    /* P1-05: 释放全局并发槽位 */
-    if (releaseSlot) releaseSlot();
-    // ── 自动反思：循环结束后异步触发，不阻塞主流程 ──
-    if (_loopFinalResult) {
-      triggerAutoReflexion({
-        pool, app,
-        tenantId: subject.tenantId,
-        spaceId: subject.spaceId,
-        subjectId: subject.subjectId,
-        runId, goal,
-        result: _loopFinalResult,
-      }).catch(() => {});
-    }
+    finalizeLoopProcess({
+      pool, app, state: s, result: _loopFinalResult,
+      releaseSlot, subject, runId, goal,
+    });
   }
 }
 

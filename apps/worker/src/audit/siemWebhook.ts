@@ -1,7 +1,6 @@
-import crypto from "node:crypto";
 import type { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory } from "@openslin/shared";
+import { normalizeAuditErrorCategory, sha256Hex } from "@openslin/shared";
 import { decryptSecretPayload } from "../secrets/envelope";
 
 function computeBackoffMs(base: number, attemptCount: number) {
@@ -11,9 +10,6 @@ function computeBackoffMs(base: number, attemptCount: number) {
   return Math.min(ms, 60_000);
 }
 
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
 
 function normalizeAllowedDomains(v: any) {
   const arr = Array.isArray(v) ? v : [];

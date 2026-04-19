@@ -120,7 +120,7 @@ export async function getSessionContext(params: { pool: Pool; tenantId: string; 
   if (!res.rowCount) return null;
   const row = toRow(res.rows[0]);
   const ctx = row.context && typeof row.context === "object" ? (row.context as SessionContext) : null;
-  if (!ctx || ctx.v < 1 || !Array.isArray(ctx.messages)) return null;
+  if (!ctx || ctx.v !== 2 || !Array.isArray(ctx.messages)) return null;
   return { sessionId: row.sessionId, context: ctx, expiresAt: row.expiresAt };
 }
 
@@ -183,6 +183,6 @@ export async function listSessionContexts(params: {
     const row = toRow(r);
     const ctx = row.context && typeof row.context === "object" ? (row.context as SessionContext) : null;
     return { sessionId: row.sessionId, context: ctx, expiresAt: row.expiresAt, createdAt: row.createdAt, updatedAt: row.updatedAt };
-  }).filter((x) => x.context && x.context.v >= 1 && Array.isArray(x.context.messages));
+  }).filter((x) => x.context && x.context.v === 2 && Array.isArray(x.context.messages));
 }
 

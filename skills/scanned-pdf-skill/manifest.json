@@ -14,6 +14,7 @@
   "category": "knowledge",
   "priority": 7,
   "tags": ["pdf", "ocr", "scanned", "knowledge", "document"],
+  "executionTimeoutMs": 300000,
   "contract": {
     "scope": "read",
     "resourceType": "document",

@@ -11,6 +11,7 @@ import { handleRecoveryEvent } from "../../kernel/runRecovery";
 import { replanFromCurrent } from "../../kernel/runtimeStepManager";
 import { runPlanningPipeline } from "../../kernel/planningKernel";
 import { runAgentLoop, type AgentLoopParams } from "../../kernel/agentLoop";
+import type { AgentDecision } from "../../kernel/loopTypes";
 import type { WorkflowQueue } from "../../modules/workflow/queue";
 import { createTaskQueueManager } from "../../kernel/taskQueueManager";
 import { broadcastToSession } from "../../lib/sessionEventBus";
@@ -128,45 +129,45 @@ export async function handleInterveneMode(ctx: DispatchContext): Promise<Dispatc
           [activeCtx.runId],
         );
         if (cpRes.rowCount) {
-          const cp = cpRes.rows[0] as any;
+          const cp = cpRes.rows[0] as Record<string, unknown>;
           // 标记 checkpoint 为 resuming
           await app.db.query(
             "UPDATE agent_loop_checkpoints SET status = 'resuming', heartbeat_at = now(), updated_at = now() WHERE loop_id = $1 AND status = 'paused'",
             [cp.loop_id],
           );
           // 重建 AgentLoopParams 并 fire-and-forget 启动 Agent Loop
-          const subjectPayload = cp.subject_payload ?? {};
+          const subjectPayload = (cp.subject_payload ?? {}) as Record<string, unknown>;
           const loopParams: AgentLoopParams = {
             app,
             pool: app.db,
             queue: app.queue as WorkflowQueue,
             subject: {
-              subjectId: subjectPayload.subjectId ?? subject.subjectId,
-              tenantId: subjectPayload.tenantId ?? subject.tenantId,
-              spaceId: subjectPayload.spaceId ?? subject.spaceId,
+              subjectId: String(subjectPayload.subjectId ?? subject.subjectId),
+              tenantId: String(subjectPayload.tenantId ?? subject.tenantId),
+              spaceId: String(subjectPayload.spaceId ?? subject.spaceId),
             },
-            locale: cp.locale ?? locale,
-            authorization: cp.authorization ?? authorization,
-            traceId: cp.trace_id ?? traceId,
-            goal: cp.goal,
+            locale: String(cp.locale ?? locale),
+            authorization: (cp.authorization as string | null) ?? authorization,
+            traceId: String(cp.trace_id ?? traceId),
+            goal: String(cp.goal),
             runId: activeCtx.runId,
-            jobId: cp.job_id,
-            taskId: cp.task_id ?? activeCtx.taskId ?? "",
-            maxIterations: cp.max_iterations ?? 15,
+            jobId: String(cp.job_id),
+            taskId: String(cp.task_id ?? activeCtx.taskId ?? ""),
+            maxIterations: Number(cp.max_iterations ?? 15),
             maxWallTimeMs: Number(cp.max_wall_time_ms ?? 600000),
-            defaultModelRef: cp.default_model_ref ?? undefined,
-            resumeLoopId: cp.loop_id,
+            defaultModelRef: cp.default_model_ref != null ? String(cp.default_model_ref) : undefined,
+            resumeLoopId: String(cp.loop_id),
             resumeState: {
-              iteration: cp.iteration ?? 0,
-              currentSeq: cp.current_seq ?? 1,
-              succeededSteps: cp.succeeded_steps ?? 0,
-              failedSteps: cp.failed_steps ?? 0,
+              iteration: Number(cp.iteration ?? 0),
+              currentSeq: Number(cp.current_seq ?? 1),
+              succeededSteps: Number(cp.succeeded_steps ?? 0),
+              failedSteps: Number(cp.failed_steps ?? 0),
               observations: Array.isArray(cp.observations_digest) ? cp.observations_digest : [],
-              lastDecision: cp.last_decision ?? null,
-              toolDiscoveryCache: cp.tool_discovery_cache ?? undefined,
-              memoryContext: cp.memory_context ?? undefined,
-              taskHistory: cp.task_history ?? undefined,
-              knowledgeContext: cp.knowledge_context ?? undefined,
+              lastDecision: (cp.last_decision as AgentDecision | null) ?? null,
+              toolDiscoveryCache: (cp.tool_discovery_cache as Record<string, unknown> | undefined) ?? undefined,
+              memoryContext: cp.memory_context != null ? String(cp.memory_context) : undefined,
+              taskHistory: cp.task_history != null ? String(cp.task_history) : undefined,
+              knowledgeContext: cp.knowledge_context != null ? String(cp.knowledge_context) : undefined,
             },
             userIntervention: message, // 用户的回复作为干预消息传入 Agent Loop
           };

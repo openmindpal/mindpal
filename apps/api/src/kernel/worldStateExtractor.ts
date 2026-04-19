@@ -82,11 +82,13 @@ export function extractFromObservation(
   // 通用提取：如果输出包含常见结构化字段
   state = extractGenericOutput(state, obs, output, now);
 
-  // 更新元数据
-  state.afterIteration = Math.max(state.afterIteration, obs.seq);
-  state.afterStepSeq = Math.max(state.afterStepSeq, obs.seq);
-  state.version++;
-  state.updatedAt = now;
+  // 更新元数据（version 已由 upsertFact/upsertEntity 自动递增，此处仅更新序号和时间戳）
+  state = {
+    ...state,
+    afterIteration: Math.max(state.afterIteration, obs.seq),
+    afterStepSeq: Math.max(state.afterStepSeq, obs.seq),
+    updatedAt: now,
+  };
 
   return state;
 }

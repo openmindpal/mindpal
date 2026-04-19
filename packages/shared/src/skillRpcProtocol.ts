@@ -21,6 +21,77 @@ export const SKILL_RPC_VERSION = "1.0";
 export const SKILL_RPC_JSONRPC = "2.0" as const;
 
 /* ================================================================== */
+/*  Device Agent 协议版本管控                                           */
+/* ================================================================== */
+
+/** 当前 Device Agent 协议版本 */
+export const DEVICE_PROTOCOL_VERSION = "1.0";
+
+/** 最低支持的协议版本 */
+export const MIN_SUPPORTED_PROTOCOL_VERSION = "1.0";
+
+/** 所有支持的协议版本列表 */
+export const PROTOCOL_VERSIONS = ["1.0"] as const;
+
+/** 协议版本类型 */
+export type ProtocolVersion = (typeof PROTOCOL_VERSIONS)[number];
+
+/** Device Agent → API: 协议握手请求 */
+export interface ProtocolHandshake {
+  type: "protocol.handshake";
+  protocolVersion: string;
+  agentVersion: string;
+  capabilities: string[];
+}
+
+/** API → Device Agent: 协议握手确认 */
+export interface ProtocolHandshakeAck {
+  type: "protocol.handshake.ack";
+  negotiatedVersion: string;
+  serverVersion: string;
+  compatible: boolean;
+  deprecationWarning?: string;
+}
+
+/**
+ * 检查客户端版本是否与最低版本兼容。
+ * 仅比较主版本号（semver major）。
+ */
+export function isVersionCompatible(clientVersion: string, minVersion: string): boolean {
+  const clientMajor = parseMajor(clientVersion);
+  const minMajor = parseMajor(minVersion);
+  if (clientMajor === null || minMajor === null) return false;
+  return clientMajor >= minMajor;
+}
+
+/**
+ * 在服务端支持的版本列表中选出与客户端兼容的最高版本。
+ * 返回 null 表示无兼容版本。
+ */
+export function negotiateVersion(clientVersion: string, supportedVersions: readonly string[]): string | null {
+  const clientMajor = parseMajor(clientVersion);
+  if (clientMajor === null) return null;
+
+  let best: string | null = null;
+  let bestMajor = -1;
+  for (const v of supportedVersions) {
+    const major = parseMajor(v);
+    if (major === null) continue;
+    if (major <= clientMajor && major > bestMajor) {
+      best = v;
+      bestMajor = major;
+    }
+  }
+  return best;
+}
+
+/** 从 semver 字符串中提取主版本号 */
+function parseMajor(version: string): number | null {
+  const m = /^(\d+)/.exec(version);
+  return m ? Number(m[1]) : null;
+}
+
+/* ================================================================== */
 /*  请求/响应基础类型                                                     */
 /* ================================================================== */
 

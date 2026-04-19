@@ -4,16 +4,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Pool } from "pg";
-import { resolveSupplyChainPolicy } from "@openslin/shared";
+import { resolveSupplyChainPolicy, resolveString } from "@openslin/shared";
 import { stableStringify } from "./common";
 
 export function getSkillRoots() {
-  const raw = String(process.env.SKILL_PACKAGE_ROOTS ?? "");
+  const raw = resolveString("SKILL_PACKAGE_ROOTS").value;
   const parts = raw
     .split(/[;,]/g)
     .map((x) => x.trim())
     .filter(Boolean);
-  const reg = String(process.env.SKILL_REGISTRY_DIR ?? "").trim();
+  const reg = resolveString("SKILL_REGISTRY_DIR").value;
   const registryRoot = path.resolve(reg || path.resolve(process.cwd(), ".data", "skill-registry"));
   if (parts.length) return Array.from(new Set([...parts.map((p) => path.resolve(p)), registryRoot]));
   const defaults = [path.resolve(process.cwd(), "skills"), path.resolve(process.cwd(), "..", "..", "skills")];
@@ -36,7 +36,7 @@ export function resolveArtifactDir(artifactRef: string) {
   if (trimmed.startsWith("artifact:")) {
     const artifactId = trimmed.slice("artifact:".length).trim();
     if (!artifactId) throw new Error("policy_violation:artifact_ref_invalid");
-    const reg = String(process.env.SKILL_REGISTRY_DIR ?? "").trim();
+    const reg = resolveString("SKILL_REGISTRY_DIR").value;
     const registryRoot = path.resolve(reg || path.resolve(process.cwd(), ".data", "skill-registry"));
     return path.resolve(registryRoot, artifactId);
   }

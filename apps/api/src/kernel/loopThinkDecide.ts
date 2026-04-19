@@ -140,8 +140,11 @@ After analyzing the situation, respond with EXACTLY ONE JSON block:
   let userPrompt = `## User's Goal\n${goal}\n`;
 
   if (completedSteps.length > 0) {
-    const { compressed, recent, totalCount } = compressStepHistory(completedSteps);
+    const { compressed, recent, preserved, totalCount } = compressStepHistory(completedSteps);
     userPrompt += `\n## Completed Steps (${totalCount} total)\n`;
+    if (preserved.length > 0) {
+      userPrompt += renderRecentSteps(preserved, "[历史失败步骤] ");
+    }
     if (compressed.length > 0) {
       userPrompt += renderCompressedSteps(compressed);
     }

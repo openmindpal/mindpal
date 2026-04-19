@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 import type Redis from "ioredis";
-import { validateCapabilityEnvelopeV1, resolveSupplyChainPolicy, checkTrust, checkDependencyScan, checkSbom, isToolAllowedForPolicy } from "@openslin/shared";
+import { validateCapabilityEnvelopeV1, resolveSupplyChainPolicy, checkTrust, checkDependencyScan, checkSbom, isToolAllowedForPolicy, StructuredLogger, resolveString } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:processStep" });
 import { acquireWriteLease, releaseWriteLease } from "../writeLease";
 import { writeAudit } from "./audit";
 import { executeBuiltinTool } from "./builtinTools";
@@ -22,10 +24,29 @@ import { applyWorkerCollabState } from "../collabStateSync";
 
 // P2-1 FIX: 移除冗余包装函数 isSideEffectWriteToolName，直接使用 isSideEffectWriteTool
 
+const STEP_BLOCKING_REMAINING_STATUSES = ["paused", "needs_approval", "needs_device", "needs_arbiter"] as const;
+const STEP_ACTIVE_REMAINING_STATUSES = ["pending", "running", "streaming"] as const;
+const RUN_HOLD_STATUSES = new Set<string>(STEP_BLOCKING_REMAINING_STATUSES);
+
+function inferBlockedRunStatus(params: {
+  currentRunStatus: string;
+  paused: number;
+  needsApproval: number;
+  needsArbiter: number;
+  needsDevice: number;
+}): string {
+  if (RUN_HOLD_STATUSES.has(params.currentRunStatus)) return params.currentRunStatus;
+  if (params.paused > 0) return "paused";
+  if (params.needsApproval > 0) return "needs_approval";
+  if (params.needsArbiter > 0) return "needs_arbiter";
+  if (params.needsDevice > 0) return "needs_device";
+  return "queued";
+}
+
 export async function processStep(params: { pool: Pool; jobId: string; runId: string; stepId: string; masterKey?: string; redis?: Redis }) {
   const masterKey =
     String(params.masterKey ?? "").trim() ||
-    String(process.env.API_MASTER_KEY ?? "").trim() ||
+    resolveString("API_MASTER_KEY").value ||
     // P2-4 FIX: 移除硬编码回退，生产环境严格要求配置
     "";
   if (!masterKey) {
@@ -34,7 +55,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
       "[processStep] FATAL: API_MASTER_KEY 未配置且未通过参数传入。" +
       "密钥加解密、工具调用等功能无法正常工作。" +
       `请在环境变量或 Worker 启动参数中配置 API_MASTER_KEY。(stepId=${params.stepId}, runId=${params.runId})`;
-    console.error(errorMsg);
+    _logger.error("FATAL: API_MASTER_KEY not configured", { stepId: params.stepId, runId: params.runId });
     throw new Error("master_key_not_configured: 无法执行步骤，请联系管理员配置 API_MASTER_KEY");
   }
   const stepRes = await params.pool.query("SELECT * FROM steps WHERE step_id = $1 LIMIT 1", [params.stepId]);
@@ -183,7 +204,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         taskId,
       });
     } catch (e: any) {
-      console.warn("[processStep] collab state sync failed", {
+      _logger.warn("collab state sync failed", {
         stepId: params.stepId,
         collabRunId,
         updateType: input.updateType,
@@ -252,7 +273,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
   try {
     await appendCollabEventOnceForStep("collab.step.started", { toolRef, seq, planStepId });
   } catch (e: any) {
-    console.warn("[processStep] collab.step.started event failed", { stepId: params.stepId, traceId: params.runId, error: String(e?.message ?? e) });
+    _logger.warn("collab.step.started event failed", { stepId: params.stepId, traceId: params.runId, error: String(e?.message ?? e) });
   }
 
   const egress: EgressEvent[] = [];
@@ -419,7 +440,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
       // 校验当前工具是否在角色的允许列表中
       if (allowedTools.length > 0 && !isToolAllowedForPolicy(allowedTools, toolRef)) {
         const violationMsg = `role_permission_boundary_violation: role=${roleName}, tool=${toolRef}, allowed=[${allowedTools.join(",")}]`;
-        console.warn(`[processStep] ${violationMsg}`);
+        _logger.warn("role permission boundary violation", { roleName, toolRef, allowedTools });
         
         await params.pool.query(
           "UPDATE steps SET status = 'failed', error_category = $2, last_error = $3, updated_at = now() WHERE step_id = $1",
@@ -486,7 +507,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     if (!idempotencyKey && idempotencyRequired && jobType.startsWith("agent.dispatch")) {
       const crypto = await import("node:crypto");
       idempotencyKey = `auto:${params.runId}:${params.stepId}:${crypto.randomUUID()}`;
-      console.log(`[processStep] 自动生成幂等键 for ${parsed.name}: ${idempotencyKey.slice(0, 40)}...`);
+      _logger.info("auto-generated idempotency key", { toolName: parsed.name, idempotencyKey: idempotencyKey.slice(0, 40) });
     }
     const metaToolInput = metaInput && typeof metaInput === "object" && !Array.isArray(metaInput) ? (metaInput as any).input : undefined;
     const toolInput = (metaToolInput !== undefined ? metaToolInput : rawInput?.input) ?? {};
@@ -545,7 +566,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
             try {
               await releaseWriteLease({ pool: params.pool, tenantId, spaceId: String(spaceId), resourceRef, owner });
             } catch (e: any) {
-              console.warn("[processStep] releaseWriteLease failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+              _logger.warn("releaseWriteLease failed", { stepId: params.stepId, error: String(e?.message ?? e) });
             }
           }
         };
@@ -708,7 +729,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     try {
       await appendCollabEventOnceForStep("collab.step.completed", { toolRef, seq, planStepId, outputDigest });
     } catch (e: any) {
-      console.warn("[processStep] collab.step.completed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+      _logger.warn("collab.step.completed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
     }
 
     if (collabRunId && tenantId && taskId && planStepId) {
@@ -727,7 +748,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
           [tenantId, collabRunId, taskId, planStepId, JSON.stringify({ stepId: params.stepId, toolRef, status: "succeeded" })],
         );
       } catch (e: any) {
-        console.warn("[processStep] collab_task_assignments update failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+        _logger.warn("collab_task_assignments update failed", { stepId: params.stepId, error: String(e?.message ?? e) });
       }
       if (actorRole) {
         try {
@@ -736,7 +757,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
             [tenantId, collabRunId, actorRole],
           );
         } catch (e: any) {
-          console.warn("[processStep] collab_agent_roles update failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+          _logger.warn("collab_agent_roles update failed", { stepId: params.stepId, error: String(e?.message ?? e) });
         }
       }
     }
@@ -778,7 +799,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         try {
           await appendCollabEventOnceForStep("collab.role.retriever.completed", { retrievalLogId: retrievalLogId || null, evidenceCount });
         } catch (e: any) {
-          console.warn("[processStep] collab.role.retriever.completed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+          _logger.warn("collab.role.retriever.completed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
         }
         const exMsg = await params.pool.query(
           "SELECT 1 FROM agent_messages WHERE tenant_id = $1 AND task_id = $2 AND (correlation->>'stepId') = $3 LIMIT 1",
@@ -833,7 +854,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         try {
           await appendCollabEventOnceForStep("collab.role.guard.completed", { allow, requiresApproval });
         } catch (e: any) {
-          console.warn("[processStep] collab.role.guard.completed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+          _logger.warn("collab.role.guard.completed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
         }
 
         if (!allow) {
@@ -862,7 +883,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
             try {
               await appendCollabEventOnceForStep("collab.run.stopped", { reason: "guard_denied" });
             } catch (e: any) {
-              console.warn("[processStep] collab.run.stopped event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+              _logger.warn("collab.run.stopped event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
             }
           }
           await params.pool.query(
@@ -901,24 +922,65 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
             });
           }
           if (spaceIdFromMeta && nextStepId && metaInput?.subjectId) {
-            await params.pool.query(
-              "INSERT INTO approvals (tenant_id, space_id, run_id, step_id, status, requested_by_subject_id, policy_snapshot_ref, input_digest) VALUES ($1,$2,$3,$4,'pending',$5,$6,$7) ON CONFLICT (tenant_id, run_id) DO NOTHING",
-              [
-                tenantId,
-                spaceIdFromMeta,
-                params.runId,
-                nextStepId,
-                String(metaInput.subjectId),
-                next.rowCount ? (next.rows[0].policy_snapshot_ref ?? null) : null,
-                next.rowCount ? (next.rows[0].input_digest ?? null) : null,
-              ],
+            let approvalId: string | null = null;
+            const pendingApproval = await params.pool.query(
+              `
+                SELECT approval_id
+                FROM approvals
+                WHERE tenant_id = $1
+                  AND step_id = $2
+                  AND status = 'pending'
+                ORDER BY requested_at DESC
+                LIMIT 1
+              `,
+              [tenantId, nextStepId],
             );
-            const approvalRes = await params.pool.query("SELECT approval_id FROM approvals WHERE tenant_id = $1 AND run_id = $2 LIMIT 1", [tenantId, params.runId]);
-            const approvalId = approvalRes.rowCount ? String(approvalRes.rows[0].approval_id) : null;
+            if (pendingApproval.rowCount) {
+              approvalId = String(pendingApproval.rows[0].approval_id);
+            } else {
+              try {
+                const insertedApproval = await params.pool.query(
+                  `
+                    INSERT INTO approvals (
+                      tenant_id, space_id, run_id, step_id, status, requested_by_subject_id,
+                      tool_ref, policy_snapshot_ref, input_digest
+                    )
+                    VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8)
+                    RETURNING approval_id
+                  `,
+                  [
+                    tenantId,
+                    spaceIdFromMeta,
+                    params.runId,
+                    nextStepId,
+                    String(metaInput.subjectId),
+                    next.rowCount ? (next.rows[0].tool_ref ?? null) : null,
+                    next.rowCount ? (next.rows[0].policy_snapshot_ref ?? null) : null,
+                    next.rowCount ? (next.rows[0].input_digest ?? null) : null,
+                  ],
+                );
+                approvalId = insertedApproval.rowCount ? String(insertedApproval.rows[0].approval_id) : null;
+              } catch (approvalErr: any) {
+                if (approvalErr?.code !== "23505") throw approvalErr;
+                const existingApproval = await params.pool.query(
+                  `
+                    SELECT approval_id
+                    FROM approvals
+                    WHERE tenant_id = $1
+                      AND step_id = $2
+                      AND status = 'pending'
+                    ORDER BY requested_at DESC
+                    LIMIT 1
+                  `,
+                  [tenantId, nextStepId],
+                );
+                approvalId = existingApproval.rowCount ? String(existingApproval.rows[0].approval_id) : null;
+              }
+            }
             try {
               await appendCollabEventOnceForStep("collab.run.needs_approval", { approvalId, stepId: nextStepId });
             } catch (e: any) {
-              console.warn("[processStep] collab.run.needs_approval event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+              _logger.warn("collab.run.needs_approval event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
             }
             await artifactsUpdate({ collabApproval: { approvalId } });
           }
@@ -957,7 +1019,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
           try {
             await appendCollabEventOnceForStep("collab.run.needs_arbiter", { reason: "guard_completed" });
           } catch (e: any) {
-            console.warn("[processStep] collab.run.needs_arbiter event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+            _logger.warn("collab.run.needs_arbiter event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
           }
           await writeAudit(params.pool, { traceId, runId: params.runId, stepId: params.stepId, toolRef, result: "success", inputDigest, outputDigest });
           return;
@@ -966,7 +1028,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         try {
           await appendCollabEventOnceForStep("collab.arbiter.decision", { actorRole: "arbiter", mode: "auto", correlationId: String(metaInput?.correlationId ?? ""), allow, requiresApproval });
         } catch (e: any) {
-          console.warn("[processStep] collab.arbiter.decision event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+          _logger.warn("collab.arbiter.decision event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
         }
       }
 
@@ -1011,7 +1073,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         try {
           await appendCollabEventOnceForStep("collab.role.reviewer.completed", { citationsCount });
         } catch (e: any) {
-          console.warn("[processStep] collab.role.reviewer.completed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+          _logger.warn("collab.role.reviewer.completed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
         }
       }
     }
@@ -1022,7 +1084,11 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
           SELECT
             COUNT(*)::int AS total,
             COUNT(*) FILTER (WHERE status = 'succeeded')::int AS succeeded,
-            COUNT(*) FILTER (WHERE status IN ('pending','running','needs_device'))::int AS remaining
+            COUNT(*) FILTER (WHERE status IN ('pending','running','streaming'))::int AS active_remaining,
+            COUNT(*) FILTER (WHERE status = 'paused')::int AS paused_remaining,
+            COUNT(*) FILTER (WHERE status = 'needs_approval')::int AS needs_approval_remaining,
+            COUNT(*) FILTER (WHERE status = 'needs_arbiter')::int AS needs_arbiter_remaining,
+            COUNT(*) FILTER (WHERE status = 'needs_device')::int AS needs_device_remaining
           FROM steps
           WHERE run_id = $1
         `,
@@ -1030,12 +1096,30 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
       );
       const total = Number(aggRes.rowCount ? aggRes.rows[0].total : 1) || 1;
       const succeeded = Number(aggRes.rowCount ? aggRes.rows[0].succeeded : 0) || 0;
-      const remaining = Number(aggRes.rowCount ? aggRes.rows[0].remaining : 0) || 0;
+      const activeRemaining = Number(aggRes.rowCount ? (aggRes.rows[0] as any).active_remaining : 0) || 0;
+      const pausedRemaining = Number(aggRes.rowCount ? (aggRes.rows[0] as any).paused_remaining : 0) || 0;
+      const needsApprovalRemaining = Number(aggRes.rowCount ? (aggRes.rows[0] as any).needs_approval_remaining : 0) || 0;
+      const needsArbiterRemaining = Number(aggRes.rowCount ? (aggRes.rows[0] as any).needs_arbiter_remaining : 0) || 0;
+      const needsDeviceRemaining = Number(aggRes.rowCount ? (aggRes.rows[0] as any).needs_device_remaining : 0) || 0;
+      const blockedRemaining = pausedRemaining + needsApprovalRemaining + needsArbiterRemaining + needsDeviceRemaining;
       const progress = Math.max(0, Math.min(100, Math.round((succeeded / total) * 100)));
-      if (remaining > 0) {
-        await params.pool.query("UPDATE runs SET status = 'queued', updated_at = now(), finished_at = NULL WHERE run_id = $1", [params.runId]);
-        await params.pool.query("UPDATE jobs SET status = 'queued', progress = $2, updated_at = now(), result_summary = $3 WHERE job_id = $1", [
+      if (activeRemaining > 0 || blockedRemaining > 0) {
+        const currentRunStatusRes = await params.pool.query("SELECT status FROM runs WHERE run_id = $1 LIMIT 1", [params.runId]);
+        const currentRunStatus = currentRunStatusRes.rowCount ? String(currentRunStatusRes.rows[0].status ?? "") : "";
+        const nextRunStatus =
+          blockedRemaining > 0
+            ? inferBlockedRunStatus({
+                currentRunStatus,
+                paused: pausedRemaining,
+                needsApproval: needsApprovalRemaining,
+                needsArbiter: needsArbiterRemaining,
+                needsDevice: needsDeviceRemaining,
+              })
+            : "queued";
+        await params.pool.query("UPDATE runs SET status = $2, updated_at = now(), finished_at = NULL WHERE run_id = $1", [params.runId, nextRunStatus]);
+        await params.pool.query("UPDATE jobs SET status = $2, progress = $3, updated_at = now(), result_summary = $4 WHERE job_id = $1", [
           params.jobId,
+          nextRunStatus,
           progress,
           safeOutput,
         ]);
@@ -1117,10 +1201,10 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         try {
           await appendCollabEventOnceForStep("collab.run.needs_device", { deviceExecutionId, deviceId, stepId: params.stepId, toolRef });
         } catch (e: any) {
-          console.warn("[processStep] collab.run.needs_device event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+          _logger.warn("collab.run.needs_device event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
         }
       }
-      console.log(`[processStep] needs_device: runId=${params.runId} stepId=${params.stepId} deviceExecutionId=${deviceExecutionId} deviceId=${deviceId}`);
+      _logger.info("needs_device", { runId: params.runId, stepId: params.stepId, deviceExecutionId, deviceId });
       await writeAudit(params.pool, { traceId, runId: params.runId, stepId: params.stepId, toolRef: toolRef ?? undefined, result: "success", inputDigest, outputDigest: { status: "needs_device", deviceExecutionId, deviceId } });
       // P0-4 FIX: 通知 Agent Loop 步骤已进入阻塞态（needs_device 是 Agent Loop 的终态之一）
       publishStepDone(params);
@@ -1154,7 +1238,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     try {
       await appendCollabEventOnceForStep("collab.step.failed", { toolRef, seq, planStepId, errorCategory: category });
     } catch (e: any) {
-      console.warn("[processStep] collab.step.failed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+      _logger.warn("collab.step.failed event failed", { stepId: params.stepId, error: String(e?.message ?? e) });
     }
     if (collabRunId && tenantId && taskId && planStepId) {
       try {
@@ -1172,7 +1256,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
           [tenantId, collabRunId, taskId, planStepId, JSON.stringify({ stepId: params.stepId, toolRef, status: "failed", errorCategory: category })],
         );
       } catch (e: any) {
-        console.warn("[processStep] collab_task_assignments update failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+        _logger.warn("collab_task_assignments update failed", { stepId: params.stepId, error: String(e?.message ?? e) });
       }
       if (actorRole) {
         try {
@@ -1181,7 +1265,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
             [tenantId, collabRunId, actorRole],
           );
         } catch (e: any) {
-          console.warn("[processStep] collab_agent_roles update failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+          _logger.warn("collab_agent_roles update failed", { stepId: params.stepId, error: String(e?.message ?? e) });
         }
       }
     }
@@ -1233,7 +1317,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
         ]);
       }
     } catch (e: any) {
-      console.warn("[processStep] backup report creation failed", { stepId: params.stepId, error: String(e?.message ?? e) });
+      _logger.warn("backup report creation failed", { stepId: params.stepId, error: String(e?.message ?? e) });
     }
 
     await writeAudit(params.pool, { traceId, runId: params.runId, stepId: params.stepId, toolRef: toolRef ?? undefined, result: "error", inputDigest, outputDigest, errorCategory: category });

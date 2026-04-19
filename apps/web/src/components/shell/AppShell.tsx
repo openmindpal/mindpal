@@ -16,7 +16,7 @@ export function AppShellHeader(props: { children: ReactNode }) {
 }
 
 export function AppShellSideNav(props: { children: ReactNode }) {
-  return <nav className={styles.sideNavInner}>{props.children}</nav>;
+  return <nav className={styles.sideNavInner} aria-label="主导航">{props.children}</nav>;
 }
 
 export function AppShellContent(props: { children: ReactNode }) {

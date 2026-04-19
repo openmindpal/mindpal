@@ -3,6 +3,10 @@
  */
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { StructuredLogger } from "@openslin/shared";
+import type { RunSummaryDTO, RunDetailDTO, RunStepDTO } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "routes:runs:query" });
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
@@ -10,6 +14,72 @@ import { PERM } from "@openslin/shared";
 import { getRunForSpace, listRuns, listSteps } from "../../modules/workflow/jobRepo";
 import { buildRunReplay } from "../../modules/workflow/replayRepo";
 import { getTaskState } from "../../modules/memory/repo";
+
+/* ─── Shared mapper helpers ─────────────────────────────────────────── */
+
+function mapRowToSummary(r: any): RunSummaryDTO {
+  const plan = r.plan ?? {};
+  const planSteps: { stepId?: string; toolRef?: string; name?: string }[] = Array.isArray(plan.steps) ? plan.steps : [];
+  const currentStepIdx = typeof r.current_step_seq === "number" ? r.current_step_seq - 1 : 0;
+  const planStep = planSteps[currentStepIdx] ?? null;
+
+  const artifacts = r.artifacts_digest ?? {};
+  const cursor = typeof artifacts.cursor === "number" ? artifacts.cursor : (r.succeeded_steps ?? 0);
+  const maxSteps = typeof artifacts.maxSteps === "number" ? artifacts.maxSteps : (planSteps.length || r.total_steps || 0);
+
+  const durationRaw = r.duration_ms ?? null;
+  const durationMs = durationRaw !== null ? Math.round(Number(durationRaw)) : null;
+
+  return {
+    runId: r.run_id,
+    status: r.status ?? "unknown",
+    phase: r.phase ?? null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    traceId: r.trace_id ?? null,
+    trigger: r.trigger ?? null,
+    jobType: r.job_type ?? null,
+    progress: {
+      current: cursor,
+      total: maxSteps,
+      percentage: maxSteps > 0 ? Math.round((cursor / maxSteps) * 100) : 0,
+    },
+    currentStep: r.current_step_id
+      ? {
+          stepId: r.current_step_id,
+          seq: r.current_step_seq,
+          status: r.current_step_status,
+          toolRef: r.current_tool_ref ?? planStep?.toolRef ?? null,
+          name: planStep?.name ?? null,
+          attempt: r.current_attempt ?? 1,
+        }
+      : null,
+    durationMs,
+    outputDigest: null,
+    errorDigest: null,
+  };
+}
+
+function mapStepToDTO(s: any): RunStepDTO {
+  const startedAt = s.startedAt ?? s.started_at;
+  const finishedAt = s.finishedAt ?? s.finished_at;
+  let stepDuration: number | null = null;
+  if (startedAt && finishedAt) {
+    stepDuration = Math.round(new Date(finishedAt).getTime() - new Date(startedAt).getTime());
+  }
+  return {
+    stepId: s.stepId ?? s.step_id,
+    seq: s.seq,
+    status: s.status,
+    toolRef: s.toolRef ?? s.tool_ref ?? null,
+    inputDigest: s.inputDigest ?? s.input_digest ?? null,
+    outputDigest: s.outputDigest ?? s.output_digest ?? null,
+    errorCategory: s.errorCategory ?? s.error_category ?? null,
+    durationMs: stepDuration,
+    createdAt: s.createdAt ?? s.created_at,
+    updatedAt: s.updatedAt ?? s.updated_at,
+  };
+}
 
 export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
   /**
@@ -39,6 +109,9 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
           r.run_id,
           r.tenant_id,
           r.status,
+          r.trigger,
+          r.started_at,
+          r.finished_at,
           r.created_at,
           r.updated_at,
           (s1.input->>'spaceId') AS space_id,
@@ -74,10 +147,29 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
         FROM steps s
         WHERE EXISTS (SELECT 1 FROM active_runs ar WHERE ar.run_id = s.run_id)
         ORDER BY s.run_id, s.seq DESC
+      ),
+      step_counts AS (
+        SELECT
+          s.run_id,
+          COUNT(*)::int AS total_steps,
+          COUNT(*) FILTER (WHERE s.status = 'succeeded')::int AS succeeded_steps
+        FROM steps s
+        WHERE EXISTS (SELECT 1 FROM active_runs ar WHERE ar.run_id = s.run_id)
+        GROUP BY s.run_id
+      ),
+      job_info AS (
+        SELECT DISTINCT ON (j.run_id)
+          j.run_id,
+          j.job_type
+        FROM jobs j
+        WHERE j.tenant_id = $1
+          AND EXISTS (SELECT 1 FROM active_runs ar WHERE ar.run_id = j.run_id)
+        ORDER BY j.run_id, j.created_at DESC
       )
       SELECT
         ar.run_id,
         ar.status,
+        ar.trigger,
         ar.created_at,
         ar.updated_at,
         ar.space_id,
@@ -89,51 +181,29 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
         cs.seq AS current_step_seq,
         cs.step_status AS current_step_status,
         cs.tool_ref AS current_tool_ref,
-        cs.attempt AS current_attempt
+        cs.attempt AS current_attempt,
+        sc.total_steps,
+        sc.succeeded_steps,
+        ji.job_type,
+        CASE WHEN ar.finished_at IS NOT NULL AND ar.started_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (ar.finished_at::timestamptz - ar.started_at::timestamptz)) * 1000
+          ELSE NULL
+        END AS duration_ms
       FROM active_runs ar
       LEFT JOIN task_states ts ON ts.run_id = ar.run_id
       LEFT JOIN current_steps cs ON cs.run_id = ar.run_id
+      LEFT JOIN step_counts sc ON sc.run_id = ar.run_id
+      LEFT JOIN job_info ji ON ji.run_id = ar.run_id
       ORDER BY ar.updated_at DESC
       `,
       [subject.tenantId, subject.spaceId, q.limit ?? 20],
     );
 
-    const activeRuns = res.rows.map((r: any) => {
-      // Extract step name from plan if available
-      const plan = r.plan ?? {};
-      const planSteps: { stepId?: string; toolRef?: string; name?: string }[] = Array.isArray(plan.steps) ? plan.steps : [];
-      const currentStepIdx = typeof r.current_step_seq === "number" ? r.current_step_seq - 1 : 0;
-      const planStep = planSteps[currentStepIdx] ?? null;
-
-      // Extract progress info from artifacts_digest
-      const artifacts = r.artifacts_digest ?? {};
-      const closedLoop = artifacts.closedLoop ?? {};
-      const cursor = typeof artifacts.cursor === "number" ? artifacts.cursor : 0;
-      const maxSteps = typeof artifacts.maxSteps === "number" ? artifacts.maxSteps : planSteps.length;
-
-      return {
-        runId: r.run_id,
-        status: r.status ?? "unknown",
-        phase: r.phase ?? "executing",
-        createdAt: r.created_at,
-        updatedAt: r.updated_at,
-        traceId: r.trace_id ?? null,
-        progress: {
-          current: cursor,
-          total: maxSteps,
-          percentage: maxSteps > 0 ? Math.round((cursor / maxSteps) * 100) : 0,
-        },
-        currentStep: r.current_step_id
-          ? {
-              stepId: r.current_step_id,
-              seq: r.current_step_seq,
-              status: r.current_step_status,
-              toolRef: r.current_tool_ref ?? planStep?.toolRef ?? null,
-              name: planStep?.name ?? null,
-              attempt: r.current_attempt ?? 1,
-            }
-          : null,
-      };
+    const activeRuns: RunSummaryDTO[] = res.rows.map((r: any) => {
+      const dto = mapRowToSummary(r);
+      // active runs default phase to 'executing' if not set
+      if (!dto.phase) dto.phase = "executing";
+      return dto;
     });
 
     req.ctx.audit!.outputDigest = { count: activeRuns.length };
@@ -158,7 +228,7 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
       .parse(req.query);
     if (q.updatedFrom && Number.isNaN(new Date(q.updatedFrom).getTime())) throw Errors.badRequest("updatedFrom 非法");
     if (q.updatedTo && Number.isNaN(new Date(q.updatedTo).getTime())) throw Errors.badRequest("updatedTo 非法");
-    const runs = await listRuns(app.db, subject.tenantId, {
+    const rows = await listRuns(app.db, subject.tenantId, {
       limit: q.limit ?? 20,
       offset: q.offset ?? 0,
       status: q.status,
@@ -166,6 +236,7 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
       updatedFrom: q.updatedFrom,
       updatedTo: q.updatedTo,
     });
+    const runs = rows.map(mapRowToSummary);
     return { runs };
   });
 
@@ -181,7 +252,6 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
     if (!run) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "Run 不存在", "en-US": "Run not found" }, traceId: req.ctx.traceId });
     const steps = await listSteps(app.db, run.runId);
 
-    // P0-3: 扁平化字段，供首页 pollTaskState 直接读取
     const succeededCount = steps.filter((s: any) => String(s.status) === "succeeded").length;
     const totalSteps = steps.length;
 
@@ -198,19 +268,62 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
       }
     } catch (e) {
       // 降级：memory_task_states 读取失败不影响主响应
-      console.warn(`[GET /runs/:runId] getTaskState failed for runId=${params.runId}:`, e);
+      _logger.warn("getTaskState failed", { runId: params.runId, err: (e as Error)?.message });
     }
 
-    return {
-      run,
-      steps,
-      // P0-3: 扁平化顶层字段，保证前端 pollTaskState 可直接读取
+    // 计算 durationMs
+    let durationMs: number | null = null;
+    if (run.startedAt && run.finishedAt) {
+      durationMs = Math.round(new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime());
+    }
+
+    // 查找当前步骤（最后一个非终态步骤，或最后一个步骤）
+    const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
+
+    const stepsDTO: RunStepDTO[] = steps.map(mapStepToDTO);
+
+    // 构建 RunDetailDTO
+    const detail: RunDetailDTO = {
+      runId: run.runId,
       status: run.status,
       phase: taskStatePhase ?? run.status,
-      stepCount: totalSteps,
-      currentStep: succeededCount,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      traceId: run.traceId ?? null,
+      trigger: run.trigger ?? null,
+      jobType: null,
+      progress: {
+        current: succeededCount,
+        total: totalSteps,
+        percentage: totalSteps > 0 ? Math.round((succeededCount / totalSteps) * 100) : 0,
+      },
+      currentStep: lastStep
+        ? {
+            stepId: lastStep.stepId,
+            seq: lastStep.seq,
+            status: lastStep.status,
+            toolRef: lastStep.toolRef ?? null,
+            name: null,
+            attempt: lastStep.attempt ?? 1,
+          }
+        : null,
+      durationMs,
+      outputDigest: null,
+      errorDigest: null,
+      steps: stepsDTO,
       blockReason,
       nextAction,
+      createdBySubjectId: run.createdBySubjectId ?? null,
+      idempotencyKey: run.idempotencyKey ?? null,
+    };
+
+    return {
+      ...detail,
+      // 向后兼容：保留原有顶层字段供前端 pollTaskState 直接读取
+      run,
+      steps,
+      stepCount: totalSteps,
+      currentStep: succeededCount,
     };
   });
 

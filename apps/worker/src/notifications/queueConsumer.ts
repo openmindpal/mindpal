@@ -8,6 +8,9 @@
  */
 import type { Pool } from "pg";
 import type { Redis as RedisClient } from "ioredis";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:notificationQueue" });
 import { dispatchDelivery } from "./channelAdapterRegistry";
 
 export async function tickNotificationQueue(params: { pool: Pool; redis?: RedisClient | null }): Promise<void> {
@@ -58,7 +61,7 @@ export async function tickNotificationQueue(params: { pool: Pool; redis?: RedisC
           [row.notification_id, nextStatus, String(e?.message ?? e).slice(0, 1000)],
         );
         if (nextStatus === "failed") {
-          console.warn("[tickNotificationQueue] notification permanently failed", {
+          _logger.warn("notification permanently failed", {
             notificationId: row.notification_id,
             channel: row.channel,
             error: String(e?.message ?? e),
@@ -68,10 +71,10 @@ export async function tickNotificationQueue(params: { pool: Pool; redis?: RedisC
     }
 
     if (res.rowCount > 0) {
-      console.log(`[tickNotificationQueue] processed ${res.rowCount} notifications`);
+      _logger.info("processed notifications", { count: res.rowCount });
     }
   } catch (e: any) {
-    console.warn("[tickNotificationQueue] tick failed", { error: String(e?.message ?? e) });
+    _logger.warn("tick failed", { error: String(e?.message ?? e) });
   }
 }
 

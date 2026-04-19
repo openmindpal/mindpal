@@ -11,6 +11,9 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:strategyEngine" });
 
 // ─── 意图分类 ──────────────────────────────────────────────────
 
@@ -159,7 +162,7 @@ export async function classifyIntentByLLM(params: {
       };
     }
   } catch (e: any) {
-    console.warn(`[StrategyEngine] LLM 意图分类失败: ${e?.message}`);
+    _logger.warn("LLM intent classification failed", { error: e?.message });
   }
 
   // 降级到规则分类
@@ -384,7 +387,7 @@ export async function determineStrategyEnhanced(params: {
         reason: `gray_zone_escalated: ${mergedIntent.intent} (${mergedIntent.confidence}), coverage=${coverage.score}`,
       };
     } catch (e: any) {
-      console.warn(`[StrategyEngine] 二级判定失败: ${e?.message}`);
+      _logger.warn("secondary determination failed", { error: e?.message });
     }
   }
 
@@ -471,7 +474,7 @@ export async function recordStrategyFeedback(params: {
       ],
     );
   } catch (e: any) {
-    console.warn(`[StrategyEngine] 反馈记录失败: ${e?.message}`);
+    _logger.warn("feedback record failed", { error: e?.message });
   }
 }
 

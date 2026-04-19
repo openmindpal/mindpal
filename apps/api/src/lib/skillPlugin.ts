@@ -17,14 +17,16 @@ import type { FastifyPluginAsync } from "fastify";
 /**
  * kernel       — Core platform tool declarations (entity CRUD etc.), no HTTP routes.
  *                Always auto-enabled. Part of the OS minimum viable kernel.
- * builtin      — Built-in capability plugins shipped with the platform
+ * core         — Essential platform capabilities, always registered, cannot be disabled.
  *                (orchestrator, model-gateway, knowledge, memory, safety …).
- *                Registered at startup, enabled by governance.
- * extension    — Optional / upper-layer capabilities that can be loaded on demand
+ * optional     — Default-enabled platform capabilities, can be disabled via env.
+ *                (nl2ui, device-runtime, collab-runtime, yjs-collab …).
+ * extension    — Upper-layer capabilities loaded on demand via explicit configuration.
  *                (analytics, media-pipeline, replay-viewer, ai-event-reasoning …).
- *                Registered only when explicitly configured.
+ *
+ * NOTE: Legacy value "builtin" is mapped to "optional" by resolveSkillLayer().
  */
-export type SkillLayer = "kernel" | "builtin" | "extension";
+export type SkillLayer = "kernel" | "core" | "optional" | "extension";
 
 /* ------------------------------------------------------------------ */
 /*  Skill Manifest v2 (built-in variant)                               */
@@ -114,9 +116,12 @@ export interface BuiltinSkillPlugin {
   routes: FastifyPluginAsync;
 }
 
-/** Resolve the effective layer — defaults to "builtin" when omitted. */
+/** Resolve the effective layer — defaults to "optional" when omitted. Legacy "builtin" maps to "optional". */
 export function resolveSkillLayer(plugin: BuiltinSkillPlugin): SkillLayer {
-  return plugin.manifest.layer ?? "builtin";
+  const raw = plugin.manifest.layer ?? "optional";
+  // 向后兼容：旧的 "builtin" 统一归一化为 "optional"
+  if ((raw as string) === "builtin") return "optional";
+  return raw;
 }
 
 /* ------------------------------------------------------------------ */
@@ -185,7 +190,8 @@ export interface StartupCheckResult {
   summary: {
     totalSkills: number;
     kernelCount: number;
-    builtinCount: number;
+    coreCount: number;
+    optionalCount: number;
     extensionCount: number;
     sealed: boolean;
   };
@@ -217,9 +223,10 @@ export function runStartupConsistencyCheck(): StartupCheckResult {
 
   // 3. Layer counts
   let kernelCount = 0;
-  let builtinCount = 0;
+  let coreCount = 0;
+  let optionalCount = 0;
   let extensionCount = 0;
-  const validLayers: Set<string> = new Set(["kernel", "builtin", "extension"]);
+  const validLayers: Set<string> = new Set(["kernel", "core", "optional", "extension", "builtin"]);
 
   for (const [name, plugin] of _registry) {
     const layer = resolveSkillLayer(plugin);
@@ -227,7 +234,8 @@ export function runStartupConsistencyCheck(): StartupCheckResult {
       errors.push(`Skill "${name}" has invalid layer "${layer}".`);
     }
     if (layer === "kernel") kernelCount++;
-    else if (layer === "builtin") builtinCount++;
+    else if (layer === "core") coreCount++;
+    else if (layer === "optional") optionalCount++;
     else if (layer === "extension") extensionCount++;
   }
 
@@ -255,7 +263,8 @@ export function runStartupConsistencyCheck(): StartupCheckResult {
     summary: {
       totalSkills: _registry.size,
       kernelCount,
-      builtinCount,
+      coreCount,
+      optionalCount,
       extensionCount,
       sealed: _registrySealed,
     },

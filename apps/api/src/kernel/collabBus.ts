@@ -202,7 +202,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
 
   /** Layer 2: 写 Redis Stream */
   async function writeRedisStream(msg: CollabMessage): Promise<void> {
-    const redis = config.redis as any;
+    const redis = config.redis;
     if (!redis?.xadd) {
       // 降级到 Pub/Sub
       if (redis?.publish) {
@@ -213,7 +213,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
           } else {
             await redis.publish(broadcastChannel(msg.collabRunId), json);
           }
-        } catch { /* Redis 发布失败不影响主流程 */ }
+        } catch (e: unknown) { logger.warn("Redis publish fallback failed", { collabRunId: msg.collabRunId, error: (e as Error)?.message }); }
       }
       return;
     }
@@ -228,8 +228,9 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
         "kind", msg.kind,
         "from", msg.fromRole,
       );
-    } catch {
+    } catch (e: unknown) {
       // Stream 写入失败，降级到 Pub/Sub
+      logger.warn("Redis Stream xadd failed, falling back to Pub/Sub", { collabRunId: msg.collabRunId, error: (e as Error)?.message });
       if (redis?.publish) {
         const json = JSON.stringify(msg);
         try {
@@ -238,7 +239,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
           } else {
             await redis.publish(broadcastChannel(msg.collabRunId), json);
           }
-        } catch { /* ignore */ }
+        } catch (e2: unknown) { logger.warn("Redis Pub/Sub fallback also failed", { collabRunId: msg.collabRunId, error: (e2 as Error)?.message }); }
       }
     }
   }
@@ -326,10 +327,14 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
       dispatchWithBackpressure(msg);
 
       // Layer 2: Redis Stream / Pub/Sub（跨进程）
-      writeRedisStream(msg).catch(() => {});
+      writeRedisStream(msg).catch((e: unknown) => {
+        logger.warn("writeRedisStream fire-and-forget failed", { collabRunId: msg.collabRunId, error: (e as Error)?.message });
+      });
 
       // Layer 3: DB 持久化（审计兜底）
-      writeDb(msg, opts?.spaceId, opts?.taskId).catch(() => {});
+      writeDb(msg, opts?.spaceId, opts?.taskId).catch((e: unknown) => {
+        logger.warn("writeDb fire-and-forget failed", { collabRunId: msg.collabRunId, error: (e as Error)?.message });
+      });
     },
 
     subscribe(collabRunId, role, handler) {
@@ -347,7 +352,9 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
       const bcStreamKey = streamKey(collabRunId, "broadcast");
       subscribedStreams.add(roleStreamKey);
       subscribedStreams.add(bcStreamKey);
-      ensureStreamConsumer().catch(() => {});
+      ensureStreamConsumer().catch((e: unknown) => {
+        logger.warn("ensureStreamConsumer failed", { collabRunId, error: (e as Error)?.message });
+      });
 
       return {
         unsubscribe: async () => {
@@ -517,7 +524,7 @@ export async function subscribeCollabMessages(params: {
         [collabRunId, role, lastSeenAt],
       );
       for (const r of res.rows) {
-        const row = r as any;
+        const row = r as Record<string, unknown>;
         lastSeenAt = String(row.created_at);
         try {
           onMessage({
@@ -525,8 +532,8 @@ export async function subscribeCollabMessages(params: {
             fromRole: String(row.from_role ?? ""),
             toRole: role,
             kind: String(row.kind ?? ""),
-            payload: row.payload_digest ?? {},
-            timestamp: new Date(row.created_at).getTime(),
+            payload: (row.payload_digest ?? {}) as Record<string, unknown>,
+            timestamp: new Date(String(row.created_at)).getTime(),
           });
         } catch { /* skip */ }
       }

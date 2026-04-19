@@ -10,6 +10,9 @@
  * 自包含 DB 查询逻辑，不依赖 API 层 import。
  */
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:loopSupervisor" });
 
 /* ───── 动态配置，零硬编码 ───── */
 
@@ -163,33 +166,33 @@ export async function tickLoopSupervisor(deps: LoopSupervisorDeps): Promise<void
   // 1. 清理超过最大恢复次数的过期检查点
   const expiredCount = await expireStaleCheckpoints(pool);
   if (expiredCount > 0) {
-    console.log(`[LoopSupervisor] ${expiredCount} 个超过最大恢复次数的循环已标记为 expired`);
+    _logger.info("expired stale checkpoints", { count: expiredCount });
     // 同步标记对应 runs 为 failed
     await pool.query(
       `UPDATE runs SET status = 'failed', finished_at = COALESCE(finished_at, now()), updated_at = now()
        WHERE run_id IN (
          SELECT run_id FROM agent_loop_checkpoints WHERE status = 'expired' AND finished_at > now() - interval '1 minute'
        ) AND status NOT IN ('succeeded','failed','stopped','canceled')`,
-    ).catch((e) => console.error("[LoopSupervisor] 更新 expired runs 失败", e));
+    ).catch((e) => _logger.error("update expired runs failed", { err: (e as Error)?.message ?? e }));
   }
 
   // 2. 查找心跳超时但可恢复的检查点
   const expired = await findExpiredCheckpoints(pool);
   if (expired.length === 0) return;
 
-  console.log(`[LoopSupervisor] 发现 ${expired.length} 个心跳超时的循环待恢复`);
+  _logger.info("found heartbeat-expired checkpoints", { count: expired.length });
 
   for (const { loopId, runId, resumeCount } of expired) {
     // CAS 获取恢复锁（防止多个 Supervisor 并发恢复同一循环）
     const acquired = await acquireResumeLock(pool, loopId);
     if (!acquired) continue;
 
-    console.log(`[LoopSupervisor] 恢复循环 loopId=${loopId}, runId=${runId}, resumeCount=${resumeCount + 1}`);
+    _logger.info("resuming loop", { loopId, runId, resumeCount: resumeCount + 1 });
 
     // 加载完整 checkpoint
     const cp = await loadCheckpoint(pool, loopId);
     if (!cp) {
-      console.error(`[LoopSupervisor] 检查点 ${loopId} 加载失败，标记为 failed`);
+      _logger.error("checkpoint load failed, marking as failed", { loopId });
       await pool.query(
         "UPDATE agent_loop_checkpoints SET status = 'failed', finished_at = now(), updated_at = now() WHERE loop_id = $1",
         [loopId],
@@ -233,9 +236,9 @@ export async function tickLoopSupervisor(deps: LoopSupervisorDeps): Promise<void
           removeOnComplete: true,
           removeOnFail: 3,
         });
-        console.log(`[LoopSupervisor] 恢复任务已入队 loopId=${loopId}`);
+        _logger.info("resume job enqueued", { loopId });
       } catch (e: any) {
-        console.error(`[LoopSupervisor] 恢复任务入队失败 loopId=${loopId}`, e?.message);
+        _logger.error("resume job enqueue failed", { loopId, err: e?.message });
         // 回退状态，让下次 tick 重试
         await pool.query(
           "UPDATE agent_loop_checkpoints SET status = 'running', updated_at = now() WHERE loop_id = $1",
@@ -243,7 +246,7 @@ export async function tickLoopSupervisor(deps: LoopSupervisorDeps): Promise<void
         ).catch(() => {});
       }
     } else {
-      console.warn(`[LoopSupervisor] 无队列可用，无法恢复 loopId=${loopId}，等待下次 tick`);
+      _logger.warn("no queue available, cannot resume", { loopId });
       await pool.query(
         "UPDATE agent_loop_checkpoints SET status = 'running', updated_at = now() WHERE loop_id = $1",
         [loopId],

@@ -8,8 +8,10 @@
  * 设计原则：
  * - 可插拔：运行时动态注册 / 注销适配器
  * - 零硬编码：分发逻辑不包含任何频道名称字面量
- * - 可观测：未知频道有明确日志告警
  */
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:channelAdapterRegistry" });
 import type { Pool } from "pg";
 import type { Redis as RedisClient } from "ioredis";
 
@@ -57,14 +59,14 @@ const adapters = new Map<string, ChannelDeliveryAdapter>();
 /** 注册一个频道投递适配器（重复注册同名频道将覆盖） */
 export function registerChannelAdapter(adapter: ChannelDeliveryAdapter): void {
   adapters.set(adapter.channel, adapter);
-  console.log(`[channelAdapterRegistry] registered adapter: ${adapter.channel}`);
+  _logger.info("adapter registered", { channel: adapter.channel });
 }
 
 /** 注销一个频道适配器 */
 export function unregisterChannelAdapter(channel: string): boolean {
   const removed = adapters.delete(channel);
   if (removed) {
-    console.log(`[channelAdapterRegistry] unregistered adapter: ${channel}`);
+    _logger.info("adapter unregistered", { channel });
   }
   return removed;
 }
@@ -89,10 +91,10 @@ export async function dispatchDelivery(
 ): Promise<void> {
   const adapter = adapters.get(notification.channel);
   if (!adapter) {
-    console.warn(
-      `[channelAdapterRegistry] no adapter registered for channel: ${notification.channel}, ` +
-        `registered channels: [${listRegisteredChannels().join(", ")}]`,
-    );
+    _logger.warn("no adapter for channel", {
+      channel: notification.channel,
+      registeredChannels: listRegisteredChannels(),
+    });
     throw new Error(`no_adapter_for_channel:${notification.channel}`);
   }
   await adapter.deliver(ctx, notification);

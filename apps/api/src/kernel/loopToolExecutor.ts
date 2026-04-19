@@ -6,8 +6,6 @@ import type { Pool } from "pg";
 import type { AgentDecision, ExecutionConstraints } from "./loopTypes";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import { Errors } from "../lib/errors";
-import { authorize } from "../modules/auth/authz";
-import { buildAbacEvaluationRequestFromContext } from "../modules/auth/guard";
 import { validateToolInput } from "../modules/tools/validate";
 import {
   admitAndBuildStepEnvelope,
@@ -18,48 +16,10 @@ import {
 } from "./executionKernel";
 import { isToolAllowedByConstraints } from "./loopThinkDecide";
 import { getSharedSubClient } from "./loopRedisClient";
+import { ErrorCategory, StructuredLogger } from "@openslin/shared";
+import { authorizeToolExecution } from "./loopPermissionUnified";
 
-async function requireLoopPermission(params: {
-  pool: Pool;
-  subjectId: string;
-  tenantId: string;
-  spaceId: string;
-  resourceType: string;
-  action: string;
-  traceId: string | null;
-  runId: string;
-  jobId: string;
-}) {
-  const decision = await authorize({
-    pool: params.pool,
-    subjectId: params.subjectId,
-    tenantId: params.tenantId,
-    spaceId: params.spaceId,
-    resourceType: params.resourceType,
-    action: params.action,
-    abacRequest: buildAbacEvaluationRequestFromContext({
-      subject: {
-        subjectId: params.subjectId,
-        tenantId: params.tenantId,
-        spaceId: params.spaceId,
-      },
-      resourceType: params.resourceType,
-      action: params.action,
-      environment: {
-        userAgent: "agent-loop/internal",
-        deviceType: "server",
-        attributes: {
-          runtime: "agent_loop",
-          runId: params.runId,
-          jobId: params.jobId,
-          ...(params.traceId ? { traceId: params.traceId } : {}),
-        },
-      },
-    }),
-  });
-  if (decision.decision !== "allow") throw Errors.forbidden();
-  return decision;
-}
+const _logger = new StructuredLogger({ module: "loopToolExecutor" });
 
 /* ================================================================== */
 /*  Act — 执行单步工具调用                                               */
@@ -78,7 +38,7 @@ export async function executeToolCall(params: {
   decision: AgentDecision;
   seq: number;
   executionConstraints?: ExecutionConstraints;
-}): Promise<{ stepId: string; ok: boolean; error?: string }> {
+}): Promise<{ stepId: string; ok: boolean; error?: string; executionTimeoutMs?: number }> {
   const { app, pool, queue, tenantId, spaceId, subjectId, traceId, runId, jobId, decision, seq, executionConstraints } = params;
   const rawToolRef = decision.toolRef ?? "";
   if (!rawToolRef) return { stepId: "", ok: false, error: "missing_tool_ref" };
@@ -94,29 +54,20 @@ export async function executeToolCall(params: {
     if (!allowed.ok) {
       return { stepId: "", ok: false, error: allowed.reason };
     }
-    validateToolInput(resolved.version.inputSchema, inputDraft);
-    await requireLoopPermission({
-      pool,
-      subjectId,
-      tenantId,
-      spaceId,
-      resourceType: "tool",
-      action: "execute",
-      traceId,
-      runId,
-      jobId,
-    });
-    const opDecision = await requireLoopPermission({
-      pool,
-      subjectId,
-      tenantId,
-      spaceId,
+    // ── 统一权限检查（合并 ABAC + 治理检查） ──
+    const authResult = await authorizeToolExecution({
+      pool, subjectId, tenantId, spaceId, traceId, runId, jobId,
       resourceType: resolved.resourceType,
       action: resolved.action,
-      traceId,
-      runId,
-      jobId,
+      toolRef: resolved.toolRef,
+      limits: executionConstraints as Record<string, unknown> | undefined,
     });
+    if (!authResult.authorized) {
+      return { stepId: "", ok: false, error: authResult.errorMessage ?? "权限检查未通过" };
+    }
+    const opDecision = authResult.opDecision!;
+    // 权限通过后再做 schema 校验，避免权限拒绝时浪费 schema 解析
+    validateToolInput(resolved.version.inputSchema, inputDraft);
     const admitted = await admitAndBuildStepEnvelope({
       pool,
       tenantId,
@@ -124,6 +75,7 @@ export async function executeToolCall(params: {
       subjectId,
       resolved,
       opDecision,
+      preAuthorized: true,
     });
     const stepInput = buildStepInputPayload({
       kind: "agent.loop.step",
@@ -152,13 +104,13 @@ export async function executeToolCall(params: {
       jobType: "agent.run",
       masterKey: app.cfg.secrets.masterKey,
     });
-    return { stepId: submitResult.stepId, ok: true };
+    return { stepId: submitResult.stepId, ok: true, executionTimeoutMs: resolved.executionTimeoutMs };
   } catch (err: any) {
     if (err?.httpStatus) {
-      return { stepId: "", ok: false, error: `governance_error: ${err.errorCode ?? err.message}` };
+      return { stepId: "", ok: false, error: `${ErrorCategory.GOVERNANCE_DENIED}: ${err.errorCode ?? err.message}` };
     }
     app.log.warn({ err: err?.message, runId, toolRef: rawToolRef }, "[AgentLoop] 工具调用准入失败");
-    return { stepId: "", ok: false, error: `governance_unavailable:${err?.message ?? "unknown"}` };
+    return { stepId: "", ok: false, error: `${ErrorCategory.GOVERNANCE_UNAVAILABLE}:${err?.message ?? "unknown"}` };
   }
 }
 
@@ -201,7 +153,7 @@ export async function waitForStepCompletion(
   if (immediate) return immediate;
 
   if (signal?.aborted) {
-    return { status: "canceled", outputDigest: null, output: null, errorCategory: "interrupted" };
+    return { status: "canceled", outputDigest: null, output: null, errorCategory: ErrorCategory.INTERRUPTED };
   }
 
   // 尝试通过 Redis Pub/Sub 等待事件通知，同时保留 DB 轮询兆底
@@ -229,8 +181,12 @@ export async function waitForStepCompletion(
       if (subRegistered) {
         getSharedSubClient().then(c => {
           if (c && messageHandler) c.removeListener("message", messageHandler);
-          c?.unsubscribe(channel).catch(() => {});
-        }).catch(() => {});
+          c?.unsubscribe(channel).catch((e2: unknown) => {
+            _logger.warn("Redis unsubscribe failed", { err: (e2 as Error)?.message, stepId, channel });
+          });
+        }).catch((e: unknown) => {
+          _logger.warn("getSharedSubClient cleanup failed", { err: (e as Error)?.message, stepId });
+        });
         messageHandler = null;
         subRegistered = false;
       }
@@ -245,11 +201,11 @@ export async function waitForStepCompletion(
 
     // 超时兆底
     timeoutTimer = setTimeout(() => {
-      settle({ status: "timeout", outputDigest: null, output: null, errorCategory: "step_timeout" });
+      settle({ status: "timeout", outputDigest: null, output: null, errorCategory: ErrorCategory.STEP_TIMEOUT });
     }, timeoutMs);
 
     // AbortSignal 监听
-    abortHandler = () => settle({ status: "canceled", outputDigest: null, output: null, errorCategory: "interrupted" });
+    abortHandler = () => settle({ status: "canceled", outputDigest: null, output: null, errorCategory: ErrorCategory.INTERRUPTED });
     signal?.addEventListener("abort", abortHandler, { once: true });
 
     // DB 轮询兆底（防止 Redis 消息丢失）
@@ -272,11 +228,11 @@ export async function waitForStepCompletion(
           if (_ch !== channel || settled) return;
           queryStepTerminal(pool, stepId)
             .then((r) => { if (r) settle(r); })
-            .catch(() => {});
+            .catch((e: unknown) => { /* DB poll query failed, will retry next tick */ });
         };
         client.on("message", messageHandler);
-      } catch {
-        // Redis 订阅失败，依赖 DB 轮询兆底
+      } catch (e: unknown) {
+        _logger.warn("Redis subscribe failed, falling back to DB poll", { err: (e as Error)?.message, stepId, channel });
       }
     })();
   });

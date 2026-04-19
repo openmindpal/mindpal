@@ -10,7 +10,7 @@
  * - 保留流式 UX（delta/toolSuggestions/nl2uiResult/done事件）
  */
 import crypto from "node:crypto";
-import { redactValue, resolveToolAlias, isDeviceToolName } from "@openslin/shared";
+import { redactValue, resolveToolAlias, isDeviceToolName, resolveNumber } from "@openslin/shared";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
 import { PERM } from "@openslin/shared";
@@ -35,8 +35,8 @@ import { dispatchRequestSchema } from "./dispatch.schema";
 import { buildExecutionReplyText, explainDispatchStreamError, explainPlanningFailure } from "./dispatch.helpers";
 import { deriveLoopPresentationStatus, makeOnStepComplete, makeOnLoopEnd, streamLoopSummary, wrapSseWithEventBus } from "./dispatch.streamHelpers";
 import { handleStreamAnswerMode } from "./dispatch.streamAnswer";
-import { AUTO_EXECUTION_THRESHOLD, FAST_RULE_HIGH_CONFIDENCE, resolveExecutionClassFromSuggestions, shouldAutoEnterExecute } from "./dispatch.executionPolicy";
-import { discoverEnabledTools } from "./modules/orchestrator";
+import { resolveExecutionClassFromSuggestions } from "./dispatch.executionPolicy";
+import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge } from "./modules/orchestrator";
 import { loadInlineWritableEntities } from "./modules/inlineToolExecutor";
 import { getQueueManager, getTaskExecutor } from "./dispatch.streamTaskQueue";
 import { persistStreamSessionContext } from "./dispatch.streamSessionPersist";
@@ -102,7 +102,7 @@ export function registerStreamRoute(app: any): void {
       const _hasActiveTask = !!(body.activeRunContext || body.activeTaskIds?.length);
 
       // S1: 加载会话历史用于意图分类上下文感知（解决"我这个不是请求"等澄清语句理解）
-      const _historyLimit = Math.max(4, Math.min(64, Number(process.env.ORCHESTRATOR_CONVERSATION_WINDOW ?? "30") || 30));
+      const _historyLimit = Math.max(4, Math.min(64, resolveNumber("ORCHESTRATOR_CONVERSATION_WINDOW").value));
       let _sessionHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
       try {
         const _prevSession = await getSessionContext({
@@ -113,7 +113,7 @@ export function registerStreamRoute(app: any): void {
         // 只提取最近 _historyLimit 条，截取 role + content
         _sessionHistory = _prevMsgs.slice(-_historyLimit).map((m) => ({
           role: m.role as "user" | "assistant",
-          content: typeof m.content === "string" ? m.content : (m.content as any)?.text ?? "",
+          content: typeof m.content === "string" ? m.content : (m.content as Record<string, unknown>)?.text as string ?? "",
         })).filter((m) => m.role === "user" || m.role === "assistant");
       } catch {
         // 加载失败不影响分类
@@ -155,28 +155,25 @@ export function registerStreamRoute(app: any): void {
       let mode: IntentMode = classification.mode;
       let autoDowngraded = false;
       if (isAutoMode) {
-        const canDirectExecute = shouldAutoEnterExecute(classification);
-        // S2: fast 规则高置信结果直接信任，不被降级
-        const fastHighConfTrust = classification.reason && !classification.reason.startsWith("llm_") && classification.confidence >= FAST_RULE_HIGH_CONFIDENCE;
-        if (!canDirectExecute && !fastHighConfTrust && classification.mode !== "answer") autoDowngraded = true;
-        mode = (canDirectExecute || fastHighConfTrust) ? classification.mode : "answer";
+        // 架构决策：auto 模式强制走 answer，依靠 answer 层的 auto-upgrade 机制
+        // （检测 LLM 生成的 tool_call 后自动升级为执行），避免 classifyIntentFast
+        // 对"修改""分析"等词的误判导致对话被错误创建为任务
+        if (classification.mode !== "answer") autoDowngraded = true;
+        mode = "answer";
         app.log.info({
           traceId: req.ctx.traceId,
           classifiedAs: classification.mode,
           confidence: classification.confidence,
           needsTask: classification.needsTask,
-          autoExecuteThreshold: AUTO_EXECUTION_THRESHOLD,
-          fastHighConfThreshold: FAST_RULE_HIGH_CONFIDENCE,
-          fastHighConfTrust,
           selectedMode: mode,
-          reason: canDirectExecute ? "high_confidence_task_intent" : fastHighConfTrust ? "fast_rule_high_confidence_trusted" : "default_answer_with_upgrade_fallback",
-        }, "[dispatch.stream] auto mode route selected");
+          reason: "auto_mode_default_answer_with_upgrade_fallback",
+        }, "[dispatch.stream] auto mode → answer (auto-upgrade fallback)");
       }
 
       // P0-1: 统一意图路由指标
       app.metrics.observeIntentRoute({
         source: "dispatch.stream",
-        classifier: classifierLabel as any,
+        classifier: classifierLabel as "fast" | "llm" | "two_level" | "parallel_fast" | "reviewer",
         mode: classification.mode,
         confidence: classification.confidence,
         result: "ok",
@@ -234,6 +231,7 @@ export function registerStreamRoute(app: any): void {
       if (mode === "answer") {
         await handleStreamAnswerMode({
           app, req, sse, subject: { ...subject, spaceId: subject.spaceId! }, body, locale, message, conversationId, piSummary,
+          classification,
         });
         return;
       }
@@ -245,7 +243,7 @@ export function registerStreamRoute(app: any): void {
       const authorization = (req.headers.authorization as string | undefined) ?? null;
 
       // 5.0 加载会话历史以保证上下文连续性（关键修复：execute/collab 也需要保存对话记录）
-      const historyLimit = Math.max(4, Math.min(64, Number(process.env.ORCHESTRATOR_CONVERSATION_WINDOW ?? "30") || 30));
+      const historyLimit = Math.max(4, Math.min(64, resolveNumber("ORCHESTRATOR_CONVERSATION_WINDOW").value));
       let prevSessionMsgs: SessionMessage[] = [];
       try {
         const prevSession = await getSessionContext({
@@ -261,6 +259,43 @@ export function registerStreamRoute(app: any): void {
         app.log.warn({ err: sessionErr, traceId: req.ctx.traceId }, "[dispatch.stream] 加载会话历史失败，不影响执行");
       }
 
+      // 5.0.1 并行回忆：记忆 + 任务历史 + 知识库
+      let memoryContextText = "";
+      let taskContextText = "";
+      let knowledgeContextText = "";
+      try {
+        const [memRecall, taskRecall, knowledgeRecall] = await Promise.all([
+          recallRelevantMemory({
+            pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!,
+            subjectId: subject.subjectId, message,
+            auditContext: req.ctx.traceId ? { traceId: req.ctx.traceId, requestId: req.ctx.requestId } : undefined,
+          }),
+          recallRecentTasks({
+            pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!,
+            subjectId: subject.subjectId,
+            auditContext: { traceId: req.ctx.traceId },
+          }),
+          recallRelevantKnowledge({
+            pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!,
+            subjectId: subject.subjectId, message,
+            auditContext: { traceId: req.ctx.traceId },
+          }),
+        ]);
+        memoryContextText = memRecall.text;
+        taskContextText = taskRecall.text;
+        knowledgeContextText = knowledgeRecall.text;
+        if (memoryContextText || taskContextText || knowledgeContextText) {
+          app.log.info({
+            traceId: req.ctx.traceId, conversationId, mode,
+            memoryRecallLen: memoryContextText.length,
+            taskRecallLen: taskContextText.length,
+            knowledgeRecallLen: knowledgeContextText.length,
+          }, "[dispatch.stream] execute 路径上下文回忆完成");
+        }
+      } catch (recallErr: any) {
+        app.log.warn({ err: recallErr, traceId: req.ctx.traceId }, "[dispatch.stream] execute 路径上下文回忆失败，不阻塞规划");
+      }
+
       // 5.1 先规划，再决定落到即时动作层还是 workflow 层
       const planResult = await runPlanningPipeline({
         app, pool: app.db, subject, spaceId: subject.spaceId, locale,
@@ -268,6 +303,9 @@ export function registerStreamRoute(app: any): void {
         traceId: req.ctx.traceId, userMessage: message,
         plannerRole: "agent", actorRole: "executor",
         purpose: "dispatch.stream.execute", headers: {},
+        memoryContext: memoryContextText || undefined,
+        taskContext: taskContextText || undefined,
+        knowledgeContext: knowledgeContextText || undefined,
       });
 
       if (isAutoMode && mode === "execute") {
@@ -305,8 +343,8 @@ export function registerStreamRoute(app: any): void {
         const failReasonText = explainPlanningFailure(locale, failCategory);
         app.log.warn({
           traceId: req.ctx.traceId, conversationId, mode, failCategory,
-          rawSuggestionCount: (planResult as any).rawSuggestionCount ?? null,
-          filteredSuggestionCount: (planResult as any).filteredSuggestionCount ?? null,
+          rawSuggestionCount: planResult.rawSuggestionCount ?? null,
+          filteredSuggestionCount: planResult.filteredSuggestionCount ?? null,
           isAutoMode,
           willFallbackToAnswer: isAutoMode,
         }, "[dispatch.stream] 规划失败，不进入 workflow 路径");
@@ -328,6 +366,7 @@ export function registerStreamRoute(app: any): void {
           sse.sendEvent("phaseIndicator", { phase: "thinking", runId: null, mode: "answer", fallbackFrom: "execute", reason: failCategory });
           await handleStreamAnswerMode({
             app, req, sse, subject: { ...subject, spaceId: subject.spaceId! }, body, locale, message, conversationId, piSummary,
+            classification,
           });
           return;
         }

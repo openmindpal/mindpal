@@ -3,7 +3,9 @@ import crypto from "node:crypto";
 import { lookup } from "node:dns/promises";
 import net from "node:net";
 import { z } from "zod";
-import { redactValue, parseDocument } from "@openslin/shared";
+import { redactValue, parseDocument, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:knowledgeRoutes" });
 import { Errors } from "../../lib/errors";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
 import { setAuditContext } from "../../modules/audit/context";
@@ -406,7 +408,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (app) => {
     try {
       const { res, finalUrl } = await fetchUrlWithGuards(targetUrl, controller.signal);
       if (!res.ok) {
-        console.error(`[knowledge:fetch-url] 抓取失败 HTTP ${res.status}: ${finalUrl}`);
+        _logger.error("fetch-url failed", { status: res.status, url: finalUrl });
         throw Errors.badRequest(`抓取失败，HTTP ${res.status}`);
       }
       const ct = String(res.headers.get("content-type") ?? "");
@@ -429,7 +431,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (app) => {
       return { content: text, title, contentType: ct, truncated, charCount: text.length, finalUrl };
     } catch (e: any) {
       if (e?.statusCode) throw e; /* 已经是 Errors */
-      console.error(`[knowledge:fetch-url] 抓取异常: ${e?.message ?? e}`);
+      _logger.error("fetch-url exception", { error: e?.message ?? e });
       throw Errors.badRequest(`抓取失败: ${e?.message ?? "网络错误"}`);
     } finally {
       clearTimeout(timer);

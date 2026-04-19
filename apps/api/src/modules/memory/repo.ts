@@ -9,6 +9,7 @@ import {
   computeMemoryRerankScore,
   escapeIlikePat,
   cosineSimilarity,
+  StructuredLogger,
   type WriteProof,
   type WriteIntent,
   type MemoryRerankInput,
@@ -17,6 +18,8 @@ import { encryptMemoryContent, decryptMemoryContent } from "./memoryEncryption";
 
 export type { WriteProof, WriteIntent, MemoryRiskEvaluation } from "@openslin/shared";
 export { evaluateMemoryRisk, MEMORY_TYPE_RISK_LEVELS } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "memory:repo" });
 
 async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
@@ -254,7 +257,7 @@ export async function detectMemoryConflicts(params: {
 
   const newContentLower = params.contentText.toLowerCase().trim();
 
-  for (const row of candidatesRes.rows as any[]) {
+  for (const row of candidatesRes.rows as Record<string, unknown>[]) {
     const mh = Array.isArray(row.embedding_minhash) ? (row.embedding_minhash as number[]) : [];
     const overlapScore = minhashOverlapScore(qMinhash, mh);
 
@@ -267,9 +270,9 @@ export async function detectMemoryConflicts(params: {
       if (isSimilar) continue;
 
       conflicts.push({
-        id: row.id,
-        type: row.type,
-        title: row.title ?? null,
+        id: String(row.id),
+        type: String(row.type),
+        title: row.title != null ? String(row.title) : null,
         snippet: String(row.content_text ?? "").slice(0, 200),
         overlapScore,
         contentDiffIndicator: "different",
@@ -558,7 +561,7 @@ export async function validateWriteIntent(params: {
       if (!approvalRes.rowCount) {
         return { ok: false, reason: "审批不存在或未通过" };
       }
-      const approvalRow = approvalRes.rows[0] as any;
+      const approvalRow = approvalRes.rows[0] as Record<string, unknown>;
       return {
         ok: true,
         proof: {
@@ -566,7 +569,7 @@ export async function validateWriteIntent(params: {
           provenAt: now,
           provenBy,
           approvalId: intent.approvalId,
-          approvedBySubjectId: approvalRow.decided_by_subject_id ?? undefined,
+          approvedBySubjectId: approvalRow.decided_by_subject_id != null ? String(approvalRow.decided_by_subject_id) : undefined,
         },
       };
     }
@@ -690,7 +693,7 @@ export async function createMemoryEntry(params: {
       );
       let bestId: string | null = null;
       let bestScore = 0;
-      for (const r of candRes.rows as any[]) {
+      for (const r of candRes.rows as Record<string, unknown>[]) {
         const mh = Array.isArray(r.embedding_minhash) ? (r.embedding_minhash as number[]) : [];
         const score = minhashOverlapScore(minhash, mh);
         if (score > bestScore) { bestScore = score; bestId = String(r.id); }
@@ -717,7 +720,7 @@ export async function createMemoryEntry(params: {
         }
       }
     } catch (mergeErr) {
-      console.warn("[memory/repo] merge detection failed, falling through to INSERT:", (mergeErr as Error)?.message);
+            _logger.warn("merge detection failed, falling through to INSERT", { err: (mergeErr as Error)?.message });
     }
   }
 
@@ -792,10 +795,10 @@ export async function updateMemoryEntry(params: {
   );
   if (!existing.rowCount) return null;
 
-  const row = existing.rows[0] as any;
-  const newType = params.type ?? row.type;
+  const row = existing.rows[0] as Record<string, unknown>;
+  const newType = params.type ?? String(row.type);
   const rawText = params.contentText ?? row.content_text;
-  const newTitle = params.title !== undefined ? params.title : row.title;
+  const newTitle = params.title !== undefined ? params.title : (row.title != null ? String(row.title) : null);
 
   // 2. DLP 脱敏
   const redacted = redactValue(rawText);
@@ -871,7 +874,7 @@ export async function exportMemoryEntries(params: {
     args,
   );
 
-  const entries = (res.rows as any[]).map(toEntry);
+  const entries = (res.rows as Record<string, unknown>[]).map(toEntry);
   return { entries, totalCount: entries.length };
 }
 
@@ -1004,7 +1007,7 @@ export async function exportAndClearMemory(params: {
       `,
       args,
     );
-    const ids = (list.rows as any[]).map((r) => String(r.id ?? "")).filter(Boolean);
+    const ids = (list.rows as Record<string, unknown>[]).map((r) => String(r.id ?? "")).filter(Boolean);
     let deletedCount = 0;
     if (ids.length) {
       const del = await client.query(
@@ -1018,7 +1021,7 @@ export async function exportAndClearMemory(params: {
       deletedCount = del.rowCount ?? 0;
     }
 
-    const entries = (list.rows as any[]).map(toEntry).map((e) => {
+    const entries = (list.rows as Record<string, unknown>[]).map(toEntry).map((e) => {
       const redactedTitle = e.title ? String(redactValue(e.title).value ?? "") : null;
       const redactedText = String(redactValue(e.contentText).value ?? "");
       return { ...e, title: redactedTitle, contentText: redactedText };
@@ -1101,9 +1104,9 @@ export async function searchMemory(params: {
       `,
       [...scopeArgs, qMinhash, vecLimit],
     );
-    vecRows = vecRes.rows as any[];
+    vecRows = vecRes.rows as Record<string, unknown>[];
   } catch (err) {
-    console.warn(`[memory/repo] MinHash vector recall failed, falling back to lexical only: ${(err as Error)?.message}`);
+        _logger.warn("MinHash vector recall failed, falling back to lexical only", { err: (err as Error)?.message });
   }
 
   // ── Stage 2b: Dense vector cosine 召回（蒸馏产物密集向量通道） ──
@@ -1126,9 +1129,9 @@ export async function searchMemory(params: {
       try {
         const payload: any = { input: [params.query], model: embModel };
         if (embDim) payload.dimensions = embDim;
-        const embRes = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload), signal: controller.signal } as any);
+        const embRes = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload), signal: controller.signal });
         if (embRes.ok) {
-          const embJson = (await embRes.json()) as any;
+          const embJson = (await embRes.json()) as Record<string, unknown>;
           const firstData = Array.isArray(embJson?.data) && embJson.data[0];
           if (firstData && Array.isArray(firstData.embedding)) {
             queryEmbeddingVec = firstData.embedding as number[];
@@ -1154,24 +1157,101 @@ export async function searchMemory(params: {
           `,
           [...scopeArgs, denseModelRef, vecLimit],
         );
-        denseRows = (denseRes.rows as any[]).map((r) => {
+        denseRows = (denseRes.rows as Record<string, unknown>[]).map((r) => {
           // 解析 JSONB 向量并计算 cosine 相似度
           let vec: number[] = [];
           try {
             vec = typeof r.embedding_vector === "string" ? JSON.parse(r.embedding_vector) : (Array.isArray(r.embedding_vector) ? r.embedding_vector : []);
-          } catch (err) { console.warn(`[memory/repo] embedding_vector JSON.parse failed: ${(err as Error)?.message}`); vec = []; }
+          } catch (err) { _logger.warn("embedding_vector JSON.parse failed", { err: (err as Error)?.message }); vec = []; }
           const cosine = cosineSimilarity(queryEmbeddingVec!, vec);
           return { ...r, _dense_score: cosine };
         }).filter((r) => r._dense_score > (Number(process.env.MEMORY_DENSE_COSINE_THRESHOLD) || 0.3)); // 过滤低相似度
       }
     }
   } catch (err) {
-    console.warn(`[memory/repo] Dense vector recall failed, falling back to other channels: ${(err as Error)?.message}`);
+        _logger.warn("Dense vector recall failed, falling back to other channels", { err: (err as Error)?.message });
+  }
+
+  // ── Stage 3: pgvector 向量检索（如果 pgvector 扩展可用） ──
+  let pgvectorRows: any[] = [];
+  try {
+    const pgvectorEnabled = String(process.env.MEMORY_PGVECTOR_ENABLED ?? "").trim().toLowerCase();
+    if (pgvectorEnabled === "true" || pgvectorEnabled === "1") {
+      // 需要查询向量（复用 Stage 2b 获取的 queryEmbeddingVec，或重新获取）
+      let pgQueryVec = queryEmbeddingVec;
+      if (!pgQueryVec) {
+        const embEndpoint = String(process.env.MEMORY_EMBEDDING_ENDPOINT ?? process.env.KNOWLEDGE_EMBEDDING_ENDPOINT ?? "").trim();
+        if (embEndpoint) {
+          const embApiKey = String(process.env.MEMORY_EMBEDDING_API_KEY ?? process.env.KNOWLEDGE_EMBEDDING_API_KEY ?? "").trim() || null;
+          const embModel = String(process.env.MEMORY_EMBEDDING_MODEL ?? process.env.KNOWLEDGE_EMBEDDING_MODEL ?? "text-embedding-3-small").trim();
+          const embDim = Math.max(64, Math.min(4096, Number(process.env.MEMORY_EMBEDDING_DIMENSIONS ?? process.env.KNOWLEDGE_EMBEDDING_DIMENSIONS ?? 1536)));
+          const embTimeout = Math.max(1000, Number(process.env.MEMORY_EMBEDDING_TIMEOUT_MS ?? process.env.KNOWLEDGE_EMBEDDING_TIMEOUT_MS ?? 5000));
+          const url = embEndpoint.replace(/\/$/, "") + "/v1/embeddings";
+          const headers: Record<string, string> = { "content-type": "application/json" };
+          if (embApiKey) headers["authorization"] = `Bearer ${embApiKey}`;
+          const ctrl = new AbortController();
+          const tmr = setTimeout(() => ctrl.abort(), embTimeout);
+          try {
+            const payload: any = { input: [params.query], model: embModel };
+            if (embDim) payload.dimensions = embDim;
+            const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload), signal: ctrl.signal });
+            if (resp.ok) {
+              const json = (await resp.json()) as Record<string, unknown>;
+              const d0 = Array.isArray(json?.data) && json.data[0];
+              if (d0 && Array.isArray(d0.embedding)) {
+                pgQueryVec = d0.embedding as number[];
+              }
+            }
+          } finally {
+            clearTimeout(tmr);
+          }
+        }
+      }
+
+      if (pgQueryVec && pgQueryVec.length > 0) {
+        const pgvStartedAt = Date.now();
+        const vecStr = `[${pgQueryVec.join(",")}]`;
+        const topK = Math.max(params.limit, params.limit * 3);
+        const distOp = String(process.env.PGVECTOR_DISTANCE_METRIC ?? "cosine").trim();
+        const op = distOp === "l2" ? "<->" : distOp === "inner_product" ? "<#>" : "<=>";
+        const scoreExpr = op === "<=>" ? `1 - (mv.embedding ${op} $${scopeNextIdx}::vector)` : `-(mv.embedding ${op} $${scopeNextIdx}::vector)`;
+
+        const pgRes = await params.pool.query(
+          `
+            SELECT me.*, 'pgvector' AS _stage,
+                   ${scoreExpr} AS _pgvector_score
+            FROM memory_vectors mv
+            JOIN memory_entries me ON me.id = mv.memory_id AND me.deleted_at IS NULL
+            WHERE me.tenant_id = $1
+              AND me.space_id = $2
+              AND (me.expires_at IS NULL OR me.expires_at > now())
+            ORDER BY mv.embedding ${op} $${scopeNextIdx}::vector
+            LIMIT $${scopeNextIdx + 1}
+          `,
+          [params.tenantId, params.spaceId, vecStr, topK],
+        );
+        pgvectorRows = pgRes.rows as Record<string, unknown>[];
+        const pgvLatency = Date.now() - pgvStartedAt;
+        _logger.info("pgvector memory recall completed", {
+          module: "memory",
+          action: "pgvector_recall",
+          resultCount: pgvectorRows.length,
+          latencyMs: pgvLatency,
+        });
+      }
+    }
+  } catch (err) {
+    // 向量检索失败时静默降级，继续使用 keyword + minhash 结果
+    _logger.warn("pgvector memory recall failed, falling back to keyword + minhash", {
+      module: "memory",
+      action: "vector_search_fallback",
+      error: (err as Error)?.message,
+    });
   }
 
   // ── Merge + Dedup ──
   const seen = new Map<string, any>();
-  for (const r of lexRes.rows as any[]) {
+  for (const r of lexRes.rows as Record<string, unknown>[]) {
     const id = String(r.id);
     if (!seen.has(id)) seen.set(id, { ...r, _stage: "lexical", _dense_score: 0 });
   }
@@ -1193,6 +1273,17 @@ export async function searchMemory(params: {
       const existing = seen.get(id)!;
       existing._stage = existing._stage === "lexical" ? "both" : existing._stage;
       existing._dense_score = Math.max(existing._dense_score ?? 0, r._dense_score ?? 0);
+    }
+  }
+  // 合并 pgvector 结果
+  for (const r of pgvectorRows) {
+    const id = String(r.id);
+    if (!seen.has(id)) seen.set(id, { ...r, _stage: "pgvector", _dense_score: typeof r._pgvector_score === "number" ? r._pgvector_score : 0 });
+    else {
+      const existing = seen.get(id)!;
+      if (existing._stage === "lexical") existing._stage = "both";
+      const pgScore = typeof r._pgvector_score === "number" ? r._pgvector_score : 0;
+      existing._dense_score = Math.max(existing._dense_score ?? 0, pgScore);
     }
   }
 
@@ -1249,11 +1340,12 @@ export async function searchMemory(params: {
 
   return {
     evidence,
-    searchMode: denseRows.length > 0 ? "hybrid_dense" : vecRows.length > 0 ? "hybrid" : "lexical_only",
+    searchMode: pgvectorRows.length > 0 ? "hybrid_pgvector" : denseRows.length > 0 ? "hybrid_dense" : vecRows.length > 0 ? "hybrid" : "lexical_only",
     stageStats: {
       lexical: { returned: lexRes.rowCount ?? 0 },
       vector: { returned: vecRows.length },
       denseVector: { returned: denseRows.length },
+      pgvector: { returned: pgvectorRows.length },
       merged: { candidateCount: candidates.length },
       reranked: { returned: evidence.length },
     },

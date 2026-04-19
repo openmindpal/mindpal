@@ -230,7 +230,9 @@ export function createWakeupManager(params: WakeupManagerParams): WakeupManager 
       };
 
       // 记录执行日志到 DB
-      recordExecution(execution).catch(() => {});
+      recordExecution(execution).catch((e: unknown) => {
+        app.log.warn({ err: (e as Error)?.message, executionId, ruleId: rule.ruleId }, "[EventWakeup] recordExecution failed");
+      });
 
       // 异步启动 Agent Loop（fire-and-forget）
       const loopParams: AgentLoopParams = {
@@ -265,14 +267,18 @@ export function createWakeupManager(params: WakeupManagerParams): WakeupManager 
             { ruleId: rule.ruleId, runId, ok: result.ok, endReason: result.endReason },
             "[EventWakeup] Agent Loop 完成",
           );
-          updateExecution(executionId, result.ok ? "completed" : "failed").catch(() => {});
+          updateExecution(executionId, result.ok ? "completed" : "failed").catch((e: unknown) => {
+            app.log.warn({ err: (e as Error)?.message, executionId }, "[EventWakeup] updateExecution failed");
+          });
         })
         .catch((err) => {
           app.log.error(
             { err: err?.message, ruleId: rule.ruleId, runId },
             "[EventWakeup] Agent Loop 失败",
           );
-          updateExecution(executionId, "failed").catch(() => {});
+          updateExecution(executionId, "failed").catch((e2: unknown) => {
+            app.log.warn({ err: (e2 as Error)?.message, executionId }, "[EventWakeup] updateExecution(failed) failed");
+          });
         });
 
       execution.status = "running";

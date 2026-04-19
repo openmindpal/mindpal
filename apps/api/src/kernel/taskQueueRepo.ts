@@ -127,14 +127,17 @@ export async function updateEntryStatus(db: DbConn, params: {
 
 /** 更新 task_id 和 run_id（任务创建后回填） */
 
-/** 增加重试次数 */
-export async function incrementRetry(db: DbConn, entryId: string, lastError: string): Promise<TaskQueueEntry | null> {
+/**
+ * 增加重试次数。
+ * 分区表优化：tenant_id 必填，启用分区裁剪，仅扫描对应分区。
+ */
+export async function incrementRetry(db: DbConn, entryId: string, lastError: string, tenantId: string): Promise<TaskQueueEntry | null> {
   const res = await db.query(
     `UPDATE session_task_queue
      SET retry_count = retry_count + 1, last_error = $2, status = 'queued'
-     WHERE entry_id = $1
+     WHERE entry_id = $1 AND tenant_id = $3
      RETURNING *`,
-    [entryId, lastError],
+    [entryId, lastError, tenantId],
   );
   return res.rowCount ? rowToQueueEntry(res.rows[0]) : null;
 }
@@ -280,6 +283,7 @@ export async function cancelAllActive(db: DbConn, tenantId: string, sessionId: s
 /**
  * P3-15: 获取全局所有正在执行的任务（优雅关闭用）
  * 不限制租户或会话，返回所有 executing + ready 状态的条目。
+ * 注意：此查询为全分区扫描（无 tenant_id 过滤），用于关闭场景，非热路径。
  */
 export async function listGlobalActiveEntries(db: DbConn): Promise<TaskQueueEntry[]> {
   const res = await db.query(
@@ -294,6 +298,7 @@ export async function listGlobalActiveEntries(db: DbConn): Promise<TaskQueueEntr
  * P3-15: 批量暂停并写入 checkpoint（优雅关闭用）
  * 将所有非终态任务设为 paused 状态并写入 checkpoint_ref。
  * 返回被暂停的任务数。
+ * 注意：此查询为全分区扫描（无 tenant_id 过滤），用于关闭场景，非热路径。
  */
 export async function batchPauseForShutdown(db: DbConn, checkpointRef: string): Promise<number> {
   const res = await db.query(
@@ -568,18 +573,22 @@ export async function getSessionQueueStats(db: DbConn, tenantId: string, session
 /*  P1-G6: Metadata 更新 + Supervisor 查询 + 启动恢复                     */
 /* ================================================================== */
 
-/** 更新队列条目的 metadata（合并模式，不覆盖已有字段） */
+/**
+ * 更新队列条目的 metadata（合并模式，不覆盖已有字段）。
+ * 分区表优化：tenant_id 必填，启用分区裁剪。
+ */
 export async function updateEntryMetadata(
   db: DbConn,
   entryId: string,
   patch: Record<string, unknown>,
+  tenantId: string,
 ): Promise<TaskQueueEntry | null> {
   const res = await db.query(
     `UPDATE session_task_queue
      SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
-     WHERE entry_id = $1
+     WHERE entry_id = $1 AND tenant_id = $3
      RETURNING *`,
-    [entryId, JSON.stringify(patch)],
+    [entryId, JSON.stringify(patch), tenantId],
   );
   return res.rowCount ? rowToQueueEntry(res.rows[0]) : null;
 }
@@ -620,6 +629,101 @@ export async function listZombieExecutingEntries(
        )
      ORDER BY q.started_at ASC
      LIMIT 50`,
+    [staleThresholdMs],
+  );
+  return res.rows.map(rowToQueueEntry);
+}
+
+/* ================================================================== */
+/*  P0: Checkpoint 持久化                                               */
+/* ================================================================== */
+
+/** 检查点数据结构 */
+export interface CheckpointData {
+  /** 当前执行步骤索引 */
+  currentStep: number;
+  /** 中间结果 */
+  intermediateResults: Record<string, unknown>[];
+  /** 执行上下文 */
+  context: Record<string, unknown>;
+  /** 保存时间戳 */
+  savedAt: string;
+}
+
+/**
+ * 保存或更新任务检查点（UPSERT）。
+ * 同时更新 session_task_queue.checkpoint_ref 字段。
+ * 分区表优化：tenant_id 必填，启用分区裁剪。
+ */
+export async function upsertCheckpoint(
+  db: DbConn,
+  entryId: string,
+  checkpointData: CheckpointData,
+  checkpointRef: string,
+  tenantId: string,
+): Promise<void> {
+  // UPSERT 检查点数据
+  await db.query(
+    `INSERT INTO task_checkpoints (entry_id, checkpoint_data)
+     VALUES ($1, $2::jsonb)
+     ON CONFLICT (entry_id) DO UPDATE
+       SET checkpoint_data = EXCLUDED.checkpoint_data,
+           updated_at = now()`,
+    [entryId, JSON.stringify(checkpointData)],
+  );
+  // 更新队列条目的 checkpoint_ref（tenant_id 启用分区裁剪）
+  await db.query(
+    `UPDATE session_task_queue SET checkpoint_ref = $2 WHERE entry_id = $1 AND tenant_id = $3`,
+    [entryId, checkpointRef, tenantId],
+  );
+}
+
+/**
+ * 读取任务检查点数据。
+ * 返回 null 表示无检查点或数据损坏。
+ */
+export async function loadCheckpoint(
+  db: DbConn,
+  entryId: string,
+): Promise<CheckpointData | null> {
+  const res = await db.query(
+    `SELECT checkpoint_data FROM task_checkpoints WHERE entry_id = $1`,
+    [entryId],
+  );
+  if (!res.rowCount) return null;
+  const raw = res.rows[0].checkpoint_data;
+  if (!raw || typeof raw !== "object") return null;
+  return raw as CheckpointData;
+}
+
+/**
+ * 删除任务检查点（任务完成/取消时清理）。
+ */
+export async function deleteCheckpoint(
+  db: DbConn,
+  entryId: string,
+): Promise<void> {
+  await db.query(
+    `DELETE FROM task_checkpoints WHERE entry_id = $1`,
+    [entryId],
+  );
+}
+
+/**
+ * 查找所有 status='executing' 且 updated_at 超过阈值的任务（启动恢复用）。
+ * 与 listZombieExecutingEntries 不同，此方法不检查 agent_loop_checkpoints 心跳，
+ * 因为启动时所有 agent loop 都已失效。
+ */
+export async function listStaleExecutingEntries(
+  db: DbConn,
+  staleThresholdMs: number,
+): Promise<TaskQueueEntry[]> {
+  const res = await db.query(
+    `SELECT *
+     FROM session_task_queue
+     WHERE status = 'executing'
+       AND updated_at < now() - ($1 || ' milliseconds')::interval
+     ORDER BY started_at ASC`,
     [staleThresholdMs],
   );
   return res.rows.map(rowToQueueEntry);

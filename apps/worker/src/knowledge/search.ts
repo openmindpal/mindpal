@@ -1,11 +1,6 @@
-import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { redactValue, computeMinhash, minhashOverlapScore } from "@openslin/shared";
+import { redactValue, computeMinhash, minhashOverlapScore, sha256_8 } from "@openslin/shared";
 import { createVectorStore, resolveVectorStoreConfigFromEnv } from "./vectorStore";
-
-function sha256_8(text: string) {
-  return crypto.createHash("sha256").update(text, "utf8").digest("hex").slice(0, 8);
-}
 
 /* ── 外部 Embedding 查询支持（Dense embedding 查询闭环） ── */
 

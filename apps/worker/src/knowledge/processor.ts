@@ -1,30 +1,11 @@
-import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { attachDlpSummary, normalizeAuditErrorCategory, redactValue } from "@openslin/shared";
+import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, sha256Hex, stableStringify } from "@openslin/shared";
 import { chunkText as knowledgeChunkText, resolveChunkConfigFromEnv, defaultChunkConfig } from "./chunkStrategy";
 import type { ChunkResult, ChunkStrategyConfig, ChunkStrategyName } from "./chunkStrategy";
 
-function sha256(text: string) {
-  return crypto.createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-function stableStringifyValue(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stableStringifyValue);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stableStringifyValue(v[k]);
-  return out;
-}
-
-function stableStringify(v: any): string {
-  return JSON.stringify(stableStringifyValue(v));
-}
-
 function computeEventHash(params: { prevHash: string | null; normalized: any }) {
   const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
-  return sha256(input);
+  return sha256Hex(input);
 }
 
 function digestObject(body: unknown) {
@@ -130,7 +111,7 @@ function chunkTextFixed(text: string, maxLen: number) {
   while (i < text.length) {
     const end = Math.min(text.length, i + maxLen);
     const snippet = text.slice(i, end);
-    chunks.push({ chunkIndex: idx++, startOffset: i, endOffset: end, snippet, contentDigest: sha256(snippet) });
+    chunks.push({ chunkIndex: idx++, startOffset: i, endOffset: end, snippet, contentDigest: sha256Hex(snippet) });
     i = end;
   }
   return chunks;

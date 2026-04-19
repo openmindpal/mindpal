@@ -69,13 +69,23 @@ describe("db/migrate", () => {
     });
     const pool = new FakePool();
     pool.applied.add("048_governance_routing_quota.sql");
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    // StructuredLogger 输出到 process.stdout.write，不是 console.log
+    const logLines: string[] = [];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(((chunk: any) => {
+      logLines.push(String(chunk));
+      return true;
+    }) as any);
 
     await migrate(pool as any, dir);
 
     expect(pool.executedBodies).toEqual([]);
     expect(pool.insertedIds).toContain("048a_governance_routing_quota.sql");
-    expect(logSpy).toHaveBeenCalledWith("[migrate] alias-sync summary: 1 file(s) [048a_governance_routing_quota.sql <= 048_governance_routing_quota.sql]");
+    const combined = logLines.join("");
+    expect(combined).toContain("alias");
+    expect(combined).toContain("048a_governance_routing_quota.sql");
+
+    stdoutSpy.mockRestore();
   });
 
   it("当别名和当前 id 都不存在时，正常执行 migration SQL", async () => {
@@ -83,15 +93,24 @@ describe("db/migrate", () => {
       "150a_memory_entry_attachments.sql": "-- migration-aliases: 150_memory_entry_attachments.sql\nSELECT 42;",
     });
     const pool = new FakePool();
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const logLines: string[] = [];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(((chunk: any) => {
+      logLines.push(String(chunk));
+      return true;
+    }) as any);
 
     await migrate(pool as any, dir);
 
     expect(pool.executedBodies).toHaveLength(1);
     expect(pool.executedBodies[0]).toContain("SELECT 42;");
     expect(pool.insertedIds).toContain("150a_memory_entry_attachments.sql");
-    expect(logSpy).toHaveBeenCalledWith("[migrate] applying: 150a_memory_entry_attachments.sql");
-    expect(logSpy).toHaveBeenCalledWith("[migrate] done: 150a_memory_entry_attachments.sql");
+    const combined = logLines.join("");
+    expect(combined).toContain("applying");
+    expect(combined).toContain("150a_memory_entry_attachments.sql");
+    expect(combined).toContain("done");
     expect(pool.released).toBe(1);
+
+    stdoutSpy.mockRestore();
   });
 });

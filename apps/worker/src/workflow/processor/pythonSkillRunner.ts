@@ -38,6 +38,7 @@ import {
   type SkillProgressNotification,
   type SkillLogNotification,
   type SkillRpcResponse,
+  resolveString,
 } from "@openslin/shared";
 import type { RuntimeLimits, NetworkPolicy } from "./runtime";
 import type { DynamicSkillExecResult } from "./dynamicSkillTypes";
@@ -46,9 +47,9 @@ import type { DynamicSkillExecResult } from "./dynamicSkillTypes";
 /*  配置                                                               */
 /* ================================================================== */
 
-const PYTHON_BIN = process.env.SKILL_PYTHON_BIN || "python3";
-const PIP_BIN = process.env.SKILL_PIP_BIN || "pip3";
-const PIP_CACHE_DIR = process.env.SKILL_PIP_CACHE_DIR || "";
+const PYTHON_BIN = resolveString("SKILL_PYTHON_BIN").value || "python3";
+const PIP_BIN = resolveString("SKILL_PIP_BIN").value || "pip3";
+const PIP_CACHE_DIR = resolveString("SKILL_PIP_CACHE_DIR").value;
 const MAX_STDOUT_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_STDERR_BYTES = 1 * 1024 * 1024;  // 1 MB
 const INIT_TIMEOUT_MS = 10_000;

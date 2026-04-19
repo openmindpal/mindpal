@@ -584,7 +584,7 @@ export async function getRunForSpace(pool: Queryable, tenantId: string, spaceId:
 }
 
 export async function listRuns(pool: Queryable, tenantId: string, params: { limit: number; offset?: number; status?: string; spaceId: string; updatedFrom?: string; updatedTo?: string }) {
-  const where: string[] = ["r.tenant_id = $1", "(s.input->>'spaceId') = $2"];
+  const where: string[] = ["r.tenant_id = $1", "(s1.input->>'spaceId') = $2"];
   const args: any[] = [tenantId, params.spaceId];
   let idx = 3;
   if (params.status) {
@@ -601,19 +601,86 @@ export async function listRuns(pool: Queryable, tenantId: string, params: { limi
   }
   const res = await pool.query(
     `
+      WITH matched_runs AS (
+        SELECT
+          r.*,
+          (s1.input->>'spaceId') AS space_id,
+          COALESCE(s1.input->>'traceId', s1.input->>'trace_id') AS trace_id
+        FROM runs r
+        JOIN steps s1 ON s1.run_id = r.run_id AND s1.seq = 1
+        WHERE ${where.join(" AND ")}
+        ORDER BY r.updated_at DESC
+        LIMIT $${idx} OFFSET $${idx + 1}
+      ),
+      step_counts AS (
+        SELECT
+          s.run_id,
+          COUNT(*)::int AS total_steps,
+          COUNT(*) FILTER (WHERE s.status = 'succeeded')::int AS succeeded_steps
+        FROM steps s
+        WHERE EXISTS (SELECT 1 FROM matched_runs mr WHERE mr.run_id = s.run_id)
+        GROUP BY s.run_id
+      ),
+      current_steps AS (
+        SELECT DISTINCT ON (s.run_id)
+          s.run_id,
+          s.step_id,
+          s.seq,
+          s.status AS step_status,
+          s.tool_ref,
+          s.attempt,
+          s.updated_at AS step_updated_at
+        FROM steps s
+        WHERE EXISTS (SELECT 1 FROM matched_runs mr WHERE mr.run_id = s.run_id)
+        ORDER BY s.run_id, s.seq DESC
+      ),
+      task_states AS (
+        SELECT DISTINCT ON (run_id)
+          run_id,
+          phase,
+          plan,
+          artifacts_digest,
+          updated_at AS task_updated_at
+        FROM memory_task_states
+        WHERE tenant_id = $1 AND space_id = $2 AND deleted_at IS NULL
+        ORDER BY run_id, updated_at DESC
+      ),
+      job_info AS (
+        SELECT DISTINCT ON (j.run_id)
+          j.run_id,
+          j.job_type
+        FROM jobs j
+        WHERE j.tenant_id = $1
+          AND EXISTS (SELECT 1 FROM matched_runs mr WHERE mr.run_id = j.run_id)
+        ORDER BY j.run_id, j.created_at DESC
+      )
       SELECT
-        r.*,
-        (s.input->>'spaceId') AS space_id,
-        COALESCE(s.input->>'traceId', s.input->>'trace_id') AS trace_id
-      FROM runs r
-      JOIN steps s ON s.run_id = r.run_id AND s.seq = 1
-      WHERE ${where.join(" AND ")}
-      ORDER BY r.updated_at DESC
-      LIMIT $${idx} OFFSET $${idx + 1}
+        mr.*,
+        sc.total_steps,
+        sc.succeeded_steps,
+        cs.step_id AS current_step_id,
+        cs.seq AS current_step_seq,
+        cs.step_status AS current_step_status,
+        cs.tool_ref AS current_tool_ref,
+        cs.attempt AS current_attempt,
+        ts.phase,
+        ts.plan,
+        ts.artifacts_digest,
+        ji.job_type,
+        CASE WHEN mr.finished_at IS NOT NULL AND mr.started_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (mr.finished_at::timestamptz - mr.started_at::timestamptz)) * 1000
+          ELSE NULL
+        END AS duration_ms
+      FROM matched_runs mr
+      LEFT JOIN step_counts sc ON sc.run_id = mr.run_id
+      LEFT JOIN current_steps cs ON cs.run_id = mr.run_id
+      LEFT JOIN task_states ts ON ts.run_id = mr.run_id
+      LEFT JOIN job_info ji ON ji.run_id = mr.run_id
+      ORDER BY mr.updated_at DESC
     `,
     [...args, params.limit, params.offset ?? 0],
   );
-  return res.rows.map(toRun);
+  return res.rows;
 }
 
 export async function listSteps(pool: Queryable, runId: string) {

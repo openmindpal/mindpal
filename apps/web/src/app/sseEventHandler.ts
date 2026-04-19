@@ -183,6 +183,23 @@ export function handleSSEEvent(evtName: string, data: any, ctx: SSEEventContext)
     case "phaseIndicator": {
       ctx.hasStructuredFlowItems = true;
       ctx.setHasStructuredFlowItems(true);
+      // 更新 reply 气泡的 phase（驱动前端真实阶段翻滚）
+      const piPhase = String(data.phase ?? "");
+      if (piPhase) {
+        ctx.setFlow((prev) => prev.map((it) =>
+          it.id === replyId ? { ...it, phase: piPhase } : it
+        ));
+      }
+      break;
+    }
+    case "status": {
+      // 后端实时处理阶段（started/classified/thinking/planning/fallback 等）
+      const stPhase = String(data.phase ?? "");
+      if (stPhase) {
+        ctx.setFlow((prev) => prev.map((it) =>
+          it.id === replyId ? { ...it, phase: stPhase } : it
+        ));
+      }
       break;
     }
     case "artifactCard": {

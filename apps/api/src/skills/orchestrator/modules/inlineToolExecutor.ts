@@ -14,10 +14,10 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import { searchMemory, listMemoryEntries, createMemoryEntry } from "../../../modules/memory/repo";
+import { searchMemory, listMemoryEntries, createMemoryEntry, updateMemoryEntry, getMemoryEntry } from "../../../modules/memory/repo";
 import { searchChunksHybrid } from "../../knowledge-rag/modules/repo";
 import type { EnabledTool } from "../../../modules/agentContext";
-import { evaluateMemoryRisk } from "@openslin/shared";
+import { evaluateMemoryRisk, resolveNumber } from "@openslin/shared";
 
 // ─── 类型定义 ────────────────────────────────────────────────────
 
@@ -101,14 +101,14 @@ export async function loadInlineWritableEntities(pool: Pool): Promise<Set<string
 
 /**
  * 基于工具元数据判定是否可内联执行。
- * 条件：scope=read 且 riskLevel=low 且非 nl2ui 类工具（有独立 UI 生成管线）
+ * 条件：scope=read 且 riskLevel=low 且未标记 execution:separate-pipeline 标签
  */
 export function isInlineEligible(toolRef: string, enabledTools: EnabledTool[]): boolean {
   const tool = enabledTools.find(t => t.toolRef === toolRef);
   if (!tool) return false;
 
-  // nl2ui 类工具有独立的 UI 生成管线，不走内联执行路径
-  if (tool.def.resourceType === "nl2ui") return false;
+  // 标记了 execution:separate-pipeline 的工具有独立管线，不走内联执行路径
+  if ((tool.def.tags ?? []).some(t => String(t).toLowerCase() === "execution:separate-pipeline")) return false;
 
   const scope = tool.def.scope;
   const riskLevel = tool.def.riskLevel ?? "low";
@@ -143,8 +143,8 @@ export function isInlineWriteEligible(
       const risk = evaluateMemoryRisk({ type, contentText: String(inputDraft?.contentText ?? "") });
       return risk.riskLevel === "low" && !risk.approvalRequired;
     }
-    // entity.create 类：检查 schema inlineCreatable 白名单
-    if (toolMeta?.def.action === "create" && toolMeta?.def.resourceType === "entity") {
+    // entity.create / entity.update 类：检查 schema inlineCreatable 白名单
+    if ((toolMeta?.def.action === "create" || toolMeta?.def.action === "update") && toolMeta?.def.resourceType === "entity") {
       const entityName = String(inputDraft?.entityName ?? "");
       return inlineWritableEntities.has(entityName);
     }
@@ -161,7 +161,7 @@ export function isInlineWriteEligible(
  * 返回：
  * - inlineTools: 可在当前请求中内联执行的只读工具
  * - upgradeTools: 需要升级到 execute 模式的工具（write/高风险等）
- * - nl2uiTool: nl2ui 类工具调用（有独立 UI 生成管线）
+ * - separatePipelineTool: 标记 execution:separate-pipeline 的工具有独立执行管线
  */
 export function classifyToolCalls(
   toolCalls: InlineToolCall[],
@@ -170,20 +170,20 @@ export function classifyToolCalls(
 ): {
   inlineTools: InlineToolCall[];
   upgradeTools: InlineToolCall[];
-  nl2uiTool: InlineToolCall | null;
+  separatePipelineTool: InlineToolCall | null;
 } {
   const inlineTools: InlineToolCall[] = [];
   const upgradeTools: InlineToolCall[] = [];
-  let nl2uiTool: InlineToolCall | null = null;
+  let separatePipelineTool: InlineToolCall | null = null;
 
   const enabledToolRefSet = new Set(enabledTools.map(t => t.toolRef));
   const enabledToolMap = new Map(enabledTools.map(t => [t.toolRef, t]));
 
   for (const tc of toolCalls) {
     const tool = enabledToolMap.get(tc.toolRef);
-    // nl2ui 类工具有独立 UI 生成管线，单独提取
-    if (tool?.def.resourceType === "nl2ui") {
-      nl2uiTool = tc;
+    // 标记了 execution:separate-pipeline 的工具有独立管线，单独提取
+    if ((tool?.def.tags ?? []).some(t => String(t).toLowerCase() === "execution:separate-pipeline")) {
+      separatePipelineTool = tc;
       continue;
     }
     if (!enabledToolRefSet.has(tc.toolRef)) continue;
@@ -197,7 +197,7 @@ export function classifyToolCalls(
     }
   }
 
-  return { inlineTools, upgradeTools, nl2uiTool };
+  return { inlineTools, upgradeTools, separatePipelineTool };
 }
 
 // ─── 内联执行引擎 ───────────────────────────────────────────────
@@ -480,12 +480,97 @@ async function executeEntityCreateInline(
   };
 }
 
+// ─── 安全内联写入：entity.update ─────────────────────────────────
+
+/**
+ * 内联执行 entity.update：直接更新数据库记录，绕过工作流管线。
+ * 仅用于安全白名单内的实体（schema 中标记 inlineCreatable），避免简单操作走
+ * job → run → step → BullMQ → worker → HTTP回调 的重量级链路。
+ */
+async function executeEntityUpdateInline(
+  input: Record<string, unknown>,
+  ctx: InlineExecContext,
+): Promise<unknown> {
+  const { updateRecord, lookupEntityNameByRecordId } = await import("../../../modules/data/dataRepo");
+  const { getEffectiveSchema, resolveSchemaNameForEntity } = await import("../../../modules/metadata/schemaRepo");
+
+  let entityName = String(input?.entityName ?? "");
+  const id = String(input?.id ?? "");
+
+  if (!id) throw new Error("缺少记录 id");
+  if (!entityName) {
+    const inferred = await lookupEntityNameByRecordId({
+      pool: ctx.pool,
+      tenantId: ctx.tenantId,
+      spaceId: ctx.spaceId,
+      id,
+    });
+    if (inferred) {
+      entityName = inferred;
+      ctx.app?.log.info(
+        { traceId: ctx.traceId, id, entityName: inferred },
+        "[InlineToolExecutor] 自动推断 entityName 成功",
+      );
+    } else {
+      throw new Error("缺少 entityName 且无法通过记录 ID 推断");
+    }
+  }
+
+  const resolvedSchemaName = await resolveSchemaNameForEntity({
+    pool: ctx.pool,
+    tenantId: ctx.tenantId,
+    spaceId: ctx.spaceId,
+    entityName,
+    requestedSchemaName: typeof input?.schemaName === "string" ? input.schemaName : null,
+  });
+  if (!resolvedSchemaName.ok) throw new Error(resolvedSchemaName.reason);
+
+  const rawPatch = input?.patch ?? input?.payload ?? input?.data;
+  const patch = (rawPatch && typeof rawPatch === "object" && !Array.isArray(rawPatch))
+    ? rawPatch as Record<string, unknown>
+    : {};
+
+  if (!Object.keys(patch).length) throw new Error("缺少 patch/payload");
+
+  // 直接更新数据库
+  const record = await updateRecord({
+    pool: ctx.pool,
+    tenantId: ctx.tenantId,
+    spaceId: ctx.spaceId,
+    entityName,
+    id,
+    patch,
+    subjectId: ctx.subjectId,
+  });
+
+  if (!record) {
+    throw new Error(`记录不存在或无权编辑：entityName=${entityName}, id=${id}`);
+  }
+
+  ctx.app?.log.info(
+    { traceId: ctx.traceId, entityName, recordId: record.id },
+    "[InlineToolExecutor] 内联更新实体记录成功",
+  );
+
+  return {
+    recordId: record.id,
+    entityName,
+    payload: record.payload,
+    updatedAt: record.updatedAt,
+    message: `已成功更新 ${entityName} 记录`,
+  };
+}
+
 // ─── 安全内联写入：memory.write（低风险类型） ─────────
 
 /**
- * 内联执行 memory.write：直接写入长期记忆，跳过工作流管线。
+ * 内联执行 memory.write：直接写入或更新长期记忆，跳过工作流管线。
  * 仅用于低风险记忆类型（preference/note/fact/identity/profile 等），
  * 避免简单的「记住我的名字」走 job → run → step → BullMQ → worker 的重量级链路。
+ *
+ * 行为由输入数据驱动（无硬编码）：
+ * - 输入包含 id → 定向更新已有记忆条目（调用 updateMemoryEntry）
+ * - 输入不含 id → 新建记忆条目（调用 createMemoryEntry，含 mergeThreshold 合并检测）
  */
 async function executeMemoryWriteInline(
   input: Record<string, unknown>,
@@ -495,12 +580,77 @@ async function executeMemoryWriteInline(
   const type = String(input?.type ?? "other");
   const title = input?.title ? String(input.title) : null;
   const contentText = String(input?.contentText ?? "");
+  const targetId = typeof input?.id === "string" && input.id.trim() ? input.id.trim() : null;
 
   if (!contentText.trim()) {
     return { error: "记忆内容不能为空", ok: false };
   }
 
   try {
+    // ── 输入数据驱动：id 存在则更新，不存在则新建 ──
+    if (targetId) {
+      const result = await updateMemoryEntry({
+        pool: ctx.pool,
+        tenantId: ctx.tenantId,
+        spaceId: ctx.spaceId,
+        subjectId: ctx.subjectId,
+        id: targetId,
+        title,
+        contentText,
+        type,
+      });
+
+      if (!result) {
+        return { error: "记忆条目不存在或无权编辑", ok: false };
+      }
+
+      ctx.app?.log.info(
+        { traceId: ctx.traceId, memoryId: result.entry.id, type, title },
+        "[InlineToolExecutor] 内联更新记忆成功",
+      );
+
+      // 从数据库重新加载完整记录，确保返回真实更新后的状态
+      let reloadedEntry = result.entry;
+      try {
+        const fresh = await getMemoryEntry({
+          pool: ctx.pool,
+          tenantId: ctx.tenantId,
+          spaceId: ctx.spaceId,
+          subjectId: ctx.subjectId,
+          id: result.entry.id,
+        });
+        if (fresh) {
+          reloadedEntry = fresh;
+        } else {
+          ctx.app?.log.warn(
+            { traceId: ctx.traceId, memoryId: result.entry.id },
+            "[InlineToolExecutor] 更新后重新加载记忆为空，降级使用更新返回值",
+          );
+        }
+      } catch (reloadErr: any) {
+        ctx.app?.log.warn(
+          { traceId: ctx.traceId, memoryId: result.entry.id, error: reloadErr?.message },
+          "[InlineToolExecutor] 更新后重新加载记忆失败，降级使用更新返回值",
+        );
+      }
+
+      return {
+        entry: {
+          id: reloadedEntry.id,
+          scope: reloadedEntry.scope,
+          type: reloadedEntry.type,
+          title: reloadedEntry.title,
+          contentText: reloadedEntry.contentText,
+          updatedAt: reloadedEntry.updatedAt,
+          createdAt: reloadedEntry.createdAt,
+        },
+        dlpSummary: result.dlpSummary,
+        riskEvaluation: result.riskEvaluation,
+        message: `已成功更新长期记忆`,
+      };
+    }
+
+    // ── 无 id：新建记忆（保留原有 mergeThreshold 合并检测） ──
     const result = await createMemoryEntry({
       pool: ctx.pool,
       tenantId: ctx.tenantId,
@@ -513,7 +663,7 @@ async function executeMemoryWriteInline(
       writeIntent: { policy: "policyAllowed" },
       subjectId: ctx.subjectId,
       sourceRef: { kind: "inline_tool", tool: "memory.write" },
-      mergeThreshold: Number(process.env.MEMORY_MERGE_THRESHOLD) || 0.86,
+      mergeThreshold: resolveNumber("MEMORY_MERGE_THRESHOLD").value,
     });
 
     ctx.app?.log.info(
@@ -527,6 +677,8 @@ async function executeMemoryWriteInline(
         scope: result.entry.scope,
         type: result.entry.type,
         title: result.entry.title,
+        contentText: result.entry.contentText,
+        updatedAt: result.entry.updatedAt,
         createdAt: result.entry.createdAt,
       },
       dlpSummary: result.dlpSummary,
@@ -535,24 +687,46 @@ async function executeMemoryWriteInline(
     };
   } catch (err: any) {
     ctx.app?.log.error(
-      { traceId: ctx.traceId, error: err?.message, type, title },
-      "[InlineToolExecutor] 内联写入记忆失败",
+      { traceId: ctx.traceId, error: err?.message, type, title, targetId },
+      "[InlineToolExecutor] 内联写入/更新记忆失败",
     );
     return { error: String(err?.message ?? "写入失败"), ok: false };
   }
 }
 
-// ─── 初始化：注册内置工具处理函数 ────────────────────────────────
-// 使用注册表模式，新增工具只需调用 registerInlineToolHandler() 即可
+// ─── 初始化：声明式 handler 注册表 ────────────────────────────────
 
-registerInlineToolHandler("memory.read", executeMemoryRead);
-registerInlineToolHandler("knowledge.search", executeKnowledgeSearch);
-registerInlineToolHandler("system.tool.list", executeSystemToolList);
-registerInlineToolHandler("memory.recall", executeMemoryRecall);
-registerInlineToolHandler("task.recall", (_input, ctx) => executeTaskRecall(ctx));
-registerInlineToolHandler("entity.list", executeEntityList);
-registerInlineToolHandler("entity.create", executeEntityCreateInline);
-registerInlineToolHandler("memory.write", executeMemoryWriteInline);
+/**
+ * 内联工具 handler 声明注册表
+ * 新增内联工具只需在此数组添加一条，无需修改其他代码
+ */
+const INLINE_HANDLER_DECLARATIONS: Array<{
+  toolName: string;
+  handler: InlineToolHandler;
+}> = [
+  { toolName: "memory.read", handler: executeMemoryRead },
+  { toolName: "knowledge.search", handler: executeKnowledgeSearch },
+  { toolName: "system.tool.list", handler: executeSystemToolList },
+  { toolName: "memory.recall", handler: executeMemoryRecall },
+  { toolName: "task.recall", handler: (_input, ctx) => executeTaskRecall(ctx) },
+  { toolName: "entity.list", handler: executeEntityList },
+  { toolName: "entity.create", handler: executeEntityCreateInline },
+  { toolName: "entity.update", handler: executeEntityUpdateInline },
+  { toolName: "memory.write", handler: executeMemoryWriteInline },
+];
+
+/**
+ * 从声明注册表批量加载所有内联 handler。
+ * 在模块初始化时自动调用。
+ */
+function loadInlineHandlers(): void {
+  for (const { toolName, handler } of INLINE_HANDLER_DECLARATIONS) {
+    registerInlineToolHandler(toolName, handler);
+  }
+}
+
+// 模块加载时自动注册
+loadInlineHandlers();
 
 // ─── 结果格式化：将工具结果转为 LLM 可理解的文本 ────────────────
 

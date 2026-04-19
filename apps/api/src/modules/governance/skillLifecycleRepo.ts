@@ -1,4 +1,7 @@
 import type { Pool, PoolClient } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "skillLifecycle" });
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -356,13 +359,11 @@ async function cascadeDisableSkillTools(params: {
       disabled += res.rowCount ?? 0;
     }
     if (disabled > 0) {
-      console.info(
-        `[skill-lifecycle] cascade disabled ${disabled} tool rollout(s) for skill=${skillName} prefix=${toolPrefix} tenant=${tenantId} scope=${scopeType}:${scopeId}`,
-      );
+            _logger.info("cascade disabled tool rollouts for skill", { disabled, skillName, toolPrefix, tenantId, scopeType, scopeId });
     }
     return disabled;
   } catch (err: any) {
-    console.warn(`[skill-lifecycle] cascadeDisableSkillTools failed: skill=${skillName} err=${err?.message}`);
+        _logger.warn("cascadeDisableSkillTools failed", { skillName, err: err?.message });
     return 0;
   }
 }

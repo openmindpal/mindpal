@@ -18,6 +18,11 @@ import {
   handleStreamingPause, handleStreamingResume,
   type StreamingState, type StreamingSendContext,
 } from './wsStreamingHandlers';
+import {
+  DEVICE_PROTOCOL_VERSION,
+  type ProtocolHandshake,
+  type ProtocolHandshakeAck,
+} from '@openslin/shared';
 
 // ────────────────────────────────────────────────────────────────
 // 类型定义
@@ -99,6 +104,7 @@ export class WebSocketDeviceAgent {
           safeLog('[WebSocketDeviceAgent] 连接成功');
           this.consecutiveFailures = 0;
           this.startHeartbeat();
+          this.sendProtocolHandshake();
           resolve();
         });
 
@@ -252,8 +258,15 @@ export class WebSocketDeviceAgent {
         case 'error':
           safeError(`[WebSocketDeviceAgent] 服务器错误：${JSON.stringify(message.payload)}`);
           break;
-        default:
-          safeLog(`[WebSocketDeviceAgent] 未知消息类型：${message.type}`);
+        default: {
+          // 检查是否为协议握手确认（type 含点号，不在 WebSocketMessage 联合类型中）
+          const raw = message as any;
+          if (raw.type === 'protocol.handshake.ack') {
+            this.handleHandshakeAck(raw as ProtocolHandshakeAck);
+          } else {
+            safeLog(`[WebSocketDeviceAgent] 未知消息类型：${message.type}`);
+          }
+        }
       }
     } catch (err: any) {
       safeError(`[WebSocketDeviceAgent] 消息解析失败：${err instanceof Error ? err.message : 'unknown'}`);
@@ -271,6 +284,35 @@ export class WebSocketDeviceAgent {
       setCurrentTask: (id) => { this.currentTaskId = id; },
       setRunning: (v) => { this.isRunning = v; },
     };
+  }
+
+  private sendProtocolHandshake(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const handshake: ProtocolHandshake = {
+      type: "protocol.handshake",
+      protocolVersion: DEVICE_PROTOCOL_VERSION,
+      agentVersion: process.env.AGENT_VERSION || "1.0.0",
+      capabilities: ["desktop.control", "browser.automation", "file.ops"],
+    };
+    try {
+      this.ws.send(JSON.stringify(handshake));
+      safeLog(`[WebSocketDeviceAgent] 协议握手已发送: v${DEVICE_PROTOCOL_VERSION}`);
+    } catch (err: any) {
+      safeError(`[WebSocketDeviceAgent] 握手发送失败: ${err?.message ?? "unknown"}`);
+    }
+  }
+
+  private handleHandshakeAck(ack: ProtocolHandshakeAck): void {
+    if (ack.compatible) {
+      safeLog(`[WebSocketDeviceAgent] 协议握手成功: negotiated=${ack.negotiatedVersion} server=${ack.serverVersion}`);
+      if (ack.deprecationWarning) {
+        safeLog(`[WebSocketDeviceAgent] 版本废弃警告: ${ack.deprecationWarning}`);
+      }
+    } else {
+      safeError(`[WebSocketDeviceAgent] 协议不兼容: server=${ack.serverVersion} negotiated=${ack.negotiatedVersion}，请升级 Device Agent`);
+      // 服务端会主动关闭连接，此处阻止自动重连
+      this.stop();
+    }
   }
 
   private startHeartbeat(): void {

@@ -441,7 +441,7 @@ Analyze and return the dependency relationships.`;
                 ...((downstream.metadata as any)?._injectedInputs ?? {}),
                 [completedEntryId]: injectedData,
               },
-            });
+            }, downstream.tenantId);
           }
         }
       }

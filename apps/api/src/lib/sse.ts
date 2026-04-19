@@ -57,14 +57,24 @@ export function openSse(params: {
   req.raw.on("close", onClose);
   reply.raw.on("close", onClose);
 
-  function sendEvent(event: string, data: unknown) {
+  function sendEvent(event: string, data: unknown, eventId?: string) {
     if (closed) return;
     try {
       const sanitized = sanitizeSseEvent({ event, data, req, dlpContext });
-      reply.raw.write(`event: ${sanitized.event}\ndata: ${JSON.stringify(sanitized.data)}\n\n`);
+      const idLine = eventId ? `id: ${eventId}\n` : "";
+      reply.raw.write(`${idLine}event: ${sanitized.event}\ndata: ${JSON.stringify(sanitized.data)}\n\n`);
       if (sanitized.denied) {
         close();
       }
+    } catch {
+    }
+  }
+
+  /** 发送 SSE 注释行（心跳保活，不触发 onmessage） */
+  function sendComment(comment: string) {
+    if (closed) return;
+    try {
+      reply.raw.write(`:${comment}\n\n`);
     } catch {
     }
   }
@@ -90,6 +100,7 @@ export function openSse(params: {
 
   return {
     sendEvent,
+    sendComment,
     close,
     abortController: ctrl,
     signal: ctrl.signal,

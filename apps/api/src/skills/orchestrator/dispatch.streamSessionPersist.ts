@@ -4,7 +4,7 @@
  * 从 dispatch.stream.ts 提取。原文件中 3 处几乎相同的会话上下文持久化逻辑
  * （即时动作、规划失败、执行完成）统一为本函数。
  */
-import { redactValue } from "@openslin/shared";
+import { redactValue, resolveNumber } from "@openslin/shared";
 import { upsertSessionContext, type SessionMessage, type SessionState } from "../../modules/memory/sessionContextRepo";
 import type { Pool } from "pg";
 
@@ -57,7 +57,7 @@ export async function persistStreamSessionContext(params: {
   }
 
   const trimmed = nextMsgs.slice(Math.max(0, nextMsgs.length - historyLimit));
-  const ttlDays = Math.max(1, Math.min(30, Number(process.env.ORCHESTRATOR_CONVERSATION_TTL_DAYS ?? "14") || 14));
+  const ttlDays = Math.max(1, Math.min(30, resolveNumber("ORCHESTRATOR_CONVERSATION_TTL_DAYS").value));
   const expiresAt = new Date(Date.now() + ttlDays * 86400000).toISOString();
 
   await upsertSessionContext({

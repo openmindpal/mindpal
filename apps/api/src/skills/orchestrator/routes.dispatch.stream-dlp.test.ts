@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
     needsApproval: false,
     complexity: "simple",
   })),
-  classifyIntentTwoLevel: vi.fn(),
+  classifyIntentTwoLevel: vi.fn(async () => ({ mode: "answer", confidence: 0.5, reason: "shadow", needsTask: false, needsApproval: false, complexity: "simple" })),
   reviewIntentDecision: vi.fn(),
   intentDecisionToClassification: vi.fn(),
   getPromptInjectionModeFromEnv: vi.fn(() => "off"),
@@ -55,6 +55,7 @@ vi.mock("./modules/intentClassifier", () => ({
   classifyIntentTwoLevel: mocks.classifyIntentTwoLevel,
   reviewIntentDecision: mocks.reviewIntentDecision,
   intentDecisionToClassification: mocks.intentDecisionToClassification,
+  GRAY_ZONE: { LOW: 0.65, HIGH: 0.85, ENABLED: false },
 }));
 
 vi.mock("../safety-policy/modules/promptInjectionGuard", () => ({
@@ -69,6 +70,57 @@ vi.mock("./dispatch.streamAnswer", () => ({
 
 vi.mock("../../lib/dlpPolicy", () => ({
   resolveRequestDlpPolicyContext: mocks.resolveRequestDlpPolicyContext,
+}));
+
+vi.mock("../../plugins/audit", () => ({
+  finalizeAuditForStream: vi.fn(),
+}));
+
+vi.mock("../../lib/streamingPipeline", () => ({
+  openManagedSse: vi.fn((params: any) => {
+    const { req, reply, dlpContext } = params;
+    let closed = false;
+    const chunks: string[] = [];
+
+    return {
+      sendEvent(event: string, data: unknown) {
+        if (closed) return false;
+
+        const dataStr = JSON.stringify(data);
+        const hasEmail = /[\w.-]+@[\w.-]+\.\w+/.test(dataStr);
+        const target = `${req?.ctx?.audit?.resourceType ?? ""}:${req?.ctx?.audit?.action ?? ""}`;
+        const denyTargets: Set<string> = dlpContext?.policy?.denyTargets ?? new Set();
+        const denyHitTypes: Set<string> = dlpContext?.policy?.denyHitTypes ?? new Set();
+        const shouldDeny = dlpContext?.policy?.mode === "deny"
+          && denyTargets.has(target)
+          && hasEmail
+          && denyHitTypes.has("email");
+
+        if (shouldDeny) {
+          chunks.push(`event: error\ndata: ${JSON.stringify({
+            errorCode: "DLP_DENIED",
+            message: "DLP blocked",
+            traceId: req?.ctx?.traceId,
+            blockedEvent: event,
+            safetySummary: { decision: "denied" },
+          })}\n\n`);
+          closed = true;
+          return false;
+        }
+
+        chunks.push(`event: ${event}\ndata: ${dataStr}\n\n`);
+        return true;
+      },
+      close() {
+        closed = true;
+        try {
+          reply.raw.writeHead(200, { "Content-Type": "text/event-stream" });
+          reply.raw.end(chunks.join(""));
+        } catch { /* inject mode */ }
+      },
+      isClosed() { return closed; },
+    };
+  }),
 }));
 
 import { orchestratorDispatchRoutes } from "./routes.dispatch";

@@ -121,8 +121,8 @@ export default function useSendMessage(params: UseSendMessageParams) {
 
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
-        let e: any = {};
-        try { e = JSON.parse(errText); } catch { /* ignore */ }
+        let e: Record<string, unknown> = {};
+        try { e = JSON.parse(errText); } catch { /* expected: errText may not be valid JSON */ }
         const traceId = String(e.traceId ?? "");
         const retryAfterSec = Number(e.retryAfterSec ?? res.headers.get("Retry-After"));
         const retryHint = res.status === 429 && Number.isFinite(retryAfterSec) && retryAfterSec > 0
@@ -269,7 +269,7 @@ export default function useSendMessage(params: UseSendMessageParams) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setFlow((prev) => prev.map((it) => {
           if (it.id !== replyId) return it;
-          const text = (it as any).text ?? "";
+          const text = it.kind === "message" ? it.text : "";
           if (!text) return null;
           return { ...it, text: `${text} ${t(locale, "chat.interruptedSuffix")}` };
         }).filter(Boolean) as ChatFlowItem[]);

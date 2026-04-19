@@ -14,6 +14,9 @@ import { spawn } from "node:child_process";
 import fss from "node:fs";
 import fs from "node:fs/promises";
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:dbBackupVerify" });
 
 // ── 配置 ──────────────────────────────────────────────────
 
@@ -166,14 +169,12 @@ export async function tickDbBackupVerify(params: { pool: Pool }): Promise<DbBack
     }
 
     if (result.verified > 0) {
-      console.log(
-        `[db-backup-verify] Verified ${result.verified} backup(s): ${result.passed} passed, ${result.failed} failed`,
-      );
+      _logger.info("backup verification complete", { verified: result.verified, passed: result.passed, failed: result.failed });
     }
   } catch (err: any) {
     const errMsg = String(err?.message ?? err);
     result.errors.push(errMsg);
-    console.error("[db-backup-verify] tick failed:", errMsg);
+    _logger.error("tick failed", { err: errMsg });
   }
 
   return result;
@@ -205,9 +206,9 @@ async function verifyOneBackup(
 
       if (!tocOk) {
         verifyError = `TOC verification failed: ${tocResult.error}`;
-        console.warn(`[db-backup-verify] ${backup.id} TOC FAILED: ${tocResult.error}`);
+        _logger.warn("TOC verification failed", { backupId: backup.id, error: tocResult.error });
       } else {
-        console.log(`[db-backup-verify] ${backup.id} TOC OK (${tocResult.objectCount} objects)`);
+        _logger.info("TOC OK", { backupId: backup.id, objectCount: tocResult.objectCount });
       }
     } else {
       // 非 custom 格式跳过 TOC 验证
@@ -222,9 +223,9 @@ async function verifyOneBackup(
       if (!checksumOk) {
         const err = `Checksum mismatch: expected=${backup.sha256Checksum.slice(0, 16)}... actual=${currentSha256.slice(0, 16)}...`;
         verifyError = verifyError ? `${verifyError}; ${err}` : err;
-        console.warn(`[db-backup-verify] ${backup.id} CHECKSUM MISMATCH`);
+        _logger.warn("CHECKSUM MISMATCH", { backupId: backup.id });
       } else {
-        console.log(`[db-backup-verify] ${backup.id} checksum OK`);
+        _logger.info("checksum OK", { backupId: backup.id });
       }
     } else {
       // 无校验和记录，跳过（不算失败）
@@ -301,6 +302,6 @@ async function writeVerifyAudit(
       ],
     );
   } catch (err) {
-    console.error("[db-backup-verify] audit write failed", err);
+    _logger.error("audit write failed", { err: (err as Error)?.message ?? err });
   }
 }

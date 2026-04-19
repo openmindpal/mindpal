@@ -214,7 +214,9 @@ export async function handleFailureCascade(
           taskId: target.taskId,
           goal: target.goal,
           reason: `上游任务失败导致级联取消 (来源: ${entry.entryId})`,
-        }).catch(() => {});
+        }).catch((e: unknown) => {
+          _logger.warn("notifyTaskNeedsIntervention failed during cascade cancel", { err: (e as Error)?.message, entryId: targetId });
+        });
       }
     }
   } else {

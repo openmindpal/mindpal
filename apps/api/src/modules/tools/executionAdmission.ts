@@ -1,5 +1,6 @@
 import type { CapabilityEnvelopeV1 } from "@openslin/shared";
 import { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicy, normalizeLimits, validateCapabilityEnvelopeV1 } from "@openslin/shared";
+import type { Pool } from "pg";
 import { getEffectiveToolNetworkPolicy } from "../governance/toolNetworkPolicyRepo";
 import { sha256Hex } from "../../lib/digest";
 
@@ -11,7 +12,7 @@ import { sha256Hex } from "../../lib/digest";
  * - 可通过 requestedIds 限制请求范围
  */
 export async function getEffectiveConnectorInstanceIds(params: {
-  pool: any;
+  pool: Pool;
   tenantId: string;
   spaceId: string | null;
   requestedIds?: string[];
@@ -34,7 +35,7 @@ export async function getEffectiveConnectorInstanceIds(params: {
     [params.tenantId, scopeType, scopeId],
   );
 
-  const allowedIds = new Set((res.rows as any[]).map((r) => String(r.id)));
+  const allowedIds = new Set(res.rows.map((r: Record<string, unknown>) => String(r.id)));
 
   // 如果有请求的 IDs，取交集
   if (params.requestedIds && params.requestedIds.length > 0) {
@@ -67,7 +68,7 @@ export type ExecutionAdmissionResult =
   | { ok: false; reason: "missing" | "invalid" | "not_subset"; details?: any };
 
 export async function admitToolExecution(params: {
-  pool: any;
+  pool: Pool;
   tenantId: string;
   spaceId: string | null;
   subjectId: string | null;
@@ -83,7 +84,7 @@ export async function admitToolExecution(params: {
 
   const effPol = await getEffectiveToolNetworkPolicy({ pool: params.pool, tenantId: params.tenantId, spaceId: params.spaceId ?? undefined, toolRef: params.toolRef });
   const effAllowedDomains = effPol?.allowedDomains ?? [];
-  const effRules = (effPol as any)?.rules ?? [];
+  const effRules = effPol?.rules ?? [];
   const effNetworkPolicy = Array.isArray(effRules) && effRules.length ? { allowedDomains: effAllowedDomains, rules: effRules } : { allowedDomains: effAllowedDomains };
 
   let limits = params.limits;
@@ -133,7 +134,7 @@ export async function admitToolExecution(params: {
   const parsed = validateCapabilityEnvelopeV1(params.requestedCapabilityEnvelope);
   if (!parsed.ok) return { ok: false, reason: "invalid" };
 
-  const rawLimits = (params.requestedCapabilityEnvelope as any)?.resourceDomain?.limits;
+  const rawLimits = params.requestedCapabilityEnvelope?.resourceDomain?.limits;
   if (rawLimits === undefined || rawLimits === null || (isPlainObject(rawLimits) && Object.keys(rawLimits).length === 0)) {
     parsed.envelope.resourceDomain.limits = effectiveEnvelope.resourceDomain.limits;
   }

@@ -12,7 +12,7 @@ import { createEventBus, type EventBus, type EventEnvelope } from "../lib/eventB
 describe("createEventBus", () => {
   it("publish 写入 DB + Redis 并返回 eventId", async () => {
     const pool = { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) } as any;
-    const redis = { publish: vi.fn(async () => 1) } as any;
+    const redis = { xadd: vi.fn(async () => "msg-1"), publish: vi.fn(async () => 1) } as any;
     const bus = createEventBus({ pool, redis });
 
     const eventId = await bus.publish({
@@ -27,9 +27,9 @@ describe("createEventBus", () => {
     expect(eventId.length).toBeGreaterThan(0);
     // DB outbox 写入
     expect(pool.query).toHaveBeenCalled();
-    // Redis 发布
-    expect(redis.publish).toHaveBeenCalled();
-    const redisCall = redis.publish.mock.calls[0];
+    // Redis Streams 写入
+    expect(redis.xadd).toHaveBeenCalled();
+    const redisCall = redis.xadd.mock.calls[0];
     expect(redisCall[0]).toContain("step.complete");
   });
 

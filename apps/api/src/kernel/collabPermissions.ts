@@ -13,6 +13,9 @@ import { insertAuditEvent } from "../modules/audit/auditRepo";
 import type { ConsensusProposal, ConsensusVote, ConsensusQuorumType } from "@openslin/shared";
 import { isConsensusReached } from "@openslin/shared";
 import crypto from "node:crypto";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "collabPermissions" });
 import type { CollabAgentRole, PermissionDelegation, CollabArbitrationStrategy } from "./collabTypes";
 import { upsertCollabSharedState } from "./collabEnvelope";
 import { queryRolePerformanceHistory } from "./collabValidation";
@@ -198,7 +201,9 @@ export async function delegatePermissions(params: {
     outputDigest: { ok: true },
     result: "success",
     traceId: "",
-  }).catch(() => {});
+  }).catch((e: unknown) => {
+    _logger.warn("audit event for permission delegation failed", { err: (e as Error)?.message, collabRunId });
+  });
 
   return { ok: true };
 }
@@ -310,7 +315,9 @@ export async function revokePermissionDelegation(params: {
     outputDigest: { ok: true },
     result: "success",
     traceId: "",
-  }).catch(() => {});
+  }).catch((e: unknown) => {
+    _logger.warn("audit event for permission revocation failed", { err: (e as Error)?.message, collabRunId, childAgentId });
+  });
 }
 
 /**

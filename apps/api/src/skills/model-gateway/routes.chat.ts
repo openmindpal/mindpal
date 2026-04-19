@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { isAppError } from "../../lib/errors";
 import { requirePermission } from "../../modules/auth/guard";
 import { PERM } from "@openslin/shared";
 import { setAuditContext } from "../../modules/audit/context";
@@ -114,9 +115,9 @@ export const modelChatRoutes: FastifyPluginAsync = async (app) => {
         routingDecision: out.routingDecision,
         usage:
           usageFromStream && typeof usageFromStream === "object"
-            ? { promptTokens: (usageFromStream as any).prompt_tokens ?? null, completionTokens: (usageFromStream as any).completion_tokens ?? null, totalTokens: (usageFromStream as any).total_tokens ?? null }
+            ? { promptTokens: (usageFromStream as Record<string, unknown>).prompt_tokens ?? null, completionTokens: (usageFromStream as Record<string, unknown>).completion_tokens ?? null, totalTokens: (usageFromStream as Record<string, unknown>).total_tokens ?? null }
             : out.usage && typeof out.usage === "object"
-              ? { promptTokens: (out.usage as any).prompt_tokens ?? null, completionTokens: (out.usage as any).completion_tokens ?? null, totalTokens: (out.usage as any).total_tokens ?? null }
+              ? { promptTokens: (out.usage as Record<string, unknown>).prompt_tokens ?? null, completionTokens: (out.usage as Record<string, unknown>).completion_tokens ?? null, totalTokens: (out.usage as Record<string, unknown>).total_tokens ?? null }
               : { tokens: null },
         latencyMs: out.latencyMs ?? null,
         outputTextLen,
@@ -131,15 +132,16 @@ export const modelChatRoutes: FastifyPluginAsync = async (app) => {
         latencyMs: out.latencyMs ?? null,
         traceId: req.ctx.traceId,
       });
-    } catch (err: any) {
-      const code = err?.errorCode ?? "INTERNAL_ERROR";
-      const msg = err?.messageI18n ?? err?.message ?? "Unknown error";
-      const retryAfterSec = Number(err?.retryAfterSec);
-      const details = err && typeof err === "object" && "details" in err ? (err as any).details : undefined;
-      if (err && typeof err === "object" && (err as any).audit) {
-        const a = (err as any).audit;
-        if (a?.errorCategory) req.ctx.audit!.errorCategory = String(a.errorCategory);
-        if (a?.outputDigest) req.ctx.audit!.outputDigest = a.outputDigest;
+    } catch (err: unknown) {
+      const appErr = isAppError(err) ? err : null;
+      const code = appErr?.errorCode ?? "INTERNAL_ERROR";
+      const msg = appErr?.messageI18n ?? (err instanceof Error ? err.message : "Unknown error");
+      const retryAfterSec = Number(appErr?.retryAfterSec);
+      const details = appErr?.details;
+      if (appErr?.audit) {
+        const a = appErr.audit;
+        if (a.errorCategory) req.ctx.audit!.errorCategory = String(a.errorCategory);
+        if (a.outputDigest) req.ctx.audit!.outputDigest = a.outputDigest;
       } else {
         req.ctx.audit!.errorCategory = "internal";
         req.ctx.audit!.outputDigest = { errorCode: code };
@@ -195,14 +197,15 @@ export const modelChatRoutes: FastifyPluginAsync = async (app) => {
         onDelta: () => {
         },
       });
-    } catch (err: any) {
-      if (err && typeof err === "object" && (err as any).audit) {
-        const a = (err as any).audit;
-        if (a?.errorCategory) req.ctx.audit!.errorCategory = String(a.errorCategory);
-        if (a?.outputDigest) req.ctx.audit!.outputDigest = a.outputDigest;
+    } catch (err: unknown) {
+      const appErr2 = isAppError(err) ? err : null;
+      if (appErr2?.audit) {
+        const a = appErr2.audit;
+        if (a.errorCategory) req.ctx.audit!.errorCategory = String(a.errorCategory);
+        if (a.outputDigest) req.ctx.audit!.outputDigest = a.outputDigest;
       }
-      const details = err && typeof err === "object" && "details" in err ? (err as any).details : undefined;
-      if (err?.errorCode === "OUTPUT_SCHEMA_VALIDATION_FAILED") {
+      const details = appErr2?.details;
+      if (appErr2?.errorCode === "OUTPUT_SCHEMA_VALIDATION_FAILED") {
         return reply.status(422).send({
           errorCode: "OUTPUT_SCHEMA_VALIDATION_FAILED",
           message: { "zh-CN": "模型输出不满足 outputSchema", "en-US": "Model output does not satisfy outputSchema" },
@@ -218,7 +221,7 @@ export const modelChatRoutes: FastifyPluginAsync = async (app) => {
       routingDecision: out.routingDecision,
       usage:
         out.usage && typeof out.usage === "object"
-          ? { promptTokens: (out.usage as any).prompt_tokens ?? null, completionTokens: (out.usage as any).completion_tokens ?? null, totalTokens: (out.usage as any).total_tokens ?? null }
+          ? { promptTokens: (out.usage as Record<string, unknown>).prompt_tokens ?? null, completionTokens: (out.usage as Record<string, unknown>).completion_tokens ?? null, totalTokens: (out.usage as Record<string, unknown>).total_tokens ?? null }
           : { tokens: null },
       latencyMs: out.latencyMs ?? null,
       outputTextLen: typeof out.outputText === "string" ? out.outputText.length : null,

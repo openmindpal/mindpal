@@ -2,7 +2,7 @@
  * Unified Event Bus — 共享核心类型
  *
  * P1-01: 统一事件总线核心定义，被 API 和 Worker 共同引用。
- * 运行时实现（Redis Pub/Sub）由各进程独立初始化。
+ * 运行时实现（Redis Streams）由各进程独立初始化。
  */
 
 // ── 系统事件类型枚举 ─────────────────────────────────────────
@@ -123,7 +123,7 @@ export type EventChannelValue = (typeof EventChannels)[keyof typeof EventChannel
 // ── EventBus 接口 ─────────────────────────────────────────────
 
 export interface EventBus {
-  /** 发布事件（双写 DB + Redis） */
+  /** 发布事件（双写 DB + Redis Streams） */
   publish(event: Omit<EventEnvelope, "eventId" | "timestamp">): Promise<string>;
   /** 订阅某个频道的事件 */
   subscribe(channel: string, handler: EventHandler): Promise<EventBusSubscription>;
@@ -146,4 +146,50 @@ export function eventBusRedisChannel(channel: string): string {
 /** 构造 step 完成信号的 Redis 频道名 */
 export function stepDoneRedisChannel(stepId: string): string {
   return `step:done:${stepId}`;
+}
+
+// ── EventBus 后端抽象 ────────────────────────────────────────
+
+/** 事件总线传输后端抽象接口 */
+export interface EventBusBackend {
+  publish(channel: string, payload: unknown): Promise<void>;
+  subscribe(channel: string, handler: (payload: unknown) => void): Promise<void>;
+  unsubscribe(channel: string): Promise<void>;
+  close(): Promise<void>;
+}
+
+/** Pub/Sub 后端（保留接口定义，发布端已统一使用 Streams） */
+export interface PubSubBackend extends EventBusBackend {
+  type: 'pubsub';
+}
+
+/** Streams 后端（新增，用于关键事件，支持 at-least-once 消费语义） */
+export interface StreamsBackend extends EventBusBackend {
+  type: 'streams';
+  /** 从上次消费位置续读所有 pending 但未 ACK 的消息 */
+  resumeFromLastAck(channel: string, consumerGroup: string, consumerId: string): Promise<void>;
+  /** 确认消息已处理 */
+  ack(channel: string, consumerGroup: string, messageId: string): Promise<void>;
+}
+
+// ── 事件频道分类（统一使用 Streams） ────────────────────────────
+
+/** 所有事件频道列表 — 统一使用 Redis Streams 投递 */
+export const CRITICAL_EVENT_CHANNELS = [
+  'step.completed',
+  'step.failed',
+  'run.completed',
+  'run.failed',
+  'task.status_changed',
+] as const;
+
+/** @deprecated 开发阶段已统一使用 Streams，不再区分关键/非关键 */
+export const NON_CRITICAL_EVENT_CHANNELS = [
+  'ui.notification',
+  'cache.invalidate',
+] as const;
+
+/** @deprecated 开发阶段所有事件统一走 Streams，此函数始终返回 true */
+export function isCriticalChannel(_channel: string): boolean {
+  return true;
 }

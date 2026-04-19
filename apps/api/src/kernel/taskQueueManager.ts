@@ -17,6 +17,8 @@ import type {
 } from "./taskQueue.types";
 import { TERMINAL_QUEUE_STATUSES, ACTIVE_STATUSES, RESUMABLE_STATUSES, DEFAULT_RETRY_CONFIG } from "./taskQueue.types";
 import * as repo from "./taskQueueRepo";
+import type { CheckpointData } from "./taskQueueRepo";
+import { AppError } from "../lib/errors";
 import { type TaskDependencyResolver } from "./taskDependencyResolver";
 import { type SessionScheduler, type SessionConcurrencyConfig } from "./sessionScheduler";
 import { StructuredLogger } from "@openslin/shared";
@@ -61,6 +63,13 @@ export interface TaskExecutor {
   cancel(entry: TaskQueueEntry): Promise<void>;
 }
 
+/** Redis 客户端最小接口（仅需 get/set/del） */
+export interface CheckpointRedisClient {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, ...args: unknown[]): Promise<unknown>;
+  del(key: string | string[]): Promise<number>;
+}
+
 /* ================================================================== */
 /*  Manager 实例                                                       */
 /* ================================================================== */
@@ -73,6 +82,7 @@ export class TaskQueueManager {
   private scheduler: SessionScheduler | null = null;
   private schedulerConfig: Partial<SessionConcurrencyConfig> | null = null;
   private retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG;
+  private redis: CheckpointRedisClient | null = null;
 
   constructor(pool: Pool) {
     this.pool = pool;
@@ -116,6 +126,11 @@ export class TaskQueueManager {
   setSessionScheduler(scheduler: SessionScheduler, config?: Partial<SessionConcurrencyConfig>) {
     this.scheduler = scheduler;
     this.schedulerConfig = config ?? null;
+  }
+
+  /** 注入 Redis 客户端（检查点缓存用） */
+  setRedis(redis: CheckpointRedisClient) {
+    this.redis = redis;
   }
 
   /* ── 入队 ────────────────────────────────────────────────── */
@@ -303,6 +318,9 @@ export class TaskQueueManager {
 
     log("info", `Task completed`, { entryId, sessionId: entry.sessionId });
 
+    // 清理检查点数据
+    await this.clearCheckpoint(entryId);
+
     this.emitEvent({
       type: "taskCompleted",
       sessionId: entry.sessionId,
@@ -440,6 +458,9 @@ export class TaskQueueManager {
 
     log("info", `Task cancelled`, { entryId, sessionId: entry.sessionId });
 
+    // 清理检查点数据
+    await this.clearCheckpoint(entryId);
+
     this.emitEvent({
       type: "taskCancelled",
       sessionId: entry.sessionId,
@@ -462,7 +483,7 @@ export class TaskQueueManager {
       return null;
     }
 
-    const updated = await repo.incrementRetry(this.pool, entryId, entry.lastError || "");
+    const updated = await repo.incrementRetry(this.pool, entryId, entry.lastError || "", entry.tenantId);
     if (!updated) return null;
 
     log("info", `Task retry scheduled`, { entryId, retryCount: updated.retryCount });
@@ -591,7 +612,9 @@ export class TaskQueueManager {
     const executing = await this.getExecutingEntries(tenantId, sessionId);
     for (const entry of executing) {
       if (this.executor) {
-        await this.executor.cancel(entry).catch(() => {});
+        await this.executor.cancel(entry).catch((e: unknown) => {
+          _logger.warn("executor.cancel failed during cancelAll", { err: (e as Error)?.message, entryId: entry.entryId, tenantId, sessionId });
+        });
       }
     }
     const count = await repo.cancelAllActive(this.pool, tenantId, sessionId);
@@ -603,7 +626,127 @@ export class TaskQueueManager {
     return _pauseAllForShutdown(this.pool, (evt) => this.emitEvent(evt), this.executor);
   }
 
+  /* ── 检查点 ────────────────────────────────────────────────── */
+
+  /** 检查点 TTL（24 小时） */
+  private static readonly CHECKPOINT_TTL_SEC = 86400;
+
+  /**
+   * 保存任务检查点。
+   * 将当前任务执行状态（当前步骤、中间结果、上下文）序列化为 JSON，
+   * 写入 task_checkpoints 表 + session_task_queue.checkpoint_ref，
+   * 同时在 Redis 中缓存（TTL 24h）。
+   *
+   * 在任务执行关键节点（如每个 step 完成后）调用。
+   */
+  async saveCheckpoint(entryId: string, checkpointData: Omit<repo.CheckpointData, "savedAt">, tenantId: string): Promise<void> {
+    const now = new Date().toISOString();
+    const fullData: repo.CheckpointData = { ...checkpointData, savedAt: now };
+    const checkpointRef = `checkpoint:${entryId}:${Date.now()}`;
+
+    try {
+      // 安全序列化校验：确保无循环引用
+      const serialized = JSON.stringify(fullData);
+
+      // 1. 写入 DB（task_checkpoints + session_task_queue.checkpoint_ref）
+      await repo.upsertCheckpoint(this.pool, entryId, fullData, checkpointRef, tenantId);
+
+      // 2. 写入 Redis 缓存（加速恢复读取）
+      if (this.redis) {
+        try {
+          await this.redis.set(
+            this.checkpointRedisKey(entryId),
+            serialized,
+            "EX",
+            TaskQueueManager.CHECKPOINT_TTL_SEC,
+          );
+        } catch (redisErr) {
+          // Redis 写入失败不影响主流程，DB 已持久化
+          log("warn", `Checkpoint Redis cache write failed`, { entryId, error: String(redisErr) });
+        }
+      }
+
+      log("info", `Checkpoint saved`, { entryId, checkpointRef, step: fullData.currentStep });
+    } catch (err) {
+      log("error", `Failed to save checkpoint`, { entryId, error: String(err) });
+      throw new AppError({
+        errorCode: "CHECKPOINT_SAVE_FAILED",
+        message: { en: `Failed to save checkpoint for entry ${entryId}`, zh: `保存检查点失败: ${entryId}` },
+        httpStatus: 500,
+        cause: err,
+      });
+    }
+  }
+
+  /**
+   * 从检查点恢复任务执行状态。
+   * 优先从 Redis 读取（快），回退到 DB（慢）。
+   * 返回 null 表示无检查点或数据损坏。
+   */
+  async restoreFromCheckpoint(entryId: string): Promise<repo.CheckpointData | null> {
+    try {
+      // 1. 先检查 checkpoint_ref 是否存在
+      const entry = await repo.getEntry(this.pool, entryId);
+      if (!entry?.checkpointRef) {
+        log("info", `No checkpoint_ref for entry`, { entryId });
+        return null;
+      }
+
+      // 2. 优先从 Redis 加载
+      if (this.redis) {
+        try {
+          const cached = await this.redis.get(this.checkpointRedisKey(entryId));
+          if (cached) {
+            const parsed = JSON.parse(cached) as repo.CheckpointData;
+            log("info", `Checkpoint restored from Redis`, { entryId, step: parsed.currentStep });
+            return parsed;
+          }
+        } catch (redisErr) {
+          log("warn", `Redis checkpoint read failed, falling back to DB`, { entryId, error: String(redisErr) });
+        }
+      }
+
+      // 3. 回退到 DB
+      const dbData = await repo.loadCheckpoint(this.pool, entryId);
+      if (!dbData) {
+        log("warn", `checkpoint_ref exists but no checkpoint data found`, { entryId, checkpointRef: entry.checkpointRef });
+        return null;
+      }
+
+      log("info", `Checkpoint restored from DB`, { entryId, step: dbData.currentStep });
+      return dbData;
+    } catch (err) {
+      // 检查点数据损坏，返回 null 触发降级到重新排队
+      log("error", `Checkpoint restore failed (data may be corrupted)`, { entryId, error: String(err) });
+      return null;
+    }
+  }
+
+  /**
+   * 清理检查点数据（任务完成/取消时调用）。
+   */
+  async clearCheckpoint(entryId: string): Promise<void> {
+    try {
+      await repo.deleteCheckpoint(this.pool, entryId);
+      if (this.redis) {
+        await this.redis.del(this.checkpointRedisKey(entryId)).catch(() => {});
+      }
+    } catch (err) {
+      log("warn", `Failed to clear checkpoint`, { entryId, error: String(err) });
+    }
+  }
+
+  /** 暴露 pool 给 Supervisor（启动恢复用） */
+  getPool(): Pool {
+    return this.pool;
+  }
+
   /* ── 内部工具 ────────────────────────────────────────────── */
+
+  /** Redis 检查点缓存 key */
+  private checkpointRedisKey(entryId: string): string {
+    return `checkpoint:${entryId}`;
+  }
 
   private emitEvent(event: QueueEvent) {
     if (this.emitter) {

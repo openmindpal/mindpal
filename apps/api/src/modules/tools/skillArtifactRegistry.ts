@@ -4,6 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import * as tar from "tar";
 import unzipper from "unzipper";
+import { sha256_8, sha256Hex, stableStringifyValue } from "@openslin/shared";
 import crypto from "node:crypto";
 import { computeDepsDigest, loadSkillManifest, verifySkillManifestTrustWithKeys } from "./skillPackage";
 
@@ -42,19 +43,6 @@ async function exists(p: string) {
   }
 }
 
-function stableValue(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stableValue);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stableValue(v[k]);
-  return out;
-}
-
-function sha256_8(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8);
-}
 
 function parsePkgNameFromLockPath(p: string) {
   const s = String(p ?? "");
@@ -88,7 +76,7 @@ export async function computeSkillSbomV1(params: { artifactDir: string; depsDige
   } catch {
     return { sbomSummary: { format: "sbom.v1", status: "error", reason: "bad_lockfile", components: [] }, sbomDigest: null };
   }
-  const pkgs = lock && typeof lock === "object" && !Array.isArray(lock) ? (lock as any).packages : null;
+  const pkgs = lock && typeof lock === "object" && !Array.isArray(lock) ? (lock as Record<string, unknown>).packages : null;
   const components: any[] = [];
   const seen = new Set<string>();
   if (pkgs && typeof pkgs === "object" && !Array.isArray(pkgs)) {
@@ -109,9 +97,9 @@ export async function computeSkillSbomV1(params: { artifactDir: string; depsDige
     lockRaw,
   ].join("\n");
   const artifactFilesDigest = { sha256_8: sha256_8(artifactFilesDigestInput), count: [manifestPath, pkgPath, lockPath].filter(Boolean).length };
-  const buildProvenanceDigest = { sha256_8: sha256_8(JSON.stringify(stableValue({ depsDigest: params.depsDigest, manifest: params.manifestSummary ?? null }))) };
+  const buildProvenanceDigest = { sha256_8: sha256_8(JSON.stringify(stableStringifyValue({ depsDigest: params.depsDigest, manifest: params.manifestSummary ?? null }))) };
   const sbomSummary = { format: "sbom.v1", status: "ok", components, artifactFilesDigest, buildProvenanceDigest };
-  const sbomDigest = `sha256:${crypto.createHash("sha256").update(JSON.stringify(stableValue(sbomSummary)), "utf8").digest("hex")}`;
+  const sbomDigest = `sha256:${sha256Hex(JSON.stringify(stableStringifyValue(sbomSummary)))}`;
   return { sbomSummary, sbomDigest };
 }
 
@@ -245,11 +233,11 @@ export async function inspectSkillArtifactDir(params: { artifactDir: string; tru
   const trust = verifySkillManifestTrustWithKeys({ toolName: name, depsDigest, manifest: loaded.manifest, trustedKeys: params.trustedKeys ?? new Map() });
   if (trust.status === "untrusted") throw new Error(`policy_violation:skill_untrusted:${trust.reason ?? "untrusted"}`);
   const scanSummary = await scanSkillDependencies({ artifactDir: params.artifactDir });
-  const scanMode = String((scanSummary as any)?.mode ?? "").toLowerCase();
-  const scanStatus = String((scanSummary as any)?.status ?? "").toLowerCase();
-  const vulns = (scanSummary as any)?.vulnerabilities ?? null;
-  const crit = Number((vulns as any)?.critical ?? 0) || 0;
-  const high = Number((vulns as any)?.high ?? 0) || 0;
+  const scanMode = String(scanSummary.mode ?? "").toLowerCase();
+  const scanStatus = String(scanSummary.status ?? "").toLowerCase();
+  const vulns = ('vulnerabilities' in scanSummary ? scanSummary.vulnerabilities : null) as Record<string, unknown> | null;
+  const crit = Number(vulns?.critical ?? 0) || 0;
+  const high = Number(vulns?.high ?? 0) || 0;
   if (scanMode === "deny") {
     if (scanStatus === "error") throw new Error("policy_violation:skill_dep_scan_failed");
     if (scanStatus === "ok" && (crit > 0 || high > 0)) throw new Error("policy_violation:skill_dep_scan_denied");

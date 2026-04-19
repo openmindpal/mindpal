@@ -9,7 +9,7 @@ import { appendAgentMessage } from "../task-manager/modules/agentMessageRepo";
 import { getTaskState, upsertTaskState } from "../../modules/memory/repo";
 import { createJobRun, getRunForSpace, listSteps } from "../../modules/workflow/jobRepo";
 import { type WorkflowQueue } from "../../modules/workflow/queue";
-import { resolveAndValidateTool, admitAndBuildStepEnvelope, buildStepInputPayload, submitStepToExistingRun } from "../../kernel/executionKernel";
+import { prepareToolStep, submitStepToExistingRun } from "../../kernel/executionKernel";
 import { runPlanningPipeline, type PlanFailureCategory } from "../../kernel/planningKernel";
 
 export const agentRuntimeRoutes: FastifyPluginAsync = async (app) => {
@@ -141,23 +141,21 @@ export const agentRuntimeRoutes: FastifyPluginAsync = async (app) => {
       const p = planSteps[i];
       const toolRef = String(p.toolRef);
 
-      // ── Use execution kernel: resolve & validate ──
-      const resolved = await resolveAndValidateTool({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, rawToolRef: toolRef });
-
-      const opDecision = await requirePermission({ req, resourceType: resolved.resourceType, action: resolved.action });
-      const idempotencyKey = resolved.scope === "write" && resolved.idempotencyRequired ? `idem-agent-${run.runId}-${i + 1}` : null;
-
-      // ── Use execution kernel: admit & build envelope ──
-      const admitted = await admitAndBuildStepEnvelope({
-        pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, subjectId: subject.subjectId ?? null,
-        resolved, opDecision, limits: {}, requireRequestedEnvelope: false,
-      });
-
-      // ── Use execution kernel: build step input ──
-      const stepInput = buildStepInputPayload({
-        kind: "agent.run.step", resolved, admitted, input: p.inputDraft ?? {},
-        idempotencyKey, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, traceId: req.ctx.traceId,
+      // ── Use execution kernel: resolve + validate + admit + build (unified) ──
+      const { resolved, opDecision, stepInput } = await prepareToolStep({
+        pool: app.db,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId,
+        subjectId: subject.subjectId ?? null,
+        rawToolRef: toolRef,
+        inputDraft: p.inputDraft ?? {},
+        checkPermission: (pm) => requirePermission({ req, resourceType: pm.resourceType, action: pm.action }),
+        kind: "agent.run.step",
+        traceId: req.ctx.traceId,
         extra: { planStepId: p.stepId, actorRole: String(p.actorRole ?? "executor"), dependsOn: Array.isArray(p.dependsOn) ? p.dependsOn : [] },
+        idempotencyKeyPrefix: "idem-agent",
+        runId: run.runId,
+        seq: i + 1,
       });
 
       // P0-1 FIX: 使用统一执行内核的 submitStepToExistingRun，确保治理一致性

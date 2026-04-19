@@ -23,6 +23,7 @@
  */
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import type { QueueEntryStatus } from "../../kernel/taskQueue.types";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
 import { PERM } from "@openslin/shared";
 import { setAuditContext } from "../../modules/audit/context";
@@ -31,6 +32,7 @@ import {
   registerSessionConnection,
   getSessionConnection,
   getSessionBusMetrics,
+  replayEventsAfter,
 } from "../../lib/sessionEventBus";
 import { resolveRequestDlpPolicyContext } from "../../lib/dlpPolicy";
 import { finalizeAuditForStream } from "../../plugins/audit";
@@ -129,6 +131,19 @@ export const taskQueueRoutes: FastifyPluginAsync = async (app) => {
       sessionId,
       connectionId: connection.connectionId,
     }, "[session-events] SSE connection established");
+
+    // Last-Event-ID 续传：重放断线期间缓冲的事件
+    const lastEventId = (req.headers["last-event-id"] as string | undefined)?.trim();
+    if (lastEventId) {
+      const missedEvents = replayEventsAfter(sessionId, subject.tenantId, lastEventId);
+      app.log.info({
+        traceId: req.ctx.traceId, sessionId, lastEventId,
+        replayCount: missedEvents.length,
+      }, "[session-events] Replaying buffered events after Last-Event-ID");
+      for (const evt of missedEvents) {
+        connection.sendEvent(evt.event, evt.data, evt.id);
+      }
+    }
 
     // 发送初始队列快照
     const manager = getQueueManager(app);
@@ -509,7 +524,7 @@ export const taskQueueRoutes: FastifyPluginAsync = async (app) => {
     }).parse(req.query);
 
     const { listHistoryEntries } = await import("../../kernel/taskQueueRepo");
-    const statusFilter = query.status ? query.status.split(",") as any[] : null;
+    const statusFilter = query.status ? query.status.split(",") as QueueEntryStatus[] : null;
     const result = await listHistoryEntries(app.db, {
       tenantId: subject.tenantId,
       sessionId: query.sessionId,

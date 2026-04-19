@@ -1,5 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "cli:seed" });
 import { loadConfig } from "../config";
 import { migrate } from "../db/migrate";
 import { createPool } from "../db/pool";
@@ -228,7 +231,7 @@ async function main() {
       "INSERT INTO role_bindings (subject_id, role_id, scope_type, scope_id) VALUES ($1, $2, 'tenant', $3) ON CONFLICT DO NOTHING",
       [devWebSubjectId, adminRoleId, tenantId],
     );
-    console.log(`[seed] granted admin role to dev web user: ${devWebSubjectId}`);
+    _logger.info("granted admin role to dev web user", { subjectId: devWebSubjectId });
   }
 
   const mockModelRef = process.env.SEED_DEFAULT_MODEL_REF ?? "mock:echo-1";
@@ -282,7 +285,7 @@ async function main() {
     [tenantId, mockModelRef],
   );
 
-  console.log("[seed] 零默认 Schema 模式已启用：不再预置 core schema");
+  _logger.info("零默认 Schema 模式已启用：不再预置 core schema");
 
   // Notes page templates removed — notes functionality is now provided by Skill extensions,
   // not built into the OS core. Page templates can be dynamically created via Skill manifests.
@@ -290,15 +293,15 @@ async function main() {
   // Auto-discover and register all tools (built-in + skill manifests)
   try {
     const discovery = await autoDiscoverAndRegisterTools(pool);
-    console.log(`[tool-discovery] registered=${discovery.registered} skipped=${discovery.skipped}`);
+    _logger.info("tool discovery complete", { registered: discovery.registered, skipped: discovery.skipped });
   } catch (err) {
-    console.error("[tool-discovery] failed:", err);
+    _logger.error("tool discovery failed", { error: (err as Error)?.message ?? err });
   }
 
   await pool.end();
 }
 
 main().catch((err) => {
-  console.error(err);
+  _logger.error("seed failed", { error: (err as Error)?.message ?? err });
   process.exit(1);
 });

@@ -3,6 +3,9 @@ import { getToolVersionByRef } from "../tools/toolRepo";
 import { resolveSupplyChainPolicy, checkTrust, checkDependencyScan } from "@openslin/shared";
 import { insertAuditEvent } from "../audit/auditRepo";
 import { Errors } from "../../lib/errors";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "toolGovernance" });
 
 export type ToolRolloutRow = {
   tenantId: string;
@@ -442,9 +445,7 @@ export async function disableToolForScope(params: DisableToolParams): Promise<En
   }
 
   if (disableMode === "graceful") {
-    console.info(
-      `[governance] disableToolForScope: graceful disable for tool=${toolRef} tenant=${tenantId} scope=${scopeType}:${scopeId} graceDeadline=${graceDeadline?.toISOString()}`
-    );
+        _logger.info("disableToolForScope: graceful disable", { toolRef, tenantId, scopeType, scopeId, graceDeadline: graceDeadline?.toISOString() });
   }
 
   return { rollout, previousEnabled };

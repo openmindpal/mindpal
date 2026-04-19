@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
+import { sha256Hex } from "@openslin/shared";
 
 export type TokenType = "access" | "refresh" | "pat";
 
@@ -33,10 +34,6 @@ function rowToToken(r: any): AuthTokenRow {
     expiresAt: r.expires_at ? String(r.expires_at) : null,
     revokedAt: r.revoked_at ? String(r.revoked_at) : null,
   };
-}
-
-export function sha256Hex(input: string) {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
 }
 
 function genPatToken() {

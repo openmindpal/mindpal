@@ -1,9 +1,10 @@
 import type { WorkerSkillContribution } from "../../lib/workerSkillContract";
 import { tickWebhookDeliveries } from "../../channels/webhookDelivery";
 import { tickChannelOutboxDeliveries } from "../../channels/outboxDelivery";
+import { resolveString } from "@openslin/shared";
 
 function resolveMasterKey() {
-  const v = String(process.env.API_MASTER_KEY ?? "").trim();
+  const v = resolveString("API_MASTER_KEY").value;
   if (v) return v;
   if (process.env.NODE_ENV === "production") return "";
   return "dev-master-key-change-me";

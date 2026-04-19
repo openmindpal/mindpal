@@ -40,6 +40,8 @@ export type ToolDefinition = {
   lastUsedAt: string | null;
   /** 额外权限声明：工具执行前需动态检查的附加权限 [{resourceType, action}] */
   extraPermissions: Array<{ resourceType: string; action: string }>;
+  /** 工具执行超时时间(毫秒)，来自 tool_definitions.execution_timeout_ms，默认120秒 */
+  executionTimeoutMs: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -65,10 +67,35 @@ export type ToolVersion = {
 
 export type ToolVisibility = "public" | "privileged" | "internal";
 
-export function deriveToolVisibility(params: Pick<ToolDefinition, "name" | "tags" | "approvalRequired" | "riskLevel">): ToolVisibility {
-  const tags = new Set((params.tags ?? []).map((tag) => String(tag).toLowerCase()));
-  if (params.name.startsWith("device.") || tags.has("internal-only")) return "internal";
-  if (tags.has("planner:hidden") || tags.has("primitive") || params.approvalRequired || params.riskLevel === "high") return "privileged";
+export interface ToolPolicyRule {
+  rule_type: "pinned" | "hidden";
+  match_field: "name" | "tag" | "prefix";
+  match_pattern: string;
+  effect: Record<string, any>;
+  enabled: boolean;
+}
+
+export function deriveToolVisibility(
+  params: Pick<ToolDefinition, "name" | "tags" | "approvalRequired" | "riskLevel">,
+  hiddenRules?: ToolPolicyRule[],
+): ToolVisibility {
+  // 优先使用 DB 规则
+  if (hiddenRules && hiddenRules.length > 0) {
+    for (const rule of hiddenRules) {
+      if (rule.match_field === "prefix" && params.name.startsWith(rule.match_pattern)) return "internal";
+      if (rule.match_field === "tag" && (params.tags ?? []).some(t => String(t).toLowerCase() === rule.match_pattern.toLowerCase())) {
+        return rule.match_pattern === "planner:hidden" || rule.match_pattern === "primitive" ? "privileged" : "internal";
+      }
+      if (rule.match_field === "name" && params.name === rule.match_pattern) return "internal";
+    }
+  } else {
+    // Fallback: 保留原始硬编码逻辑
+    const tags = new Set((params.tags ?? []).map((tag) => String(tag).toLowerCase()));
+    if (params.name.startsWith("device.") || tags.has("internal-only")) return "internal";
+    if (tags.has("planner:hidden") || tags.has("primitive")) return "privileged";
+  }
+
+  if (params.approvalRequired || params.riskLevel === "high") return "privileged";
   return "public";
 }
 
@@ -97,6 +124,7 @@ function toDef(r: any): ToolDefinition {
     usageCount: r.usage_count ?? 0,
     lastUsedAt: r.last_used_at ?? null,
     extraPermissions: Array.isArray(r.extra_permissions) ? r.extra_permissions : [],
+    executionTimeoutMs: r.execution_timeout_ms ?? 120_000,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -265,10 +293,10 @@ export async function publishToolVersion(params: {
       toolRef,
       params.publish.depsDigest ?? null,
       params.publish.artifactRef ?? null,
-      (params.publish as any).scanSummary ?? null,
-      (params.publish as any).trustSummary ?? null,
-      (params.publish as any).sbomSummary ?? null,
-      (params.publish as any).sbomDigest ?? null,
+      params.publish.scanSummary ?? null,
+      params.publish.trustSummary ?? null,
+      params.publish.sbomSummary ?? null,
+      params.publish.sbomDigest ?? null,
       params.publish.inputSchema ?? null,
       params.publish.outputSchema ?? null,
     ],

@@ -20,7 +20,7 @@ import { rbacManagerRoutes } from "./routes";
 const plugin: BuiltinSkillPlugin = {
   manifest: {
     identity: { name: "rbac.manager", version: "1.0.0" },
-    layer: "builtin",
+    layer: "optional",
     routes: ["/rbac-manager"],
     dependencies: ["audit", "rbac"],
     tools: [

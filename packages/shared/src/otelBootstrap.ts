@@ -16,6 +16,8 @@
  *   bootstrapOtel({ serviceName: "openslin-api", ... });
  */
 
+import { resolveBoolean, resolveString } from "./runtimeConfig";
+
 export function parseOtelHeaders(raw: string | undefined): Record<string, string> | undefined {
   const s = String(raw ?? "").trim();
   if (!s) return undefined;
@@ -32,13 +34,12 @@ export function parseOtelHeaders(raw: string | undefined): Record<string, string
 
 /** 检查 OTel 是否启用 */
 export function isOtelEnabled(): boolean {
-  const v = String(process.env.OTEL_ENABLED ?? "").toLowerCase();
-  return v === "1" || v === "true";
+  return resolveBoolean("OTEL_ENABLED").value;
 }
 
 /** 获取默认 OTLP 端点（优先 Jaeger docker-compose 默认） */
 export function getOtlpEndpoint(): string {
-  return process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "http://localhost:4318";
+  return resolveString("OTEL_EXPORTER_OTLP_ENDPOINT").value || "http://localhost:4318";
 }
 
 /**
@@ -64,25 +65,23 @@ export function bootstrapOtel(params: {
   if (!isOtelEnabled()) return;
 
   const { deps } = params;
-  const diagEnabled =
-    String(process.env.OTEL_DIAG ?? "").toLowerCase() === "1" ||
-    String(process.env.OTEL_DIAG ?? "").toLowerCase() === "true";
+  const diagEnabled = resolveBoolean("OTEL_DIAG").value;
   if (diagEnabled) deps.diag.setLogger(new deps.DiagConsoleLogger(), deps.DiagLogLevel.INFO);
 
   // P3-14: 默认指向 Jaeger OTLP HTTP (docker-compose port 4318)
   const endpoint = getOtlpEndpoint();
   const exporter = new deps.OTLPTraceExporter({
     url: `${endpoint}/v1/traces`,
-    headers: parseOtelHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS),
+    headers: parseOtelHeaders(resolveString("OTEL_EXPORTER_OTLP_HEADERS").value || undefined),
   });
 
   // P3-14: 增加 service.version + deployment.environment 资源属性
   const resourceAttrs: Record<string, string> = {
     [deps.SEMRESATTRS_SERVICE_NAME]: params.serviceName,
   };
-  const version = params.serviceVersion || process.env.OTEL_SERVICE_VERSION;
+  const version = params.serviceVersion || resolveString("OTEL_SERVICE_VERSION").value;
   if (version) resourceAttrs["service.version"] = version;
-  const env = process.env.OTEL_DEPLOYMENT_ENVIRONMENT;
+  const env = resolveString("OTEL_DEPLOYMENT_ENVIRONMENT").value;
   if (env) resourceAttrs["deployment.environment"] = env;
 
   const sdk = new deps.NodeSDK({

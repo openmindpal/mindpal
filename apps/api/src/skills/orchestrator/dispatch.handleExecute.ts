@@ -10,12 +10,8 @@ import { appendStepToRun, createJobRun } from "../../modules/workflow/jobRepo";
 import { upsertTaskState } from "../../modules/memory/repo";
 import type { WorkflowQueue } from "../../modules/workflow/queue";
 import { requirePermission } from "../../modules/auth/guard";
-import { validateToolInput } from "../../modules/tools/validate";
 import {
-  admitAndBuildStepEnvelope,
-  buildStepInputPayload,
-  generateIdempotencyKey,
-  resolveAndValidateTool,
+  prepareToolStep,
   submitStepToExistingRun,
 } from "../../kernel/executionKernel";
 import { runPlanningPipeline } from "../../kernel/planningKernel";
@@ -156,45 +152,20 @@ export async function handleExecuteMode(ctx: DispatchContext): Promise<DispatchR
       let firstOutcome: "queued" | "needs_approval" = "queued";
       for (let i = 0; i < workerSuggestions.length; i++) {
         const suggestion = workerSuggestions[i];
-        const resolved = await resolveAndValidateTool({
+        const { resolved, opDecision, stepInput } = await prepareToolStep({
           pool: app.db,
           tenantId: subject.tenantId,
           spaceId: subject.spaceId,
+          subjectId: subject.subjectId,
           rawToolRef: suggestion.toolRef,
-        });
-        const inputDraft = suggestion.inputDraft ?? {};
-        validateToolInput(resolved.version.inputSchema, inputDraft);
-
-        const opDecision = await requirePermission({
-          req,
-          resourceType: resolved.resourceType,
-          action: resolved.action,
-        });
-        const admitted = await admitAndBuildStepEnvelope({
-          pool: app.db,
-          tenantId: subject.tenantId,
-          spaceId: subject.spaceId,
-          subjectId: subject.subjectId,
-          resolved,
-          opDecision,
-        });
-        const idempotencyKey = generateIdempotencyKey({
-          resolved,
-          prefix: "dispatch-upgrade",
-          runId,
-          seq: i + 1,
-        });
-        const stepInput = buildStepInputPayload({
+          inputDraft: suggestion.inputDraft ?? {},
+          checkPermission: (p) => requirePermission({ req, resourceType: p.resourceType, action: p.action }),
           kind: "agent.dispatch.upgrade",
-          resolved,
-          admitted,
-          input: inputDraft,
-          idempotencyKey,
-          tenantId: subject.tenantId,
-          spaceId: subject.spaceId,
-          subjectId: subject.subjectId,
           traceId,
           extra: { actorRole: "executor", source: "auto-upgrade" },
+          idempotencyKeyPrefix: "dispatch-upgrade",
+          runId,
+          seq: i + 1,
         });
 
         if (i === 0) {

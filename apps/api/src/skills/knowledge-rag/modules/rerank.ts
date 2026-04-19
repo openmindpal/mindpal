@@ -11,6 +11,9 @@
  */
 
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:rerank" });
 
 export type RerankConfig = {
   enabled: boolean;
@@ -105,7 +108,7 @@ export async function rerank(params: {
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => "");
-      console.error(`[knowledge:rerank] Rerank API 返回 ${res.status}: ${errBody.slice(0, 500)}`);
+      _logger.error("rerank API error", { status: res.status, body: errBody.slice(0, 500) });
       return {
         reranked: false,
         items: params.documents.map((_, i) => ({ originalIndex: i, score: 0 })),
@@ -122,7 +125,7 @@ export async function rerank(params: {
       score: Number(r?.relevance_score ?? r?.score ?? 0),
     }));
 
-    console.log(`[knowledge:rerank] Rerank 成功，返回 ${items.length} 条结果，耗时 ${Date.now() - startedAt}ms`);
+    _logger.info("rerank succeeded", { count: items.length, latencyMs: Date.now() - startedAt });
     return {
       reranked: true,
       items,
@@ -132,7 +135,7 @@ export async function rerank(params: {
     };
   } catch (e: any) {
     const reason = e?.name === "AbortError" ? "rerank_timeout" : `rerank_error: ${e?.message ?? e}`;
-    console.error(`[knowledge:rerank] Rerank 失败: ${reason}`);
+    _logger.error("rerank failed", { reason });
     return {
       reranked: false,
       items: params.documents.map((_, i) => ({ originalIndex: i, score: 0 })),

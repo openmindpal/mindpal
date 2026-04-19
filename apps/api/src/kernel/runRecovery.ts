@@ -52,7 +52,7 @@ type RecoverableStepRow = { step_id: string; status: string };
 async function listRecoverableSteps(pool: Pool, runId: string): Promise<RecoverableStepRow[]> {
   const stepRes = await pool.query<RecoverableStepRow>(
     `SELECT step_id, status FROM steps
-     WHERE run_id = $1 AND status IN ('pending', 'paused', 'needs_device', 'needs_arbiter', 'failed')
+     WHERE run_id = $1 AND status IN ('pending', 'paused', 'needs_device', 'needs_arbiter')
      ORDER BY seq ASC`,
     [runId],
   );
@@ -77,7 +77,7 @@ export async function pauseRun(ctx: RecoveryContext): Promise<RecoveryResult> {
     [tenantId, runId],
   );
   if (!runRes.rowCount) {
-    return { ok: false, action: "pause", previousStatus: "created" as any, newStatus: "created" as any, message: "Run 不存在" };
+    return { ok: false, action: "pause", previousStatus: "created", newStatus: "created", message: "Run 不存在" };
   }
   const currentStatus = runRes.rows[0].status as RunStatus;
 
@@ -141,7 +141,7 @@ export async function pauseRun(ctx: RecoveryContext): Promise<RecoveryResult> {
 
 /**
  * 恢复运行
- * 从阻塞状态（needs_approval, needs_device, needs_arbiter, paused, failed）恢复
+ * 从阻塞状态（needs_approval, needs_device, needs_arbiter, paused）恢复
  */
 export async function resumeRun(ctx: RecoveryContext): Promise<RecoveryResult> {
   const { pool, queue, tenantId, runId, reason, spaceId } = ctx;
@@ -167,6 +167,15 @@ export async function resumeRun(ctx: RecoveryContext): Promise<RecoveryResult> {
       message: "Run 需要审批，不能直接恢复",
     };
   }
+  if (currentStatus === "failed") {
+    return {
+      ok: false,
+      action: "resume",
+      previousStatus: currentStatus,
+      newStatus: currentStatus,
+      message: "Run 已失败，请使用 retry 而不是 resume",
+    };
+  }
 
   // Step 3: 状态机校验
   const transition = tryTransitionRun(currentStatus, "queued");
@@ -175,7 +184,7 @@ export async function resumeRun(ctx: RecoveryContext): Promise<RecoveryResult> {
   }
 
   // Step 4: 原子更新（仅当状态未变时生效）
-  const recoverableStatuses = ["needs_device", "needs_arbiter", "paused", "failed"];
+  const recoverableStatuses = ["needs_device", "needs_arbiter", "paused"];
   const updateRes = await pool.query(
     `UPDATE runs SET status = 'queued', updated_at = now()
      WHERE tenant_id = $1 AND run_id = $2 AND status = ANY($3::text[])
@@ -218,7 +227,7 @@ export async function resumeRun(ctx: RecoveryContext): Promise<RecoveryResult> {
 
       await pool.query(
         "UPDATE steps SET queue_job_id = $1, updated_at = now() WHERE step_id = $2",
-        [String((queuedJob as any).id), recoverableStep.step_id],
+        [String(queuedJob.id), recoverableStep.step_id],
       );
     }
 
@@ -340,7 +349,7 @@ export async function retryFailedStep(ctx: RecoveryContext): Promise<RecoveryRes
     
     await pool.query(
       "UPDATE steps SET queue_job_id = $1, updated_at = now() WHERE step_id = $2",
-      [String((job as any).id), stepId]
+      [String(job.id), stepId]
     );
   }
   

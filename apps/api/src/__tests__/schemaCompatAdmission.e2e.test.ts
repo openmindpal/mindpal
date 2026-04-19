@@ -33,6 +33,21 @@ async function seedMinimal() {
     "INSERT INTO role_bindings (subject_id, role_id, scope_type, scope_id) VALUES ($1, $2, 'tenant', $3) ON CONFLICT DO NOTHING",
     ["approver", "role_admin", "tenant_dev"],
   );
+
+  // 确保 __default__ 租户和 schema 审批规则存在
+  await pool.query("INSERT INTO tenants (id) VALUES ('__default__') ON CONFLICT (id) DO NOTHING");
+  const existingSchemaGate = await pool.query(
+    "SELECT rule_id FROM approval_rules WHERE tenant_id = '__default__' AND rule_type = 'changeset_gate' AND name = 'Schema 变更' AND enabled = true LIMIT 1",
+  );
+  if (!existingSchemaGate.rowCount) {
+    await pool.query(
+      `INSERT INTO approval_rules (tenant_id, rule_type, name, description, priority, match_condition, effect)
+       VALUES ('__default__', 'changeset_gate', 'Schema 变更', '涉及 Schema 发布/回滚时标记为高风险，需双人审批', 11,
+         '{"match":"item_kind_prefix","pattern":"schema."}',
+         '{"riskLevel":"high","requiredApprovals":2}')
+       ON CONFLICT DO NOTHING`,
+    );
+  }
 }
 
 describe.sequential("schema compat admission e2e", { timeout: 60_000 }, () => {

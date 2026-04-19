@@ -12,6 +12,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { invokeModelChat, type LlmSubject } from "../../../lib/llm";
+import { resolveBoolean, resolveNumber } from "@openslin/shared";
 
 /* ── 结果类型 ── */
 
@@ -36,15 +37,13 @@ export interface SafetyPreCheckResult {
 
 /** 环境变量开关：SAFETY_PRE_CHECK_ENABLED（默认 true） */
 function isEnabled(): boolean {
-  const v = process.env.SAFETY_PRE_CHECK_ENABLED;
-  if (v === "false" || v === "0") return false;
-  return true;
+  return resolveBoolean("SAFETY_PRE_CHECK_ENABLED").value;
 }
 
 /** LLM 安全评估超时（毫秒），默认 8000 */
 function llmTimeoutMs(): number {
-  const raw = Number(process.env.SAFETY_PRE_CHECK_LLM_TIMEOUT_MS ?? "8000");
-  return Number.isFinite(raw) && raw > 0 ? raw : 8000;
+  const raw = resolveNumber("SAFETY_PRE_CHECK_LLM_TIMEOUT_MS").value;
+  return raw > 0 ? raw : 8000;
 }
 
 /* ── 中风险：规则匹配（纯本地，零网络开销） ── */

@@ -14,6 +14,7 @@
   "category": "knowledge",
   "priority": 7,
   "tags": ["ocr", "image", "text-extraction", "knowledge", "document"],
+  "executionTimeoutMs": 300000,
   "contract": {
     "scope": "read",
     "resourceType": "media",

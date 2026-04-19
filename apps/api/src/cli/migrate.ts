@@ -1,5 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "cli:migrate" });
 import { loadConfig } from "../config";
 import { migrate } from "../db/migrate";
 import { createPool } from "../db/pool";
@@ -29,6 +32,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
+  _logger.error("migration failed", { error: (err as Error)?.message ?? err });
   process.exit(1);
 });

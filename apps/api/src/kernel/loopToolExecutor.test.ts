@@ -9,8 +9,7 @@ const {
   mockSubmitStepToExistingRun,
   mockValidateToolInput,
   mockIsToolAllowedByConstraints,
-  mockAuthorize,
-  mockBuildAbacEvaluationRequestFromContext,
+  mockAuthorizeToolExecution,
 } = vi.hoisted(() => ({
   mockGetSharedSubClient: vi.fn(),
   mockResolveAndValidateTool: vi.fn(),
@@ -20,8 +19,7 @@ const {
   mockSubmitStepToExistingRun: vi.fn(),
   mockValidateToolInput: vi.fn(),
   mockIsToolAllowedByConstraints: vi.fn(),
-  mockAuthorize: vi.fn(),
-  mockBuildAbacEvaluationRequestFromContext: vi.fn(),
+  mockAuthorizeToolExecution: vi.fn(),
 }));
 
 vi.mock("./loopRedisClient", () => ({
@@ -44,12 +42,8 @@ vi.mock("./loopThinkDecide", () => ({
   isToolAllowedByConstraints: (...args: any[]) => mockIsToolAllowedByConstraints(...args),
 }));
 
-vi.mock("../modules/auth/authz", () => ({
-  authorize: (...args: any[]) => mockAuthorize(...args),
-}));
-
-vi.mock("../modules/auth/guard", () => ({
-  buildAbacEvaluationRequestFromContext: (...args: any[]) => mockBuildAbacEvaluationRequestFromContext(...args),
+vi.mock("./loopPermissionUnified", () => ({
+  authorizeToolExecution: (...args: any[]) => mockAuthorizeToolExecution(...args),
 }));
 
 import { executeToolCall, waitForStepCompletion } from "./loopToolExecutor";
@@ -166,15 +160,16 @@ describe("loopToolExecutor.executeToolCall", () => {
       idempotencyRequired: false,
     });
     mockIsToolAllowedByConstraints.mockReturnValue({ ok: true });
-    mockBuildAbacEvaluationRequestFromContext.mockImplementation((params: any) => ({ ...params, built: true }));
-    mockAuthorize
-      .mockResolvedValueOnce({ decision: "allow", snapshotRef: "policy_snapshot:tool-execute" })
-      .mockResolvedValueOnce({
+    mockAuthorizeToolExecution.mockResolvedValue({
+      authorized: true,
+      opDecision: {
         decision: "allow",
         snapshotRef: "policy_snapshot:memory-read",
         fieldRules: { read: { allow: ["title"] } },
         rowFilters: { kind: "owner_only" },
-      });
+      },
+      governanceResult: { passed: true, requiresApproval: false },
+    });
     mockAdmitAndBuildStepEnvelope.mockResolvedValue({ envelope: {}, limits: {}, networkPolicy: {}, networkPolicyDigest: {}, effectiveEnvelope: {} });
     mockGenerateIdempotencyKey.mockReturnValue("agent-loop-run-1-1");
     mockBuildStepInputPayload.mockReturnValue({ kind: "agent.loop.step" });
@@ -197,26 +192,16 @@ describe("loopToolExecutor.executeToolCall", () => {
     });
 
     expect(result).toEqual({ stepId: "step-1", ok: true });
-    expect(mockAuthorize).toHaveBeenCalledTimes(2);
-    expect(mockAuthorize).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      resourceType: "tool",
-      action: "execute",
-      abacRequest: expect.objectContaining({
-        resourceType: "tool",
-        action: "execute",
-        environment: expect.objectContaining({
-          attributes: expect.objectContaining({
-            runtime: "agent_loop",
-            runId: "run-1",
-            jobId: "job-1",
-            traceId: "trace-1",
-          }),
-        }),
-      }),
-    }));
-    expect(mockAuthorize).toHaveBeenNthCalledWith(2, expect.objectContaining({
+    expect(mockAuthorizeToolExecution).toHaveBeenCalledTimes(1);
+    expect(mockAuthorizeToolExecution).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "tenant-1",
+      spaceId: "space-1",
+      subjectId: "subject-1",
+      runId: "run-1",
+      jobId: "job-1",
       resourceType: "memory",
       action: "read",
+      toolRef: "memory.read@1",
     }));
     expect(mockAdmitAndBuildStepEnvelope).toHaveBeenCalledWith(expect.objectContaining({
       opDecision: expect.objectContaining({
@@ -224,6 +209,7 @@ describe("loopToolExecutor.executeToolCall", () => {
         fieldRules: { read: { allow: ["title"] } },
         rowFilters: { kind: "owner_only" },
       }),
+      preAuthorized: true,
     }));
     expect(mockSubmitStepToExistingRun).toHaveBeenCalledWith(expect.objectContaining({
       opDecision: expect.objectContaining({

@@ -1,5 +1,5 @@
 -- 006: Workflow Engine
--- Consolidated from: 005, 022, 029, 053, 054, 055, 056, 057, 058, 059(tenant col), 060, 061, 073, 091, 105, 144
+-- Consolidated from: 005, 022, 028(deadletter_retry), 029, 053, 054, 055, 056, 057, 058, 059(tenant col), 060, 061, 073, 091, 105, 144
 
 -- ── jobs ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS jobs (
@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS steps (
   started_at TIMESTAMPTZ NULL,
   finished_at TIMESTAMPTZ NULL,
   deadlettered_at TIMESTAMPTZ NULL,
+  deadletter_retry_count INT NOT NULL DEFAULT 0,
+  permanent_failure BOOLEAN NOT NULL DEFAULT false,
   last_error_digest JSONB NULL,
   queue_job_id TEXT NULL,
   -- Envelope encryption (from 057/058/061)
@@ -122,6 +124,13 @@ CREATE INDEX IF NOT EXISTS steps_run_tool_input_digest_idx
 CREATE INDEX IF NOT EXISTS steps_run_sealed_at_idx
   ON steps (run_id, sealed_at DESC)
   WHERE sealed_at IS NOT NULL;
+
+-- 死信重试扫描索引
+CREATE INDEX IF NOT EXISTS steps_deadletter_retryable_idx
+  ON steps (deadlettered_at ASC)
+  WHERE deadlettered_at IS NOT NULL
+    AND permanent_failure = false
+    AND deadletter_retry_count < 3;
 
 COMMENT ON COLUMN steps.meta_input IS '步骤执行元信息（JSON），如 actorRole, suggestionId 等非业务输入数据';
 

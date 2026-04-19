@@ -11,7 +11,9 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import type { Pool } from "pg";
-import { computeMinhash } from "@openslin/shared";
+import { computeMinhash, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "activeReflexion" });
 import { encryptMemoryContent } from "../memory/memoryEncryption";
 
 /* ================================================================== */
@@ -367,7 +369,7 @@ async function reflectOnRun(params: {
     if (!lesson && !strategy) return null;
     return { lesson, strategy, confidence };
   } catch (err: any) {
-    console.warn(`[activeReflexion] reflectOnRun failed for run=${run.runId}: ${err?.message}`);
+        _logger.warn("reflectOnRun failed", { runId: run.runId, err: err?.message });
     return null;
   }
 }
@@ -404,7 +406,7 @@ async function writeProceduralStrategy(params: {
     [tenantId, spaceId, contentDigest],
   );
   if (existing.rowCount && existing.rowCount > 0) {
-    console.log(`[activeReflexion] strategy already exists (digest=${contentDigest.slice(0, 12)}...), skip`);
+        _logger.info("strategy already exists, skip", { digest: contentDigest.slice(0, 12) });
     return null;
   }
 
@@ -429,7 +431,7 @@ async function writeProceduralStrategy(params: {
 
   const entryId = String(res.rows[0]?.id ?? "");
   if (entryId) {
-    console.log(`[activeReflexion] procedural strategy written: id=${entryId}, title=${title.slice(0, 50)}`);
+        _logger.info("procedural strategy written", { entryId, title: title.slice(0, 50) });
   }
   return entryId || null;
 }
@@ -477,7 +479,7 @@ export async function tickActiveReflexion(params: { pool: Pool }): Promise<Activ
   // 加载 reflexion-skill
   const reflexionSkill = loadReflexionSkill();
   if (!reflexionSkill) {
-    console.log("[activeReflexion] reflexion-skill not available, skipping");
+        _logger.info("reflexion-skill not available, skipping");
     result.durationMs = Date.now() - startTime;
     return result;
   }
@@ -509,7 +511,7 @@ export async function tickActiveReflexion(params: { pool: Pool }): Promise<Activ
   );
 
   if (!runsRes.rowCount) {
-    console.log("[activeReflexion] no unreflected runs found within scan window");
+        _logger.info("no unreflected runs found within scan window");
     result.durationMs = Date.now() - startTime;
     return result;
   }
@@ -518,7 +520,7 @@ export async function tickActiveReflexion(params: { pool: Pool }): Promise<Activ
   const scoredRuns: ScoredRun[] = [];
   for (const row of runsRes.rows) {
     const runId = String(row.run_id);
-    const inputDigest = (row.input_digest as any) ?? {};
+    const inputDigest = (row.input_digest ?? {}) as Record<string, unknown>;
     const spaceId = String(inputDigest?.spaceId ?? inputDigest?.space_id ?? "");
     const goal = String(inputDigest?.goal ?? inputDigest?.message ?? "");
     if (!spaceId || !goal) continue;
@@ -584,10 +586,10 @@ export async function tickActiveReflexion(params: { pool: Pool }): Promise<Activ
     .filter(r => r.qualityScore < QUALITY_SCORE_THRESHOLD)
     .slice(0, MAX_RUNS_PER_TICK);
 
-  console.log(
-    `[activeReflexion] scanned=${scoredRuns.length}, belowThreshold=${runsToReflect.length}, ` +
-    `depth=${REFLEXION_DEPTH}, threshold=${QUALITY_SCORE_THRESHOLD}`,
-  );
+  _logger.info("scan completed", {
+    scanned: scoredRuns.length, belowThreshold: runsToReflect.length,
+    depth: REFLEXION_DEPTH, threshold: QUALITY_SCORE_THRESHOLD,
+  });
 
   // ── Phase 2: 单 Run 深度反思 ──
   for (const run of runsToReflect) {
@@ -620,7 +622,7 @@ export async function tickActiveReflexion(params: { pool: Pool }): Promise<Activ
         if (entryId) result.strategiesWritten++;
       }
     } catch (err: any) {
-      console.warn(`[activeReflexion] single run reflexion failed: run=${run.runId}, error=${err?.message}`);
+          _logger.warn("single run reflexion failed", { runId: run.runId, err: err?.message });
     }
   }
 
@@ -633,10 +635,10 @@ export async function tickActiveReflexion(params: { pool: Pool }): Promise<Activ
 
       result.patternsDetected = errorPatterns.length + toolFailures.size;
 
-      console.log(
-        `[activeReflexion] patterns: errors=${errorPatterns.length}, toolFailures=${toolFailures.size}, ` +
-        `candidates=${strategyCandidates.length}`,
-      );
+      _logger.info("patterns detected", {
+        errors: errorPatterns.length, toolFailures: toolFailures.size,
+        candidates: strategyCandidates.length,
+      });
 
       // 将策略候选写入 procedural 记忆
       let strategiesWritten = 0;
@@ -721,20 +723,20 @@ export async function tickActiveReflexion(params: { pool: Pool }): Promise<Activ
             if (entryId) result.strategiesWritten++;
           }
         } catch (err: any) {
-          console.warn(`[activeReflexion] deep synthesis failed: ${err?.message}`);
+              _logger.warn("deep synthesis failed", { err: err?.message });
         }
       }
     } catch (err: any) {
-      console.warn(`[activeReflexion] cross-run pattern detection failed: ${err?.message}`);
+          _logger.warn("cross-run pattern detection failed", { err: err?.message });
     }
   }
 
   result.durationMs = Date.now() - startTime;
-  console.log(
-    `[activeReflexion] completed: scanned=${result.scannedRuns}, reflected=${result.reflectedRuns}, ` +
-    `strategies=${result.strategiesWritten}, patterns=${result.patternsDetected}, ` +
-    `duration=${result.durationMs}ms`,
-  );
+  _logger.info("reflexion completed", {
+    scannedRuns: result.scannedRuns, reflectedRuns: result.reflectedRuns,
+    strategiesWritten: result.strategiesWritten, patternsDetected: result.patternsDetected,
+    durationMs: result.durationMs,
+  });
 
   return result;
 }

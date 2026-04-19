@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import crypto from "node:crypto";
+import { sha256_8, sha256Hex } from "@openslin/shared";
 import { encryptJson } from "../secrets/crypto";
 import { decryptSecretPayload, encryptSecretEnvelopeWithKeyVersion } from "../secrets/envelope";
 import { invokeFirstPartySkill } from "../lib/skillInvoke";
@@ -49,14 +49,6 @@ export class ExchangePollError extends Error {
     this.digest = params.digest ?? null;
     this.backoffMs = params.backoffMs;
   }
-}
-
-function sha256_8(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8);
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
 }
 
 function digestText(s: any) {

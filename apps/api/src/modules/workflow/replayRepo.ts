@@ -1,5 +1,8 @@
 import type { Pool } from "pg";
 import { getRun, listSteps } from "./jobRepo";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "replayRepo" });
 
 function digestObject(body: unknown) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;
@@ -86,7 +89,7 @@ export async function buildRunReplay(params: { pool: Pool; tenantId: string; run
         updatedAt: r.updated_at,
       };
     });
-  } catch (err) { console.warn(`[replayRepo] goal_graphs query failed (table may not exist): ${(err as Error)?.message}`); }
+  } catch (err) { _logger.warn("goal_graphs query failed (table may not exist)", { err: (err as Error)?.message }); }
 
   // 3. P3-07a: WorldState 快照序列
   let worldStateSnapshots: any[] = [];
@@ -109,7 +112,7 @@ export async function buildRunReplay(params: { pool: Pool; tenantId: string; run
       version: r.version,
       createdAt: r.created_at,
     }));
-  } catch (err) { console.warn(`[replayRepo] world_state_snapshots query failed (table may not exist): ${(err as Error)?.message}`); }
+  } catch (err) { _logger.warn("world_state_snapshots query failed (table may not exist)", { err: (err as Error)?.message }); }
 
   // 4. P3-07a: Checkpoint 记录
   let checkpoints: any[] = [];
@@ -137,7 +140,7 @@ export async function buildRunReplay(params: { pool: Pool; tenantId: string; run
       resumeCount: r.resume_count,
       createdAt: r.created_at,
     }));
-  } catch (err) { console.warn(`[replayRepo] agent_loop_checkpoints query failed (table may not exist): ${(err as Error)?.message}`); }
+  } catch (err) { _logger.warn("agent_loop_checkpoints query failed (table may not exist)", { err: (err as Error)?.message }); }
 
   // 5. P3-07a: 目标验证日志
   let verificationLog: any[] = [];
@@ -159,7 +162,7 @@ export async function buildRunReplay(params: { pool: Pool; tenantId: string; run
       criteriaResults: r.criteria_results ?? [],
       createdAt: r.created_at,
     }));
-  } catch (err) { console.warn(`[replayRepo] goal_verification_log query failed (table may not exist): ${(err as Error)?.message}`); }
+  } catch (err) { _logger.warn("goal_verification_log query failed (table may not exist)", { err: (err as Error)?.message }); }
 
   const replay = {
     run: {

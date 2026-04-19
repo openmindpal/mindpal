@@ -2,7 +2,9 @@ import { Worker } from "bullmq";
 import "./otel";
 import { SpanStatusCode, context, trace } from "@opentelemetry/api";
 import { loadConfig } from "./config";
-import { validateEnvironment, formatValidationResult } from "@openslin/shared";
+import { validateEnvironment, formatValidationResult, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:main" });
 import { extractJobTraceContext } from "./lib/tracing";
 import { dispatchJob } from "./workflow/jobDispatcher";
 import { processStep } from "./workflow/processor";
@@ -15,7 +17,18 @@ import {
   logWorkerProductionBaseline,
   shutdownWorkerRuntime,
 } from "./bootstrap/runtime";
+import { CRITICAL_EVENT_CHANNELS } from "@openslin/shared";
 import { createAgentRunScheduler } from "./workflow/agentRunScheduler";
+import { getJobType } from "./jobRepo";
+
+/** 安全执行并记录结构化日志，失败不抛异常 */
+async function safeDo(fn: () => Promise<void>, label: string, meta?: Record<string, unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (e: unknown) {
+    _logger.warn(`${label} failed`, { ...meta, error: e instanceof Error ? e.message : String(e) });
+  }
+}
 
 /** Worker 作业数据必须符合的基本结构 */
 interface WorkflowJobData {
@@ -47,19 +60,35 @@ async function main() {
   /* ── P0: 启动时环境变量校验 ──────────────────────────────────── */
   const envResult = validateEnvironment("worker");
   if (!envResult.valid) {
-    console.error(formatValidationResult(envResult));
+    _logger.error(formatValidationResult(envResult));
     if (process.env.NODE_ENV === "production") {
       process.exit(1);
     }
   } else if (envResult.warnings.length > 0) {
-    console.warn(formatValidationResult(envResult));
+    _logger.warn(formatValidationResult(envResult));
   }
 
   const cfg = loadConfig(process.env);
   initializeWorkerExtensions();
   const runtime = await createWorkerRuntime(cfg);
-  const { pool, queue, redis, redisPub, connection } = runtime;
+  const { pool, queue, redis, redisPub, connection, streamsBus } = runtime;
   const masterKey = cfg.secrets.masterKey;
+
+  // ── P1: Redis Streams — 关键事件可靠消费 ─────────────────────
+  // 1) 订阅关键事件 channel（启动读取循环）
+  for (const ch of CRITICAL_EVENT_CHANNELS) {
+    await streamsBus.subscribe(ch, (payload) => {
+      _logger.info("stream.event received", { channel: ch, payload: typeof payload === "object" ? JSON.stringify(payload).slice(0, 200) : String(payload) });
+    });
+  }
+  // 2) 恢复断点消费：处理 Worker 掉线期间积累的未 ACK 消息
+  for (const ch of CRITICAL_EVENT_CHANNELS) {
+    await streamsBus.resumeFromLastAck(ch, streamsBus.consumerGroup, streamsBus.consumerId);
+  }
+  _logger.info("Redis Streams critical event consumers initialized", {
+    channels: [...CRITICAL_EVENT_CHANNELS],
+    consumerGroup: "openslin-worker-group",
+  });
 
   async function syncWorkerCollabStateSafe(params: Parameters<typeof applyWorkerCollabState>[0]) {
     if (!params.tenantId || !params.collabRunId) return;
@@ -69,7 +98,7 @@ async function main() {
         redis,
       });
     } catch (e: any) {
-      console.warn("[worker] collab state sync failed", {
+      _logger.warn("collab state sync failed", {
         collabRunId: params.collabRunId,
         updateType: params.updateType,
         sourceRole: params.sourceRole ?? null,
@@ -114,12 +143,14 @@ async function main() {
         if (dispatched) return;
       // P1-4 FIX: collab 事件追踪通过 collabStepTracker 中间件实现
         let collabMeta: CollabMeta | null = null;
-        try {
-          collabMeta = await resolveCollabMeta(pool, String(data.stepId ?? ""), String(data.runId ?? ""));
-          if (collabMeta) await beforeStep(pool, collabMeta, redis);
-        } catch (e: any) {
-          console.warn("[worker] collab step.started event failed", { jobId: String(data?.jobId ?? ""), runId: String(data?.runId ?? ""), stepId: String(data?.stepId ?? ""), error: String(e?.message ?? e) });
-        }
+        await safeDo(
+          async () => {
+            collabMeta = await resolveCollabMeta(pool, String(data.stepId ?? ""), String(data.runId ?? ""));
+            if (collabMeta) await beforeStep(pool, collabMeta, redis);
+          },
+          "collab step.started event",
+          { jobId: String(data?.jobId ?? ""), runId: String(data?.runId ?? ""), stepId: String(data?.stepId ?? "") },
+        );
         try {
           const span = tracer.startSpan("workflow.step.process", { attributes: { jobId: String(data.jobId ?? ""), runId: String(data.runId ?? ""), stepId: String(data.stepId ?? ""), kind: "step" } });
           try {
@@ -135,39 +166,40 @@ async function main() {
             span.end();
           }
           redis.incr("worker:workflow:step:success").catch((e: any) => {
-            console.warn("[worker] redis incr step:success failed", { error: String(e?.message ?? e) });
+            _logger.warn("redis incr step:success failed", { error: String(e?.message ?? e) });
           });
           redis.incr("worker:tool_execute:success").catch((e: any) => {
-            console.warn("[worker] redis incr tool_execute:success failed", { error: String(e?.message ?? e) });
+            _logger.warn("redis incr tool_execute:success failed", { error: String(e?.message ?? e) });
           });
         } catch (e) {
           redis.incr("worker:workflow:step:error").catch((e2: any) => {
-            console.warn("[worker] redis incr step:error failed", { error: String(e2?.message ?? e2) });
+            _logger.warn("redis incr step:error failed", { error: String(e2?.message ?? e2) });
           });
           redis.incr("worker:tool_execute:error").catch((e2: any) => {
-            console.warn("[worker] redis incr tool_execute:error failed", { error: String(e2?.message ?? e2) });
+            _logger.warn("redis incr tool_execute:error failed", { error: String(e2?.message ?? e2) });
           });
           throw e;
         }
-        try {
-          if (collabMeta) await afterStep(pool, collabMeta, redis);
-        } catch (e: any) {
-          console.warn("[worker] collab step completed/failed event failed", { runId: String(data?.runId ?? ""), error: String(e?.message ?? e) });
-        }
-        try {
-          const jobTypeRes = await pool.query("SELECT job_type FROM jobs WHERE job_id = $1 LIMIT 1", [String(data.jobId ?? "")]);
-          const jobType = jobTypeRes.rowCount ? String(jobTypeRes.rows[0].job_type ?? "") : "";
-          if (jobType === "agent.run" || jobType === "agent.dispatch" || jobType === "agent.dispatch.upgrade") {
-            await scheduleNextAgentRunStep({ jobId: String(data.jobId ?? ""), runId: String(data.runId ?? "") });
-          }
-        } catch (e: any) {
-          console.warn("[worker] scheduleNextAgentRunStep failed", { jobId: String(data?.jobId ?? ""), runId: String(data?.runId ?? ""), error: String(e?.message ?? e) });
-        }
-        try {
-          await afterRunStatusSync(pool, { runId: String(data.runId ?? "") }, collabMeta, redis);
-        } catch (e: any) {
-          console.warn("[worker] collab run status sync failed", { runId: String(data?.runId ?? ""), error: String(e?.message ?? e) });
-        }
+        await safeDo(
+          async () => { if (collabMeta) await afterStep(pool, collabMeta, redis); },
+          "collab step completed/failed event",
+          { runId: String(data?.runId ?? "") },
+        );
+        await safeDo(
+          async () => {
+            const jobType = await getJobType(pool, String(data.jobId ?? ""));
+            if (jobType === "agent.run" || jobType === "agent.dispatch" || jobType === "agent.dispatch.upgrade") {
+              await scheduleNextAgentRunStep({ jobId: String(data.jobId ?? ""), runId: String(data.runId ?? "") });
+            }
+          },
+          "scheduleNextAgentRunStep",
+          { jobId: String(data?.jobId ?? ""), runId: String(data?.runId ?? "") },
+        );
+        await safeDo(
+          async () => { await afterRunStatusSync(pool, { runId: String(data.runId ?? "") }, collabMeta, redis); },
+          "collab run status sync",
+          { runId: String(data?.runId ?? "") },
+        );
       });
       return await withJobTimeout(jobWork, jobTimeout, String(job.id));
     },
@@ -183,7 +215,7 @@ async function main() {
     const attemptsMade = Number(job?.attemptsMade ?? 0);
 
     // 结构化日志：每次失败都记录，便于排障
-    console.error("[worker] job failed", {
+    _logger.error("job failed", {
       queueJobId: job?.id ?? null,
       jobId,
       runId,
@@ -191,8 +223,8 @@ async function main() {
       attemptsMade,
       maxAttempts,
       isFinalAttempt: attemptsMade >= maxAttempts,
-      errorMessage: String((err as any)?.message ?? err),
-      errorCode: (err as any)?.code ?? null,
+      errorMessage: err instanceof Error ? err.message : String(err),
+      errorCode: err instanceof Error && 'code' in err ? String((err as Record<string, unknown>).code) : null,
     });
 
     try {
@@ -203,7 +235,7 @@ async function main() {
       if (attemptsMade < maxAttempts) return;
       await markWorkflowStepDeadletter({ pool, jobId, runId, stepId, queueJobId: String(job.id), err });
     } catch (e) {
-      console.error("[worker] deadletter mark failed", e);
+      _logger.error("deadletter mark failed", { err: (e as Error)?.message });
     }
   });
 
@@ -214,10 +246,10 @@ async function main() {
   async function gracefulWorkerShutdown(signal: string) {
     if (workerShuttingDown) return;
     workerShuttingDown = true;
-    console.log(`[worker] ${signal} received — starting graceful shutdown (timeout=${WORKER_SHUTDOWN_TIMEOUT_MS}ms)`);
+    _logger.info(`${signal} received — starting graceful shutdown`, { timeoutMs: WORKER_SHUTDOWN_TIMEOUT_MS });
 
     const forceTimer = setTimeout(() => {
-      console.error(`[worker] Shutdown timeout exceeded (${WORKER_SHUTDOWN_TIMEOUT_MS}ms) — forcing exit`);
+      _logger.error(`Shutdown timeout exceeded (${WORKER_SHUTDOWN_TIMEOUT_MS}ms) — forcing exit`);
       process.exit(1);
     }, WORKER_SHUTDOWN_TIMEOUT_MS);
     forceTimer.unref();
@@ -225,17 +257,17 @@ async function main() {
     try {
       // 1) 停止所有 ticker
       // 1) 等待 BullMQ Worker 当前 Job 完成并关闭
-      console.log("[worker] Closing BullMQ worker (waiting for current job)...");
+      _logger.info("Closing BullMQ worker (waiting for current job)...");
       await worker.close();
 
       // 2) 关闭后台资源（ticker / queue / redis / health / db）
       await shutdownWorkerRuntime(runtime);
 
-      console.log("[worker] Graceful shutdown complete");
+      _logger.info("Graceful shutdown complete");
       clearTimeout(forceTimer);
       process.exit(0);
     } catch (e: any) {
-      console.error(`[worker] Graceful shutdown error: ${e?.message}`);
+      _logger.error("Graceful shutdown error", { err: e?.message });
       clearTimeout(forceTimer);
       process.exit(1);
     }
@@ -246,6 +278,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
+  _logger.error("main() fatal error", { err: (err as Error)?.message, stack: (err as Error)?.stack });
   process.exit(1);
 });

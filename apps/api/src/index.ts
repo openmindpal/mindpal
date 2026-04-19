@@ -7,6 +7,9 @@ import { migrate } from "./db/migrate";
 import { createPool } from "./db/pool";
 import { createWorkflowQueue } from "./modules/workflow/queue";
 import { buildServer } from "./server";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:lifecycle" });
 
 async function findMigrationsDir(): Promise<string> {
   const candidates = [
@@ -32,12 +35,12 @@ async function main() {
   /* ── P0: 启动时环境变量校验 ──────────────────────────────────── */
   const envResult = validateEnvironment("api");
   if (!envResult.valid) {
-    console.error(formatValidationResult(envResult));
+    _logger.error(formatValidationResult(envResult));
     if (process.env.NODE_ENV === "production") {
       process.exit(1);
     }
   } else if (envResult.warnings.length > 0) {
-    console.warn(formatValidationResult(envResult));
+    _logger.warn(formatValidationResult(envResult));
   }
 
   const cfg = loadConfig(process.env);
@@ -64,7 +67,7 @@ async function main() {
   /* ── P1-G5: 启动恢复 + Supervisor ──────────────────────────────── */
   try {
     const { listShutdownPausedEntries, updateEntryStatus } = await import("./kernel/taskQueueRepo");
-    const { startTaskQueueSupervisor } = await import("./kernel/taskQueueSupervisor");
+    const { startTaskQueueSupervisor, recoverInterruptedTasks } = await import("./kernel/taskQueueSupervisor");
     const { getOrCreateTaskQueueSystem } = await import("./kernel/taskQueueFactory");
 
     // 确保 TaskQueueManager 在启动阶段已初始化，避免 mgr 为 undefined
@@ -91,25 +94,33 @@ async function main() {
           });
           recovered++;
         } catch (e: any) {
-          console.warn(`[api] Failed to recover entry ${entry.entryId}: ${e?.message}`);
+          _logger.warn(`Failed to recover entry ${entry.entryId}`, { err: e?.message });
         }
       }
       if (recovered > 0) {
-        console.log(`[api] Recovered ${recovered}/${shutdownPaused.length} shutdown-paused tasks to queued`);
+        _logger.info(`Recovered ${recovered}/${shutdownPaused.length} shutdown-paused tasks to queued`);
       }
     }
+
+    // 3. P0: 恢复中断的 executing 任务（检查点恢复机制）
+    // 注入 Redis 供检查点缓存读取
+    try { mgr.setRedis(app.redis as any); } catch { /* ignore */ }
+    // 使用 setImmediate 延迟，不阻塞启动
+    recoverInterruptedTasks({ pool, manager: mgr }).catch((e: any) => {
+      _logger.warn("Checkpoint recovery failed (non-fatal)", { err: e?.message });
+    });
   } catch (e: any) {
-    console.warn(`[api] Startup recovery error (non-fatal): ${e?.message}`);
+    _logger.warn("Startup recovery error (non-fatal)", { err: e?.message });
   }
 
   async function gracefulShutdown(signal: string) {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[api] ${signal} received — starting graceful shutdown (timeout=${SHUTDOWN_TIMEOUT_MS}ms)`);
+    _logger.info(`${signal} received — starting graceful shutdown`, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
 
     // 设置硬超时保底
     const forceTimer = setTimeout(() => {
-      console.error(`[api] Graceful shutdown timeout exceeded (${SHUTDOWN_TIMEOUT_MS}ms) — forcing exit`);
+      _logger.error(`Graceful shutdown timeout exceeded (${SHUTDOWN_TIMEOUT_MS}ms) — forcing exit`);
       process.exit(1);
     }, SHUTDOWN_TIMEOUT_MS);
     forceTimer.unref();
@@ -133,9 +144,9 @@ async function main() {
           mgr.setEmitter(createQueueEventEmitter());
         }
         const paused = await mgr.pauseAllForShutdown();
-        if (paused > 0) console.log(`[api] Paused ${paused} active tasks (checkpoint written)`);
+        if (paused > 0) _logger.info(`Paused ${paused} active tasks (checkpoint written)`);
       } catch (e: any) {
-        console.warn(`[api] Task queue shutdown error: ${e?.message}`);
+        _logger.warn("Task queue shutdown error", { err: e?.message });
       }
 
       // 1) 关闭会话级 SSE 连接
@@ -147,27 +158,27 @@ async function main() {
       // 2) 排空所有活跃 SSE 连接
       const { drainAllConnections } = await import("./lib/streamingPipeline");
       const drained = await drainAllConnections("server_shutting_down");
-      if (drained > 0) console.log(`[api] Drained ${drained} active SSE connections`);
+      if (drained > 0) _logger.info(`Drained ${drained} active SSE connections`);
 
       // 3) 停止接受新请求 + 等待进行中请求排空
       await app.close();
-      console.log("[api] Fastify server closed — no more connections");
+      _logger.info("Fastify server closed — no more connections");
 
       // 4) 关闭 BullMQ 队列
       try { await queue.close(); } catch (e: any) {
-        console.warn(`[api] queue.close() error: ${e?.message}`);
+        _logger.warn("queue.close() error", { err: e?.message });
       }
 
       // 5) 关闭数据库连接池
       try { await pool.end(); } catch (e: any) {
-        console.warn(`[api] pool.end() error: ${e?.message}`);
+        _logger.warn("pool.end() error", { err: e?.message });
       }
 
-      console.log("[api] Graceful shutdown complete");
+      _logger.info("Graceful shutdown complete");
       clearTimeout(forceTimer);
       process.exit(0);
     } catch (e: any) {
-      console.error(`[api] Graceful shutdown error: ${e?.message}`);
+      _logger.error(`Graceful shutdown error: ${e?.message}`);
       clearTimeout(forceTimer);
       process.exit(1);
     }
@@ -178,6 +189,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
+  _logger.error("main() fatal error", { err: (err as Error)?.message, stack: (err as Error)?.stack });
   process.exit(1);
 });

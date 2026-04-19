@@ -11,6 +11,9 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type { MetricsRegistry } from "../modules/metrics/metrics";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "serverTimers" });
 import { dispatchAuditOutboxBatch } from "../modules/audit/outboxRepo";
 import { collectCollabBacklogMetrics } from "../modules/metrics/collabBacklog";
 
@@ -63,7 +66,7 @@ export function initServerTimers(deps: ServerTimerDeps): ServerTimerHandles {
               .query("SELECT status, COUNT(*)::int AS c FROM audit_outbox GROUP BY status")
               .then((res) => {
                 const map = new Map<string, number>();
-                for (const row of res.rows) map.set(String((row as any).status), Number((row as any).c ?? 0));
+                for (const row of res.rows) map.set(String((row as Record<string, unknown>).status), Number((row as Record<string, unknown>).c ?? 0));
                 const statuses = ["queued", "processing", "succeeded", "failed"];
                 for (const s of statuses) metrics.setAuditOutboxBacklog({ status: s, count: map.get(s) ?? 0 });
                 /* P1-2: outbox backlog 告警阈值 */
@@ -72,11 +75,11 @@ export function initServerTimers(deps: ServerTimerDeps): ServerTimerHandles {
                 const totalPending = (map.get("queued") ?? 0) + (map.get("processing") ?? 0) + (map.get("failed") ?? 0);
                 const deadletterCount = map.get("deadletter") ?? 0;
                 if (totalPending > outboxThreshold) {
-                  console.error("[ALERT] audit_outbox_backlog exceeded threshold", { totalPending, threshold: outboxThreshold });
+                                  _logger.error("audit_outbox_backlog exceeded threshold", { totalPending, threshold: outboxThreshold });
                   metrics.incAlertFired({ alert: "outbox_backlog" });
                 }
                 if (deadletterCount > deadletterThreshold) {
-                  console.error("[ALERT] audit_outbox_deadletter exceeded threshold", { deadletterCount, threshold: deadletterThreshold });
+                                  _logger.error("audit_outbox_deadletter exceeded threshold", { deadletterCount, threshold: deadletterThreshold });
                   metrics.incAlertFired({ alert: "outbox_deadletter" });
                 }
               })
@@ -90,19 +93,19 @@ export function initServerTimers(deps: ServerTimerDeps): ServerTimerHandles {
 
   // ── 2. 工作流队列 backlog 指标 + 告警 ──
   const queueBacklogIntervalMs = Math.max(1000, Number(process.env.WORKFLOW_QUEUE_BACKLOG_INTERVAL_MS ?? "10000") || 10000);
-  const canReadQueueCounts = Boolean(queue && typeof (queue as any).getJobCounts === "function");
+  const canReadQueueCounts = Boolean(queue && typeof (queue as unknown as Record<string, unknown>).getJobCounts === "function");
   const queueBacklogTimer = canReadQueueCounts
     ? setInterval(() => {
-        (queue as any)
+        (queue as unknown as { getJobCounts(...statuses: string[]): Promise<Record<string, number>> })
           .getJobCounts("waiting", "active", "delayed", "failed")
-          .then((c: any) => {
+          .then((c: Record<string, number>) => {
             const statuses = ["waiting", "active", "delayed", "failed"] as const;
             for (const s of statuses) metrics.setWorkflowQueueBacklog({ status: s, count: Number(c?.[s] ?? 0) });
             /* P1-2: queue backlog 告警阈值 */
             const queueThreshold = Math.max(1, Number(process.env.ALERT_QUEUE_BACKLOG_THRESHOLD ?? "1000") || 1000);
             const totalQueue = Number(c?.waiting ?? 0) + Number(c?.active ?? 0) + Number(c?.delayed ?? 0);
             if (totalQueue > queueThreshold) {
-              console.error("[ALERT] workflow_queue_backlog exceeded threshold", { totalQueue, threshold: queueThreshold });
+                            _logger.error("workflow_queue_backlog exceeded threshold", { totalQueue, threshold: queueThreshold });
               metrics.incAlertFired({ alert: "queue_backlog" });
             }
           })
@@ -123,7 +126,7 @@ export function initServerTimers(deps: ServerTimerDeps): ServerTimerHandles {
   // ── 4. Worker 心跳 / 步骤 / 工具执行指标 ──
   const workerMetricsIntervalMs = Math.max(1000, Number(process.env.WORKER_METRICS_INTERVAL_MS ?? "10000") || 10000);
   const workerMetricsTimer = setInterval(() => {
-    if ((redis as any)?.status !== "ready") {
+    if ((redis as Record<string, unknown>)?.status !== "ready") {
       return;
     }
     Promise.all([

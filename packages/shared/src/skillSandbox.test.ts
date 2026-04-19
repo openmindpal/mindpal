@@ -63,20 +63,20 @@ describe("P1-3: Skill Sandbox Module Blocking", () => {
     });
 
     it("应该封禁 Worker 线程模块", () => {
-      expect(SANDBOX_FORBIDDEN_MODULES_STRICT).toContain("node:worker_threads");
-      expect(SANDBOX_FORBIDDEN_MODULES_STRICT).toContain("worker_threads");
+      expect(SANDBOX_FORBIDDEN_MODULES_BASE).toContain("node:worker_threads");
+      expect(SANDBOX_FORBIDDEN_MODULES_BASE).toContain("worker_threads");
     });
 
     it("应该封禁 VM 模块", () => {
-      expect(SANDBOX_FORBIDDEN_MODULES_STRICT).toContain("node:vm");
-      expect(SANDBOX_FORBIDDEN_MODULES_STRICT).toContain("vm");
+      expect(SANDBOX_FORBIDDEN_MODULES_BASE).toContain("node:vm");
+      expect(SANDBOX_FORBIDDEN_MODULES_BASE).toContain("vm");
     });
 
     it("应该封禁调试和异步钩子模块", () => {
-      expect(SANDBOX_FORBIDDEN_MODULES_STRICT).toContain("node:inspector");
-      expect(SANDBOX_FORBIDDEN_MODULES_STRICT).toContain("inspector");
-      expect(SANDBOX_FORBIDDEN_MODULES_STRICT).toContain("node:async_hooks");
-      expect(SANDBOX_FORBIDDEN_MODULES_STRICT).toContain("async_hooks");
+      expect(SANDBOX_FORBIDDEN_MODULES_BASE).toContain("node:inspector");
+      expect(SANDBOX_FORBIDDEN_MODULES_BASE).toContain("inspector");
+      expect(SANDBOX_FORBIDDEN_MODULES_BASE).toContain("node:async_hooks");
+      expect(SANDBOX_FORBIDDEN_MODULES_BASE).toContain("async_hooks");
     });
 
     it("严格模式封禁列表应该是不可变的", () => {

@@ -1,11 +1,12 @@
 import { AppError, Errors } from "../../../lib/errors";
-import { redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, resolvePromptInjectionPolicy, shouldDenyDlpForTarget } from "@openslin/shared";
+import { redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, resolvePromptInjectionPolicy, shouldDenyDlpForTarget, resolveBoolean } from "@openslin/shared";
 import { decryptSecretPayload } from "../../../modules/secrets/envelope";
 import { getSecretRecordEncryptedPayload } from "../../../modules/secrets/secretRepo";
 import { writeSecretUsageEvent } from "../../../modules/secrets/usageRepo";
 import { getConnectorInstance, getConnectorType } from "../../connector-manager/modules/connectorRepo";
 import { getEffectiveSafetyPolicyVersion } from "../../safety-policy/modules/safetyPolicyRepo";
-import { checkModelDegradation } from "../../../modules/modelGateway/routingPolicyRepo";
+import { checkModelDegradation, checkQuotaLimit } from "../../../modules/modelGateway/routingPolicyRepo";
+import { listModelCatalogFromDb } from "../../../modules/modelGateway/catalog";
 import {
   extractTextForPromptInjectionScan,
   getPromptInjectionPolicyFromEnv,
@@ -234,7 +235,7 @@ export async function invokeModelChatUpstreamStream(params: {
     throw err;
   }
 
-  const redactModelPrompt = String(process.env.DLP_REDACT_MODEL_PROMPT ?? "").trim() === "1";
+  const redactModelPrompt = resolveBoolean("DLP_REDACT_MODEL_PROMPT").value;
   const messages = redactModelPrompt && Array.isArray(promptDlp.value) ? (promptDlp.value as any[]) : body.messages;
 
   // 使用并行查询结果构建候选列表
@@ -266,8 +267,37 @@ export async function invokeModelChatUpstreamStream(params: {
   const hasVideoContent = messages.some((m: any) =>
     Array.isArray(m.content) && (m.content as any[]).some((p: any) => p?.type === "video_url")
   );
+
+  // ── 元数据驱动的多模态候选查询 ──
+  const neededModalities: string[] = [];
+  if (hasImageContent) neededModalities.push("image");
+  if (hasAudioContent) neededModalities.push("audio");
+  if (hasVideoContent) neededModalities.push("video");
+
+  let catalogMultimodalRefs: string[] = [];
+  if (neededModalities.length > 0) {
+    try {
+      const catalogItems = await listModelCatalogFromDb({ pool: params.app.db, tenantId: subject.tenantId, status: "active" });
+      catalogMultimodalRefs = catalogItems
+        .filter(m => neededModalities.every(mod => (m.capabilities as any)?.supportedModalities?.includes(mod)))
+        .map(m => m.modelRef);
+    } catch { /* 静默降级到正则匹配 */ }
+  }
+
   const rankingPatterns = hasVideoContent ? VIDEO_PATTERNS : hasAudioContent ? AUDIO_PATTERNS : hasImageContent ? VISION_PATTERNS : null;
   if (rankingPatterns) {
+    if (catalogMultimodalRefs.length > 0) {
+      // 元数据驱动：将 DB 查询到的多模态模型插入候选列表前部
+      const newRefs = catalogMultimodalRefs.filter(r => !uniqCandidates.includes(r));
+      for (const ref of newRefs.reverse()) {
+        uniqCandidates.unshift(ref);
+      }
+      params.app.log.info(
+        { catalogMultimodalRefs, originalDefault: candidates[0], allCandidates: uniqCandidates.slice(0, 10) },
+        "[multimodal-routing] 元数据驱动：已注入 DB 目录中的多模态模型候选"
+      );
+    } else {
+    // fallback: 原正则匹配逻辑
     // 如果当前候选列表中没有明确的 vision 模型，自动从全部绑定中注入所有模型作为候选
     // （因为多模态模型名称不一定包含 vision/vl，如 qwen-plus、gpt-4o 等）
     const hasVisionCandidate = uniqCandidates.some(c => rankingPatterns.test(c));
@@ -300,13 +330,27 @@ export async function invokeModelChatUpstreamStream(params: {
       });
       params.app.log.info({ hasImageContent, hasAudioContent, hasVideoContent, candidates: uniqCandidates }, "[multimodal-routing] 检测到多模态内容，已优先排序匹配模型");
     }
+    } // end fallback 正则匹配
   }
 
-  const attempts: Array<{ modelRef: string; status: "success" | "skipped" | "error"; errorCode?: string; reason?: string; secretTries?: number; provider?: string }> = [];
+  const attempts: Array<{ modelRef: string; status: "success" | "skipped" | "error"; errorCode?: string; reason?: string; secretTries?: number; secretRotationReason?: string; provider?: string }> = [];
   let lastPolicyViolation: { errorCode: string; message: any } | null = null;
   let lastUpstreamErr: any = null;
   let lastSelected: { provider: string; modelRef: string } | null = null;
   let lastProviderUnsupported: string | null = null;
+
+  // ── 配额限制检查 ──
+  const quotaResult = await checkQuotaLimit({
+    pool: params.app.db,
+    tenantId: subject.tenantId,
+    scopeType: scope.scopeType,
+    scopeId: scope.scopeId,
+  });
+  if (!quotaResult.allowed) {
+    const err = Errors.rateLimitedLlm();
+    err.retryAfterSec = quotaResult.retryAfterSec ?? 60;
+    throw err;
+  }
 
   const startedAtMs = Date.now();
   for (const modelRef of uniqCandidates) {
@@ -465,7 +509,9 @@ export async function invokeModelChatUpstreamStream(params: {
               else params.signal.addEventListener("abort", onAbort, { once: true });
             }
             let streamStarted = false;
-            const timer = setTimeout(() => { if (!streamStarted) ctrl.abort(); }, effTimeoutMs);
+            const INACTIVITY_TIMEOUT_MS = 30_000;
+            const inactivityMs = (body as any).constraints?.inactivityTimeoutMs ?? INACTIVITY_TIMEOUT_MS;
+            let timer = setTimeout(() => { if (!streamStarted) ctrl.abort(); }, effTimeoutMs);
             const usageFromStream: any = {};
             let result: any;
             try {
@@ -481,7 +527,9 @@ export async function invokeModelChatUpstreamStream(params: {
                 ...(typeof body.maxTokens === "number" ? { maxTokens: body.maxTokens } : {}),
                 signal: ctrl.signal,
                 onDelta: (t: string) => {
-                  if (!streamStarted) { streamStarted = true; clearTimeout(timer); }
+                  if (!streamStarted) { streamStarted = true; }
+                  clearTimeout(timer);
+                  timer = setTimeout(() => ctrl.abort(), inactivityMs);
                   outputText += t;
                   params.onDelta(t);
                 },
@@ -613,9 +661,38 @@ export async function invokeModelChatUpstreamStream(params: {
         policyRefsDigest: { ...(!envDlpOverride && contentEff?.policyDigest ? { contentPolicyDigest: String(contentEff.policyDigest) } : {}), ...(injEff?.policyDigest ? { injectionPolicyDigest: String(injEff.policyDigest) } : {}) },
       };
     } catch (e: any) {
+      // ── 密钥轮换失败审计 ──
+      const secretRotationReason = (e as any)?.upstreamStatus === 429 ? "rate_limited"
+        : (e as any)?.upstreamTimeout ? "timeout"
+        : (e as any)?.upstreamStatus === 401 ? "auth_failed"
+        : "upstream_error";
+
       if (isModelUpstreamError(e)) {
         lastUpstreamErr = e;
-        attempts.push({ modelRef, status: "error", errorCode: "MODEL_UPSTREAM_FAILED", reason: "upstream_failed", provider: cat.provider });
+        attempts.push({ modelRef, status: "error", errorCode: "MODEL_UPSTREAM_FAILED", reason: "upstream_failed", secretRotationReason, provider: cat.provider });
+
+        // 密钥失败审计（fire-and-forget）
+        const secretIds = Array.isArray((binding as any).secretIds) && (binding as any).secretIds.length ? (binding as any).secretIds : [binding.secretId];
+        if (secretIds.length > 0) {
+          // 从上游错误中获取实际尝试次数，精确定位失败的密钥
+          const failedTries = typeof (e as any)?.secretTries === "number" ? (e as any).secretTries : 1;
+          const failedIdx = Math.min(failedTries, secretIds.length) - 1;
+          writeSecretUsageEvent({
+            pool: params.app.db,
+            tenantId: subject.tenantId,
+            scopeType: scope.scopeType,
+            scopeId: scope.scopeId,
+            connectorInstanceId: inst.id,
+            secretId: secretIds[failedIdx] ?? secretIds[0],
+            // credentialVersion 在 catch 作用域内无法获取 secretMetas，使用 fallback 1
+            credentialVersion: 1,
+            scene,
+            result: "error",
+            traceId: params.traceId ?? "",
+            requestId: params.requestId ?? "",
+          }).catch(() => {});
+        }
+
         // P2-模型: 失败指标回传退化检测
         checkModelDegradation({
           pool: params.app.db,

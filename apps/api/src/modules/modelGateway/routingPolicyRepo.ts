@@ -421,3 +421,52 @@ export async function checkModelDegradation(params: {
 
   return { degraded, alertType };
 }
+
+/**
+ * 检查租户/范围级模型调用配额（RPM）。
+ * 基于 quota_limits 表定义和 model_usage_events 表的滑动窗口计数。
+ * 无配额记录时默认不限制（返回 allowed: true）。
+ */
+export async function checkQuotaLimit(params: {
+  pool: Pool;
+  tenantId: string;
+  scopeType: string;
+  scopeId: string;
+}): Promise<{ allowed: boolean; retryAfterSec?: number }> {
+  const { pool, tenantId, scopeType, scopeId } = params;
+  try {
+    // 1. 查询配额限制
+    const limitRes = await pool.query(
+      `
+        SELECT model_chat_rpm
+        FROM quota_limits
+        WHERE tenant_id = $1 AND scope_type = $2 AND scope_id = $3
+        LIMIT 1
+      `,
+      [tenantId, scopeType, scopeId],
+    );
+    if (!limitRes.rowCount) return { allowed: true };
+    const rpm = limitRes.rows[0].model_chat_rpm;
+    if (!rpm || rpm <= 0) return { allowed: true };
+
+    // 2. 统计最近 1 分钟调用次数
+    const countRes = await pool.query(
+      `
+        SELECT COUNT(*)::int AS cnt
+        FROM model_usage_events
+        WHERE tenant_id = $1 AND created_at > NOW() - INTERVAL '1 minute'
+      `,
+      [tenantId],
+    );
+    const cnt: number = countRes.rows[0]?.cnt ?? 0;
+
+    // 3. 判断是否超限
+    if (cnt >= rpm) {
+      return { allowed: false, retryAfterSec: 60 };
+    }
+    return { allowed: true };
+  } catch {
+    // 配额检查不应阻断主链路
+    return { allowed: true };
+  }
+}

@@ -11,6 +11,9 @@
  */
 
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:localRerank" });
 import type { RerankConfig, RerankResult } from "./rerank";
 import { rerank as externalRerank } from "./rerank";
 
@@ -428,7 +431,7 @@ export async function crossEncoderRerank(params: {
       latencyMs: Date.now() - startedAt,
     };
   } catch (e: any) {
-    console.warn(`[localRerank] Cross-Encoder rerank failed: ${e?.message}`);
+    _logger.warn("cross-encoder rerank failed", { error: e?.message });
     return {
       reranked: false,
       items: params.documents.map((_, i) => ({ originalIndex: i, score: 0 })),
@@ -688,7 +691,7 @@ export function createCrossEncoderFromConfig(config: ExtendedRerankConfig): Cros
       return new MockCrossEncoder();
     case "onnx":
       // ONNX 模型需要额外的 runtime 依赖，目前降级到 mock
-      console.warn("[localRerank] ONNX model type not yet supported, falling back to mock");
+      _logger.warn("ONNX model type not yet supported, falling back to mock");
       return new MockCrossEncoder();
     default:
       return null;

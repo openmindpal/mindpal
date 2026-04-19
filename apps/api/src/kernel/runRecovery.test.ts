@@ -260,4 +260,35 @@ describe("resumeRun", () => {
       ),
     ).toBe(true);
   });
+
+  it("failed 运行不能通过 resume 直接重置失败步骤", async () => {
+    const queue = {
+      add: vi.fn(),
+    } as any;
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes("SELECT job_id FROM jobs")) {
+          return { rowCount: 1, rows: [{ job_id: "job-1" }] };
+        }
+        if (sql.includes("SELECT status FROM runs")) {
+          return { rowCount: 1, rows: [{ status: "failed" }] };
+        }
+        throw new Error(`Unexpected SQL: ${sql}`);
+      }),
+    } as any;
+
+    const result = await resumeRun({
+      pool,
+      queue,
+      tenantId: "tenant-1",
+      spaceId: "space-1",
+      runId: "run-1",
+      subjectId: "subject-1",
+      traceId: "trace-1",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("请使用 retry");
+    expect(queue.add).not.toHaveBeenCalled();
+  });
 });

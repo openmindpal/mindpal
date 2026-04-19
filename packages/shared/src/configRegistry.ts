@@ -82,7 +82,10 @@ export function findConfigEntry(envKey: string): ConfigEntry | undefined {
 export function parseConfigValue(entry: ConfigEntry, raw: string | undefined): string | number | boolean | string[] | undefined {
   const v = raw?.trim();
   if (v === undefined || v === "") {
-    if (entry.defaultValue !== undefined) return parseConfigValue(entry, entry.defaultValue);
+    // 防御无限递归：defaultValue 也为空时直接返回 undefined
+    if (entry.defaultValue !== undefined && entry.defaultValue.trim() !== "") {
+      return parseConfigValue(entry, entry.defaultValue);
+    }
     return undefined;
   }
   switch (entry.valueType) {

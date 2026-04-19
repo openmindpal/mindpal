@@ -1,3 +1,7 @@
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:intentClassifier" });
+
 /**
  * Intent Classifier Module
  * 
@@ -231,6 +235,9 @@ export function intentDecisionToClassification(decision: IntentDecision): Intent
     needsTask: decision.needsTask,
     needsApproval: decision.needsConfirmation,
     complexity: decision.confidence >= 0.8 ? "simple" : decision.confidence >= 0.5 ? "moderate" : "complex",
+    hasToolIntent: decision.primary === "immediate_action" ||
+                   decision.needsTask ||
+                   decision.secondary === "write_task",
   };
 }
 
@@ -255,6 +262,8 @@ export interface IntentClassification {
   targetTaskId?: string;
   /** 多任务干预：目标 entryId */
   targetEntryId?: string;
+  /** answer 模式下是否需要工具上下文（用于 prompt 轻重选择） */
+  hasToolIntent?: boolean;
 }
 
 /** P1-2: 灰区置信度阈值配置 */
@@ -313,6 +322,7 @@ async function classifyByLlm(params: ClassifyIntentParams): Promise<IntentClassi
       needsTask: false,
       needsApproval: false,
       complexity: "simple",
+      hasToolIntent: false,
     };
   }
 
@@ -439,16 +449,22 @@ IMPORTANT:
         targetEntryId = matched?.entryId;
       }
 
+      const llmNeedsTask = safeMode !== "answer" && safeMode !== "intervene";
+      // hasToolIntent 独立于路由模式，基于 LLM 原始分类（parsed.mode）判定
+      // 即使 auto 模式将 execute 降级为 answer，仍保留原始工具意图信号
+      const llmHasToolIntent =
+        parsed.mode === "execute" || parsed.mode === "collab";
       return {
         mode: safeMode,
         confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.7,
         reason: parsed.reason ?? "llm_classified",
-        needsTask: safeMode !== "answer" && safeMode !== "intervene",
+        needsTask: llmNeedsTask,
         needsApproval: Boolean(parsed.needsApproval),
         complexity: ["simple", "moderate", "complex"].includes(parsed.complexity) ? parsed.complexity : "moderate",
         interventionType,
         targetTaskId,
         targetEntryId,
+        hasToolIntent: llmHasToolIntent,
       };
     }
   } catch {
@@ -463,6 +479,7 @@ IMPORTANT:
     needsTask: false,
     needsApproval: false,
     complexity: "simple",
+    hasToolIntent: false,
   };
 }
 
@@ -481,6 +498,7 @@ export async function classifyIntent(params: ClassifyIntentParams): Promise<Inte
       needsTask: false,
       needsApproval: false,
       complexity: "simple",
+      hasToolIntent: false,
     };
   }
 
@@ -493,6 +511,7 @@ export async function classifyIntent(params: ClassifyIntentParams): Promise<Inte
       needsTask: params.explicitMode !== "answer" && params.explicitMode !== "intervene",
       needsApproval: false,
       complexity: params.explicitMode === "collab" ? "complex" : "moderate",
+      hasToolIntent: params.explicitMode === "execute" || params.explicitMode === "collab",
     };
   }
 
@@ -544,6 +563,7 @@ export function classifyIntentFast(
       needsTask: explicitMode !== "answer" && explicitMode !== "intervene",
       needsApproval: false,
       complexity: explicitMode === "collab" ? "complex" : "moderate",
+      hasToolIntent: explicitMode === "execute" || explicitMode === "collab",
     };
     _logClassification(message, result);
     return result;
@@ -554,7 +574,7 @@ export function classifyIntentFast(
 
   // ────── 规则 1: 空消息 → answer ──────
   if (!msg) {
-    return { mode: "answer", confidence: 1.0, reason: "empty_message", needsTask: false, needsApproval: false, complexity: "simple" };
+    return { mode: "answer", confidence: 1.0, reason: "empty_message", needsTask: false, needsApproval: false, complexity: "simple", hasToolIntent: false };
   }
 
   // ────── 规则 2: 极短消息（≤5字）→ answer ──────
@@ -581,21 +601,21 @@ export function classifyIntentFast(
       _logClassification(message, r);
       return r;
     }
-    const r: IntentClassification = { mode: "answer", confidence: 0.9, reason: "short_message_likely_greeting", needsTask: false, needsApproval: false, complexity: "simple" };
+    const r: IntentClassification = { mode: "answer", confidence: 0.9, reason: "short_message_likely_greeting", needsTask: false, needsApproval: false, complexity: "simple", hasToolIntent: false };
     _logClassification(message, r);
     return r;
   }
 
   // ────── 规则 3: 问候/寒暄 → answer ──────
   if (GREETING_WORDS.some(g => msg === g || msgLower === g.toLowerCase())) {
-    const r: IntentClassification = { mode: "answer", confidence: 0.95, reason: "greeting_pattern", needsTask: false, needsApproval: false, complexity: "simple" };
+    const r: IntentClassification = { mode: "answer", confidence: 0.95, reason: "greeting_pattern", needsTask: false, needsApproval: false, complexity: "simple", hasToolIntent: false };
     _logClassification(message, r);
     return r;
   }
 
   // ────── 规则 4: 协作关键词 → collab ──────
   if (COLLAB_KEYWORDS.some(k => msg.includes(k) || msgLower.includes(k))) {
-    const r: IntentClassification = { mode: "collab", confidence: 0.75, reason: "collab_keyword_detected", needsTask: true, needsApproval: false, complexity: "complex" };
+    const r: IntentClassification = { mode: "collab", confidence: 0.75, reason: "collab_keyword_detected", needsTask: true, needsApproval: false, complexity: "complex", hasToolIntent: true };
     _logClassification(message, r);
     return r;
   }
@@ -620,7 +640,7 @@ export function classifyIntentFast(
     const afterPrefix = msg.replace(OPINION_PREFIX_RE, "").trim();
     const hasExecuteAfter = EXECUTE_ACTION_RE.test(afterPrefix) || EXECUTE_REQUEST_RE.test(afterPrefix);
     if (!hasExecuteAfter) {
-      const r: IntentClassification = { mode: "answer", confidence: 0.88, reason: "opinion_expression", needsTask: false, needsApproval: false, complexity: "simple" };
+      const r: IntentClassification = { mode: "answer", confidence: 0.88, reason: "opinion_expression", needsTask: false, needsApproval: false, complexity: "simple", hasToolIntent: false };
       _logClassification(message, r);
       return r;
     }
@@ -643,17 +663,21 @@ export function classifyIntentFast(
     const r: IntentClassification = {
       mode: "execute", confidence: 0.85, reason: "execute_request_prefix",
       needsTask: true, needsApproval: isHighRisk, complexity: "moderate",
+      hasToolIntent: true,
     };
     _logClassification(message, r);
     return r;
   }
 
   // ────── 规则 9: 动作词开头（创建/搜索/create/search）→ execute ──────
+  // 置信度 0.60：低于灰区 LOW(0.65)，确保两级路由时必须经过 LLM 复判
+  // 高歧义动词（修改/更新/设置/配置/添加等）已从词表移除，交由 LLM 自主判断
   if (EXECUTE_ACTION_RE.test(msg)) {
     const isHighRisk = hasHighRiskKeyword(msg);
     const r: IntentClassification = {
-      mode: "execute", confidence: 0.78, reason: "execute_action_verb",
+      mode: "execute", confidence: 0.60, reason: "execute_action_verb",
       needsTask: true, needsApproval: isHighRisk, complexity: "moderate",
+      hasToolIntent: true,
     };
     _logClassification(message, r);
     return r;
@@ -662,13 +686,13 @@ export function classifyIntentFast(
   // ────── 规则 10: 纯问句模式 → answer ──────
   // 问句指示词开头（什么/怎么/为什么/what/how/why）
   if (QUESTION_INDICATOR_RE.test(msg)) {
-    const r: IntentClassification = { mode: "answer", confidence: 0.82, reason: "question_pattern", needsTask: false, needsApproval: false, complexity: "simple" };
+    const r: IntentClassification = { mode: "answer", confidence: 0.82, reason: "question_pattern", needsTask: false, needsApproval: false, complexity: "simple", hasToolIntent: false };
     _logClassification(message, r);
     return r;
   }
   // 问号结尾 + 无动作词
   if (/[?？]$/.test(msg) || /[吗呢么呀嘛]$/.test(msg)) {
-    const r: IntentClassification = { mode: "answer", confidence: 0.78, reason: "question_suffix", needsTask: false, needsApproval: false, complexity: "simple" };
+    const r: IntentClassification = { mode: "answer", confidence: 0.78, reason: "question_suffix", needsTask: false, needsApproval: false, complexity: "simple", hasToolIntent: false };
     _logClassification(message, r);
     return r;
   }
@@ -687,6 +711,7 @@ export function classifyIntentFast(
           needsTask: mappedMode === "execute" || mappedMode === "collab",
           needsApproval: false,
           complexity: mappedMode === "collab" ? "complex" : "moderate",
+          hasToolIntent: mappedMode === "execute" || mappedMode === "collab",
         };
         _logClassification(message, r, { analyzerIntent: analyzerResult.intent, analyzerKeywords: analyzerResult.matchedKeywords });
         return r;
@@ -709,7 +734,7 @@ function _logClassification(
     const snippet = message.length > 60 ? message.slice(0, 60) + "…" : message;
     const detail = matchDetails ? ` match=${JSON.stringify(matchDetails)}` : "";
     if (typeof process !== "undefined" && process.env.NODE_ENV !== "production") {
-      console.log(`[classifyIntentFast] mode=${result.mode} conf=${result.confidence} reason=${result.reason} msg="${snippet}"${detail}`);
+      _logger.info("classifyIntentFast", { mode: result.mode, confidence: result.confidence, reason: result.reason, snippet, ...matchDetails });
     }
   } catch { /* 静默 */ }
 }
@@ -861,8 +886,8 @@ const COMPILED_PATTERNS: PatternEntry[] = (() => {
   // 请求前缀
   entries.push({ id: "exec_request", mode: "execute", confidence: 0.85, reason: "execute_request_prefix", regex: EXECUTE_REQUEST_RE, needsTask: true });
 
-  // 动作词
-  entries.push({ id: "exec_action", mode: "execute", confidence: 0.78, reason: "execute_action_verb", regex: EXECUTE_ACTION_RE, needsTask: true });
+  // 动作词（置信度 0.60：低于灰区 LOW，确保走 LLM 复判）
+  entries.push({ id: "exec_action", mode: "execute", confidence: 0.60, reason: "execute_action_verb", regex: EXECUTE_ACTION_RE, needsTask: true });
 
   // 问句指示词
   entries.push({ id: "question", mode: "answer", confidence: 0.82, reason: "question_pattern", regex: QUESTION_INDICATOR_RE });
@@ -945,6 +970,7 @@ export async function classifyIntentTwoLevel(
       needsTask: false,
       needsApproval: false,
       complexity: "simple" as const,
+      hasToolIntent: false,
       classifierUsed: "fast" as const,
     };
   }

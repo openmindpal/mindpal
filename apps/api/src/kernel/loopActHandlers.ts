@@ -7,6 +7,7 @@
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
 import type { GoalGraph, WorldState } from "@openslin/shared";
+import { ErrorCategory } from "@openslin/shared";
 import type { AgentDecision, StepObservation, ExecutionConstraints } from "./loopTypes";
 import type { VerificationResult } from "./verifierAgent";
 import { verifyGoalCompletion, verifySimple } from "./verifierAgent";
@@ -122,7 +123,9 @@ export async function handleDoneAction(params: {
     clearNextAction: true,
     clearApprovalStatus: true,
   });
-  await finalizeCheckpoint(pool, loopId, "succeeded").catch(() => {});
+  await finalizeCheckpoint(pool, loopId, "succeeded").catch((e: unknown) => {
+    app.log.warn({ err: (e as Error)?.message, loopId }, "[AgentLoop] finalizeCheckpoint(succeeded) failed");
+  });
   return { outcome: "verified", verification };
 }
 
@@ -182,7 +185,9 @@ export async function handleToolCallAction(params: {
       inputDigest: { proposedAction, decision },
       outputDigest: { violation: boundaryCheck.violation, reason: boundaryCheck.reason },
       result: "denied", traceId: traceId ?? "",
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      app.log.warn({ err: (e as Error)?.message, runId }, "[AgentLoop] audit event for intent_boundary failed");
+    });
 
     await safeTransitionRun(pool, runId, "paused", { log: app.log });
     await upsertTaskState({
@@ -191,7 +196,9 @@ export async function handleToolCallAction(params: {
       blockReason: `intent_boundary_violation: ${boundaryCheck.reason}`,
       nextAction: "waiting_for_admin_review",
     });
-    await finalizeCheckpoint(pool, loopId, "paused").catch(() => {});
+    await finalizeCheckpoint(pool, loopId, "paused").catch((e: unknown) => {
+      app.log.warn({ err: (e as Error)?.message, loopId }, "[AgentLoop] finalizeCheckpoint(paused) failed");
+    });
     return { outcome: "boundary_paused", reason: boundaryCheck.reason ?? "intent_boundary_violation" };
   }
 
@@ -207,14 +214,14 @@ export async function handleToolCallAction(params: {
     const failObs: StepObservation = {
       stepId: "", seq: currentSeq, toolRef: decision.toolRef ?? "",
       status: "failed", outputDigest: { error: execResult.error },
-      output: null, errorCategory: "tool_validation_failed", durationMs: null,
+      output: null, errorCategory: ErrorCategory.INPUT_VALIDATION_FAILED, durationMs: null,
     };
     app.log.warn({ runId, toolRef: decision.toolRef, error: execResult.error }, "[AgentLoop] 工具验证失败");
     return { outcome: "validation_failed", failObs };
   }
 
   // 等待步骤执行完成
-  const stepResult = await waitForStepCompletion(pool, execResult.stepId, signal);
+  const stepResult = await waitForStepCompletion(pool, execResult.stepId, signal, execResult.executionTimeoutMs);
 
   const obs: StepObservation = {
     stepId: execResult.stepId, seq: currentSeq,

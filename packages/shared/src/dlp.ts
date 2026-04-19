@@ -1,4 +1,5 @@
 import { isPlainObject, normalizeStringSet } from "./runtime";
+import { resolveString } from "./runtimeConfig";
 
 export type DlpHitType = "token" | "email" | "phone" | "idCard" | "creditCard" | "bankAccount" | "address" | "ipAddress";
 export type DlpMode = "audit_only" | "deny";
@@ -93,8 +94,8 @@ const rules: Array<{ type: DlpHitType; re: RegExp; validate?: (match: string) =>
   }},
 ];
 
-const DEFAULT_DLP_DENY_TARGETS = "model:invoke,tool:execute";
-const DEFAULT_DLP_DENY_HIT_TYPES = "token";
+const FALLBACK_DLP_DENY_TARGETS = "model:invoke,tool:execute";
+const FALLBACK_DLP_DENY_HIT_TYPES = "token";
 
 function normalizeDlpMode(value: unknown): DlpMode {
   return value === "deny" ? "deny" : "audit_only";
@@ -118,17 +119,21 @@ export function resolveDlpPolicy(input?: { version?: unknown; mode?: unknown; de
   return {
     version: input?.version === "v1" ? "v1" : "v1",
     mode: normalizeDlpMode(input?.mode),
-    denyTargets: normalizeStringSet(input?.denyTargets, DEFAULT_DLP_DENY_TARGETS),
-    denyHitTypes: normalizeDlpHitTypeSet(input?.denyHitTypes, DEFAULT_DLP_DENY_HIT_TYPES),
+    denyTargets: normalizeStringSet(input?.denyTargets, FALLBACK_DLP_DENY_TARGETS),
+    denyHitTypes: normalizeDlpHitTypeSet(input?.denyHitTypes, FALLBACK_DLP_DENY_HIT_TYPES),
   };
 }
 
 export function resolveDlpPolicyFromEnv(env: NodeJS.ProcessEnv = process.env): DlpPolicy {
+  const { value: denyTargets } = resolveString("DLP_DENY_TARGETS", env as Record<string, string | undefined>);
+  const { value: denyHitTypes } = resolveString("DLP_DENY_HIT_TYPES", env as Record<string, string | undefined>);
+  const { value: mode } = resolveString("DLP_MODE", env as Record<string, string | undefined>);
+
   return resolveDlpPolicy({
     version: "v1",
-    mode: env.DLP_MODE,
-    denyTargets: env.DLP_DENY_TARGETS,
-    denyHitTypes: env.DLP_DENY_HIT_TYPES,
+    mode,
+    denyTargets: denyTargets || FALLBACK_DLP_DENY_TARGETS,
+    denyHitTypes: denyHitTypes || FALLBACK_DLP_DENY_HIT_TYPES,
   });
 }
 

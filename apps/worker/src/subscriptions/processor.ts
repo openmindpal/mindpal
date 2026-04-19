@@ -1,7 +1,6 @@
-import crypto from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory } from "@openslin/shared";
+import { normalizeAuditErrorCategory, sha256Hex, sha256HexBytes, stableStringify, stableStringifyValue } from "@openslin/shared";
 import { ExchangePollError, pollExchangeDelta } from "./exchangeGraph";
 import { invokeFirstPartySkill } from "../lib/skillInvoke";
 
@@ -23,27 +22,6 @@ async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promis
   }
 }
 
-function stableStringifyValue(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stableStringifyValue);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stableStringifyValue(v[k]);
-  return out;
-}
-
-function stableStringify(v: any): string {
-  return JSON.stringify(stableStringifyValue(v));
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
-
-function sha256HexBytes(bytes: Buffer) {
-  return crypto.createHash("sha256").update(bytes).digest("hex");
-}
 
 function normalizeAllowedDomains(v: any) {
   const arr = Array.isArray(v) ? v : [];

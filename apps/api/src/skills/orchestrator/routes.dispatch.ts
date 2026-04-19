@@ -22,7 +22,7 @@ import crypto from "node:crypto";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM, resolveNumber } from "@openslin/shared";
 import { sha256Hex } from "../../lib/digest";
 import {
   classifyIntentFast,
@@ -32,7 +32,6 @@ import {
   type IntentMode,
   type IntentClassification,
 } from "./modules/intentClassifier";
-import { AUTO_EXECUTION_THRESHOLD, FAST_RULE_HIGH_CONFIDENCE, shouldAutoEnterExecute } from "./dispatch.executionPolicy";
 import { getPromptInjectionModeFromEnv, scanPromptInjection, summarizePromptInjection } from "../safety-policy/modules/promptInjectionGuard";
 
 /* ================================================================== */
@@ -120,7 +119,7 @@ export const orchestratorDispatchRoutes: FastifyPluginAsync = async (app) => {
     const useFast = !!body.fastClassify;
 
     // S1: 加载会话历史用于意图分类上下文感知
-    const _historyLimit = Math.max(4, Math.min(64, Number(process.env.ORCHESTRATOR_CONVERSATION_WINDOW ?? "30") || 30));
+    const _historyLimit = Math.max(4, Math.min(64, resolveNumber("ORCHESTRATOR_CONVERSATION_WINDOW").value));
     let _sessionHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
     try {
       const _prevSession = await getSessionContext({
@@ -130,7 +129,7 @@ export const orchestratorDispatchRoutes: FastifyPluginAsync = async (app) => {
       const _prevMsgs = Array.isArray(_prevSession?.context?.messages) ? _prevSession!.context.messages : [];
       _sessionHistory = _prevMsgs.slice(-_historyLimit).map((m) => ({
         role: m.role as "user" | "assistant",
-        content: typeof m.content === "string" ? m.content : (m.content as any)?.text ?? "",
+        content: typeof m.content === "string" ? m.content : (m.content as Record<string, unknown>)?.text as string ?? "",
       })).filter((m) => m.role === "user" || m.role === "assistant");
     } catch {
       // 加载失败不影响分类
@@ -214,28 +213,25 @@ export const orchestratorDispatchRoutes: FastifyPluginAsync = async (app) => {
     let mode: IntentMode = classification.mode;
     let autoDowngraded = false;
     if (isAutoMode) {
-      const canDirectExecute = shouldAutoEnterExecute(classification);
-      // S2: fast 规则高置信结果直接信任，不被降级
-      const fastHighConfTrust = classification.reason && !classification.reason.startsWith("llm_") && classification.confidence >= FAST_RULE_HIGH_CONFIDENCE;
-      if (!canDirectExecute && !fastHighConfTrust && classification.mode !== "answer") autoDowngraded = true;
-      mode = (canDirectExecute || fastHighConfTrust) ? classification.mode : "answer";
+      // 架构决策：auto 模式强制走 answer，依靠 answer 层的 auto-upgrade 机制
+      // （检测 LLM 生成的 tool_call 后自动升级为执行），避免 classifyIntentFast
+      // 对"修改""分析"等词的误判导致对话被错误创建为任务
+      if (classification.mode !== "answer") autoDowngraded = true;
+      mode = "answer";
       app.log.info({
         traceId: req.ctx.traceId,
         classifiedAs: classification.mode,
         confidence: classification.confidence,
         needsTask: classification.needsTask,
-        autoExecuteThreshold: AUTO_EXECUTION_THRESHOLD,
-        fastHighConfThreshold: FAST_RULE_HIGH_CONFIDENCE,
-        fastHighConfTrust,
         selectedMode: mode,
-        reason: canDirectExecute ? "high_confidence_task_intent" : fastHighConfTrust ? "fast_rule_high_confidence_trusted" : "default_answer_with_upgrade_fallback",
-      }, "[dispatch] auto mode route selected");
+        reason: "auto_mode_default_answer_with_upgrade_fallback",
+      }, "[dispatch] auto mode → answer (auto-upgrade fallback)");
     }
 
     // P0-1: 统一意图路由指标
     app.metrics.observeIntentRoute({
       source: "dispatch",
-      classifier: classifierLabel as any,
+      classifier: classifierLabel as "fast" | "llm" | "two_level" | "parallel_fast" | "reviewer",
       mode: classification.mode,
       confidence: classification.confidence,
       result: "ok",

@@ -93,7 +93,18 @@ export const deviceAgentRoutes: FastifyPluginAsync = async (app) => {
       reportedCapabilities: reportedCapabilities.length,
       policyAutoPopulated: Boolean(policyAutoPopulated),
     };
-    return { deviceId: device.deviceId, deviceToken, policy, policyAutoPopulated };
+
+    // ── 元数据驱动：根据设备类型下发插件策略 ────────────────
+    // 替代端侧 DEVICE_AGENT_BUILTIN_PLUGINS 环境变量的静态控制
+    const DEVICE_TYPE_PLUGIN_POLICY: Record<string, string[]> = {
+      desktop: ["desktop"],
+      mobile: [],
+    };
+    const pluginPolicy = {
+      builtinPlugins: DEVICE_TYPE_PLUGIN_POLICY[body.deviceType] ?? [],
+    };
+
+    return { deviceId: device.deviceId, deviceToken, policy, policyAutoPopulated, pluginPolicy };
   });
 
   app.post("/device-agent/heartbeat", async (req) => {

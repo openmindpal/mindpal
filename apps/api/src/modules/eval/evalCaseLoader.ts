@@ -13,6 +13,9 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "evalCaseLoader" });
 import type { IntentEvalCase, Nl2UiEvalCase, KnowledgeEvalCase, DecomposeEvalCase, EvalCase } from "./evalSuite";
 
 /* ================================================================== */
@@ -118,7 +121,7 @@ function loadJsonEvalCases(filePath: string): EvalCasesJson | null {
     if (typeof parsed.version !== "number") return null;
     return parsed;
   } catch (err) {
-    console.warn(`[evalCaseLoader] Failed to load from ${filePath}:`, (err as Error).message);
+        _logger.warn("Failed to load eval cases", { filePath, err: (err as Error).message });
     return null;
   }
 }
@@ -174,7 +177,7 @@ export function initEvalCaseLoader(): EvalCaseSnapshot {
     if (process.env.NODE_ENV !== "production") {
       const total = _snapshot.intentCases.length + _snapshot.nl2uiCases.length
         + _snapshot.knowledgeCases.length + _snapshot.decomposeCases.length;
-      console.log(`[evalCaseLoader] Loaded v${_snapshot.version}: ${total} cases from ${jsonPath}`);
+          _logger.info("Loaded eval cases", { version: _snapshot.version, total, jsonPath });
     }
     return _snapshot;
   }

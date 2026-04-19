@@ -1,11 +1,7 @@
 import type { Pool } from "pg";
-import crypto from "node:crypto";
+import { sha256HexBytes } from "@openslin/shared";
 import fs from "node:fs/promises";
 import path from "node:path";
-
-function sha256Hex(bytes: Buffer) {
-  return crypto.createHash("sha256").update(bytes).digest("hex");
-}
 
 function safeJoin(rootDir: string, storageKey: string) {
   const root = path.resolve(rootDir);
@@ -191,7 +187,7 @@ export async function processMediaJob(params: { pool: Pool; tenantId: string; jo
           const fullText = bytes.toString("utf8");
           const maxChars = 1_000_000;
           const text = fullText.length > maxChars ? fullText.slice(0, maxChars) : fullText;
-          const textSha8 = sha256Hex(Buffer.from(text, "utf8")).slice(0, 8);
+          const textSha8 = sha256HexBytes(Buffer.from(text, "utf8")).slice(0, 8);
           const art = await createArtifact({
             pool: params.pool,
             tenantId: params.tenantId,
@@ -222,7 +218,7 @@ export async function processMediaJob(params: { pool: Pool; tenantId: string; jo
             continue;
           }
           const base64 = bytes.toString("base64");
-          const digest8 = sha256Hex(bytes).slice(0, 8);
+          const digest8 = sha256HexBytes(bytes).slice(0, 8);
           const art = await createArtifact({
             pool: params.pool,
             tenantId: params.tenantId,

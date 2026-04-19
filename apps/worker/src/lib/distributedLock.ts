@@ -10,6 +10,9 @@
  */
 import crypto from "node:crypto";
 import type Redis from "ioredis";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:distributedLock" });
 
 /* ── 类型 ── */
 
@@ -90,11 +93,11 @@ export async function acquireLock(
             const renewed = await (redis as any).eval(RENEW_SCRIPT, 1, key, token, String(ttlMs));
             if (!renewed) {
               // token 不匹配，锁已被他人持有 — 停止续期
-              console.warn(`[distributed-lock] watchdog: lock ${key} lost (token mismatch), stopping renewal`);
+              _logger.warn("watchdog: lock lost (token mismatch), stopping renewal", { key });
               if (renewTimer) clearInterval(renewTimer);
             }
           } catch (err) {
-            console.error(`[distributed-lock] watchdog renew failed for ${key}`, err);
+            _logger.error("watchdog renew failed", { key, error: (err as Error)?.message ?? err });
           }
         }, renewInterval);
         renewTimer.unref(); // 不阻止进程退出
@@ -111,13 +114,13 @@ export async function acquireLock(
             const result = await (redis as any).eval(RELEASE_SCRIPT, 1, key, token);
             return result === 1;
           } catch (err) {
-            console.error(`[distributed-lock] release failed for ${key}`, err);
+            _logger.error("release failed", { key, error: (err as Error)?.message ?? err });
             return false;
           }
         },
       };
 
-      console.log(`[distributed-lock] acquired: ${key} (token=${token.slice(0, 8)}…, ttl=${ttlMs}ms)`);
+      _logger.info("lock acquired", { key, tokenPrefix: token.slice(0, 8), ttlMs });
       return handle;
     }
 

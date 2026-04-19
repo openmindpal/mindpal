@@ -26,7 +26,7 @@ export async function getEffectiveSafetyPolicyVersion(params: { pool: Pool; tena
     [params.tenantId, params.spaceId ?? "", params.policyType],
   );
   if (!res.rowCount) return null;
-  const r = res.rows[0] as any;
+  const r = res.rows[0] as Record<string, unknown>;
   const version = r.active_version === null || r.active_version === undefined ? null : Number(r.active_version);
   if (!version) return null;
   const ver = await params.pool.query(
@@ -34,7 +34,7 @@ export async function getEffectiveSafetyPolicyVersion(params: { pool: Pool; tena
     [String(r.policy_id), version],
   );
   if (!ver.rowCount) return null;
-  const row = ver.rows[0] as any;
+  const row = ver.rows[0] as Record<string, unknown>;
   if (String(row.status) !== "released") return null;
   return {
     policyId: String(r.policy_id),

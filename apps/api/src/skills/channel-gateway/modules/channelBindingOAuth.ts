@@ -6,6 +6,9 @@
  */
 
 import { getFeishuTenantAccessToken } from "./feishu";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:channelBindingOAuth" });
 
 // ─── 公共工具 ─────────────────────────────────────────────────────────────────
 
@@ -160,7 +163,7 @@ async function exchangeFeishu(params: {
 
   const data = json?.data;
   if (!data) {
-    console.error("[channelBindingOAuth] 飞书 code 换取失败:", JSON.stringify(json));
+    _logger.error("飞书 code 换取失败", { response: JSON.stringify(json) });
     throw new Error("feishu_exchange_failed");
   }
 
@@ -169,7 +172,7 @@ async function exchangeFeishu(params: {
   const avatar = typeof data.avatar_url === "string" ? data.avatar_url : undefined;
 
   if (!openId) {
-    console.error("[channelBindingOAuth] 飞书返回缺少 open_id:", JSON.stringify(data));
+    _logger.error("飞书返回缺少 open_id", { data: JSON.stringify(data) });
     throw new Error("feishu_missing_open_id");
   }
 
@@ -196,7 +199,7 @@ async function exchangeDingtalk(params: {
 
   const userAccessToken = String(tokenJson?.accessToken ?? "");
   if (!userAccessToken) {
-    console.error("[channelBindingOAuth] 钉钉 token 交换失败:", JSON.stringify(tokenJson));
+    _logger.error("钉钉 token 交换失败", { response: JSON.stringify(tokenJson) });
     throw new Error("dingtalk_exchange_failed");
   }
 
@@ -211,7 +214,7 @@ async function exchangeDingtalk(params: {
   const avatar = typeof userJson?.avatarUrl === "string" ? userJson.avatarUrl : undefined;
 
   if (!openId) {
-    console.error("[channelBindingOAuth] 钉钉返回缺少 openId:", JSON.stringify(userJson));
+    _logger.error("钉钉返回缺少 openId", { data: JSON.stringify(userJson) });
     throw new Error("dingtalk_missing_open_id");
   }
 
@@ -232,7 +235,7 @@ async function exchangeWecom(params: {
 
   const accessToken = String(tokenJson?.access_token ?? "");
   if (!accessToken) {
-    console.error("[channelBindingOAuth] 企业微信 access_token 获取失败:", JSON.stringify(tokenJson));
+    _logger.error("企业微信 access_token 获取失败", { response: JSON.stringify(tokenJson) });
     throw new Error("wecom_token_failed");
   }
 
@@ -244,7 +247,7 @@ async function exchangeWecom(params: {
 
   const userId = String(userJson?.UserId ?? userJson?.userid ?? userJson?.OpenId ?? "");
   if (!userId) {
-    console.error("[channelBindingOAuth] 企业微信返回缺少 UserId:", JSON.stringify(userJson));
+    _logger.error("企业微信返回缺少 UserId", { data: JSON.stringify(userJson) });
     throw new Error("wecom_missing_user_id");
   }
 
@@ -274,7 +277,7 @@ async function exchangeSlack(params: {
 
   const userId = String(json?.authed_user?.id ?? "");
   if (!userId) {
-    console.error("[channelBindingOAuth] Slack 返回缺少 user id:", JSON.stringify(json));
+    _logger.error("Slack 返回缺少 user id", { data: JSON.stringify(json) });
     throw new Error("slack_missing_user_id");
   }
 
@@ -305,7 +308,7 @@ async function exchangeDiscord(params: {
 
   const accessToken = String(tokenJson?.access_token ?? "");
   if (!accessToken) {
-    console.error("[channelBindingOAuth] Discord token 交换失败:", JSON.stringify(tokenJson));
+    _logger.error("Discord token 交换失败", { response: JSON.stringify(tokenJson) });
     throw new Error("discord_exchange_failed");
   }
 
@@ -316,7 +319,7 @@ async function exchangeDiscord(params: {
 
   const userId = String(userJson?.id ?? "");
   if (!userId) {
-    console.error("[channelBindingOAuth] Discord 返回缺少 user id:", JSON.stringify(userJson));
+    _logger.error("Discord 返回缺少 user id", { data: JSON.stringify(userJson) });
     throw new Error("discord_missing_user_id");
   }
 

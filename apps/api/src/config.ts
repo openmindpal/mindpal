@@ -22,6 +22,13 @@ export type ApiConfig = {
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv): ApiConfig {
+  const isProduction = env.NODE_ENV === "production";
+  if (isProduction && !env.API_CORS_ORIGINS) {
+    throw new Error(
+      "[config] API_CORS_ORIGINS must be explicitly set in production. " +
+      "Example: API_CORS_ORIGINS=https://app.example.com"
+    );
+  }
   const allowedOrigins =
     (env.API_CORS_ORIGINS ?? "http://localhost:4000,http://127.0.0.1:4000")
       .split(",")

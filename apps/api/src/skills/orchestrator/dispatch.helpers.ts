@@ -115,43 +115,108 @@ export function buildExecutionReplyText(params: {
 /* ------------------------------------------------------------------ */
 
 export class ToolCallFilter {
-  private readonly START_MARKER = "```tool_call";
-  private readonly END_MARKER = "```";
+  // markdown: match ```tool_ prefix (covers tool_call, tool_code, etc.)
+  private static readonly MD_PREFIX = "```tool_";
+  private static readonly MD_END = "```";
+  // XML: match <tool_* or <function_call prefixes
+  private static readonly XML_PREFIXES = ["<tool_", "<function_call"];
+
   private mode: "text" | "tool" = "text";
+  private toolMode: "markdown" | "xml" = "markdown";
+  private xmlEndMarker = "</tool_call>"; // dynamically set per block
   private buf = "";
+  /** keep-tail covers longest possible prefix + tag name */
   private readonly keepTail: number;
-  private readonly keepEndTail: number;
 
   constructor(private readonly emit: (text: string) => void) {
-    this.keepTail = this.START_MARKER.length - 1;
-    this.keepEndTail = this.END_MARKER.length - 1;
+    this.keepTail = Math.max(
+      ToolCallFilter.MD_PREFIX.length,
+      ...ToolCallFilter.XML_PREFIXES.map(p => p.length),
+    ) + 15; // +15 for possible long tag names like "tool_code_execution"
   }
 
   feed(chunk: string): void {
     this.buf += chunk;
     while (this.buf) {
       if (this.mode === "text") {
-        const idx = this.buf.indexOf(this.START_MARKER);
-        if (idx === -1) {
-          if (this.buf.length > this.keepTail) {
-            const out = this.buf.slice(0, this.buf.length - this.keepTail);
-            this.buf = this.buf.slice(this.buf.length - this.keepTail);
-            if (out) this.emit(out);
+        // find markdown prefix
+        const mdIdx = this.buf.indexOf(ToolCallFilter.MD_PREFIX);
+
+        // find earliest XML prefix
+        let xmlIdx = -1;
+        let xmlPrefix = "";
+        for (const prefix of ToolCallFilter.XML_PREFIXES) {
+          const idx = this.buf.indexOf(prefix);
+          if (idx !== -1 && (xmlIdx === -1 || idx < xmlIdx)) {
+            xmlIdx = idx;
+            xmlPrefix = prefix;
           }
-          return;
         }
-        const out = this.buf.slice(0, idx);
-        if (out) this.emit(out);
-        this.buf = this.buf.slice(idx + this.START_MARKER.length);
-        this.mode = "tool";
-        continue;
-      }
-      const idx2 = this.buf.indexOf(this.END_MARKER);
-      if (idx2 === -1) {
-        if (this.buf.length > this.keepEndTail) this.buf = this.buf.slice(this.buf.length - this.keepEndTail);
+
+        // ── markdown wins ──
+        if (mdIdx !== -1 && (xmlIdx === -1 || mdIdx <= xmlIdx)) {
+          const newlineAfter = this.buf.indexOf("\n", mdIdx);
+          if (newlineAfter === -1) {
+            // haven't received newline yet — keep buffering
+            if (this.buf.length > this.keepTail) {
+              const safe = this.buf.slice(0, mdIdx);
+              this.buf = this.buf.slice(mdIdx);
+              if (safe) this.emit(safe);
+            }
+            return;
+          }
+          const out = this.buf.slice(0, mdIdx);
+          if (out) this.emit(out);
+          this.buf = this.buf.slice(newlineAfter + 1);
+          this.mode = "tool";
+          this.toolMode = "markdown";
+          continue;
+        }
+
+        // ── XML wins ──
+        if (xmlIdx !== -1) {
+          const gtPos = this.buf.indexOf(">", xmlIdx + xmlPrefix.length);
+          if (gtPos === -1) {
+            // haven't received closing '>' yet — keep buffering
+            if (this.buf.length > this.keepTail) {
+              const safe = this.buf.slice(0, xmlIdx);
+              this.buf = this.buf.slice(xmlIdx);
+              if (safe) this.emit(safe);
+            }
+            return;
+          }
+          // extract tag name: <tool_code ...> → tool_code, <function_call ...> → function_call
+          const tagContent = this.buf.slice(xmlIdx + 1, gtPos); // e.g. "tool_code" or "tool_code attr..."
+          const tagName = tagContent.split(/[\s/]/)[0]; // e.g. "tool_code"
+          this.xmlEndMarker = `</${tagName}>`;
+
+          const out = this.buf.slice(0, xmlIdx);
+          if (out) this.emit(out);
+          this.buf = this.buf.slice(gtPos + 1);
+          this.mode = "tool";
+          this.toolMode = "xml";
+          continue;
+        }
+
+        // no marker found — flush safely, keep tail for partial match
+        if (this.buf.length > this.keepTail) {
+          const out = this.buf.slice(0, this.buf.length - this.keepTail);
+          this.buf = this.buf.slice(this.buf.length - this.keepTail);
+          if (out) this.emit(out);
+        }
         return;
       }
-      this.buf = this.buf.slice(idx2 + this.END_MARKER.length);
+
+      /* ── tool mode: look for the matching end marker ── */
+      const endMarker = this.toolMode === "markdown" ? ToolCallFilter.MD_END : this.xmlEndMarker;
+      const idx2 = this.buf.indexOf(endMarker);
+      if (idx2 === -1) {
+        // keep enough tail for partial end-marker match
+        const keepEnd = endMarker.length - 1;
+        if (this.buf.length > keepEnd) this.buf = this.buf.slice(this.buf.length - keepEnd);
+        return;
+      }
+      this.buf = this.buf.slice(idx2 + endMarker.length);
       this.mode = "text";
     }
   }

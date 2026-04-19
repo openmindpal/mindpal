@@ -14,6 +14,7 @@
   "category": "ai",
   "priority": 8,
   "tags": ["vision", "image", "multimodal", "analysis"],
+  "executionTimeoutMs": 300000,
   "contract": {
     "scope": "read",
     "resourceType": "media",

@@ -1,5 +1,4 @@
-import crypto from "node:crypto";
-export { isPlainObject } from "@openslin/shared";
+export { isPlainObject, sha256Hex, stableStringify, stableStringifyValue } from "@openslin/shared";
 import { isPlainObject } from "@openslin/shared";
 
 export function digestObject(body: unknown) {
@@ -58,22 +57,3 @@ export function validateBySchema(kind: "input" | "output", schema: any, value: a
     if (v !== undefined && !checkType(def.type, v)) throw new Error(`${kind}_schema:type_mismatch:${fieldName}`);
   }
 }
-
-function stableStringifyValue(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stableStringifyValue);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stableStringifyValue(v[k]);
-  return out;
-}
-
-export function stableStringify(v: any): string {
-  return JSON.stringify(stableStringifyValue(v));
-}
-
-export function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
-

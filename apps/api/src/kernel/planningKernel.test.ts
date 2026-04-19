@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockPool } from "./testHelpers";
 
 const mockParseToolCallsFromOutput = vi.fn();
 const mockResolveEffectiveToolRef = vi.fn();
@@ -52,12 +53,13 @@ describe("planningKernel.parsePlanSuggestions", () => {
       parseErrorCount: 0,
     });
 
+    const testPool = mockPool();
     const result = await parsePlanSuggestions({
-      pool: {} as any,
+      pool: testPool,
       tenantId: "tenant_dev",
       spaceId: "space_dev",
       modelOutputText: "tool_call",
-      enabledTools: [{ toolRef: "entity.create@1" } as any],
+      enabledTools: [{ toolRef: "entity.create@1" } as Partial<import("../modules/agentContext").EnabledTool> as import("../modules/agentContext").EnabledTool],
       maxSteps: 3,
       actorRole: "executor",
       traceId: "trace-plan-unversioned",
@@ -67,12 +69,13 @@ describe("planningKernel.parsePlanSuggestions", () => {
     expect(result.planSteps[0]?.toolRef).toBe("entity.create@1");
     expect(result.filteredSuggestionCount).toBe(1);
     expect(result.droppedToolCalls).toHaveLength(0);
-    expect(mockResolveEffectiveToolRef).toHaveBeenCalledWith({
-      pool: {} as any,
-      tenantId: "tenant_dev",
-      spaceId: "space_dev",
-      name: "entity.create",
-    });
+    expect(mockResolveEffectiveToolRef).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant_dev",
+        spaceId: "space_dev",
+        name: "entity.create",
+      }),
+    );
   });
 
   it("still drops suggestions whose tool name is not present in the enabled catalog", async () => {
@@ -82,11 +85,11 @@ describe("planningKernel.parsePlanSuggestions", () => {
     });
 
     const result = await parsePlanSuggestions({
-      pool: {} as any,
+      pool: mockPool(),
       tenantId: "tenant_dev",
       spaceId: "space_dev",
       modelOutputText: "tool_call",
-      enabledTools: [{ toolRef: "entity.create@1" } as any],
+      enabledTools: [{ toolRef: "entity.create@1" } as Partial<import("../modules/agentContext").EnabledTool> as import("../modules/agentContext").EnabledTool],
       maxSteps: 3,
     });
 

@@ -5,6 +5,21 @@ import childProcess from "node:child_process";
 
 export type DeviceType = "desktop" | "mobile" | "iot" | "robot" | "vehicle" | "home" | "gateway";
 
+/**
+ * 插件配置（元数据驱动：由配对时写入 + 云端策略下发 + 心跳同步更新）
+ * 替代原有 DEVICE_AGENT_BUILTIN_PLUGINS 环境变量的静态控制
+ */
+export type PluginConfig = {
+  /** 内置插件列表，如 ["desktop"] 或 ["file","browser",...] */
+  builtinPlugins: string[];
+  /** 外部插件目录列表（可选） */
+  pluginDirs?: string[];
+  /** 插件配置最后更新时间 */
+  updatedAt?: string;
+  /** 配置来源：local=本地默认 | cloud=云端策略下发 */
+  source?: "local" | "cloud";
+};
+
 export type DeviceAgentConfig = {
   apiBase: string;
   deviceId: string;
@@ -13,6 +28,8 @@ export type DeviceAgentConfig = {
   deviceType: DeviceType;
   os: string;
   agentVersion: string;
+  /** 插件配置（元数据驱动，替代环境变量） */
+  pluginConfig?: PluginConfig;
 };
 
 export function defaultConfigPath() {

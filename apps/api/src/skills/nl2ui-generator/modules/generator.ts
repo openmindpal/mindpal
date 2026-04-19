@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:nl2uiGenerator" });
 import { nl2uiRequestSchema, nl2uiGeneratedConfigSchema, type Nl2UiGeneratedConfig } from "./types";
 import { listUiComponentRegistryComponentIds, isComponentAllowed } from "../../ui-page-config/modules/componentRegistry";
 
@@ -22,7 +25,7 @@ function enforceComponentWhitelistOnConfig(config: Nl2UiGeneratedConfig): Nl2UiG
   let patched = false;
   const areas = config.ui.layout.areas.map((area) => {
     if (allowed.has(area.componentId) || isComponentAllowed(area.componentId)) return area;
-    console.warn(`[NL2UI] componentId "${area.componentId}" not in whitelist, downgrading to ${NL2UI_DEFAULT_COMPONENT}`);
+    _logger.warn("componentId not in whitelist, downgrading", { componentId: area.componentId, fallback: NL2UI_DEFAULT_COMPONENT });
     patched = true;
     return { ...area, componentId: NL2UI_DEFAULT_COMPONENT };
   });
@@ -85,7 +88,7 @@ function enforceFieldSecurity(
 
     // Strip sort if field is not readable
     if (db.sort && !allowedFields.includes(db.sort.field) && !systemFields.includes(db.sort.field)) {
-      console.warn(`[NL2UI] T12: sort field "${db.sort.field}" not in effective schema for ${entityName}, removing`);
+      _logger.warn("T12: sort field not in effective schema, removing", { field: db.sort.field, entity: entityName });
       newDb = { ...newDb, sort: undefined };
       patched = true;
     }
@@ -97,7 +100,7 @@ function enforceFieldSecurity(
         if (allowedFields.includes(field) || systemFields.includes(field)) {
           safeFilters[field] = cond;
         } else {
-          console.warn(`[NL2UI] T12: filter field "${field}" not in effective schema for ${entityName}, stripping`);
+          _logger.warn("T12: filter field not in effective schema, stripping", { field, entity: entityName });
           patched = true;
         }
       }
@@ -432,7 +435,7 @@ async function callLlmForUiGeneration(params: {
     try {
       parsed = JSON.parse(jsonStr);
     } catch {
-      console.error(`[NL2UI] JSON parse failed, raw output: ${outputText.slice(0, 1000)}`);
+      _logger.error("JSON parse failed", { rawOutput: outputText.slice(0, 1000) });
       if (heuristicFallbackEnabled) {
         return heuristicFallback();
       }
@@ -485,7 +488,7 @@ async function callLlmForUiGeneration(params: {
     // 使用 safeParse 增强容错
     const result = nl2uiGeneratedConfigSchema.safeParse(parsed);
     if (!result.success) {
-      console.error("[NL2UI] Schema validation failed:", JSON.stringify(result.error.issues, null, 2));
+      _logger.error("schema validation failed", { issues: JSON.stringify(result.error.issues, null, 2) });
       if (heuristicFallbackEnabled) {
         return heuristicFallback();
       }
@@ -498,11 +501,11 @@ async function callLlmForUiGeneration(params: {
   } catch (err: any) {
     if (err && typeof err === "object" && (err as any).statusCode === 429) throw err;
     if (heuristicFallbackEnabled) {
-      console.warn("[NL2UI] Falling back to heuristic UI synthesis:", err?.message ?? err);
+      _logger.warn("falling back to heuristic UI synthesis", { error: err?.message ?? err });
       return heuristicFallback();
     }
     if (err && typeof err === "object" && (err as any).payload) throw err;
-    console.error("[NL2UI] LLM generation failed:", err?.message ?? err);
+    _logger.error("LLM generation failed", { error: err?.message ?? err });
     const e: any = new Error("NL2UI_ERROR");
     e.statusCode = 502;
     e.payload = { errorCode: "NL2UI_ERROR", message: { "zh-CN": "界面生成异常", "en-US": "UI generation error" }, traceId: String(params.traceId ?? "") };
@@ -658,7 +661,7 @@ export async function generateUiFromNaturalLanguage(
       const isTimeout = errorCode.includes("UPSTREAM_FAILED") && (String(payload?.message?.["zh-CN"] ?? "").includes("timeout") || String(payload?.message?.["en-US"] ?? "").includes("timeout"));
       const msgZh = payload && typeof payload.message === "object" ? String(payload.message["zh-CN"] ?? "") : payload ? String(payload.message ?? "") : "";
       const msgEn = payload && typeof payload.message === "object" ? String(payload.message["en-US"] ?? "") : "";
-      console.error(`[NL2UI] 生成失败 (attempt=${attempt + 1}): errorCode=${errorCode}, msg=${msgZh || msgEn || String(err?.message ?? err)}, statusCode=${(err as any)?.statusCode ?? "?"}, isTimeout=${isTimeout}`);
+      _logger.error("generation failed", { attempt: attempt + 1, errorCode, error: msgZh || msgEn || String(err?.message ?? err), statusCode: (err as any)?.statusCode ?? "?", isTimeout });
 
       // 仅对超时错误重试，其他错误（如限流、解析失败等）立即抛出
       if (!isTimeout || attempt >= maxRetries) {
@@ -721,6 +724,6 @@ async function cacheGeneration(
       [context.tenantId, context.userId, hash, JSON.stringify(config)],
     );
   } catch (error) {
-    console.error("Failed to cache NL2UI generation:", error);
+    _logger.error("failed to cache NL2UI generation", { error: (error as Error)?.message ?? error });
   }
 }

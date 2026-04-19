@@ -12,6 +12,10 @@
  * - MEMORY_ENCRYPTION_SCOPE_TYPE    加密 scope 类型（默认 "tenant"）
  */
 
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:memoryEncryption" });
+
 import type { Pool, PoolClient } from "pg";
 import {
   encryptColumn,
@@ -78,7 +82,7 @@ async function getActiveKeyMaterial(params: {
       kRef: { scopeType, scopeId, keyVersion: pk.keyVersion },
     };
   } catch (err) {
-    console.warn(`[api/memory-encryption] getActiveKeyMaterial failed: ${(err as Error)?.message}`);
+    _logger.warn("getActiveKeyMaterial failed", { err: (err as Error)?.message });
     return null;
   }
 }
@@ -136,9 +140,7 @@ export async function encryptMemoryContent(params: {
   });
 
   if (!keyMaterial) {
-    console.warn(
-      `[api/memory-encryption] No active key for tenant=${params.tenantId}, storing plaintext`,
-    );
+    _logger.warn("No active key, storing plaintext", { tenantId: params.tenantId });
     return params.plaintext;
   }
 

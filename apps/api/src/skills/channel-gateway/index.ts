@@ -14,7 +14,7 @@ import { channelRoutes } from "./routes";
 const plugin: BuiltinSkillPlugin = {
   manifest: {
     identity: { name: "channel.gateway", version: "1.0.0" },
-    layer: "kernel", // 治理工具默认启用
+    layer: "core",
     routes: ["/channels", "/governance/channels", "/channels/binding"],
     frontend: ["/gov/channels"],
     dependencies: ["schemas", "entities", "audit", "rbac", "secrets"],

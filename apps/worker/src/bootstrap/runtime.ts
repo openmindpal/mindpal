@@ -4,8 +4,13 @@ import {
   createRedisConcurrencyBackend,
   setConcurrencyBackend,
   validateProductionBaseline,
+  StructuredLogger,
 } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:runtime" });
 import { registerAdvancedChunkStrategies } from "../knowledge/chunkStrategy";
+import { RedisStreamsBus } from "../lib/redisStreamsBus";
+import { CRITICAL_EVENT_CHANNELS } from "@openslin/shared";
 
 import "../tickers";
 import type { WorkerConfig } from "../config";
@@ -28,22 +33,23 @@ export type WorkerRuntime = {
   redisLock: Redis;
   healthServer: any;
   connection: { host: string; port: number };
+  /** Redis Streams 后端 — 关键事件可靠消费 */
+  streamsBus: RedisStreamsBus;
 };
 
 export function logWorkerProductionBaseline() {
   const baselineResult = validateProductionBaseline(process.env, ["process", "container"]);
   if (!baselineResult.valid) {
-    console.error(
-      `[worker] Production baseline validation FAILED. Violations: ${baselineResult.violations.join(", ")}. ` +
-        `Startup will continue but dynamic Skill execution may be restricted.`,
-    );
+    _logger.error("production baseline validation FAILED", {
+      violations: baselineResult.violations,
+    });
     return;
   }
   if (baselineResult.policy.isProduction) {
-    console.log(
-      `[worker] Production baseline validation passed. ` +
-        `minIsolation=${baselineResult.policy.minIsolation}, trustEnforced=${baselineResult.policy.trustEnforced}`,
-    );
+    _logger.info("production baseline validation passed", {
+      minIsolation: baselineResult.policy.minIsolation,
+      trustEnforced: baselineResult.policy.trustEnforced,
+    });
   }
 }
 
@@ -74,15 +80,14 @@ export function initializeWorkerExtensions() {
 
   try {
     const skillResult = initWorkerSkills();
-    console.log(
-      `[worker] initWorkerSkills: ${skillResult.registered.length} registered ` +
-        `(core=${skillResult.coreCount}, optional=${skillResult.optionalCount})` +
-        (skillResult.skipped.length > 0 ? `, skipped=${skillResult.skipped.join(",")}` : ""),
-    );
-  } catch (e: any) {
-    console.error("[worker] initWorkerSkills FAILED — worker skill contributions will be unavailable", {
-      error: String(e?.message ?? e),
+    _logger.info("initWorkerSkills", {
+      registered: skillResult.registered.length,
+      coreCount: skillResult.coreCount,
+      optionalCount: skillResult.optionalCount,
+      skipped: skillResult.skipped,
     });
+  } catch (e: any) {
+    _logger.error("initWorkerSkills FAILED", { error: String(e?.message ?? e) });
   }
   registerContributionTickersOnce();
 }
@@ -101,11 +106,21 @@ export async function createWorkerRuntime(cfg: WorkerConfig): Promise<WorkerRunt
 
   if ((process.env.CONCURRENCY_BACKEND ?? "local") === "redis") {
     setConcurrencyBackend(createRedisConcurrencyBackend(redisPub));
-    console.log("[worker] P2-4: Redis concurrency backend enabled");
+    _logger.info("Redis concurrency backend enabled");
   }
 
   startAllTickers({ pool, queue, redis: redisPub, redisLock, masterKey: cfg.secrets.masterKey, cfg, withLock });
   const healthServer = startHealthServer({ pool, queue, redis });
+
+  // P1: Redis Streams 后端 — 关键事件可靠消费
+  const hostname = (process.env.HOSTNAME ?? process.env.COMPUTERNAME ?? "unknown").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const streamsBus = new RedisStreamsBus({
+    redis: redisPub,
+    consumerGroup: "openslin-worker-group",
+    consumerId: `worker-${hostname}-${process.pid}`,
+    maxStreamLength: 10_000,
+    blockTimeoutMs: 5_000,
+  });
 
   return {
     pool,
@@ -115,25 +130,32 @@ export async function createWorkerRuntime(cfg: WorkerConfig): Promise<WorkerRunt
     redisLock,
     healthServer,
     connection,
+    streamsBus,
   };
 }
 
 export async function shutdownWorkerRuntime(runtime: WorkerRuntime) {
   stopAllTickers();
+  // P1: 先关闭 Streams 读取循环
+  try {
+    await runtime.streamsBus.close();
+  } catch (e: any) {
+    _logger.warn("streamsBus.close() error", { err: e?.message });
+  }
   try {
     await runtime.queue.close();
   } catch (e: any) {
-    console.warn(`[worker] queue.close() error: ${e?.message}`);
+    _logger.warn("queue.close() error", { err: e?.message });
   }
   try {
     await runtime.redisPub.quit();
   } catch (e: any) {
-    console.warn(`[worker] redisPub.quit() error: ${e?.message}`);
+    _logger.warn("redisPub.quit() error", { err: e?.message });
   }
   try {
     await runtime.redisLock.quit();
   } catch (e: any) {
-    console.warn(`[worker] redisLock.quit() error: ${e?.message}`);
+    _logger.warn("redisLock.quit() error", { err: e?.message });
   }
   if (runtime.healthServer && typeof runtime.healthServer.close === "function") {
     await new Promise<void>((resolve) => runtime.healthServer.close(() => resolve()));
@@ -141,6 +163,6 @@ export async function shutdownWorkerRuntime(runtime: WorkerRuntime) {
   try {
     await runtime.pool.end();
   } catch (e: any) {
-    console.warn(`[worker] pool.end() error: ${e?.message}`);
+    _logger.warn("pool.end() error", { err: e?.message });
   }
 }

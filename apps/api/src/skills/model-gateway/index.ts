@@ -13,7 +13,7 @@ import { modelRoutes } from "./routes";
 const plugin: BuiltinSkillPlugin = {
   manifest: {
     identity: { name: "model.gateway", version: "1.0.0" },
-    layer: "kernel", // 治理工具默认启用
+    layer: "core",
     routes: ["/models"],
     frontend: ["/gov/models", "/gov/model-gateway", "/gov/routing"],
     dependencies: ["schemas", "entities", "audit", "rbac", "secrets"],

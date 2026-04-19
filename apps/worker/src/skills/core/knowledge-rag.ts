@@ -2,6 +2,7 @@ import type { WorkerSkillContribution } from "../../lib/workerSkillContract";
 import { processKnowledgeIndexJob } from "../../knowledge/processor";
 import { processKnowledgeEmbeddingJob } from "../../knowledge/embedding";
 import { processKnowledgeIngestJob } from "../../knowledge/ingest";
+import { resolveString } from "@openslin/shared";
 
 export const knowledgeRagWorker: WorkerSkillContribution = {
   skillName: "knowledge.rag",
@@ -11,7 +12,7 @@ export const knowledgeRagWorker: WorkerSkillContribution = {
       process: async ({ pool, data, queue }) => {
         const out = await processKnowledgeIndexJob({ pool, indexJobId: data.indexJobId });
         if (out && out.chunkCount > 0) {
-          const embeddingModelRef = String(process.env.KNOWLEDGE_EMBEDDING_MODEL_REF ?? "").trim() || "minhash:16@1";
+          const embeddingModelRef = resolveString("KNOWLEDGE_EMBEDDING_MODEL_REF").value || "minhash:16@1";
           const ins = await pool.query(
             `
               INSERT INTO knowledge_embedding_jobs (tenant_id, space_id, document_id, document_version, embedding_model_ref, status)

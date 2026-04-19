@@ -88,6 +88,10 @@ export async function executeParallel(
 
   const promises = states.map(async (state) => {
     state.status = "running";
+    params.app.log.info(
+      { agentId: state.agentId, role: state.role, runId: state.runId },
+      "[CollabOrchestrator] 并行 Agent 开始执行",
+    );
     state.result = await runAgentLoop({
       app: params.app,
       pool: params.pool,
@@ -124,6 +128,47 @@ export async function executeParallel(
 
 // ── 流水线执行 ───────────────────────────────────────────────────
 
+/**
+ * 依赖图无环检测（DFS 拓扑排序预验证）
+ * 返回环路径（如 ["A","B","C","A"]），无环返回 null
+ */
+function detectCycleInDependencyGraph(
+  agents: CollabAgentRole[],
+): string[] | null {
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+  const cycle: string[] = [];
+
+  function dfs(agentId: string): boolean {
+    if (inStack.has(agentId)) {
+      cycle.push(agentId);
+      return true;
+    }
+    if (visited.has(agentId)) return false;
+
+    visited.add(agentId);
+    inStack.add(agentId);
+
+    const agent = agents.find((a) => a.agentId === agentId);
+    for (const dep of agent?.dependencies ?? []) {
+      if (dfs(dep)) {
+        cycle.push(agentId);
+        return true;
+      }
+    }
+
+    inStack.delete(agentId);
+    return false;
+  }
+
+  for (const agent of agents) {
+    if (!visited.has(agent.agentId)) {
+      if (dfs(agent.agentId)) return cycle.reverse();
+    }
+  }
+  return null;
+}
+
 /** 流水线执行：每个 Agent 处理后传给下一个，支持依赖关系 */
 export async function executePipeline(
   states: AgentState[],
@@ -132,6 +177,23 @@ export async function executePipeline(
   maxIterations: number,
 ): Promise<void> {
   params.app.log.info({ agentCount: states.length }, "[CollabOrchestrator] 开始流水线执行");
+
+  // ── 新增：依赖图无环检测（在执行前预验证） ──
+  const cycle = detectCycleInDependencyGraph(agents);
+  if (cycle) {
+    const cycleStr = cycle.join(" → ");
+    params.app.log.error({ cycle: cycleStr }, "[CollabOrchestrator] 检测到循环依赖");
+    for (const state of states) {
+      state.status = "failed";
+      state.result = {
+        ok: false,
+        endReason: "cycle_detected",
+        message: `流水线存在循环依赖: ${cycleStr}`,
+        iterations: 0,
+      } as any;
+    }
+    return;
+  }
 
   // 按依赖关系排序（拓扑排序）
   const completed = new Set<string>();
@@ -151,10 +213,31 @@ export async function executePipeline(
 
     if (ready.length === 0) {
       // 死锁检测：有剩余 Agent 但没有可执行的
-      params.app.log.error({ remaining: Array.from(remaining) }, "[CollabOrchestrator] 流水线死锁");
+      const remainingIds = Array.from(remaining);
+      const deadlockInfo = {
+        remainingAgents: remainingIds,
+        unresolvedDeps: remainingIds.map((id) => {
+          const agent = agents.find((a) => a.agentId === id);
+          return {
+            agentId: id,
+            waitingFor: (agent?.dependencies ?? []).filter((d) => !completed.has(d)),
+          };
+        }),
+      };
+      params.app.log.error(deadlockInfo, "[CollabOrchestrator] 流水线死锁：有剩余 Agent 但无可执行者");
+
+      // 标记所有剩余 Agent 为失败，附带死锁原因
       for (const id of remaining) {
         const s = states.find((x) => x.agentId === id);
-        if (s) s.status = "failed";
+        if (s) {
+          s.status = "failed";
+          s.result = {
+            ok: false,
+            endReason: "pipeline_deadlock",
+            message: `流水线死锁：等待未完成的依赖 ${JSON.stringify(deadlockInfo.unresolvedDeps.find((d) => d.agentId === id)?.waitingFor)}`,
+            iterations: 0,
+          } as any;
+        }
       }
       break;
     }

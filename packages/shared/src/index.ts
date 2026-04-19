@@ -186,6 +186,9 @@ export type PolicySnapshotSummary = {
   policyCacheEpoch?: unknown;
 };
 
+// ─── Run 响应 DTO ─────────────────────────────────────────────────
+export type { RunSummaryDTO, RunDetailDTO, RunStepDTO } from "./runDto.js";
+
 export type { EvidenceSourceRef, EvidenceRef, EvidencePolicy, AnswerEnvelope } from "./evidence";
 
 export type { VectorStoreModeV1, VectorStoreRefV1, VectorStoreCapabilitiesV1, VectorStoreChunkEmbeddingV1, VectorStoreQueryResultItemV1, VectorStoreQueryResponseV1 } from "./knowledgeVectorStore";
@@ -207,6 +210,7 @@ export type {
   VectorStoreFilterCondition,
   VectorStoreQueryResultV2,
   VectorStoreDegradeEvent,
+  PgVectorConfig,
 } from "./knowledgeVectorStore";
 
 
@@ -279,6 +283,9 @@ export type { SchemaMigrationKind } from "./schemaMigration";
 
 export type { CapabilityEnvelopeV1 } from "./capabilityEnvelope";
 export { checkCapabilityEnvelopeNotExceedV1, validateCapabilityEnvelopeV1 } from "./capabilityEnvelope";
+
+// ─── 统一错误分类枚举 ─────────────────────────────────────────────────
+export { ErrorCategory, type ErrorCategoryValue, isRetryableError, errorActionHint } from "./errorCategory";
 
 export { AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory } from "./audit";
 export type { AuditErrorCategory } from "./audit";
@@ -369,6 +376,10 @@ export {
   SANDBOX_FORBIDDEN_MODULES_BASE,
   SANDBOX_FORBIDDEN_MODULES_STRICT,
   SANDBOX_FORBIDDEN_MODULES_DATABASE,
+  SANDBOX_BLOCKED_MODULES,
+  SANDBOX_BLOCKED_HIGH_RISK,
+  SANDBOX_BLOCKED_MEDIUM_RISK,
+  SANDBOX_BLOCKED_LOW_RISK,
   resolveSandboxMode,
   buildForbiddenModulesSet,
   lockdownDynamicCodeExecution,
@@ -376,10 +387,14 @@ export {
   pickExecute,
   checkModuleForbidden,
   createModuleLoadInterceptor,
+  getRiskLevel,
+  isModuleBlocked,
+  assertModuleAllowed,
 } from "./skillSandbox";
 export type {
   SandboxMode,
   DynamicCodeLockState,
+  RiskLevel,
 } from "./skillSandbox";
 
 // ─── P2-4: 统一协作协议 + P2-03: 通用 DAG 工具函数 ──────────────────────
@@ -429,6 +444,9 @@ export {
   EVENT_BUS_CHANNEL_PREFIX,
   eventBusRedisChannel,
   stepDoneRedisChannel,
+  CRITICAL_EVENT_CHANNELS,
+  NON_CRITICAL_EVENT_CHANNELS,
+  isCriticalChannel,
 } from "./eventBus";
 export type {
   SystemEventTypeValue,
@@ -437,6 +455,9 @@ export type {
   EventBusSubscription,
   EventChannelValue,
   EventBus,
+  EventBusBackend,
+  PubSubBackend,
+  StreamsBackend,
 } from "./eventBus";
 
 export {
@@ -481,11 +502,14 @@ export type {
 // ── Skill RPC Protocol ──
 export {
   SKILL_RPC_VERSION, SKILL_RPC_JSONRPC, SKILL_RPC_ERRORS, SKILL_RPC_METHODS,
+  DEVICE_PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSIONS,
   createRpcRequest, createRpcSuccess, createRpcError, createRpcNotification,
   serializeRpcMessage, parseRpcMessage,
   isRpcRequest, isRpcNotification, isRpcResponse, isRpcError,
+  isVersionCompatible, negotiateVersion,
 } from "./skillRpcProtocol";
 export type {
+  ProtocolVersion, ProtocolHandshake, ProtocolHandshakeAck,
   SkillRpcRequest, SkillRpcSuccess, SkillRpcError, SkillRpcNotification,
   SkillRpcResponse, SkillRpcMessage,
   SkillInitializeParams, SkillInitializeResult,
@@ -522,6 +546,12 @@ export {
   resolveToolAlias,
   isDeviceToolName,
 } from "./toolAliasResolver";
+
+// ── 统一密码学工具 & 稳定序列化 ──
+export {
+  sha256Hex, sha256HexBytes, sha256_8,
+  stableStringifyValue, stableStringify,
+} from "./cryptoUtils";
 
 // ── 统一文档解析引擎 ──
 export {

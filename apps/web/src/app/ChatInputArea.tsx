@@ -74,14 +74,17 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
   const attachMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!attachMenuOpen) return;
+    if (!attachMenuOpen && !modelPickerOpen) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (!attachMenuRef.current) return;
-      if (attachMenuRef.current.contains(event.target as Node)) return;
-      setAttachMenuOpen(false);
+      if (attachMenuOpen && attachMenuRef.current && !attachMenuRef.current.contains(event.target as Node)) {
+        setAttachMenuOpen(false);
+      }
     };
     const onKeyDownWindow = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAttachMenuOpen(false);
+      if (event.key === "Escape") {
+        if (modelPickerOpen) setModelPickerOpen(false);
+        if (attachMenuOpen) setAttachMenuOpen(false);
+      }
     };
     document.addEventListener("mousedown", onPointerDown);
     window.addEventListener("keydown", onKeyDownWindow);
@@ -89,7 +92,7 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
       document.removeEventListener("mousedown", onPointerDown);
       window.removeEventListener("keydown", onKeyDownWindow);
     };
-  }, [attachMenuOpen]);
+  }, [attachMenuOpen, modelPickerOpen, setModelPickerOpen]);
 
   const openPicker = (kind: "image" | "document" | "audio" | "video") => {
     setAttachMenuOpen(false);
@@ -170,14 +173,11 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
             onClick={() => setAttachMenuOpen((v) => !v)}
             disabled={busy}
             title="@"
-            aria-label="@"
-            aria-expanded={attachMenuOpen}
-            aria-haspopup="menu"
           >
             <span className={styles.attachAtSymbol}>@</span>
           </button>
           {attachMenuOpen && (
-            <div className={styles.attachMenuDropdown} role="menu">
+            <div className={styles.attachMenuDropdown}>
               <button type="button" className={styles.attachMenuItem} onClick={() => openPicker("image")} title={t(locale, "chat.attach.imageTypes")}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
@@ -275,23 +275,18 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
               className={`${styles.modelPickerTrigger} ${modelPickerOpen ? styles.modelPickerTriggerActive : ""}`}
               onClick={() => { if (!busy && bindings.length > 1) setModelPickerOpen((v) => !v); }}
               title={modelPickerTitle}
-              aria-label={modelPickerTitle}
-              aria-expanded={modelPickerOpen}
-              aria-haspopup="listbox"
             >
-              <span className={styles.modelPickerTriggerIcon} aria-hidden="true"><IconSliders /></span>
+              <span className={styles.modelPickerTriggerIcon}><IconSliders /></span>
             </button>
             {modelPickerOpen && (
               <>
                 <div className={styles.modelPickerOverlay} onClick={() => setModelPickerOpen(false)} />
-                <div className={styles.modelPickerDropdown} role="listbox" aria-label={t(locale, "home.modelPicker")}>
+                <div className={styles.modelPickerDropdown}>
                   <div className={styles.modelPickerHeader}>{t(locale, "home.modelPicker")}</div>
                   <div className={styles.modelPickerList}>
                     {bindings.map((b) => (
                       <div
                         key={b.modelRef}
-                        role="option"
-                        aria-selected={b.modelRef === selectedModelRef}
                         className={`${styles.modelPickerItem} ${b.modelRef === selectedModelRef ? styles.modelPickerItemActive : ""}`}
                         onClick={() => { setSelectedModelRef(b.modelRef); setModelPickerOpen(false); }}
                       >
@@ -314,7 +309,7 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
         {/* P1-19: Show stop button only for foreground streaming task, not background tasks */}
         {showStop !== undefined ? (
           showStop ? (
-            <button className={`${styles.sendBtn} ${styles.stopBtn}`} onClick={() => { try { abortRef.current?.abort(); } catch {} }} title={t(locale, "common.stop")}>
+            <button className={`${styles.sendBtn} ${styles.stopBtn}`} onClick={() => { try { abortRef.current?.abort(); } catch { /* expected: abort may throw */ } }} title={t(locale, "common.stop")}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
             </button>
           ) : (

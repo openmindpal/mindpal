@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import { redactValue } from "@openslin/shared";
+import { redactValue, resolveNumber } from "@openslin/shared";
 import { Errors } from "../../../lib/errors";
 import { invokeModelChat, parseToolCallsFromOutput, type LlmSubject } from "../../../lib/llm";
 import type { OrchestratorTurnRequest, OrchestratorTurnResponse } from "./model";
@@ -15,6 +15,87 @@ import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRe
 
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+// ── Fallback（DB 不可用时降级） ──────────────────────────────────────
+
+const FALLBACK_EVENT_TRIGGER_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /换个话题|说回|回到|继续(之前的|刚才的)/i, reason: 'topic_switch' },
+  { pattern: /总结一下|归纳一下|所以(结论是|结果是)/i, reason: 'conclusion' },
+  { pattern: /定稿|确认|就这样(吧|了)/i, reason: 'finalization' },
+  { pattern: /列(个|出|一下)(清单|列表|要点)/i, reason: 'listing' },
+  { pattern: /按(前面|之前|刚才)(的方式|的方法|的思路)/i, reason: 'reference' },
+];
+
+// 元数据驱动：分类显示名完全由 DB orchestrator_rule_configs 的 category_display 规则提供。
+// 缺失时以 category key 本身作为显示名，避免硬编码业务语义。
+const FALLBACK_CATEGORY_NAMES: Record<string, { zh: string; en: string }> = {};
+
+// OS 级分层定义（四层架构是平台概念，非业务数据，可硬编码）
+const FALLBACK_LAYER_NAMES: Record<string, { zh: string; en: string; examples: string[] }> = {
+  "kernel": { zh: "Kernel 内核层", en: "Kernel Layer", examples: ["实体CRUD", "工具治理"] },
+  "core": { zh: "Core 核心层", en: "Core Layer", examples: ["编排", "模型网关", "知识", "记忆", "安全"] },
+  "optional": { zh: "Optional 可选层", en: "Optional Layer", examples: ["界面生成", "权限管理", "协作运行时"] },
+  "extension": { zh: "Extension 扩展层", en: "Extension Layer", examples: ["媒体", "自动化", "分析"] },
+};
+
+const FALLBACK_ACTION_INTENT_REGEX = /执行|(帮我.{0,8}创建)|(帮我.{0,8}删除)|(帮我.{0,8}更新)|(帮我.{0,8}发送)|(帮我.{0,8}关闭)|(请.{0,8}创建)|(请.{0,8}删除)/i;
+
+// ── 编排器规则缓存（从 DB 加载，TTL 60s） ───────────────────────────
+
+interface OrchestratorRuleCache {
+  eventTriggers: Array<{ pattern: RegExp; reason: string }>;
+  categoryDisplay: Record<string, { zh: string; en: string }>;
+  layerDisplay: Record<string, { zh: string; en: string; examples: string[] }>;
+  intentPatterns: any;
+  actionIntentRescue: RegExp | null;
+}
+
+let _ruleCache: OrchestratorRuleCache | null = null;
+let _ruleCacheAt = 0;
+const RULE_CACHE_TTL_MS = 60_000;
+
+async function loadOrchestratorRuleConfigs(pool: Pool, tenantId: string): Promise<OrchestratorRuleCache> {
+  if (_ruleCache && Date.now() - _ruleCacheAt < RULE_CACHE_TTL_MS) {
+    return _ruleCache;
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT rule_group, rules FROM orchestrator_rule_configs WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    const byGroup = new Map(rows.map((r: any) => [r.rule_group, r.rules]));
+
+    // event_trigger: JSON 中 pattern 是字符串，需编译为 RegExp
+    const rawTriggers: any[] = byGroup.get("event_trigger") ?? [];
+    const eventTriggers = rawTriggers.map((t: any) => ({
+      pattern: new RegExp(t.pattern, t.flags ?? "i"),
+      reason: String(t.reason),
+    }));
+
+    _ruleCache = {
+      eventTriggers: eventTriggers.length > 0 ? eventTriggers : FALLBACK_EVENT_TRIGGER_PATTERNS,
+      categoryDisplay: byGroup.get("category_display") ?? FALLBACK_CATEGORY_NAMES,
+      layerDisplay: byGroup.get("layer_display") ?? FALLBACK_LAYER_NAMES,
+      intentPatterns: byGroup.get("intent_pattern") ?? null,
+      actionIntentRescue: (() => {
+        const raw = byGroup.get("action_intent_rescue");
+        if (raw?.pattern) return new RegExp(raw.pattern, raw.flags ?? "i");
+        return null;
+      })(),
+    };
+    _ruleCacheAt = Date.now();
+    return _ruleCache;
+  } catch {
+    // DB 不可用时用 fallback
+    return _ruleCache ?? {
+      eventTriggers: FALLBACK_EVENT_TRIGGER_PATTERNS,
+      categoryDisplay: FALLBACK_CATEGORY_NAMES,
+      layerDisplay: FALLBACK_LAYER_NAMES,
+      intentPatterns: null,
+      actionIntentRescue: null,
+    };
+  }
 }
 
 /** P0: 解析结构化摘要（从 LLM 输出中提取 JSON） */
@@ -54,17 +135,15 @@ export function extractEntities(...texts: (string|undefined)[]): string[] {
 }
 
 /** P0: 检测是否应该触发事件驱动摘要 */
-export function shouldTriggerEventDrivenSummary(message: string, totalTurnCount: number): { should: boolean; reason?: string } {
+export function shouldTriggerEventDrivenSummary(
+  message: string,
+  totalTurnCount: number,
+  eventTriggers?: Array<{ pattern: RegExp; reason: string }>,
+): { should: boolean; reason?: string } {
   // 1. 检测到关键事件关键词
-  const EVENT_TRIGGER_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
-    { pattern: /换个话题|说回|回到|继续(之前的|刚才的)/i, reason: 'topic_switch' },  // 话题切换
-    { pattern: /总结一下|归纳一下|所以(结论是|结果是)/i, reason: 'conclusion' },     // 结论输出
-    { pattern: /定稿|确认|就这样(吧|了)/i, reason: 'finalization' },                  // 任务定稿
-    { pattern: /列(个|出|一下)(清单|列表|要点)/i, reason: 'listing' },                // 列清单
-    { pattern: /按(前面|之前|刚才)(的方式|的方法|的思路)/i, reason: 'reference' },    // 回指引用
-  ];
+  const patterns = eventTriggers ?? FALLBACK_EVENT_TRIGGER_PATTERNS;
   
-  for (const { pattern, reason } of EVENT_TRIGGER_PATTERNS) {
+  for (const { pattern, reason } of patterns) {
     if (pattern.test(message)) {
       return { should: true, reason };
     }
@@ -84,7 +163,7 @@ export function shouldTriggerEventDrivenSummary(message: string, totalTurnCount:
 }
 
 function conversationWindowSize() {
-  const raw = Number(process.env.ORCHESTRATOR_CONVERSATION_WINDOW ?? "30");
+  const raw = resolveNumber("ORCHESTRATOR_CONVERSATION_WINDOW").value;
   return clampInt(Number.isFinite(raw) ? Math.floor(raw) : 16, 4, 64);
 }
 
@@ -131,7 +210,12 @@ function appendConversationContext(parts: string[], contextMeta: ContextMeta | u
  * 从已启用工具列表动态提取能力摘要（用于轻量聊天模式）
  * 不写死能力描述，而是根据实际加载的 Skills/Tools 自动生成能力画像
  */
-function buildCapabilitySummary(tools: EnabledTool[], locale: string): string {
+function buildCapabilitySummary(
+  tools: EnabledTool[],
+  locale: string,
+  categoryNames?: Record<string, { zh: string; en: string }>,
+  layerNames?: Record<string, { zh: string; en: string; examples: string[] }>,
+): string {
   const zh = locale !== "en-US";
   
   // 按分类聚合工具
@@ -147,33 +231,17 @@ function buildCapabilitySummary(tools: EnabledTool[], locale: string): string {
       entry.examples.push(tool.name);
     }
     // 记录工具所属的分层
-    const layer = (tool as any).def.sourceLayer;
+    const layer = tool.def.sourceLayer;
     if (layer) entry.layers.add(layer);
   }
 
   // 分类名称映射
-  const categoryNames: Record<string, { zh: string; en: string }> = {
-    "nl2ui": { zh: "界面生成", en: "UI Generation" },
-    "memory": { zh: "记忆管理", en: "Memory Management" },
-    "knowledge": { zh: "知识检索", en: "Knowledge Retrieval" },
-    "governance": { zh: "治理控制", en: "Governance Control" },
-    "communication": { zh: "通信集成", en: "Communication" },
-    "file": { zh: "文件操作", en: "File Operations" },
-    "database": { zh: "数据库", en: "Database" },
-    "analytics": { zh: "数据分析", en: "Analytics" },
-    "integration": { zh: "系统集成", en: "Integration" },
-    "ai": { zh: "AI 增强", en: "AI Enhancement" },
-    "device": { zh: "设备控制", en: "Device Control" },
-    "collaboration": { zh: "多智能体协作", en: "Multi-Agent Collaboration" },
-    "testing": { zh: "测试工具", en: "Testing Tools" },
-    "automation": { zh: "自动化", en: "Automation" },
-    "uncategorized": { zh: "其他工具", en: "Other Tools" },
-  };
+  const catNames = categoryNames ?? FALLBACK_CATEGORY_NAMES;
 
   // 构建能力描述
   const capabilityLines: string[] = [];
   for (const [cat, info] of categoryMap.entries()) {
-    const names = categoryNames[cat] || { zh: cat, en: cat };
+    const names = catNames[cat] || { zh: cat, en: cat };
     capabilityLines.push(
       zh
         ? `- ${names.zh}（${info.count}个工具）：${info.examples.join("、")}`
@@ -188,7 +256,7 @@ function buildCapabilitySummary(tools: EnabledTool[], locale: string): string {
   const activeLayers = new Set<string>();
   const layerSkills = new Map<string, string[]>();
   for (const tool of tools) {
-    const layer = (tool as any).def.sourceLayer || "builtin";
+    const layer = tool.def.sourceLayer || "optional";
     activeLayers.add(layer);
     if (!layerSkills.has(layer)) layerSkills.set(layer, []);
     const skillName = tool.name.split('.')[0];
@@ -197,16 +265,12 @@ function buildCapabilitySummary(tools: EnabledTool[], locale: string): string {
   }
 
   // 分层名称映射
-  const layerNames: Record<string, { zh: string; en: string; examples: string[] }> = {
-    "kernel": { zh: "Kernel 内核层", en: "Kernel Layer", examples: ["实体CRUD", "工具治理"] },
-    "builtin": { zh: "Core 核心层", en: "Core Layer", examples: ["编排", "模型网关", "知识", "记忆", "安全"] },
-    "extension": { zh: "Extension 扩展层", en: "Extension Layer", examples: ["媒体", "自动化", "分析"] },
-  };
+  const lyrNames = layerNames ?? FALLBACK_LAYER_NAMES;
 
   // 构建动态架构描述
   const activeLayerLines: string[] = [];
   for (const [layer, skills] of layerSkills.entries()) {
-    const info = layerNames[layer] || { zh: layer, en: layer, examples: [] };
+    const info = lyrNames[layer] || { zh: layer, en: layer, examples: [] };
     activeLayerLines.push(
       zh
         ? `- ${info.zh}：${skills.join("、")}`
@@ -255,17 +319,24 @@ export function buildLightChatPrompt(
   memoryContext: string,
   contextMeta?: ContextMeta,
   enabledTools?: EnabledTool[],
+  ruleCache?: OrchestratorRuleCache,
+  knowledgeContext?: string,
 ): string {
   const zh = locale !== "en-US";
 
   // 动态生成能力摘要（基于实际加载的工具）
-  const capabilitySummary = buildCapabilitySummary(enabledTools ?? [], locale);
+  const capabilitySummary = buildCapabilitySummary(
+    enabledTools ?? [],
+    locale,
+    ruleCache?.categoryDisplay,
+    ruleCache?.layerDisplay,
+  );
 
   const parts: string[] = [
     capabilitySummary,
     zh
-      ? "重要规则：\n1. 不要自动将普通对话内容写入长期记忆库。普通闲聊绝对不写入记忆。\n2. 不要主动搜索知识库或记忆库。在普通对话中，用你自己的知识直接回答即可。不要尝试调用任何工具来回答日常对话问题。\n3. 保持对话的自然流畅。当用户在表达观点、纠正误解或进行讨论时，应自然地回应并保持话题连贯性，而不是试图转化为任务执行。"
-      : "IMPORTANT RULES:\n1. Never auto-save ordinary conversation content to long-term memory. Never write casual chat to memory.\n2. Do NOT proactively search knowledge base or memory. For routine conversations, reply with your own knowledge directly. Do NOT attempt to call any tools to answer casual questions.\n3. Maintain natural conversational flow. When the user is expressing opinions, correcting misunderstandings, or having a discussion, respond naturally and maintain topic coherence instead of trying to convert it into task execution.",
+      ? "根据对话上下文自主判断是否需要调用工具。保持对话的自然流畅，当用户在表达观点、纠正误解或进行讨论时，应自然地回应并保持话题连贯性。"
+      : "Autonomously decide whether to invoke tools based on conversation context. Maintain natural conversational flow — when the user is expressing opinions, correcting misunderstandings, or having a discussion, respond naturally and maintain topic coherence.",
   ];
   if (memoryContext) {
     parts.push(
@@ -273,6 +344,9 @@ export function buildLightChatPrompt(
       memoryContext +
       `\n\n${zh ? "参考以上记忆提供上下文相关的回复。" : "Use the above recalled memory to provide contextually relevant responses."}`
     );
+  }
+  if (knowledgeContext) {
+    parts.push(`\n## Relevant Knowledge\n${knowledgeContext}`);
   }
   appendConversationContext(parts, contextMeta, locale);
   return parts.join("\n");
@@ -289,6 +363,7 @@ export function buildSystemPrompt(
   taskContext: string,
   toolCatalog: string,
   contextMeta?: ContextMeta,
+  knowledgeContext?: string,
 ): string {
   const parts: string[] = [
     "You are 灵智Mindpal, the intelligent agent of an Agent OS / Agent Infrastructure platform.",
@@ -301,21 +376,22 @@ export function buildSystemPrompt(
     "You CANNOT execute tools directly. You can only suggest tool invocations using the required tool_call block format.",
     "NEVER claim that a tool has been executed or that data has been saved unless the system provides an execution receipt/result.",
     "When suggesting a tool, use conditional language (e.g., 'I can help you with this by running the tool below') and avoid 'already saved' wording.",
-    "IMPORTANT: Never auto-save ordinary conversation content to long-term memory (memory.write). BUT when user EXPLICITLY says 'remember/save/record' AND provides specific content (e.g., 'remember, my name is XX'), directly generate a memory.write tool_call WITHOUT asking for confirmation. Only ask for clarification when user's intent is unclear. Never write casual chat to memory.",
+    "When you identify information worth remembering (user preferences, important facts, explicit save requests), use memory.write to persist it. Do not ask for confirmation when the save intent is clear.",
   ];
   if (toolCatalog) {
     parts.push(
       "\n## Available Tools (enabled in current workspace)\n" +
       toolCatalog +
       "\n\n## Built-in Capabilities\n" +
-      "- nl2ui.generate: Generate visual UI pages/dashboards from natural language. ONLY use this when the user EXPLICITLY requests a visual interface, page, dashboard, or chart. For regular data queries, information lookups, approvals, or status checks, always respond with rich text (markdown tables, lists, formatted text). Do NOT call nl2ui.generate for routine conversations.\n" +
-      "\nWhen using a tool, include a tool_call block at the END of your reply:" +
-      '\n```tool_call\n[{"toolRef":"<toolRef>","inputDraft":{<key>:<value>}}]\n```'
+      "- nl2ui.generate: Use nl2ui.generate when a visual interface would enhance the user experience (data display, workflow visualization, form creation, etc.).\n" +
+      "\nTOOL CALL FORMAT: When you decide to use a tool, include a tool_call block in this markdown format at the END of your reply:" +
+      '\n```tool_call\n[{"toolRef":"<toolRef>","inputDraft":{<key>:<value>}}]\n```' +
+      "\nAlways use this markdown code block format for tool invocations."
     );
   } else {
     parts.push(
       "\n## Built-in Capabilities\n" +
-      "- nl2ui.generate: Generate visual UI pages/dashboards from natural language. ONLY use this when the user EXPLICITLY requests a visual interface, page, dashboard, or chart. For regular data queries, information lookups, approvals, or status checks, always respond with rich text (markdown tables, lists, formatted text). Do NOT call nl2ui.generate for routine conversations.\n" +
+      "- nl2ui.generate: Use nl2ui.generate when a visual interface would enhance the user experience (data display, workflow visualization, form creation, etc.).\n" +
       "\nNo database tools are currently enabled in this workspace. You can still help with information, analysis, and suggestions."
     );
   }
@@ -333,12 +409,15 @@ export function buildSystemPrompt(
       "\n\nUse the above task history to understand what the user has been working on recently."
     );
   }
+  if (knowledgeContext) {
+    parts.push(`\n## Relevant Knowledge\n${knowledgeContext}`);
+  }
   appendConversationContext(parts, contextMeta, locale);
   return parts.join("\n");
 }
 
 function conversationTtlMs() {
-  const rawDays = Number(process.env.ORCHESTRATOR_CONVERSATION_TTL_DAYS ?? "14");
+  const rawDays = resolveNumber("ORCHESTRATOR_CONVERSATION_TTL_DAYS").value;
   const days = clampInt(Number.isFinite(rawDays) ? Math.floor(rawDays) : 14, 1, 30);
   return days * 24 * 60 * 60 * 1000;
 }
@@ -518,6 +597,9 @@ export async function orchestrateChatTurn(params: {
   const msg = params.message.trim();
   if (!msg) throw Errors.badRequest("message 为空");
 
+  // 从 DB 加载编排器规则（带 60s 缓存，DB 不可用时自动降级到 FALLBACK）
+  const ruleCache = await loadOrchestratorRuleConfigs(params.pool, params.subject.tenantId);
+
   const conversationId = (params.conversationId ?? "").trim() || crypto.randomUUID();
 
   const spaceId = params.subject.spaceId ?? "";
@@ -575,7 +657,7 @@ export async function orchestrateChatTurn(params: {
 
   /* ── 记忆召回 + 工具发现阶段（架构-08§7 + 架构-11§4.1）── */
   const auditContext = params.traceId ? { traceId: params.traceId } : undefined;
-  const [memoryRecall, taskRecall, toolDiscovery] = await Promise.all([
+  const [memoryRecall, taskRecall, knowledgeRecall, toolDiscovery] = await Promise.all([
     spaceId
       ? recallRelevantMemory({ pool: params.pool, tenantId: params.subject.tenantId, spaceId, subjectId: params.subject.subjectId, message: userContent, auditContext })
       : Promise.resolve({ text: "" }),
@@ -583,11 +665,15 @@ export async function orchestrateChatTurn(params: {
       ? recallRecentTasks({ pool: params.pool, tenantId: params.subject.tenantId, spaceId, subjectId: params.subject.subjectId, auditContext })
       : Promise.resolve({ text: "" }),
     spaceId
+      ? recallRelevantKnowledge({ pool: params.pool, tenantId: params.subject.tenantId, spaceId, subjectId: params.subject.subjectId, message: userContent, auditContext })
+      : Promise.resolve({ text: "" }),
+    spaceId
       ? discoverEnabledTools({ pool: params.pool, tenantId: params.subject.tenantId, spaceId, locale })
       : Promise.resolve({ catalog: "", tools: [] as EnabledTool[] }),
   ]);
   const memoryContext = memoryRecall.text;
   const taskContext = taskRecall.text;
+  const knowledgeContext = knowledgeRecall.text;
 
   const modelMessages: { role: string; content: string | Array<{type: string; [k: string]: any}> }[] = [
     { role: "system", content: toolDiscovery.catalog
@@ -595,12 +681,12 @@ export async function orchestrateChatTurn(params: {
           totalTurnCount,
           windowMessageCount: clippedPrev.length,
           summary: newSummary || undefined,
-        })
+        }, knowledgeContext)
       : buildLightChatPrompt(locale, memoryContext, {
           totalTurnCount,
           windowMessageCount: clippedPrev.length,
           summary: newSummary || undefined,
-        }, toolDiscovery.tools)  // 传递实际的工具列表，让智能体动态感知能力
+        }, toolDiscovery.tools, ruleCache, knowledgeContext)  // 传递实际的工具列表，让智能体动态感知能力
     },
     ...clippedPrev
       .filter((m: any) => m && typeof m === "object")
@@ -719,7 +805,7 @@ export async function orchestrateChatTurn(params: {
     }
     
     // 场景 2：回复包含行动意图但未生成 tool_call → 二次 LLM 校验
-    else if (/执行|(帮我.{0,8}创建)|(帮我.{0,8}删除)|(帮我.{0,8}更新)|(帮我.{0,8}发送)|(帮我.{0,8}关闭)|(请.{0,8}创建)|(请.{0,8}删除)/i.test(parsedReplyText)) {
+    else if ((ruleCache.actionIntentRescue ?? FALLBACK_ACTION_INTENT_REGEX).test(parsedReplyText)) {
       params.app.log.warn({ 
         traceId: params.traceId, 
         replyTextPreview: parsedReplyText.slice(0, 100) 
@@ -757,9 +843,50 @@ export async function orchestrateChatTurn(params: {
     }
   }
 
-  /* ── 验证 tool_call：仅保留确实已启用的工具 ── */
+  /* ━━━ 输入补全：为缺少 entityName 的 entity 工具调用自动推断 ━━━ */
   const enabledToolRefSet = new Set(toolDiscovery.tools.map((t) => t.toolRef));
   const enabledToolMap = new Map(toolDiscovery.tools.map((t) => [t.toolRef, t]));
+  for (const tc of toolCalls) {
+    const tool = enabledToolMap.get(tc.toolRef);
+    if (!tool) continue;
+    if (tool.def.resourceType !== "entity") continue;
+
+    // 字段归一化：payload/data → patch
+    if (tool.def.action === "update") {
+      if (!tc.inputDraft.patch && (tc.inputDraft.payload || tc.inputDraft.data)) {
+        tc.inputDraft.patch = tc.inputDraft.payload ?? tc.inputDraft.data;
+        delete tc.inputDraft.payload;
+        delete tc.inputDraft.data;
+      }
+    }
+
+    // entityName 推断
+    if (!tc.inputDraft.entityName && tc.inputDraft.id) {
+      try {
+        const { lookupEntityNameByRecordId } = await import("../../../modules/data/dataRepo");
+        const inferred = await lookupEntityNameByRecordId({
+          pool: params.pool,
+          tenantId: params.subject.tenantId,
+          spaceId: params.subject.spaceId,
+          id: String(tc.inputDraft.id),
+        });
+        if (inferred) {
+          tc.inputDraft.entityName = inferred;
+          params.app.log.info(
+            { traceId: params.traceId, toolRef: tc.toolRef, id: tc.inputDraft.id, entityName: inferred },
+            "[orchestrator] 自动补全 entityName 成功",
+          );
+        }
+      } catch (e: any) {
+        params.app.log.warn(
+          { traceId: params.traceId, toolRef: tc.toolRef, id: tc.inputDraft.id, error: e?.message },
+          "[orchestrator] 自动补全 entityName 失败",
+        );
+      }
+    }
+  }
+
+  /* ── 验证 tool_call：仅保留确实已启用的工具 ── */
   const validatedSuggestions: Array<{
     toolRef: string;
     inputDraft: Record<string, unknown>;

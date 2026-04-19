@@ -13,7 +13,9 @@
  *   - bidirectional: 双向持久连接（WebSocket/长轮询）
  */
 import type { Pool } from "pg";
-import { getOrCreateBreaker, CircuitOpenError } from "@openslin/shared";
+import { getOrCreateBreaker, CircuitOpenError, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "connectorFramework" });
 
 /** 连接器熔断器默认参数 */
 const CONNECTOR_BREAKER_DEFAULTS = {
@@ -21,7 +23,7 @@ const CONNECTOR_BREAKER_DEFAULTS = {
   resetTimeoutMs: 60_000,
   halfOpenMaxAttempts: 2,
   onStateChange: (e: { name: string; from: string; to: string; consecutiveFailures: number }) => {
-    console.warn(`[connector:circuit-breaker] ${e.name}: ${e.from} → ${e.to} (failures=${e.consecutiveFailures})`);
+    _logger.warn("circuit-breaker state change", { name: e.name, from: e.from, to: e.to, failures: e.consecutiveFailures });
   },
 } as const;
 

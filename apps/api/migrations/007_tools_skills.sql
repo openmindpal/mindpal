@@ -1,4 +1,4 @@
--- 007: Tools & Skills (merged 029_tool_category_priority, 030_tool_extra_permissions, 031_tool_rollout_grace)
+-- 007: Tools & Skills (merged 029_tool_category_priority, 030_tool_extra_permissions, 031_tool_rollout_grace, 031_execution_timeout)
 -- Consolidated from: 006, 014, 017, 023, 024, 067, 080, 081, 082, 095, 120, 127, 132, 133, 134, 149a, 156(tool cols), 029, 030, 031
 
 -- ── tool_definitions ─────────────────────────────────────────
@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS tool_definitions (
   last_used_at TIMESTAMPTZ,
   -- Extra permissions (from 030)
   extra_permissions JSONB DEFAULT NULL,
+  -- Execution timeout (from 031_execution_timeout)
+  execution_timeout_ms INT DEFAULT 120000,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, name)
@@ -60,6 +62,8 @@ COMMENT ON COLUMN tool_definitions.last_used_at IS
   '最后使用时间：用于识别闲置工具';
 COMMENT ON COLUMN tool_definitions.extra_permissions IS
   '额外权限声明 [{resourceType, action}]，工具执行前动态检查';
+COMMENT ON COLUMN tool_definitions.execution_timeout_ms IS
+  '工具执行超时时间(毫秒)，默认120秒';
 
 -- ── tool_versions ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tool_versions (

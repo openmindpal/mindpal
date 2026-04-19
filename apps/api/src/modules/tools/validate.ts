@@ -32,7 +32,7 @@ export function validateToolInput(inputSchema: any, input: unknown) {
 
   const schemaEntries = Object.entries<any>(fields).sort(([a], [b]) => a.localeCompare(b));
   for (const [fieldName, def] of schemaEntries) {
-    const v = (input as any)[fieldName];
+    const v = (input as Record<string, unknown>)[fieldName];
     const expectedType = String(def?.type ?? "");
     if (def?.required && (v === undefined || v === null)) {
       throw Errors.inputSchemaInvalid(`缺少必填字段：input.${fieldName}${expectedType ? `（期望 ${expectedType}）` : ""}`);

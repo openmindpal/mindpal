@@ -157,7 +157,7 @@
 | 后端框架 | Fastify 5 + WebSocket |
 | 前端框架 | Next.js 16 + React 19 |
 | UI 库 | @xyflow/react (流程图) + framer-motion + react-markdown |
-| 数据库 | PostgreSQL 16（26 个迁移文件） |
+| 数据库 | PostgreSQL 16（28 个迁移文件） |
 | 缓存/消息 | Redis 7 + ioredis |
 | 任务队列 | BullMQ 5.58 |
 | 对象存储 | MinIO |
@@ -257,18 +257,18 @@ openslin/
 ├── apps/
 │   ├── api/            # Fastify API 服务（Agent OS 大脑）
 │   │   ├── kernel/     # 内核：Agent Loop/目标分解/规划/执行/调度/协作
-│   │   ├── routes/     # 30 个路由（含 /v1 版本化）
-│   │   ├── modules/    # 30 个领域模块（认证/治理/模型/知识/记忆等）
-│   │   ├── skills/     # 42 个内建技能（四层：kernel/core/optional/extension）
-│   │   ├── plugins/    # 16 个中间件（日志/追踪/版本化/通知/DLP/审计等）
-│   │   └── migrations/ # 26 个 SQL 迁移文件
+│   │   ├── routes/     # 43 个路由（含 /v1 版本化）
+│   │   ├── modules/    # 28 个领域模块（认证/治理/模型/知识/记忆等）
+│   │   ├── skills/     # 39 个内建技能（四层：kernel/core/optional/extension）
+│   │   ├── plugins/    # 15 个中间件（日志/追踪/版本化/通知/DLP/审计等）
+│   │   └── migrations/ # 28 个 SQL 迁移文件
 │   ├── web/            # Next.js 前端（React 19 + ReactFlow + 国际化）
 │   ├── worker/         # BullMQ 异步工作节点（知识/记忆/治理/通知）
 │   ├── device-agent/   # 桌面端 Agent（Playwright + GUI 自动化 + 视觉感知）
 │   ├── runner/         # Skill 沙箱运行时（Fastify + RPC 协议 + 子进程隔离）
 │   └── admin-cli/      # 运维 CLI 工具
 ├── packages/
-│   └── shared/         # 共享库（537 行索引，200+ 导出符号）
+│   └── shared/         # 共享库（587 行索引，250+ 导出符号）
 │                         多模态类型/ABAC策略引擎/Prompt注入检测/DLP/状态机/
 │                         GoalGraph/WorldState/熔断器/事件总线/协作协议/
 │                         Skill RPC协议/结构化日志/供应链安全/沙箱安全/文档解析

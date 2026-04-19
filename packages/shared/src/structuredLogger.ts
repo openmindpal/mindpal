@@ -73,6 +73,8 @@ export interface SamplingRule {
   rate: number;
   /** 是否仅对 info 及以下级别采样（error/fatal 始终输出） */
   infoOnly?: boolean;
+  /** 错误时强制全量记录：当 HTTP 状态码 >= 400 时忽略采样率，100% 输出 */
+  overrideOnError?: boolean;
 }
 
 /** 日志器配置 */
@@ -154,10 +156,10 @@ export function redactSensitiveFields(value: unknown, maxDepth = 8): unknown {
 
 /** 默认采样规则 */
 export const DEFAULT_SAMPLING_RULES: SamplingRule[] = [
-  // 健康检查和指标路由：0% 采样（不输出 info/debug）
-  { pathPrefix: "/healthz", rate: 0, infoOnly: true },
-  { pathPrefix: "/readyz", rate: 0, infoOnly: true },
-  { pathPrefix: "/metrics", rate: 0, infoOnly: true },
+  // 健康检查和指标路由：0% 采样（不输出 info/debug），错误时强制全量记录
+  { pathPrefix: "/healthz", rate: 0, infoOnly: true, overrideOnError: true },
+  { pathPrefix: "/readyz", rate: 0, infoOnly: true, overrideOnError: true },
+  { pathPrefix: "/metrics", rate: 0, infoOnly: true, overrideOnError: true },
   // 正常请求路由：10% 采样（info 级别仅输出 10%）
   { pathPrefix: "/", rate: 0.1, infoOnly: true },
 ];
@@ -167,15 +169,17 @@ export const DEFAULT_SAMPLING_RULES: SamplingRule[] = [
  *
  * 规则：
  * - error / fatal / warn：始终输出（100%）
+ * - 匹配规则启用 overrideOnError 且 statusCode >= 400：强制输出（100%）
  * - info / debug：按匹配的采样规则决定
  * - 无匹配规则：默认输出
  */
 export function shouldSample(params: {
   level: LogLevel;
   path?: string;
+  statusCode?: number;
   rules: SamplingRule[];
 }): boolean {
-  const { level, path, rules } = params;
+  const { level, path, statusCode, rules } = params;
 
   // error / fatal / warn 始终输出
   if (LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY.warn) return true;
@@ -195,6 +199,9 @@ export function shouldSample(params: {
 
   if (!matchedRule) return true;
   if (matchedRule.infoOnly && LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY.warn) return true;
+
+  // overrideOnError：HTTP 状态码 >= 400 时强制全量记录
+  if (matchedRule.overrideOnError && statusCode != null && statusCode >= 400) return true;
 
   // 按采样率决定
   return Math.random() < matchedRule.rate;
@@ -247,7 +254,7 @@ export class StructuredLogger {
         error: {
           message: errorOrExtra.message,
           stack: errorOrExtra.stack,
-          code: (errorOrExtra as any).code,
+          code: 'code' in errorOrExtra ? (errorOrExtra as Record<string, unknown>).code : undefined,
         },
       });
     } else {
@@ -261,7 +268,7 @@ export class StructuredLogger {
         error: {
           message: errorOrExtra.message,
           stack: errorOrExtra.stack,
-          code: (errorOrExtra as any).code,
+          code: 'code' in errorOrExtra ? (errorOrExtra as Record<string, unknown>).code : undefined,
         },
       });
     } else {
@@ -292,7 +299,8 @@ export class StructuredLogger {
 
     // 采样过滤
     const path = (extra?.path ?? this.config.context.path) as string | undefined;
-    if (!shouldSample({ level, path, rules: this.config.samplingRules })) return;
+    const statusCode = (extra?.statusCode ?? this.config.context.statusCode) as number | undefined;
+    if (!shouldSample({ level, path, statusCode, rules: this.config.samplingRules })) return;
 
     // 构建日志条目
     const entry: StructuredLogEntry = {

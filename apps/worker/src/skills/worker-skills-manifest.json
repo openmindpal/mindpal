@@ -1,0 +1,58 @@
+[
+  {
+    "key": "knowledge.rag",
+    "module": "./core/knowledge-rag",
+    "exportName": "knowledgeRagWorker",
+    "tier": "core",
+    "description": "Knowledge indexing, embedding, and ingestion"
+  },
+  {
+    "key": "channel.gateway",
+    "module": "./core/channel-gateway",
+    "exportName": "channelGatewayWorker",
+    "tier": "core",
+    "description": "Webhook and outbox delivery"
+  },
+  {
+    "key": "trigger.engine",
+    "module": "./core/trigger-engine",
+    "exportName": "triggerEngineWorker",
+    "tier": "core",
+    "description": "Trigger scheduling and execution"
+  },
+  {
+    "key": "notification.outbox",
+    "module": "./optional/notification-outbox",
+    "exportName": "notificationOutboxWorker",
+    "tier": "optional",
+    "description": "Email delivery via SMTP"
+  },
+  {
+    "key": "subscription.runner",
+    "module": "./optional/subscription-runner",
+    "exportName": "subscriptionRunnerWorker",
+    "tier": "optional",
+    "description": "Subscription scheduling"
+  },
+  {
+    "key": "media.pipeline",
+    "module": "./optional/media-pipeline",
+    "exportName": "mediaPipelineWorker",
+    "tier": "optional",
+    "description": "Media processing jobs"
+  },
+  {
+    "key": "device.runtime",
+    "module": "./optional/device-runtime",
+    "exportName": "deviceRuntimeWorker",
+    "tier": "optional",
+    "description": "Device execution resume"
+  },
+  {
+    "key": "ai.event.reasoning",
+    "module": "./optional/ai-event-reasoning-contrib",
+    "exportName": "aiEventReasoningWorker",
+    "tier": "optional",
+    "description": "AI-powered event reasoning"
+  }
+]

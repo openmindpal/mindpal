@@ -10,12 +10,16 @@ import type { Pool } from "pg";
 import { searchMemory, listRecentTaskStates, touchMemoryAccess } from "./memory/repo";
 import { computeMinhash, minhashOverlapScore } from "@openslin/shared";
 import { getKnowledgeContract } from "./contracts/knowledgeContract";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "agentContext" });
 import {
   getLatestReleasedToolVersion,
   listToolDefinitions,
   getToolVersionByRef,
   type ToolDefinition,
   type ToolVersion,
+  type ToolPolicyRule,
 } from "./tools/toolRepo";
 import { resolveEffectiveToolRef } from "./tools/resolve";
 import { isToolEnabled } from "./governance/toolGovernanceRepo";
@@ -40,11 +44,8 @@ const MEMORY_RECALL_MAX_CHARS = Math.max(500, Number(process.env.ORCHESTRATOR_ME
 const TASK_RECALL_MAX_CHARS = Math.max(500, Number(process.env.ORCHESTRATOR_TASK_RECALL_MAX_CHARS) || 1500);
 const TASK_RECALL_LIMIT = 8;
 const TOOLS_CATALOG_MAX_CHARS = Math.max(1000, Number(process.env.ORCHESTRATOR_TOOLS_CATALOG_MAX_CHARS) || 8000);
-const PINNED_TOOL_NAMES = [
-  "knowledge.search", "memory.read", "memory.write",
-  "nl2ui.generate",
-  "entity.create", "entity.update", "entity.delete",
-] as const;
+
+// 元数据驱动：pinned 工具完全由 DB tool_policy_rules 的 pinned 规则决定，不硬编码 fallback。
 
 const KNOWLEDGE_RECALL_LIMIT = 3;
 const KNOWLEDGE_RECALL_MAX_CHARS = 2000;
@@ -131,7 +132,7 @@ export async function recallRelevantMemory(params: {
     let totalChars = 0;
     const lines: string[] = [];
     for (const e of evidence) {
-      const line = `- [${e.type ?? "memory"}] ${e.title ? e.title + ": " : ""}${e.snippet}`;
+      const line = `- [记忆 #${e.id}] 类型: ${e.type ?? "memory"}${e.title ? ", 标题: " + e.title : ""}, 内容: ${e.snippet}`;
       if (totalChars + line.length > MEMORY_RECALL_MAX_CHARS) break;
       lines.push(line);
       totalChars += line.length;
@@ -154,7 +155,7 @@ export async function recallRelevantMemory(params: {
 
     return { text: lines.join("\n"), recallStats: { evidenceCount: evidence.length, searchMode } };
   } catch (err) {
-    console.warn("[recallRelevantMemory] failed:", err);
+    _logger.warn("recallRelevantMemory failed", { err: (err as Error)?.message });
     return { text: "" };
   }
 }
@@ -252,7 +253,7 @@ export async function recallProceduralStrategies(params: {
 
     return { text: lines.join("\n"), strategyCount: lines.length };
   } catch (err) {
-    console.warn("[recallProceduralStrategies] failed:", err);
+    _logger.warn("recallProceduralStrategies failed", { err: (err as Error)?.message });
     return { text: "", strategyCount: 0 };
   }
 }
@@ -306,7 +307,7 @@ export async function recallRecentTasks(params: {
 
     return { text: lines.join("\n"), recallStats: { taskCount: tasks.length } };
   } catch (err) {
-    console.warn("[recallRecentTasks] failed:", err);
+    _logger.warn("recallRecentTasks failed", { err: (err as Error)?.message });
     return { text: "" };
   }
 }
@@ -363,7 +364,7 @@ export async function recallRelevantKnowledge(params: {
 
     return { text: lines.join("\n"), recallStats: { hitCount: hits.length } };
   } catch (err) {
-    console.warn("[recallRelevantKnowledge] failed:", err);
+    _logger.warn("recallRelevantKnowledge failed", { err: (err as Error)?.message });
     return { text: "" };
   }
 }
@@ -383,10 +384,48 @@ function _toolDiscoveryCacheKey(tenantId: string, spaceId: string, locale: strin
   return `${tenantId}:${spaceId}:${locale}:${category ?? ""}:${query ?? ""}:${includeHiddenTools ? "all" : "planner"}`;
 }
 
-function isPlannerVisibleTool(def: ToolDefinition): boolean {
-  if (def.name.startsWith("device.")) return false;
-  const hiddenTags = new Set(["planner:hidden", "internal-only"]);
-  return !def.tags.some((tag) => hiddenTags.has(String(tag).toLowerCase()));
+// ── tool_policy_rules 缓存加载 ──
+let _policyCache: ToolPolicyRule[] | null = null;
+let _policyCacheAt = 0;
+const POLICY_CACHE_TTL_MS = 60_000;
+
+async function loadToolPolicyRules(pool: Pool, tenantId: string): Promise<ToolPolicyRule[]> {
+  if (_policyCache && Date.now() - _policyCacheAt < POLICY_CACHE_TTL_MS) {
+    return _policyCache;
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT rule_type, match_field, match_pattern, effect, enabled
+       FROM tool_policy_rules WHERE tenant_id = $1 AND enabled = true`,
+      [tenantId],
+    );
+    _policyCache = rows;
+    _policyCacheAt = Date.now();
+    return _policyCache;
+  } catch {
+    return _policyCache ?? [];
+  }
+}
+
+function isPlannerVisibleTool(
+  def: ToolDefinition,
+  hiddenRules: ToolPolicyRule[],
+): boolean {
+  for (const rule of hiddenRules) {
+    if (rule.rule_type !== "hidden") continue;
+    switch (rule.match_field) {
+      case "prefix":
+        if (def.name.startsWith(rule.match_pattern)) return false;
+        break;
+      case "tag":
+        if (def.tags.some(t => String(t).toLowerCase() === rule.match_pattern.toLowerCase())) return false;
+        break;
+      case "name":
+        if (def.name === rule.match_pattern) return false;
+        break;
+    }
+  }
+  return true;
 }
 
 /** 清除工具目录查询缓存（工具配置变更时可调用，TTL 过期后也会自动失效） */
@@ -428,8 +467,12 @@ export async function discoverEnabledTools(params: {
     const defs = await listToolDefinitions(params.pool, params.tenantId);
     if (!defs.length) return { catalog: "", tools: [] };
 
+    // 从 DB 加载 tool_policy_rules
+    const policyRules = await loadToolPolicyRules(params.pool, params.tenantId);
+    const hiddenRules = policyRules.filter(r => r.rule_type === "hidden");
+
     // P2: 按分类过滤
-    let filteredDefs = params.includeHiddenTools ? defs : defs.filter(isPlannerVisibleTool);
+    let filteredDefs = params.includeHiddenTools ? defs : defs.filter(d => isPlannerVisibleTool(d, hiddenRules));
     if (params.category) {
       filteredDefs = filteredDefs.filter(d => d.category === params.category);
     }
@@ -455,13 +498,21 @@ export async function discoverEnabledTools(params: {
       return a.name.localeCompare(b.name);
     });
 
+    // 从 DB 规则构建 pinned 顺序
+    const pinnedRules = policyRules
+      .filter(r => r.rule_type === "pinned")
+      .sort((a, b) => (a.effect.pinnedOrder ?? 99) - (b.effect.pinnedOrder ?? 99));
+    const pinnedNames = pinnedRules.map(r => r.match_pattern);
+    // 元数据驱动：pinned 顺序完全来自 DB tool_policy_rules 规则
+    const effectivePinnedNames = pinnedNames;
+
     const pinned: ToolDefinition[] = [];
-    for (const n of PINNED_TOOL_NAMES) {
-      const d = sortedDefs.find((x) => x.name === n);
+    for (const n of effectivePinnedNames) {
+      const d = sortedDefs.find(x => x.name === n);
       if (d) pinned.push(d);
     }
-    const pinnedNameSet = new Set<string>(PINNED_TOOL_NAMES as unknown as string[]);
-    const orderedDefs = [...pinned, ...sortedDefs.filter((d) => !pinnedNameSet.has(d.name))];
+    const pinnedNameSet = new Set(effectivePinnedNames);
+    const orderedDefs = [...pinned, ...sortedDefs.filter(d => !pinnedNameSet.has(d.name))];
 
     const toolResults = await Promise.all(orderedDefs.map(async (def): Promise<EnabledTool | null> => {
       try {
@@ -533,7 +584,7 @@ export async function discoverEnabledTools(params: {
 
     return result;
   } catch (err) {
-    console.warn("[discoverEnabledTools] failed:", err);
+    _logger.warn("discoverEnabledTools failed", { err: (err as Error)?.message });
     return { catalog: "", tools: [] };
   }
 }

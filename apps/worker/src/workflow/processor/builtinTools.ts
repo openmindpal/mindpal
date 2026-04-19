@@ -1,4 +1,7 @@
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:builtinTools" });
 import { memoryRead, memoryWrite } from "../../memory/processor";
 import { knowledgeSearch } from "../../knowledge/search";
 import { isPlainObject } from "./common";
@@ -55,7 +58,7 @@ const prefixHandlers: PrefixToolHandler[] = [];
 /** 注册精确名称的内置工具处理函数 */
 export function registerBuiltinToolHandler(name: string, handler: BuiltinToolHandler): void {
   if (exactHandlers.has(name)) {
-    console.warn(`[builtinTools] 覆盖已注册的内置工具处理器: ${name}`);
+    _logger.warn("overriding registered builtin tool handler", { name });
   }
   exactHandlers.set(name, handler);
 }
@@ -264,6 +267,6 @@ export async function executeBuiltinTool(params: BuiltinToolParams) {
   }
 
   // 3. 未注册的工具
-  console.error(`[builtinTools] 未注册的内置工具: ${params.name} (已注册: ${exactHandlers.size} 个精确 + ${prefixHandlers.length} 个前缀)`);
+  _logger.error("unregistered builtin tool", { name: params.name, exactCount: exactHandlers.size, prefixCount: prefixHandlers.length });
   throw new Error(`policy_violation:unsupported_tool:${params.name}`);
 }

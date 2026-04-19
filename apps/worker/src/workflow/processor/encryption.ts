@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { decryptSecretPayload, encryptSecretEnvelopeWithKeyVersion } from "../../secrets/envelope";
-import { isPlainObject } from "@openslin/shared";
+import { isPlainObject, resolveString } from "@openslin/shared";
 
 function mergeMetaInput(decrypted: any, metaInput: any) {
   if (!isPlainObject(decrypted) || !isPlainObject(metaInput)) return decrypted;
@@ -38,7 +38,7 @@ function pickCompensationFromOutput(scrubbedOutput: any) {
 export async function decryptStepInputIfNeeded(params: { pool: Pool; tenantId: string; masterKey?: string; step: any; metaInput: any }) {
   const masterKey =
     String(params.masterKey ?? "").trim() ||
-    String(process.env.API_MASTER_KEY ?? "").trim() ||
+    resolveString("API_MASTER_KEY").value ||
     (process.env.NODE_ENV === "production" ? "" : "dev-master-key-change-me");
   const encFormat = params.step?.input_enc_format as string | null;
   const encryptedPayload = params.step?.input_encrypted_payload as any;
@@ -92,7 +92,7 @@ export async function encryptStepOutputAndCompensation(params: {
 }) {
   const masterKey =
     String(params.masterKey ?? "").trim() ||
-    String(process.env.API_MASTER_KEY ?? "").trim() ||
+    resolveString("API_MASTER_KEY").value ||
     (process.env.NODE_ENV === "production" ? "" : "dev-master-key-change-me");
   let outputEncFormat: string | null = null;
   let outputKeyVersion: number | null = null;

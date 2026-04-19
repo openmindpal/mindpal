@@ -1,3 +1,7 @@
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:intentVocabLoader" });
+
 /**
  * Intent Vocabulary Loader — 极薄词表加载 + 热更新 + 租户级别覆盖
  *
@@ -104,7 +108,7 @@ function loadJsonVocab(filePath: string): IntentVocabJson | null {
     if (typeof parsed.version !== "number") return null;
     return parsed;
   } catch (err) {
-    console.warn(`[intentVocabLoader] Failed to load vocab from ${filePath}:`, (err as Error).message);
+    _logger.warn("failed to load vocab", { filePath, error: (err as Error).message });
     return null;
   }
 }
@@ -138,7 +142,7 @@ function reloadGlobalVocab(): void {
   if (json) {
     _currentSnapshot = mergeVocab(DEFAULT_SNAPSHOT, json, "json");
     if (process.env.NODE_ENV !== "production") {
-      console.log(`[intentVocabLoader] Loaded vocab v${_currentSnapshot.version} from ${vocabPath}`);
+      _logger.info("loaded vocab", { version: _currentSnapshot.version, path: vocabPath });
     }
   }
 }

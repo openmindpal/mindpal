@@ -12,6 +12,9 @@
  *   任意 API 节点接收到请求后调用 runAgentLoop(resumeLoopId, resumeState)
  */
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:loopResume" });
 
 /* ================================================================== */
 /*  Types                                                               */
@@ -192,11 +195,11 @@ export async function processLoopResume(
     }
     const status = String(cpRes.rows[0].status);
     if (status === "succeeded" || status === "failed" || status === "expired") {
-      console.log(`[loopResume] checkpoint ${payload.loopId} already in terminal state: ${status}`);
+      _logger.info("checkpoint already in terminal state", { loopId: payload.loopId, status });
       return { ok: true, loopId: payload.loopId, runId: payload.runId, durationMs: Date.now() - t0 };
     }
   } catch (e: any) {
-    console.warn(`[loopResume] checkpoint status check failed: ${e?.message}`);
+    _logger.warn("checkpoint status check failed", { err: e?.message });
     // 继续尝试恢复
   }
 
@@ -225,7 +228,7 @@ export async function processLoopResume(
       if (resp.ok) {
         recordNodeSuccess(apiUrl, responseMs);
         const body = await resp.json().catch(() => ({})) as any;
-        console.log(`[loopResume] resume dispatched: loopId=${payload.loopId}, apiNode=${apiUrl}, responseMs=${responseMs}`);
+        _logger.info("resume dispatched", { loopId: payload.loopId, apiNode: apiUrl, responseMs });
         return {
           ok: true,
           loopId: payload.loopId,
@@ -239,14 +242,14 @@ export async function processLoopResume(
       const errBody = await resp.text().catch(() => "");
       lastError = `http_${resp.status}: ${errBody.slice(0, 200)}`;
       recordNodeFailure(apiUrl);
-      console.warn(`[loopResume] attempt ${attempt + 1}/${MAX_RETRIES + 1} failed: ${lastError}`);
+      _logger.warn("resume attempt failed", { attempt: attempt + 1, maxAttempts: MAX_RETRIES + 1, error: lastError });
 
       // 4xx 不重试（payload 问题）
       if (resp.status >= 400 && resp.status < 500) break;
     } catch (err: any) {
       lastError = err?.message ?? "unknown_error";
       recordNodeFailure(apiUrl);
-      console.warn(`[loopResume] attempt ${attempt + 1}/${MAX_RETRIES + 1} error: ${lastError}`);
+      _logger.warn("resume attempt error", { attempt: attempt + 1, maxAttempts: MAX_RETRIES + 1, error: lastError });
     }
 
     // 指数退避

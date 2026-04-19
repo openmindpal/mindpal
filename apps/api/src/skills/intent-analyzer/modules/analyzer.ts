@@ -8,6 +8,9 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:intentAnalyzer" });
 import { invokeModelChat, type LlmSubject } from "../../../lib/llm";
 import {
   type IntentType,
@@ -38,6 +41,109 @@ function resolveLlmConfig() {
 
 // ─── Rule-based Intent Detection ───────────────────────────────────────
 
+// ── DB 意图规则结构 ──
+interface IntentRule {
+  pattern: string;
+  flags?: string;
+  intent: string;
+  confidence: number;
+  tag?: string;
+  prevIntent?: string;
+  historyPattern?: string;
+}
+
+interface IntentRulesPayload {
+  context_rules: IntentRule[];
+  standalone_rules: IntentRule[];
+  keywords?: Record<string, string[]>;
+}
+
+// ── 意图规则缓存（从 DB 加载，TTL 60s） ──
+let _intentRuleCache: IntentRulesPayload | null = null;
+let _intentRuleCacheAt = 0;
+const INTENT_RULE_CACHE_TTL_MS = 60_000;
+
+async function loadIntentPatterns(pool: Pool, tenantId: string): Promise<IntentRulesPayload | null> {
+  if (_intentRuleCache && Date.now() - _intentRuleCacheAt < INTENT_RULE_CACHE_TTL_MS) {
+    return _intentRuleCache;
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT rules FROM orchestrator_rule_configs WHERE tenant_id = $1 AND rule_group = 'intent_pattern'`,
+      [tenantId],
+    );
+    if (rows.length > 0 && rows[0].rules) {
+      _intentRuleCache = rows[0].rules as IntentRulesPayload;
+      _intentRuleCacheAt = Date.now();
+      return _intentRuleCache;
+    }
+    return null;
+  } catch {
+    return _intentRuleCache ?? null;
+  }
+}
+
+/** 安全编译正则：非法 pattern 返回 null 并打日志，不抛异常 */
+function compileSafeRegex(pattern: string | undefined, flags?: string): RegExp | null {
+  if (!pattern) return null;
+  try {
+    return new RegExp(pattern, flags ?? "i");
+  } catch (err) {
+    console.warn("[IntentAnalyzer] regex compile failed, skipping rule", {
+      pattern,
+      flags,
+      error: (err as Error)?.message,
+    });
+    return null;
+  }
+}
+
+/** 使用动态规则匹配意图（standalone_rules 路径） */
+function matchStandaloneRules(trimmed: string, rules: IntentRule[]): RuleBasedResult | null {
+  for (const rule of rules) {
+    const regex = compileSafeRegex(rule.pattern, rule.flags);
+    if (!regex) continue;
+    if (regex.test(trimmed)) {
+      return {
+        intent: rule.intent as IntentType,
+        confidence: rule.confidence,
+        matchedKeywords: [rule.tag ?? rule.intent],
+      };
+    }
+  }
+  return null;
+}
+
+/** 使用动态规则匹配上下文意图（context_rules 路径） */
+function matchContextRules(
+  trimmed: string,
+  rules: IntentRule[],
+  lastRuleIntent: string,
+  historyText: string,
+): RuleBasedResult | null {
+  for (const rule of rules) {
+    // prevIntent 条件
+    if (rule.prevIntent && lastRuleIntent !== rule.prevIntent) continue;
+    // historyPattern 条件
+    if (rule.historyPattern) {
+      const hp = compileSafeRegex(rule.historyPattern, "i");
+      if (!hp || !hp.test(historyText)) continue;
+    }
+    const regex = compileSafeRegex(rule.pattern, rule.flags);
+    if (!regex) continue;
+    if (regex.test(trimmed)) {
+      return {
+        intent: rule.intent as IntentType,
+        confidence: rule.confidence,
+        matchedKeywords: [rule.tag ?? rule.intent],
+      };
+    }
+  }
+  return null;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+
 interface RuleBasedResult {
   intent: IntentType;
   confidence: number;
@@ -46,7 +152,8 @@ interface RuleBasedResult {
 
 function detectIntentFromContext(
   message: string,
-  context?: IntentAnalyzeRequest["context"]
+  context?: IntentAnalyzeRequest["context"],
+  dbContextRules?: IntentRule[],
 ): RuleBasedResult | null {
   const trimmed = message.trim();
   const history = Array.isArray(context?.conversationHistory) ? context.conversationHistory : [];
@@ -56,6 +163,13 @@ function detectIntentFromContext(
   const lastAssistantTurn = [...history].reverse().find((item) => item.role === "assistant")?.content ?? "";
   const lastRuleIntent = lastUserTurn ? detectIntentByRules(lastUserTurn).intent : "chat";
   const historyText = `${lastUserTurn}\n${lastAssistantTurn}`;
+
+  // 优先使用 DB 动态规则
+  if (dbContextRules && dbContextRules.length > 0) {
+    return matchContextRules(trimmed, dbContextRules, lastRuleIntent, historyText);
+  }
+
+  // Fallback：硬编码上下文规则
 
   if (/^(继续|接着来|再多看几条|再看看|继续查|再查一些)$/i.test(trimmed) && lastRuleIntent === "query") {
     return { intent: "query", confidence: 0.68, matchedKeywords: ["context_query_follow_up"] };
@@ -79,52 +193,61 @@ function detectIntentFromContext(
   return null;
 }
 
-export function detectIntentByRules(message: string): RuleBasedResult {
+export function detectIntentByRules(message: string, dbStandaloneRules?: IntentRule[]): RuleBasedResult {
   const trimmed = message.trim();
   if (!trimmed) {
     return { intent: "chat", confidence: 0, matchedKeywords: [] };
   }
-  if (/^[.…!！?？.]+$/.test(trimmed)) {
-    return { intent: "chat", confidence: 0.05, matchedKeywords: [] };
-  }
-  if (/^(你好|您好|hello|hi|hey)$/i.test(trimmed)) {
-    return { intent: "chat", confidence: 0.85, matchedKeywords: [trimmed] };
-  }
-  if (/^(谢谢|感谢).*(清楚|明白|解释|帮助|啦)?$/i.test(trimmed) || /^(好的|好吧|明白了|我知道了|收到|可以吗|行吗)([，,。.!！]|$)/i.test(trimmed)) {
-    return { intent: "chat", confidence: 0.85, matchedKeywords: [trimmed] };
-  }
-  if (/什么是|区别|怎么|怎样|为什么|缺点|优点|详细|例子|展开讲讲|还有其他方法|跟上一个方案比|天气怎么样|架构是怎样|我想了解|解释一下|你觉得.+更好|推荐.+框架/i.test(trimmed)) {
-    return { intent: "chat", confidence: 0.72, matchedKeywords: ["chat_qa_pattern"] };
-  }
-  if (/协作|多智能体|多角色|多个 agent|多个智能体|一起调查|一起评审|并行处理|团队讨论|组织一场.+讨论|发起.+讨论/i.test(trimmed)) {
-    return { intent: "collab", confidence: 0.78, matchedKeywords: ["collab_pattern"] };
-  }
-  if (/查询并.*(删除|创建|审批|通知)|删除然后创建|执行审批最后发通知|把.+改为.+|改成发邮件|约一下|安排一下|排查一下|弄一下吧|换个思路|不要继续了/i.test(trimmed)) {
-    return { intent: "task", confidence: 0.76, matchedKeywords: ["task_explicit_pattern"] };
-  }
-  if (/^有个东西需要你帮忙$/i.test(trimmed)) {
-    return { intent: "task", confidence: 0.46, matchedKeywords: ["task_vague_request"] };
-  }
-  if (/^帮我看看数据$/i.test(trimmed)) {
-    return { intent: "query", confidence: 0.45, matchedKeywords: ["看看数据"] };
-  }
-  if (/弄一下报表|做一下报表|生成报表|报表界面/i.test(trimmed)) {
-    return { intent: "ui", confidence: 0.66, matchedKeywords: ["ui_report_pattern"] };
-  }
-  if (/上个月的报表|查一下.+报表|按时间排序|上个月的数据|这个月的数据|搞定了没有|把.+联系方式给我|查.+联系方式|结果有问题/i.test(trimmed)) {
-    return { intent: "query", confidence: 0.72, matchedKeywords: ["query_explicit_pattern"] };
-  }
-  if (/生成.+(面板|页面|界面)|显示.+(看板|dashboard|图表|面板)|show me.+(dashboard|page|panel)|左边.+右边.+|上面.+下面.+|三栏布局|仪表盘|dashboard/i.test(trimmed)) {
-    return { intent: "ui", confidence: 0.82, matchedKeywords: ["ui_explicit_pattern"] };
-  }
-  if (/界面|页面|面板|布局|表单|仪表盘|dashboard|图表|看板|左边.*右边|上面.*下面/i.test(trimmed)) {
-    return { intent: "ui", confidence: 0.76, matchedKeywords: ["ui_pattern"] };
-  }
-  if (/查询|查找|搜索|列出|统计|汇总|找下|找找|看看|看下|拉一下|找出来|翻翻|有哪些|还在不在|历史订单|最近\d+条|数据不对劲|给我拉|帮我看下|报表|联系方式|再多看几条/i.test(trimmed)) {
-    return { intent: "query", confidence: 0.72, matchedKeywords: ["query_pattern"] };
-  }
-  if (/创建|新建|更新|修改|删除|审批|发送|发一封|导入|安排|处理|转给|设置|发布|标记|撤回|重新来过|停止|取消|暂停|回滚|执行|通知|跳过审批|继续这个任务|排查|约一下|弄一下|改成|换个思路/i.test(trimmed)) {
-    return { intent: "task", confidence: 0.74, matchedKeywords: ["task_pattern"] };
+
+  // 优先使用 DB 动态规则
+  if (dbStandaloneRules && dbStandaloneRules.length > 0) {
+    const dbResult = matchStandaloneRules(trimmed, dbStandaloneRules);
+    if (dbResult) return dbResult;
+    // DB 规则未命中，继续走关键词打分逻辑
+  } else {
+    // Fallback：无 DB 规则时使用硬编码正则（原始逻辑）
+    if (/^[.…!！?？.]+$/.test(trimmed)) {
+      return { intent: "chat", confidence: 0.05, matchedKeywords: [] };
+    }
+    if (/^(你好|您好|hello|hi|hey)$/i.test(trimmed)) {
+      return { intent: "chat", confidence: 0.85, matchedKeywords: [trimmed] };
+    }
+    if (/^(谢谢|感谢).*(清楚|明白|解释|帮助|啦)?$/i.test(trimmed) || /^(好的|好吧|明白了|我知道了|收到|可以吗|行吗)([，,。.!！]|$)/i.test(trimmed)) {
+      return { intent: "chat", confidence: 0.85, matchedKeywords: [trimmed] };
+    }
+    if (/什么是|区别|怎么|怎样|为什么|缺点|优点|详细|例子|展开讲讲|还有其他方法|跟上一个方案比|天气怎么样|架构是怎样|我想了解|解释一下|你觉得.+更好|推荐.+框架/i.test(trimmed)) {
+      return { intent: "chat", confidence: 0.72, matchedKeywords: ["chat_qa_pattern"] };
+    }
+    if (/协作|多智能体|多角色|多个 agent|多个智能体|一起调查|一起评审|并行处理|团队讨论|组织一场.+讨论|发起.+讨论/i.test(trimmed)) {
+      return { intent: "collab", confidence: 0.78, matchedKeywords: ["collab_pattern"] };
+    }
+    if (/查询并.*(删除|创建|审批|通知)|删除然后创建|执行审批最后发通知|把.+改为.+|改成发邮件|约一下|安排一下|排查一下|弄一下吧|换个思路|不要继续了/i.test(trimmed)) {
+      return { intent: "task", confidence: 0.76, matchedKeywords: ["task_explicit_pattern"] };
+    }
+    if (/^有个东西需要你帮忙$/i.test(trimmed)) {
+      return { intent: "task", confidence: 0.46, matchedKeywords: ["task_vague_request"] };
+    }
+    if (/^帮我看看数据$/i.test(trimmed)) {
+      return { intent: "query", confidence: 0.45, matchedKeywords: ["看看数据"] };
+    }
+    if (/弄一下报表|做一下报表|生成报表|报表界面/i.test(trimmed)) {
+      return { intent: "ui", confidence: 0.66, matchedKeywords: ["ui_report_pattern"] };
+    }
+    if (/上个月的报表|查一下.+报表|按时间排序|上个月的数据|这个月的数据|搞定了没有|把.+联系方式给我|查.+联系方式|结果有问题/i.test(trimmed)) {
+      return { intent: "query", confidence: 0.72, matchedKeywords: ["query_explicit_pattern"] };
+    }
+    if (/生成.+(面板|页面|界面)|显示.+(看板|dashboard|图表|面板)|show me.+(dashboard|page|panel)|左边.+右边.+|上面.+下面.+|三栏布局|仪表盘|dashboard/i.test(trimmed)) {
+      return { intent: "ui", confidence: 0.82, matchedKeywords: ["ui_explicit_pattern"] };
+    }
+    if (/界面|页面|面板|布局|表单|仪表盘|dashboard|图表|看板|左边.*右边|上面.*下面/i.test(trimmed)) {
+      return { intent: "ui", confidence: 0.76, matchedKeywords: ["ui_pattern"] };
+    }
+    if (/查询|查找|搜索|列出|统计|汇总|找下|找找|看看|看下|拉一下|找出来|翻翻|有哪些|还在不在|历史订单|最近\d+条|数据不对劲|给我拉|帮我看下|报表|联系方式|再多看几条/i.test(trimmed)) {
+      return { intent: "query", confidence: 0.72, matchedKeywords: ["query_pattern"] };
+    }
+    if (/创建|新建|更新|修改|删除|审批|发送|发一封|导入|安排|处理|转给|设置|发布|标记|撤回|重新来过|停止|取消|暂停|回滚|执行|通知|跳过审批|继续这个任务|排查|约一下|弄一下|改成|换个思路/i.test(trimmed)) {
+      return { intent: "task", confidence: 0.74, matchedKeywords: ["task_pattern"] };
+    }
   }
 
   const lowerMsg = message.toLowerCase();
@@ -267,7 +390,7 @@ ${historyText || "(无)"}
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.warn(`[intent-analyzer] LLM API error: ${response.status}`);
+      _logger.warn("LLM API error", { status: response.status });
       return null;
     }
 
@@ -283,7 +406,7 @@ ${historyText || "(无)"}
     
     // 验证基本结构
     if (!parsed.intent || !INTENT_KEYWORDS[parsed.intent as IntentType]) {
-      console.warn("[intent-analyzer] Invalid intent from LLM:", parsed.intent);
+      _logger.warn("invalid intent from LLM", { intent: parsed.intent });
       return null;
     }
 
@@ -294,7 +417,7 @@ ${historyText || "(无)"}
       modelUsed: llmCfg.model,
     };
   } catch (err: any) {
-    console.warn("[intent-analyzer] LLM detection failed:", err?.message);
+    _logger.warn("LLM detection failed", { error: err?.message });
     return null;
   }
 }
@@ -378,7 +501,7 @@ ${historyText || "(无)"}
 
     const parsed = JSON.parse(jsonMatch[0]);
     if (!parsed.intent || !INTENT_KEYWORDS[parsed.intent as IntentType]) {
-      console.warn("[intent-analyzer] Invalid intent from model-gateway LLM:", parsed.intent);
+      _logger.warn("invalid intent from model-gateway LLM", { intent: parsed.intent });
       return null;
     }
 
@@ -389,7 +512,7 @@ ${historyText || "(无)"}
       modelUsed: typeof result?.modelRef === "string" ? result.modelRef : params.defaultModelRef,
     };
   } catch (err: any) {
-    console.warn("[intent-analyzer] model-gateway detection failed:", err?.message);
+    _logger.warn("model-gateway detection failed", { error: err?.message });
     return null;
   }
 }
@@ -483,14 +606,18 @@ export async function analyzeIntent(
   const startTime = Date.now();
   const { message, context } = request;
 
+  // 从 DB 加载意图规则（带 60s 缓存，DB 不可用时降级到硬编码 fallback）
+  const tenantId = String(context?.tenantId ?? "tenant_dev").trim() || "tenant_dev";
+  const intentRules = await loadIntentPatterns(pool, tenantId);
+
   // Step 1: 规则快速匹配
-  const ruleResult = detectIntentByRules(message);
+  const ruleResult = detectIntentByRules(message, intentRules?.standalone_rules);
   
   let intent: IntentType = ruleResult.intent;
   let confidence: number = ruleResult.confidence;
   let reasoning: string = `规则匹配: ${ruleResult.matchedKeywords.join(", ")}`;
 
-  const contextResult = detectIntentFromContext(message, context);
+  const contextResult = detectIntentFromContext(message, context, intentRules?.context_rules);
   if (contextResult && contextResult.confidence >= confidence) {
     intent = contextResult.intent;
     confidence = contextResult.confidence;

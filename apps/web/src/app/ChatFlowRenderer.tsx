@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import Image from "next/image";
 import Link from "next/link";
 import { t } from "@/lib/i18n";
@@ -71,32 +72,48 @@ export default function ChatFlowRenderer(props: ChatFlowRendererProps) {
     return null;
   }, [flow]);
 
-  return (
-    <div className={styles.chatFlow} ref={scrollRef}>
-      {flow.map((it) => (
-        <MemoizedFlowBubble
-          key={it.id}
-          it={it}
-          locale={locale}
-          busy={busy}
-          isStreaming={busy && it.id === lastAssistantId}
-          ts={itemTimestamps[it.id]}
-          toolExecStates={toolExecStates}
-          directiveNav={directiveNav}
-          savedPages={savedPages}
-          savingPageId={savingPageId}
-          send={send}
-          executeToolInline={executeToolInline}
-          openDirective={openDirective}
-          openInWorkspace={openInWorkspace}
-          saveAsPage={saveAsPage}
-          setMaximizedNl2ui={setMaximizedNl2ui}
-          onApprovalDecision={onApprovalDecision}
-          onImageClick={setLightboxSrc}
-          registerTimestamp={registerTimestamp}
-        />
-      ))}
+  /* ── Virtual scrolling (enabled when flow exceeds threshold) ── */
+  const VIRTUALIZATION_THRESHOLD = 100;
+  const useVirtualization = flow.length > VIRTUALIZATION_THRESHOLD;
 
+  const virtualizer = useVirtualizer({
+    count: flow.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 120,
+    overscan: 5,
+    enabled: useVirtualization,
+  });
+
+  /* ── Shared bubble renderer ── */
+  const renderBubble = useCallback((it: ChatFlowItem, index: number) => (
+    <MemoizedFlowBubble
+      key={it.id}
+      it={it}
+      locale={locale}
+      busy={busy}
+      isStreaming={busy && it.id === lastAssistantId}
+      ts={itemTimestamps[it.id]}
+      toolExecStates={toolExecStates}
+      directiveNav={directiveNav}
+      savedPages={savedPages}
+      savingPageId={savingPageId}
+      send={send}
+      executeToolInline={executeToolInline}
+      openDirective={openDirective}
+      openInWorkspace={openInWorkspace}
+      saveAsPage={saveAsPage}
+      setMaximizedNl2ui={setMaximizedNl2ui}
+      onApprovalDecision={onApprovalDecision}
+      onImageClick={setLightboxSrc}
+      registerTimestamp={registerTimestamp}
+    />
+  ), [locale, busy, lastAssistantId, itemTimestamps, toolExecStates, directiveNav,
+      savedPages, savingPageId, send, executeToolInline, openDirective,
+      openInWorkspace, saveAsPage, setMaximizedNl2ui, onApprovalDecision, registerTimestamp]);
+
+  /* ── Tail overlay (loading indicators) ── */
+  const tailOverlay = (
+    <>
       {/* Lightbox overlay */}
       {lightboxSrc && (
         <div className={styles.lightbox} onClick={() => setLightboxSrc(null)}>
@@ -126,6 +143,42 @@ export default function ChatFlowRenderer(props: ChatFlowRendererProps) {
         </div>
       )}
       {busy && !nl2uiLoading && <div className={styles.typing}><span /><span /><span /></div>}
+    </>
+  );
+
+  /* ── Non-virtualized (original) rendering ── */
+  if (!useVirtualization) {
+    return (
+      <div className={styles.chatFlow} ref={scrollRef}>
+        {flow.map((it, i) => renderBubble(it, i))}
+        {tailOverlay}
+      </div>
+    );
+  }
+
+  /* ── Virtualized rendering ── */
+  return (
+    <div className={styles.chatFlowVirtual} ref={scrollRef}>
+      <div
+        className={styles.virtualListContainer}
+        style={{ height: virtualizer.getTotalSize() }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const it = flow[virtualItem.index];
+          return (
+            <div
+              key={it.id ?? virtualItem.index}
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              className={styles.virtualListItem}
+              style={{ transform: `translateY(${virtualItem.start}px)` }}
+            >
+              {renderBubble(it, virtualItem.index)}
+            </div>
+          );
+        })}
+      </div>
+      {tailOverlay}
     </div>
   );
 }
@@ -208,7 +261,15 @@ const MemoizedFlowBubble = memo(function FlowBubble({
         <div className={styles.bubbleText}>
           {isUser
             ? it.text
-            : <><FlowMarkdown text={it.text} locale={locale} onImageClick={onImageClick} />{isStreaming && <span className={styles.streamCursor}>▍</span>}</>}
+            : <>
+                {isStreaming && !it.text ? (
+                  <span className={styles.phaseLabel}>
+                    {t(locale, `chat.phase.${it.phase || "started"}`) || t(locale, "chat.thinking")}…
+                  </span>
+                ) : (
+                  <><FlowMarkdown text={it.text} locale={locale} onImageClick={onImageClick} />{isStreaming && <span className={styles.streamCursor}>▍</span>}</>
+                )}
+              </>}
           {it.attachments && it.attachments.length > 0 && (
             <div className={styles.bubbleAttachments}>
               {it.attachments.map((att) => {

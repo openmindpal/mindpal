@@ -1,3 +1,7 @@
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:crossDeviceBus" });
+
 /**
  * P2: Cross-Device Bus — 跨设备实时通信总线核心
  *
@@ -183,7 +187,7 @@ export async function sendD2DMessage(params: {
     await persistMessage(pool, envelope);
   } catch (dbErr: any) {
     // DB 写入失败，整个消息发送失败
-    console.error(`[crossDeviceBus] DB persistence failed: ${dbErr?.message}`);
+    _logger.error("DB persistence failed", { error: dbErr?.message });
     throw new Error(`message_persistence_failed: ${dbErr?.message}`);
   }
 
@@ -218,10 +222,9 @@ export async function sendD2DMessage(params: {
   } catch (redisErr: any) {
     // P1-1 FIX: Redis 推送失败时记录警告，但不影响已持久化的消息
     // 离线设备可通过 pending list 拉取，在线设备会在下次心跳时收到
-    console.warn(
-      `[crossDeviceBus] Redis push failed (message persisted): ${redisErr?.message}`, 
-      { messageId: envelope.messageId }
-    );
+    _logger.warn("Redis push failed (message persisted)", { 
+      messageId: envelope.messageId, error: redisErr?.message 
+    });
     // 记录审计事件
     try {
       await pool.query(
@@ -641,9 +644,7 @@ export async function retryPendingMessages(params: {
     } catch (retryErr: any) {
       // P1-1 FIX: 重试失败时记录错误，超过最大重试次数则标记为failed
       failedCount++;
-      console.warn(
-        `[crossDeviceBus] Retry failed for message ${env.messageId}: ${retryErr?.message}`
-      );
+      _logger.warn("retry failed for message", { messageId: env.messageId, error: retryErr?.message });
       
       if (env.retryCount >= env.maxRetries) {
         // 超过最大重试次数，标记为failed
@@ -673,9 +674,7 @@ export async function retryPendingMessages(params: {
   }
   
   if (failedCount > 0) {
-    console.warn(
-      `[crossDeviceBus] Retry summary: ${retried} succeeded, ${failedCount} failed`
-    );
+    _logger.warn("retry summary", { succeeded: retried, failed: failedCount });
   }
 
   return retried;

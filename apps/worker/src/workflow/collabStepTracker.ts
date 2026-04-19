@@ -6,6 +6,9 @@
  * 属于 cross-cutting concern，非 collab run 时自动跳过。
  */
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:collabStepTracker" });
 import { appendCollabEventOnce } from "../lib/collabEvents";
 import { applyWorkerCollabState, mapRunStatusToCollabPhase } from "./collabStateSync";
 
@@ -149,7 +152,7 @@ export async function afterRunStatusSync(pool: Pool, data: { runId: string }, co
         sourceRole: "system",
         payload: { runId: String(data.runId ?? ""), status: st, terminal: true },
       }).catch((e: any) => {
-        console.warn("[collabStepTracker] terminal collab state sync failed", {
+        _logger.warn("terminal collab state sync failed", {
           runId: String(data.runId ?? ""),
           collabRunId,
           status: st,

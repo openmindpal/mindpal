@@ -44,6 +44,7 @@ export function createRouteTestApp(params: {
     observeAgentDecision: () => undefined,
     observeParallelToolCalls: () => undefined,
     observePlanQualityScore: () => undefined,
+    incIntentRuleMatch: () => undefined,
   });
   if (params.decorate) params.decorate(app);
   app.addHook("onRequest", async (req: any) => {

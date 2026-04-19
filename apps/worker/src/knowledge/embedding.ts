@@ -1,27 +1,10 @@
-import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, computeMinhash } from "@openslin/shared";
+import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, computeMinhash, StructuredLogger, sha256Hex, stableStringify } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:knowledge:embedding" });
 import { createVectorStore, resolveVectorStoreConfigFromEnv } from "./vectorStore";
 import { createVectorStoreChainFromEnv } from "./vectorStoreProvider";
 import type { VectorStoreEmbeddingV2 } from "@openslin/shared";
-
-function sha256Hex(text: string) {
-  return crypto.createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-function stableStringifyValue(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stableStringifyValue);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stableStringifyValue(v[k]);
-  return out;
-}
-
-function stableStringify(v: any): string {
-  return JSON.stringify(stableStringifyValue(v));
-}
 
 function computeEventHash(params: { prevHash: string | null; normalized: any }) {
   const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
@@ -202,11 +185,11 @@ async function fetchEmbeddingBatch(
       // 429/5xx 可重试
       if ((statusCode === 429 || statusCode >= 500) && attempt < cfg.maxRetries) {
         const delayMs = Math.min(10000, 1000 * Math.pow(2, attempt));
-        console.warn(`[knowledge:embedding] API ${statusCode}，${delayMs}ms 后重试 (${attempt + 1}/${cfg.maxRetries})`);
+        _logger.warn("API retryable error", { statusCode, delayMs, attempt: attempt + 1, maxRetries: cfg.maxRetries });
         await new Promise(r => setTimeout(r, delayMs));
         return fetchEmbeddingBatch(cfg, batch, attempt + 1);
       }
-      console.error(`[knowledge:embedding] 外部 Embedding API 返回 ${statusCode}: ${errBody.slice(0, 500)}`);
+      _logger.error("external embedding API error", { statusCode, body: errBody.slice(0, 500) });
       throw new Error(`embedding_api_http_${statusCode}`);
     }
     const json = (await res.json()) as any;
@@ -217,11 +200,11 @@ async function fetchEmbeddingBatch(
     if (e?.name === "AbortError") {
       if (attempt < cfg.maxRetries) {
         const delayMs = Math.min(10000, 1000 * Math.pow(2, attempt));
-        console.warn(`[knowledge:embedding] API 超时，${delayMs}ms 后重试 (${attempt + 1}/${cfg.maxRetries})`);
+        _logger.warn("API timeout, retrying", { timeoutMs: cfg.timeoutMs, delayMs, attempt: attempt + 1, maxRetries: cfg.maxRetries });
         await new Promise(r => setTimeout(r, delayMs));
         return fetchEmbeddingBatch(cfg, batch, attempt + 1);
       }
-      console.error(`[knowledge:embedding] 外部 Embedding API 超时 (${cfg.timeoutMs}ms)`);
+      _logger.error("external embedding API timeout", { timeoutMs: cfg.timeoutMs });
       throw new Error("embedding_api_timeout");
     }
     throw e;
@@ -261,7 +244,7 @@ async function fetchExternalEmbeddings(cfg: ExternalEmbeddingConfig, texts: stri
       }
       completedBatches++;
       if (totalBatches > 2 && completedBatches % Math.max(1, Math.floor(totalBatches / 5)) === 0) {
-        console.log(`[knowledge:embedding] 进度: ${completedBatches}/${totalBatches} 批次 (${Date.now() - startedAt}ms)`);
+        _logger.info("batch progress", { completed: completedBatches, total: totalBatches, elapsedMs: Date.now() - startedAt });
       }
     })();
 
@@ -281,7 +264,7 @@ async function fetchExternalEmbeddings(cfg: ExternalEmbeddingConfig, texts: stri
   await Promise.all(executing);
 
   const elapsed = Date.now() - startedAt;
-  console.log(`[knowledge:embedding] 外部模型 ${cfg.model} 完成 ${texts.length} 条，${totalBatches} 批次，耗时 ${elapsed}ms (${Math.round(texts.length / (elapsed / 1000))}/s)`);
+  _logger.info("external embedding complete", { model: cfg.model, count: texts.length, batches: totalBatches, elapsedMs: elapsed, throughput: Math.round(texts.length / (elapsed / 1000)) });
 
   return allEmbeddings;
 }
@@ -364,9 +347,9 @@ export async function processKnowledgeEmbeddingJob(params: { pool: Pool; embeddi
       try {
         const texts = chunks.map((c) => String(c.snippet ?? "").slice(0, 8000));
         externalVectors = await fetchExternalEmbeddings(extCfg, texts);
-        console.log(`[knowledge:embedding] 外部模型 ${extCfg.model} 成功返回 ${externalVectors.length} 个向量（维度=${externalVectors[0]?.length ?? 0}）`);
+        _logger.info("external vectors returned", { model: extCfg.model, count: externalVectors.length, dimensions: externalVectors[0]?.length ?? 0 });
       } catch (e: any) {
-        console.error(`[knowledge:embedding] 外部 Embedding 失败，降级为 minhash: ${e?.message ?? e}`);
+        _logger.error("external embedding failed, fallback to minhash", { err: e?.message ?? e });
         externalVectors = null;
       }
     }
@@ -446,12 +429,12 @@ export async function processKnowledgeEmbeddingJob(params: { pool: Pool; embeddi
           }
           if (v2Embeddings.length > 0) {
             v2UpsertRes = await v2Chain.batchUpsert({ collection: collectionName, embeddings: v2Embeddings });
-            console.log(`[knowledge:embedding] V2 向量存储写入 ${v2UpsertRes.count} 条 (${v2UpsertRes.provider}, ${v2UpsertRes.latencyMs}ms)`);
+            _logger.info("V2 vector store upsert", { count: v2UpsertRes.count, provider: v2UpsertRes.provider, latencyMs: v2UpsertRes.latencyMs });
           }
         }
       }
     } catch (e: any) {
-      console.warn(`[knowledge:embedding] V2 向量存储写入失败（不影响主流程）: ${e?.message ?? e}`);
+      _logger.warn("V2 vector store upsert failed (non-blocking)", { err: e?.message ?? e });
     }
 
     await params.pool.query("UPDATE knowledge_embedding_jobs SET status='succeeded', last_error=NULL, updated_at=now() WHERE id=$1", [params.embeddingJobId]);

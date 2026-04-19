@@ -7,6 +7,9 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type Redis from "ioredis";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:tickerRegistry" });
 import type { WorkerConfig } from "./config";
 
 export interface TickerDeps {
@@ -50,30 +53,30 @@ export function startAllTickers(deps: TickerDeps): ReturnType<typeof setInterval
         if (inFlight) return;
         inFlight = true;
         deps.withLock(deps.redisLock, { lockKey: def.lockKey, ttlMs: lockTtlMs }, () => def.handler(deps))
-          .catch((err) => console.error(`${def.name} tick failed`, err))
+          .catch((err) => _logger.error("tick failed", { name: def.name, err: (err as Error)?.message ?? err }))
           .finally(() => { inFlight = false; });
       }, intervalMs);
       runningTimers.push(timer);
     } else if (def.noLock) {
       const timer = setInterval(() => {
-        def.handler(deps).catch((err) => console.error(`${def.name} tick failed`, err));
+        def.handler(deps).catch((err) => _logger.error("tick failed", { name: def.name, err: (err as Error)?.message ?? err }));
       }, intervalMs);
       runningTimers.push(timer);
     } else {
       const timer = setInterval(() => {
         deps.withLock(deps.redisLock, { lockKey: def.lockKey, ttlMs: lockTtlMs }, () => def.handler(deps))
-          .catch((err) => console.error(`${def.name} tick failed`, err));
+          .catch((err) => _logger.error("tick failed", { name: def.name, err: (err as Error)?.message ?? err }));
       }, intervalMs);
       runningTimers.push(timer);
     }
   }
 
-  console.log(`[tickerRegistry] Started ${registry.length} tickers`);
+  _logger.info("tickers started", { count: registry.length });
   return runningTimers;
 }
 
 export function stopAllTickers() {
-  console.log(`[tickerRegistry] Stopping ${runningTimers.length} tickers...`);
+  _logger.info("stopping tickers", { count: runningTimers.length });
   for (const t of runningTimers) clearInterval(t);
   runningTimers.length = 0;
 }

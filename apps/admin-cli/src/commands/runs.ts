@@ -74,6 +74,16 @@ export function registerRunsCommands(program: Command) {
     printResult(await apiPost(o, `/runs/${encodeURIComponent(runId)}/reexec`), g.format);
   });
 
+  runs.command("approve <runId>").description("批准运行").option("--reason <r>", "批准原因").action(async (runId, _o, cmd) => {
+    const g = resolveGlobalOptions(cmd); const o = toApiOpts(g);
+    printResult(await apiPost(o, `/runs/${encodeURIComponent(runId)}/approve`, { reason: _o.reason }), g.format);
+  });
+
+  runs.command("reject <runId>").description("拒绝运行").option("--reason <r>", "拒绝原因").action(async (runId, _o, cmd) => {
+    const g = resolveGlobalOptions(cmd); const o = toApiOpts(g);
+    printResult(await apiPost(o, `/runs/${encodeURIComponent(runId)}/reject`, { reason: _o.reason }), g.format);
+  });
+
   // ── replan ─────────────────────────────────────────────────────
   runs.command("replan <runId>").description("重新规划").requiredOption("--cursor <n>", "当前游标").requiredOption("--steps-json <json>", "新步骤 JSON 数组").option("--keep-pending", "保留 pending 步骤").option("--reason <r>", "原因").action(async (runId, _o, cmd) => {
     const g = resolveGlobalOptions(cmd); const o = toApiOpts(g);

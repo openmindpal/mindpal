@@ -16,8 +16,10 @@ import {
   restoreDynamicCodeExecution,
   pickExecute,
   createModuleLoadInterceptor,
-  SANDBOX_FORBIDDEN_MODULES_BASE,
+  SANDBOX_BLOCKED_MODULES,
   SANDBOX_FORBIDDEN_MODULES_STRICT,
+  SANDBOX_FORBIDDEN_MODULES_DATABASE,
+  getRiskLevel,
 } from "@openslin/shared";
 
 async function main() {
@@ -26,10 +28,18 @@ async function main() {
     if (m.type !== "execute") return;
     const payload = m.payload ?? {};
 
-    // 将封禁模块列表传递给 Worker 线程
+    // 将封禁模块列表传递给 Worker 线程（使用统一黑名单）
     const mode = resolveSandboxMode();
-    const forbiddenBase = JSON.stringify([...SANDBOX_FORBIDDEN_MODULES_BASE]);
-    const forbiddenStrict = JSON.stringify([...SANDBOX_FORBIDDEN_MODULES_STRICT]);
+    const allBlocked = JSON.stringify([...SANDBOX_BLOCKED_MODULES]);
+    const strictExtra = JSON.stringify([...SANDBOX_FORBIDDEN_MODULES_STRICT]);
+
+    // 构建风险等级映射传递给 Worker
+    const riskMapEntries: [string, string][] = [];
+    for (const m of SANDBOX_BLOCKED_MODULES) {
+      const level = getRiskLevel(m);
+      if (level) riskMapEntries.push([m, level]);
+    }
+    const riskMapJson = JSON.stringify(riskMapEntries);
 
     const workerCode = `
       const { parentPort } = require("node:worker_threads");
@@ -52,12 +62,19 @@ async function main() {
         return process.env.NODE_ENV === "production" ? "strict" : "compat";
       }
 
-      // 使用传递进来的封禁模块列表，保持与 shared 一致
+      // 使用传递进来的统一封禁模块列表（SANDBOX_BLOCKED_MODULES）
+      const _riskMap = new Map(${riskMapJson});
+      function getRiskLevel(moduleName) {
+        const bare = moduleName.startsWith("node:") ? moduleName.slice(5) : moduleName;
+        return _riskMap.get(bare) || _riskMap.get("node:" + bare) || "unknown";
+      }
+
       function forbiddenModules(mode) {
-        const base = new Set(${forbiddenBase});
-        if (mode === "compat") return base;
-        const strict = ${forbiddenStrict};
-        for (const x of strict) base.add(x);
+        const base = new Set(${allBlocked});
+        if (mode === "strict") {
+          const strict = ${strictExtra};
+          for (const x of strict) base.add(x);
+        }
         return base;
       }
 
@@ -117,6 +134,16 @@ async function main() {
             const norm = req.startsWith("node:") ? req : req ? \`node:\${req}\` : req;
             if (denied.has(req) || denied.has(norm)) {
               const base = req.startsWith("node:") ? req.slice("node:".length) : req;
+              const riskLevel = getRiskLevel(base);
+              // 安全审计日志：记录被拦截的模块加载尝试
+              console.warn(JSON.stringify({
+                module: "skillSandbox",
+                action: "blocked_module_access",
+                blockedModule: base,
+                skillName: String(payload.toolRef ?? "unknown"),
+                riskLevel,
+                timestamp: new Date().toISOString(),
+              }));
               throw new Error(\`policy_violation:skill_forbidden_import:\${base}\`);
             }
             return origLoad.call(this, request, parent, isMain);

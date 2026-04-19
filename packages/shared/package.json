@@ -61,6 +61,7 @@
   },
   "devDependencies": {
     "@types/pdf-parse": "^1.1.4",
-    "@types/unzipper": "^0.10.10"
+    "@types/unzipper": "^0.10.10",
+    "vitest": "^3.2.4"
   }
 }

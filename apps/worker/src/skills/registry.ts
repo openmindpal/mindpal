@@ -1,61 +1,38 @@
 /**
  * Worker Skill Registry — registers all skill worker contributions.
  *
+ * Manifest-driven: skill entries are loaded from worker-skills-manifest.json.
+ * Adding a new worker skill only requires updating the manifest file.
+ *
  * Supports explicit enablement control via environment variable:
  *   DISABLED_WORKER_SKILLS: Comma-separated list of skill keys to disable.
  *     - "none" (default): All skills enabled
  *     - "all": All skills disabled
  *     - "media.pipeline,ai.event.reasoning": Specific skills disabled
- *
- * Worker Skill Keys:
- *   - knowledge.rag         (core, always enabled)
- *   - channel.gateway       (core, always enabled)
- *   - notification.outbox   (optional)
- *   - subscription.runner   (optional)
- *   - trigger.engine        (core, always enabled)
- *   - media.pipeline        (optional)
- *   - device.runtime        (optional)
- *   - ai.event.reasoning    (optional)
  */
 import { registerWorkerContribution, type WorkerSkillContribution } from "../lib/workerSkillContract";
+import { StructuredLogger } from "@openslin/shared";
+import * as path from "node:path";
 
-// ── Core Worker Skills (kernel-level, always enabled) ──────────────────
-import {
-  knowledgeRagWorker,
-  channelGatewayWorker,
-  triggerEngineWorker,
-} from "./core";
+import manifestEntries from "./worker-skills-manifest.json";
 
-// ── Optional Worker Skills (can be disabled via DISABLED_WORKER_SKILLS) ──
-import {
-  notificationOutboxWorker,
-  subscriptionRunnerWorker,
-  mediaPipelineWorker,
-  deviceRuntimeWorker,
-  aiEventReasoningWorker,
-} from "./optional";
+const _logger = new StructuredLogger({ module: "worker:skillRegistry" });
 
 // ────────────────────────────────────────────────────────────────
-// Skill Tier Classification
+// Skill Tier Classification (derived from manifest)
 // ────────────────────────────────────────────────────────────────
 
 /** 核心 Worker 能力 — 始终注册，不可禁用 */
-export const CORE_WORKER_SKILL_KEYS = [
-  "knowledge.rag",
-  "channel.gateway",
-  "trigger.engine",
-] as const;
+export const CORE_WORKER_SKILL_KEYS = manifestEntries
+  .filter(e => e.tier === "core")
+  .map(e => e.key) as unknown as readonly string[];
 
 /** 可选 Worker 能力 — 默认启用，可通过 DISABLED_WORKER_SKILLS 禁用 */
-export const OPTIONAL_WORKER_SKILL_KEYS = [
-  "notification.outbox",
-  "subscription.runner",
-  "media.pipeline",
-  "device.runtime",
-  "ai.event.reasoning",
-] as const;
+export const OPTIONAL_WORKER_SKILL_KEYS = manifestEntries
+  .filter(e => e.tier === "optional")
+  .map(e => e.key) as unknown as readonly string[];
 
-export type WorkerSkillKey = typeof CORE_WORKER_SKILL_KEYS[number] | typeof OPTIONAL_WORKER_SKILL_KEYS[number];
+export type WorkerSkillKey = string;
 
 // ────────────────────────────────────────────────────────────────
 // Configuration Parsing
@@ -85,46 +62,57 @@ export interface WorkerSkillRegistrationResult {
 }
 
 /**
+ * 从 manifest 加载 worker skill 贡献模块。
+ */
+function loadWorkerContribution(entry: typeof manifestEntries[number]): WorkerSkillContribution | null {
+  try {
+    const resolved = path.resolve(__dirname, entry.module);
+    const mod = require(resolved);
+    return mod[entry.exportName] ?? mod.default ?? mod;
+  } catch (err) {
+    _logger.warn("[WorkerSkillRegistry] Failed to load skill from manifest", {
+      key: entry.key,
+      module: entry.module,
+      error: String(err),
+    });
+    return null;
+  }
+}
+
+/**
  * 初始化 Worker Skill 贡献，支持显式启用控制。
  */
 export function initWorkerSkills(env?: Record<string, string | undefined>): WorkerSkillRegistrationResult {
   const disabledSkills = parseDisabledWorkerSkills(env);
   const registered: string[] = [];
   const skipped: string[] = [];
+  let coreCount = 0;
 
-  // ── Core Worker Skills (always registered) ──
-  const coreSkills: Array<[string, WorkerSkillContribution]> = [
-    ["knowledge.rag", knowledgeRagWorker],
-    ["channel.gateway", channelGatewayWorker],
-    ["trigger.engine", triggerEngineWorker],
-  ];
-  for (const [key, contrib] of coreSkills) {
-    registerWorkerContribution(contrib);
-    registered.push(key);
-  }
+  for (const entry of manifestEntries) {
+    const isCore = entry.tier === "core";
 
-  // ── Optional Worker Skills (can be disabled) ──
-  const optionalSkills: Array<[string, WorkerSkillContribution]> = [
-    ["notification.outbox", notificationOutboxWorker],
-    ["subscription.runner", subscriptionRunnerWorker],
-    ["media.pipeline", mediaPipelineWorker],
-    ["device.runtime", deviceRuntimeWorker],
-    ["ai.event.reasoning", aiEventReasoningWorker],
-  ];
-  for (const [key, contrib] of optionalSkills) {
-    if (!disabledSkills.has(key)) {
-      registerWorkerContribution(contrib);
-      registered.push(key);
-    } else {
-      console.log(`[worker-registry] optional skill skipped: ${key}`);
-      skipped.push(key);
+    // Optional skills can be disabled
+    if (!isCore && disabledSkills.has(entry.key)) {
+      _logger.info("optional skill skipped", { key: entry.key });
+      skipped.push(entry.key);
+      continue;
     }
+
+    const contrib = loadWorkerContribution(entry);
+    if (!contrib) {
+      skipped.push(entry.key);
+      continue;
+    }
+
+    registerWorkerContribution(contrib);
+    registered.push(entry.key);
+    if (isCore) coreCount++;
   }
 
   return {
     registered,
     skipped,
-    coreCount: coreSkills.length,
-    optionalCount: registered.length - coreSkills.length,
+    coreCount,
+    optionalCount: registered.length - coreCount,
   };
 }

@@ -10,6 +10,9 @@
 import crypto from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { Queue } from "bullmq";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:deviceResumeTicker" });
 
 async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
@@ -162,9 +165,9 @@ export async function tickDeviceExecutionResume(params: { pool: Pool; queue: Que
         throw enqueueErr;
       }
 
-      console.log(`[device-resume-ticker] resumed: runId=${runId} stepId=${stepId} deviceExecutionId=${deviceExecutionId} jobId=${jobId}`);
+      _logger.info("device execution resumed", { runId, stepId, deviceExecutionId, jobId });
     } catch (err) {
-      console.error(`[device-resume-ticker] failed to resume: runId=${runId} stepId=${stepId} deviceExecutionId=${deviceExecutionId}`, err);
+      _logger.error("failed to resume device execution", { runId, stepId, deviceExecutionId, err: (err as Error)?.message ?? err });
     }
   }
 }

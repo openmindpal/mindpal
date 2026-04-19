@@ -1,7 +1,8 @@
-import crypto from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory } from "@openslin/shared";
+import { normalizeAuditErrorCategory, StructuredLogger, sha256Hex, stableStringifyValue } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:webhookDelivery" });
 import { callDataPlaneJson } from "../workflow/processor/dataPlaneGateway";
 
 async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -22,22 +23,8 @@ async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promis
   }
 }
 
-function stable(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stable);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stable(v[k]);
-  return out;
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
-
 function sha256_24(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex").slice(0, 24);
+  return sha256Hex(s).slice(0, 24);
 }
 
 function channelConversationId(params: { provider: string; workspaceId: string; channelChatId: string; threadId?: string | null }) {
@@ -106,7 +93,7 @@ async function resolveChannelLocale(params: { pool: Pool; tenantId: string; spac
       const loc = res.rowCount ? String(res.rows[0].default_locale ?? "").trim() : "";
       if (loc) return loc;
     } catch (e: any) {
-      console.warn(`[webhookDelivery] 无法从 space 获取 locale: ${e?.message ?? "unknown"}`);
+      _logger.warn("failed to get locale from space", { spaceId: params.spaceId, error: e?.message ?? "unknown" });
     }
   }
   // 2. 回退到 tenant
@@ -118,7 +105,7 @@ async function resolveChannelLocale(params: { pool: Pool; tenantId: string; spac
     const loc = res.rowCount ? String(res.rows[0].default_locale ?? "").trim() : "";
     if (loc) return loc;
   } catch (e: any) {
-    console.warn(`[webhookDelivery] 无法从 tenant 获取 locale: ${e?.message ?? "unknown"}`);
+    _logger.warn("failed to get locale from tenant", { tenantId: params.tenantId, error: e?.message ?? "unknown" });
   }
   // 3. 环境变量回退
   const envLocale = String(process.env.DEFAULT_LOCALE ?? "").trim();

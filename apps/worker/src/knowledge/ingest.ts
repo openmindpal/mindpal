@@ -1,28 +1,11 @@
-import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, parseDocument, findParserByMimeType } from "@openslin/shared";
+import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, parseDocument, findParserByMimeType, StructuredLogger, sha256Hex, stableStringify } from "@openslin/shared";
 
-function sha256(text: string) {
-  return crypto.createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-function stableStringifyValue(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stableStringifyValue);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stableStringifyValue(v[k]);
-  return out;
-}
-
-function stableStringify(v: any): string {
-  return JSON.stringify(stableStringifyValue(v));
-}
+const _logger = new StructuredLogger({ module: "worker:knowledge:ingest" });
 
 function computeEventHash(params: { prevHash: string | null; normalized: any }) {
   const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
-  return sha256(input);
+  return sha256Hex(input);
 }
 
 async function writeAudit(pool: Pool, params: { traceId: string; tenantId: string; spaceId: string; action: string; inputDigest?: any; outputDigest?: any; errorCategory?: string }) {
@@ -138,11 +121,11 @@ async function loadMediaText(pool: Pool, tenantId: string, spaceId: string, medi
     try {
       const result = await parseDocument({ buffer: bytes, mimeType: ct });
       if (result.text.trim()) {
-        console.log(`[knowledge:ingest] 文档解析成功: ${ct} => ${result.stats.parseMethod} (${result.text.length} 字符, ${result.stats.parseTimeMs}ms)`);
+        _logger.info("document parsed", { contentType: ct, method: result.stats.parseMethod, chars: result.text.length, parseTimeMs: result.stats.parseTimeMs });
         return result.text.slice(0, 500_000);
       }
     } catch (e: any) {
-      console.warn(`[knowledge:ingest] 文档解析失败 (${ct}): ${e?.message ?? e}，尝试纯文本回退`);
+      _logger.warn("document parse failed, trying text fallback", { contentType: ct, err: e?.message ?? e });
     }
   }
 
@@ -203,7 +186,7 @@ export async function processKnowledgeIngestJob(params: { pool: Pool; ingestJobI
     if (!contentText.trim()) contentText = `provider=${provider} workspace=${workspaceId} event=${eventId}`;
 
     const title = `${provider}:${eventId}`;
-    const contentDigest = sha256(contentText);
+    const contentDigest = sha256Hex(contentText);
     const docRes = await params.pool.query(
       `
         INSERT INTO knowledge_documents (tenant_id, space_id, version, title, source_type, tags, content_text, content_digest, status, visibility, owner_subject_id)

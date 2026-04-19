@@ -37,7 +37,10 @@ export const diagnosticsRoutes: FastifyPluginAsync = async (app) => {
         : { waiting: 0, active: 0, delayed: 0, failed: 0, completed: 0 };
 
     const cbPattern = `cb:model_chat:open:${subject.tenantId}:*`;
-    const cb = await countKeysByPattern({ redis: app.redis, pattern: cbPattern, maxScans: 20 });
+    let cb = { count: 0, truncated: false };
+    try {
+      cb = await countKeysByPattern({ redis: app.redis, pattern: cbPattern, maxScans: 20 });
+    } catch { /* Redis unavailable — degrade gracefully */ }
 
     req.ctx.audit!.outputDigest = { scopeType, queue: counts, circuitOpenCount: cb.count, circuitOpenTruncated: cb.truncated };
     return {

@@ -1,5 +1,6 @@
 import { validateProductionBaseline } from "@openslin/shared";
 import { buildServer } from "./server";
+import { getProcessPool, shutdownPool } from "./skillProcessPool";
 
 async function main() {
   // P0-04: 生产隔离基线启动校验
@@ -21,6 +22,17 @@ async function main() {
   const portRaw = Number(process.env.RUNNER_PORT ?? process.env.PORT ?? 8082);
   const port = Number.isFinite(portRaw) && portRaw > 0 ? Math.round(portRaw) : 8082;
   await app.listen({ host, port });
+
+  // 预热进程池
+  await getProcessPool().warmup();
+
+  // 优雅退出时关闭进程池
+  const onExit = async () => {
+    await shutdownPool();
+    process.exit(0);
+  };
+  process.on("SIGINT", onExit);
+  process.on("SIGTERM", onExit);
 }
 
 void main();

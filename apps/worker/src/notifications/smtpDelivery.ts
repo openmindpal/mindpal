@@ -1,7 +1,6 @@
-import crypto from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory } from "@openslin/shared";
+import { normalizeAuditErrorCategory, sha256_8 } from "@openslin/shared";
 
 async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
@@ -28,9 +27,6 @@ function normalizeAllowedDomains(v: any) {
     .filter((x) => Boolean(x));
 }
 
-function sha256_8(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8);
-}
 
 async function insertAuditEvent(params: {
   pool: Pool;

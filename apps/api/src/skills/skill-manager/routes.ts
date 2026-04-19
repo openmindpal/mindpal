@@ -35,7 +35,7 @@ function getBuiltinSkillList(): SkillInfo[] {
     result.push({
       name: plugin.manifest.identity.name,
       version: plugin.manifest.identity.version,
-      layer: plugin.manifest.layer ?? "builtin",
+      layer: plugin.manifest.layer ?? "optional",
       displayName: plugin.manifest.tools?.[0]?.displayName ?? null,
       description: plugin.manifest.tools?.[0]?.description ?? null,
     });
@@ -117,7 +117,7 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
       return {
         name: skill.name,
         version: skill.version,
-        layer: skill.layer ?? "builtin",
+        layer: skill.layer ?? "optional",
         displayName: skill.displayName,
         description: skill.description,
         status: status?.latestStatus ?? "enabled_tenant",

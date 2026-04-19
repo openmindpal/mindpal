@@ -248,7 +248,9 @@ export async function runDynamicCorrectionPhase(params: {
          validatorState.agentId, revalidationRunId,
          revalidation.verdict, revalidation.confidence,
          revalidation.reasoning.slice(0, 1000), retriesAttempted],
-      ).catch(() => {});
+      ).catch((e: unknown) => {
+        app.log.warn({ err: (e as Error)?.message, collabRunId: orchestratorParams.collabRunId }, "[CollabValidation] cross_validation_log insert failed");
+      });
 
       app.log.info({
         agentId: targetState.agentId,

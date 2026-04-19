@@ -1,6 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors } from "../../lib/errors";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "routes:governance:tools" });
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
 import { sha256Hex } from "../../lib/digest";
@@ -14,7 +17,7 @@ async function refreshToolDiscovery(pool: any) {
   try {
     await autoDiscoverAndRegisterTools(pool);
   } catch (err) {
-    console.error("[tool-discovery] on-demand failed (non-fatal):", err);
+        _logger.error("on-demand tool discovery failed (non-fatal)", { err: (err as Error)?.message });
   }
 }
 
@@ -321,7 +324,7 @@ export const governanceToolsRoutes: FastifyPluginAsync = async (app) => {
       );
       activeStepCount = parseInt(stepRes.rows[0]?.count ?? "0", 10);
     } catch (err: any) {
-      console.warn(`[governance] impact-analysis active runs query failed: ${err?.message}`);
+          _logger.warn("impact-analysis active runs query failed", { err: err?.message });
     }
 
     // 2. 查询依赖该工具的 Skill 列表
@@ -337,7 +340,7 @@ export const governanceToolsRoutes: FastifyPluginAsync = async (app) => {
         }
       }
     } catch (err: any) {
-      console.warn(`[governance] impact-analysis dependentSkills query failed: ${err?.message}`);
+          _logger.warn("impact-analysis dependentSkills query failed", { err: err?.message });
     }
 
     // 3. 生成风险摘要

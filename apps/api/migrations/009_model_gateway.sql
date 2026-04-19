@@ -1,5 +1,5 @@
 -- 009: Model Gateway
--- Consolidated from: 009, 048a, 074, 076, 093, 096, 101(skip data), 109, 117(skip data), 123, 147, 156
+-- Consolidated from: 009, 032(provider_protocol_family), 048a, 074, 076, 093, 096, 101(skip data), 109, 117(skip data), 123, 147, 156
 -- Skipped: 083/129 (model_budgets created then dropped), 101/117 (data migration UPDATE only)
 
 -- ── provider_bindings ────────────────────────────────────────
@@ -139,28 +139,34 @@ CREATE TABLE IF NOT EXISTS model_provider_registry (
   provider TEXT NOT NULL,
   status TEXT NOT NULL,
   reason TEXT NULL,
+  protocol_family TEXT NOT NULL DEFAULT 'openai',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_by TEXT NULL,
   PRIMARY KEY (tenant_id, provider)
 );
 
-INSERT INTO model_provider_registry (tenant_id, provider, status, reason)
-SELECT t.id, p.provider, 'enabled', NULL
+COMMENT ON COLUMN model_provider_registry.protocol_family IS
+  '协议族: openai(OpenAI兼容)/anthropic(Anthropic原生)/gemini(Google Gemini原生)';
+
+INSERT INTO model_provider_registry (tenant_id, provider, status, reason, protocol_family)
+SELECT t.id, p.provider, 'enabled', NULL, p.family
 FROM tenants t
 CROSS JOIN (
   VALUES
-    ('openai'),
-    ('mock'),
-    ('openai_compatible'),
-    ('deepseek'),
-    ('hunyuan'),
-    ('qianwen'),
-    ('zhipu'),
-    ('doubao'),
-    ('kimi'),
-    ('kimimax'),
-    ('anthropic')
-) AS p(provider)
+    ('openai',             'openai'),
+    ('mock',               'openai'),
+    ('openai_compatible',  'openai'),
+    ('deepseek',           'openai'),
+    ('hunyuan',            'openai'),
+    ('qianwen',            'openai'),
+    ('zhipu',              'openai'),
+    ('doubao',             'openai'),
+    ('kimi',               'openai'),
+    ('kimimax',            'openai'),
+    ('anthropic',          'anthropic'),
+    ('custom_anthropic',   'anthropic'),
+    ('custom_gemini',      'gemini')
+) AS p(provider, family)
 ON CONFLICT (tenant_id, provider) DO NOTHING;
 
 -- ── model_catalog ────────────────────────────────────────────

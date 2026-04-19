@@ -1,4 +1,4 @@
-import { Errors } from "../../../lib/errors";
+import { Errors, type ModelUpstreamError, isModelUpstreamError } from "../../../lib/errors";
 
 /** 多模态 content part（OpenAI Vision 格式） */
 export type OpenAiContentPart =
@@ -26,7 +26,7 @@ export async function openAiChatWithSecretRotation(params: {
   const apiKeys = params.apiKeys.map((k) => String(k)).filter(Boolean);
   if (!apiKeys.length) throw Errors.badRequest("缺少 apiKey");
 
-  let lastErr: any = null;
+  let lastErr: ModelUpstreamError | Error | null = null;
   const baseUrl = String(params.baseUrl ?? "").replace(/\/+$/g, "");
   const chatPathRaw = String(params.chatCompletionsPath ?? "").trim() || "/chat/completions";
   const chatPath = chatPathRaw.startsWith("/") ? chatPathRaw : `/${chatPathRaw}`;
@@ -57,8 +57,8 @@ export async function openAiChatWithSecretRotation(params: {
         const traceId = json?.error?.traceId ?? json?.traceId ?? json?.request_id ?? "";
         const detail = [`status=${res.status}`, upstreamMsg && `msg=${upstreamMsg}`, traceId && `traceId=${traceId}`].filter(Boolean).join(" ");
         const err = Errors.modelUpstreamFailed(detail);
-        (err as any).upstreamStatus = res.status;
-        (err as any).upstreamBody = json;
+        err.upstreamStatus = res.status;
+        err.upstreamBody = json;
         throw err;
       }
 
@@ -69,17 +69,15 @@ export async function openAiChatWithSecretRotation(params: {
     } catch (e: any) {
       const isAbort = String(e?.name ?? "") === "AbortError";
       if (isAbort) {
-        lastErr = Errors.modelUpstreamFailed("timeout");
-        (lastErr as any).upstreamTimeout = true;
+        const timeoutErr = Errors.modelUpstreamFailed("timeout");
+        timeoutErr.upstreamTimeout = true;
+        lastErr = timeoutErr;
       } else {
         lastErr = e;
       }
       const retryable = Boolean(
-        lastErr &&
-          typeof lastErr === "object" &&
-          "errorCode" in lastErr &&
-          (lastErr as any).errorCode === "MODEL_UPSTREAM_FAILED" &&
-          (((lastErr as any).upstreamStatus ?? null) === 429 || Boolean((lastErr as any).upstreamTimeout)),
+        isModelUpstreamError(lastErr) &&
+          (lastErr.upstreamStatus === 429 || Boolean(lastErr.upstreamTimeout)),
       );
       if (retryable && i < apiKeys.length - 1) continue;
       throw lastErr;
@@ -127,7 +125,7 @@ export async function openAiChatStreamWithSecretRotation(params: {
   const apiKeys = params.apiKeys.map((k) => String(k)).filter(Boolean);
   if (!apiKeys.length) throw Errors.badRequest("缺少 apiKey");
 
-  let lastErr: any = null;
+  let lastErr: ModelUpstreamError | Error | null = null;
   const baseUrl = String(params.baseUrl ?? "").replace(/\/+$/g, "");
   const chatPathRaw = String(params.chatCompletionsPath ?? "").trim() || "/chat/completions";
   const chatPath = chatPathRaw.startsWith("/") ? chatPathRaw : `/${chatPathRaw}`;
@@ -168,13 +166,13 @@ export async function openAiChatStreamWithSecretRotation(params: {
         const traceId = errJson?.error?.traceId ?? errJson?.traceId ?? errJson?.request_id ?? "";
         const detail = [`status=${res.status}`, upstreamMsg && `msg=${upstreamMsg}`, traceId && `traceId=${traceId}`].filter(Boolean).join(" ");
         const err = Errors.modelUpstreamFailed(detail);
-        (err as any).upstreamStatus = res.status;
-        (err as any).upstreamBody = errJson;
+        err.upstreamStatus = res.status;
+        err.upstreamBody = errJson;
         throw err;
       }
       if (!res.body || typeof (res.body as any).getReader !== "function") {
         const err = Errors.modelUpstreamFailed("missing_body");
-        (err as any).upstreamStatus = 502;
+        err.upstreamStatus = 502;
         throw err;
       }
 
@@ -219,16 +217,13 @@ export async function openAiChatStreamWithSecretRotation(params: {
       }
       const retryable = Boolean(
         !sawAnyDelta &&
-          lastErr &&
-          typeof lastErr === "object" &&
-          "errorCode" in lastErr &&
-          (lastErr as any).errorCode === "MODEL_UPSTREAM_FAILED" &&
-          (((lastErr as any).upstreamStatus ?? null) === 429),
+          isModelUpstreamError(lastErr) &&
+          lastErr.upstreamStatus === 429,
       );
       if (retryable && i < apiKeys.length - 1) continue;
       throw lastErr;
     } finally {
-      if (params.signal) params.signal.removeEventListener("abort", abortByOuter as any);
+      if (params.signal) params.signal.removeEventListener("abort", abortByOuter as EventListener);
     }
   }
   throw lastErr ?? Errors.modelUpstreamFailed("unknown");

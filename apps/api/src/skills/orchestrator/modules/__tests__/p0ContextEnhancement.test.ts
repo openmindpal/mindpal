@@ -91,7 +91,7 @@ describe('P0: 结构化上下文增强', () => {
 
     it('长消息应触发摘要', () => {
       // 生成超过500字符的消息
-      const longMessage = '这是一条很长的消息，包含了很多复杂的决策和讨论内容，需要系统仔细分析和理解用户的意图，以便提供更好的服务和支持。用户提到了关于项目管理的多个方面，包括任务分配、进度跟踪、团队协作等重要议题。'.repeat(3);
+      const longMessage = '这是一条很长的消息，包含了很多复杂的决策和讨论内容，需要系统仔细分析和理解用户的意图，以便提供更好的服务和支持。用户提到了关于项目管理的多个方面，包括任务分配、进度跟踪、团队协作等重要议题。'.repeat(6);
       expect(longMessage.length).toBeGreaterThan(500);
       
       const result = shouldTriggerEventDrivenSummary(longMessage, 8);

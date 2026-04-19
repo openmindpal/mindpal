@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { CapabilityEnvelopeV1 } from "@openslin/shared";
+import { resolveString } from "@openslin/shared";
 import type { RuntimeLimits, NetworkPolicy } from "./runtime";
 import type { DynamicSkillExecResult } from "./dynamicSkillTypes";
 import { sha256Hex, stableStringify } from "./common";
@@ -25,8 +26,8 @@ function buildRunnerExecuteUrl(endpoint: string) {
 }
 
 function workerSigningKey() {
-  const keyId = String(process.env.SKILL_RUNTIME_SIGNING_KEY_ID ?? "").trim();
-  const privateKeyPem = String(process.env.SKILL_RUNTIME_SIGNING_PRIVATE_KEY_PEM ?? "").trim();
+  const keyId = resolveString("SKILL_RUNTIME_SIGNING_KEY_ID").value;
+  const privateKeyPem = resolveString("SKILL_RUNTIME_SIGNING_PRIVATE_KEY_PEM").value;
   if (!keyId || !privateKeyPem) return null;
   return { keyId, privateKeyPem };
 }

@@ -12,6 +12,9 @@
  */
 import type { Pool, PoolClient } from "pg";
 import type { Queue } from "bullmq";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:aiEventReasoning" });
 
 async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
@@ -130,7 +133,7 @@ export async function processEventReasoningJob(params: {
   const payload = d.payload ?? null;
 
   if (!tenantId || !eventSourceId) {
-    console.warn("event.reasoning job: missing tenantId or eventSourceId, skipping");
+    _logger.warn("event.reasoning job: missing tenantId or eventSourceId, skipping");
     return;
   }
 

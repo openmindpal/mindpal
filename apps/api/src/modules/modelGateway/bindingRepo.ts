@@ -1,4 +1,7 @@
 import type { Pool, PoolClient } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "bindingRepo" });
 
 export type ProviderBinding = {
   id: string;
@@ -27,12 +30,12 @@ function toBinding(r: any): ProviderBinding {
     try {
       const j = JSON.parse(rawIds);
       if (Array.isArray(j)) parsedIds = j;
-    } catch (err) { console.warn(`[bindingRepo] JSON.parse rawIds string failed: ${(err as Error)?.message}`); }
+    } catch (err) { _logger.warn("JSON.parse rawIds string failed", { err: (err as Error)?.message }); }
   } else if (rawIds && typeof rawIds === "object" && typeof (rawIds as any).toString === "function") {
     try {
       const j = JSON.parse(String((rawIds as any).toString("utf8")));
       if (Array.isArray(j)) parsedIds = j;
-    } catch (err) { console.warn(`[bindingRepo] JSON.parse rawIds buffer failed: ${(err as Error)?.message}`); }
+    } catch (err) { _logger.warn("JSON.parse rawIds buffer failed", { err: (err as Error)?.message }); }
   }
   const secretIds = parsedIds.map((x: any) => String(x)).filter(Boolean);
   const secretId = String(r.secret_id ?? "");

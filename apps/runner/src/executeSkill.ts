@@ -1,10 +1,10 @@
 import crypto from "node:crypto";
-import child_process from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EgressEvent, NetworkPolicy } from "./runtime";
 import { stableStringify } from "./common";
+import { getProcessPool } from "./skillProcessPool";
 
 function getSkillRoots() {
   const raw = String(process.env.SKILL_PACKAGE_ROOTS ?? "");
@@ -48,27 +48,48 @@ async function loadManifest(artifactDir: string) {
   return { manifest, raw };
 }
 
+/* ── 依赖摘要缓存（附 mtime 校验） ─────────────────────────── */
+interface DigestCacheEntry {
+  digest: string;
+  manifestMtimeMs: number;
+  entryMtimeMs: number;
+}
+const _digestCache = new Map<string, DigestCacheEntry>();
+
 async function computeDepsDigest(params: { artifactDir: string; manifest: any }) {
   const manifestStable = stableStringify(params.manifest);
   const entryRel = String(params.manifest?.entry ?? "");
   const entryPath = entryRel ? path.resolve(params.artifactDir, entryRel) : "";
+  const manifestPath = path.join(params.artifactDir, "manifest.json");
+
+  // mtime 校验
+  const [manifestStat, entryStat] = await Promise.all([
+    fs.stat(manifestPath).catch(() => null),
+    entryPath ? fs.stat(entryPath).catch(() => null) : Promise.resolve(null),
+  ]);
+  const manifestMtimeMs = manifestStat?.mtimeMs ?? 0;
+  const entryMtimeMs = entryStat?.mtimeMs ?? 0;
+  const cacheKey = params.artifactDir;
+  const cached = _digestCache.get(cacheKey);
+  if (
+    cached &&
+    cached.manifestMtimeMs === manifestMtimeMs &&
+    cached.entryMtimeMs === entryMtimeMs
+  ) {
+    return cached.digest;
+  }
+
   const entryBytes = entryPath ? await fs.readFile(entryPath) : Buffer.from("");
   const h = crypto.createHash("sha256");
   h.update(Buffer.from(manifestStable, "utf8"));
   h.update(Buffer.from("\n", "utf8"));
   h.update(entryBytes);
-  return `sha256:${h.digest("hex")}`;
+  const digest = `sha256:${h.digest("hex")}`;
+
+  _digestCache.set(cacheKey, { digest, manifestMtimeMs, entryMtimeMs });
+  return digest;
 }
 
-async function resolveSandboxChildEntry() {
-  const jsPath = path.resolve(__dirname, "skillSandboxChild.js");
-  try {
-    const st = await fs.stat(jsPath);
-    if (st.isFile()) return { entry: jsPath, execArgv: [] as string[] };
-  } catch {}
-  const tsPath = path.resolve(__dirname, "skillSandboxChild.ts");
-  return { entry: tsPath, execArgv: ["-r", "tsx/cjs"] as string[] };
-}
 
 export async function executeSkillInSandbox(params: {
   toolRef: string;
@@ -94,17 +115,14 @@ export async function executeSkillInSandbox(params: {
   if (!entryRel) throw new Error("policy_violation:skill_manifest_missing_entry");
   const entryPath = path.resolve(artifactDir, entryRel);
   if (!isWithinRoot(artifactDir, entryPath)) throw new Error("policy_violation:skill_entry_outside_artifact");
-  const childInfo = await resolveSandboxChildEntry();
-  const memArgv =
-    typeof params.limits?.memoryMb === "number" && Number.isFinite(params.limits.memoryMb) && params.limits.memoryMb > 0
-      ? [`--max-old-space-size=${Math.max(32, Math.round(params.limits.memoryMb))}`]
-      : [];
-  const child = child_process.fork(childInfo.entry, [], { execArgv: [...childInfo.execArgv, ...memArgv], stdio: ["ignore", "ignore", "ignore", "ipc"] });
 
+  // 从进程池获取子进程（冷启动时自动 fork）
+  const pool = getProcessPool();
+  const { child, _poolEntry } = await pool.acquire(params.limits);
+
+  let executionFailed = false;
   const kill = () => {
-    try {
-      child.kill("SIGKILL");
-    } catch {}
+    pool.discard(child);
   };
   if (params.signal.aborted) kill();
   params.signal.addEventListener("abort", kill, { once: true });
@@ -115,7 +133,10 @@ export async function executeSkillInSandbox(params: {
       : null;
 
   const result = await new Promise<any>((resolve, reject) => {
-    const onExit = (code: number | null) => reject(new Error(`skill_sandbox_exited:${code ?? "null"}`));
+    const onExit = (code: number | null) => {
+      executionFailed = true;
+      reject(new Error(`skill_sandbox_exited:${code ?? "null"}`));
+    };
     const onMessage = (m: any) => {
       if (!m || typeof m !== "object") return;
       if (m.type !== "result") return;
@@ -145,8 +166,14 @@ export async function executeSkillInSandbox(params: {
     });
   }).finally(() => {
     params.signal.removeEventListener("abort", kill);
-    kill();
   });
+
+  // 执行成功：归还进程到池；失败：kill 进程
+  if (!result?.ok || executionFailed) {
+    pool.discard(child);
+  } else {
+    pool.release(child, _poolEntry);
+  }
 
   if (!result?.ok) {
     const msg = String(result?.error?.message ?? "skill_sandbox_error");

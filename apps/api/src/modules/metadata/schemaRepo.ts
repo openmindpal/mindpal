@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import type { SchemaDef } from "./schemaModel";
-import { isPlainObject } from "@openslin/shared";
+import { isPlainObject, resolveString } from "@openslin/shared";
 
 type Q = Pool | PoolClient;
 type EffectiveScope = { tenantId: string; spaceId?: string; name: string };
@@ -15,7 +15,8 @@ export type StoredSchema = {
   publishedAt: string | null;
 };
 
-const DEFAULT_ALLOWED_EXTENSION_NAMESPACES = ["io.openslin.*", "org.openslin.*"];
+// Fallback（configRegistry 不可用时降级）
+const FALLBACK_EXTENSION_NAMESPACES = ["io.openslin.*", "org.openslin.*"];
 const NAMESPACE_KEY_RE = /^[a-z][a-z0-9]*(?:[._-]?[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:[._-]?[a-z0-9]+)*)+$/;
 const resolvedVersionCache = new Map<string, number | null>();
 const effectiveSchemaCache = new Map<string, StoredSchema | null>();
@@ -86,13 +87,10 @@ export function getSchemaEffectiveCacheVersion(params: EffectiveScope) {
 }
 
 function normalizeAllowedNamespaces() {
-  const raw = String(process.env.SCHEMA_EXTENSION_NAMESPACES ?? "").trim();
-  const list = raw
-    ? raw
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : DEFAULT_ALLOWED_EXTENSION_NAMESPACES;
+  const { value: raw } = resolveString("SCHEMA_EXTENSION_NAMESPACES");
+  const list = raw.trim()
+    ? raw.split(",").map((s) => s.trim()).filter(Boolean)
+    : FALLBACK_EXTENSION_NAMESPACES;
   return Array.from(new Set(list));
 }
 

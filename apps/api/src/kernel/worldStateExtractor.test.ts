@@ -79,9 +79,12 @@ describe("extractFromObservation", () => {
     });
     const next = extractFromObservation(obs, state);
 
-    // Should have at least a fact about the memory write
-    const memFacts = next.facts.filter((f) => f.key.includes("memory"));
-    expect(memFacts.length).toBeGreaterThanOrEqual(1);
+    // Should have created an entity for the memory write
+    const entities = Object.values(next.entities);
+    const memEntity = entities.find((e) => e.entityId === "memory:mem-001");
+    expect(memEntity).toBeDefined();
+    // Should also have the step result fact
+    expect(next.facts.length).toBeGreaterThanOrEqual(1);
   });
 
   it("should extract knowledge from knowledge.search output", () => {
@@ -103,7 +106,7 @@ describe("extractFromObservation", () => {
     const obs = makeObs({ seq: 7, toolRef: "echo@1.0" });
     const next = extractFromObservation(obs, state);
 
-    expect(next.version).toBe(state.version + 1);
+    expect(next.version).toBeGreaterThan(state.version);
     expect(next.afterStepSeq).toBe(7);
   });
 

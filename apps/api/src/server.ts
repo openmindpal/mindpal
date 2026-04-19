@@ -7,6 +7,7 @@ import type { ApiConfig } from "./config";
 import { Errors, isAppError } from "./lib/errors";
 import { createRedisClient } from "./modules/redis/client";
 import { initServerTimers } from "./lib/serverTimers";
+import { initRbacCacheSubscriber, stopRbacCacheSubscriber } from "./modules/auth/authz";
 import { entityRoutes } from "./routes/entities";
 import { effectiveSchemaRoutes } from "./routes/effectiveSchema";
 import { healthRoutes } from "./routes/health";
@@ -78,6 +79,8 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
   app.decorate("cfg", cfg);
   app.decorate("metrics", createMetricsRegistry());
   app.redis.on("error", () => undefined);
+  // 启动 RBAC 缓存 Pub/Sub 订阅（跨实例缓存失效）
+  initRbacCacheSubscriber(app.redis).catch(() => {});
   app.register(websocket);
   app.addContentTypeParser("application/scim+json", { parseAs: "string" }, (_req, body, done) => {
     try {
@@ -140,6 +143,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
 
   app.addHook("onClose", async () => {
     timers.stopAll();
+    await stopRbacCacheSubscriber();
     const quit = app.redis.quit().catch(() => undefined);
     await Promise.race([
       quit,

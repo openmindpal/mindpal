@@ -2,6 +2,7 @@
 import os from "node:os";
 import { parseCli, getStringOpt } from "./cli";
 import { defaultConfigPath, loadConfigFile, saveConfigFile, killExistingInstance, acquireLock, releaseLock } from "./config";
+import type { DeviceType } from "./config";
 import { apiPostJson } from "./api";
 import { runLoop } from "./agent";
 import { createWebSocketDeviceAgent } from "./websocketClient";
@@ -123,8 +124,15 @@ async function cmdPair(opts: Record<string, string | boolean>) {
     safeLog(`paired: 云端已自动配置工具策略 (allowedTools=${autoPolicy.allowedToolsCount} 个)`);
   }
 
-  await saveConfigFile(cfgPath, { apiBase, deviceId, deviceToken, enrolledAt: new Date().toISOString(), deviceType, os: osName, agentVersion: v });
-  safeLog(`paired: deviceId=${deviceId} tokenSha256_8=${sha256_8(deviceToken)} config=${cfgPath} capabilities=${capabilities.length}`);
+  // ── 元数据驱动：将插件配置写入配置文件 ────────────
+  // 优先使用云端下发的 pluginPolicy，否则使用设备类型默认值
+  const cloudPluginPolicy = (r.json as any).pluginPolicy;
+  const pluginConfig = cloudPluginPolicy
+    ? { builtinPlugins: cloudPluginPolicy.builtinPlugins ?? [], pluginDirs: cloudPluginPolicy.pluginDirs ?? [], updatedAt: new Date().toISOString(), source: "cloud" as const }
+    : { builtinPlugins: getDefaultPluginsForDeviceType(deviceType), updatedAt: new Date().toISOString(), source: "local" as const };
+
+  await saveConfigFile(cfgPath, { apiBase, deviceId, deviceToken, enrolledAt: new Date().toISOString(), deviceType, os: osName, agentVersion: v, pluginConfig });
+  safeLog(`paired: deviceId=${deviceId} tokenSha256_8=${sha256_8(deviceToken)} config=${cfgPath} capabilities=${capabilities.length} pluginSource=${pluginConfig.source}`);
 }
 
 /**
@@ -147,19 +155,37 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
   desktop: ["file", "browser", "desktop-control", "clipboard", "evidence"],
 };
 
-async function initPlugins() {
-  // 1. 根据环境变量决定加载哪些内置插件
-  //    未设置 → 不加载任何内置插件（收缩默认，遵循轻量化内核原则）
-  //    "none" → 不加载任何内置插件（纯外部插件模式，用于 IoT/机器人/工厂）
-  //    "desktop" → 仅加载 desktop
-  //    "desktop,gui-automation" → 指定多个
-  const builtinEnv = process.env.DEVICE_AGENT_BUILTIN_PLUGINS;
-  const builtinRaw =
-    builtinEnv === undefined || builtinEnv === "" || builtinEnv === "none"
-      ? []
-      : builtinEnv.split(",").map((s) => s.trim()).filter(Boolean);
-  // 展开别名（如 "desktop" → 5个子插件），去重
-  const builtinList = Array.from(new Set(builtinRaw.flatMap((name) => BUILTIN_ALIASES[name] ?? [name])));
+/**
+ * 设备类型 → 默认内置插件映射（元数据驱动）
+ * 当配置文件中无 pluginConfig 时，根据设备类型自动推断应加载的插件集。
+ * 新增设备类型只需在此添加映射，无需修改加载逻辑。
+ */
+const DEVICE_TYPE_DEFAULT_PLUGINS: Record<string, string[]> = {
+  desktop: ["desktop"],
+  mobile: [],
+  iot: [],
+  robot: [],
+  vehicle: [],
+  home: [],
+  gateway: [],
+};
+
+/** 根据设备类型获取默认插件列表 */
+export function getDefaultPluginsForDeviceType(deviceType: string): string[] {
+  return DEVICE_TYPE_DEFAULT_PLUGINS[deviceType] ?? [];
+}
+
+/**
+ * 加载插件（元数据驱动）。
+ * 插件列表由配置文件 pluginConfig 或设备类型默认值决定，
+ * 不再依赖 DEVICE_AGENT_BUILTIN_PLUGINS 环境变量。
+ *
+ * @param builtinNames - 要加载的内置插件名称（支持别名如 "desktop"）
+ * @param pluginDirs  - 外部插件目录列表
+ */
+async function initPlugins(builtinNames: string[] = [], pluginDirs: string[] = []) {
+  // 1. 展开别名（如 "desktop" → 5个子插件），去重
+  const builtinList = Array.from(new Set(builtinNames.flatMap((name) => BUILTIN_ALIASES[name] ?? [name])));
 
   for (const name of builtinList) {
     const loader = BUILTIN_PLUGIN_MAP[name];
@@ -178,19 +204,18 @@ async function initPlugins() {
     }
   }
   if (builtinList.length === 0) {
-    safeLog("builtin_plugins: none（轻量模式，仅加载内核；设置 DEVICE_AGENT_BUILTIN_PLUGINS=desktop 可启用全部桌面插件）");
+    safeLog("builtin_plugins: none（轻量内核模式）");
+  } else {
+    safeLog(`builtin_plugins: ${builtinList.join(", ")}（来源: 配置文件元数据）`);
   }
 
-  // 2. 从环境变量指定的目录加载外部插件（逗号分隔多个目录）
-  const pluginDirs = process.env.DEVICE_AGENT_PLUGIN_DIRS;
-  if (pluginDirs) {
-    for (const dir of pluginDirs.split(",").map((d) => d.trim()).filter(Boolean)) {
-      try {
-        const loaded = await loadPluginsFromDir(dir);
-        if (loaded.length) safeLog(`plugins_loaded: dir=${dir} plugins=${loaded.join(",")}`);
-      } catch (e: any) {
-        safeError(`plugin_dir_error: ${dir} - ${e?.message ?? "unknown"}`);
-      }
+  // 2. 从配置文件指定的目录加载外部插件
+  for (const dir of pluginDirs) {
+    try {
+      const loaded = await loadPluginsFromDir(dir);
+      if (loaded.length) safeLog(`plugins_loaded: dir=${dir} plugins=${loaded.join(",")}`);
+    } catch (e: any) {
+      safeError(`plugin_dir_error: ${dir} - ${e?.message ?? "unknown"}`);
     }
   }
 
@@ -311,8 +336,40 @@ async function main() {
     process.on("SIGTERM", () => { releaseLock().catch(() => {}); process.exit(0); });
   }
 
-  // 在执行任何命令前先加载插件
-  await initPlugins();
+  // ── 元数据驱动：从配置文件/设备类型推断插件列表，不依赖环境变量 ──
+  let builtinPlugins: string[] = [];
+  let pluginDirs: string[] = [];
+
+  if (command === "run" || command === "tray") {
+    // 运行/托盘模式：从配置文件读取插件元数据
+    const cfgPath = getStringOpt(options, "config") || defaultConfigPath();
+    try {
+      const cfg = await loadConfigFile(cfgPath);
+      if (cfg?.pluginConfig) {
+        // 配置文件中有明确的 pluginConfig → 使用它（可能来自云端策略下发）
+        builtinPlugins = cfg.pluginConfig.builtinPlugins ?? [];
+        pluginDirs = cfg.pluginConfig.pluginDirs ?? [];
+        safeLog(`[plugin-config] 来源: ${cfg.pluginConfig.source ?? "local"}, 插件: [${builtinPlugins.join(",")}]`);
+      } else if (cfg?.deviceType) {
+        // 配置文件存在但无 pluginConfig → 使用设备类型默认值
+        builtinPlugins = getDefaultPluginsForDeviceType(cfg.deviceType);
+        safeLog(`[plugin-config] 来源: 设备类型默认值 (${cfg.deviceType}), 插件: [${builtinPlugins.join(",")}]`);
+      }
+    } catch {
+      // 配置文件不存在时，根据 OS 推断设备类型
+      builtinPlugins = getDefaultPluginsForDeviceType("desktop");
+      safeLog(`[plugin-config] 来源: OS推断默认值 (desktop), 插件: [${builtinPlugins.join(",")}]`);
+    }
+  } else if (command === "pair") {
+    // 配对模式：根据 CLI 指定的设备类型加载默认插件（用于上报能力清单）
+    const deviceType = detectDeviceType(options);
+    builtinPlugins = getDefaultPluginsForDeviceType(deviceType);
+    safeLog(`[plugin-config] 来源: 配对设备类型 (${deviceType}), 插件: [${builtinPlugins.join(",")}]`);
+  }
+  // else: help 命令不加载插件
+
+  await initPlugins(builtinPlugins, pluginDirs);
+
   try {
     if (command === "pair") await cmdPair(options);
     else if (command === "run") await cmdRun(options);
@@ -320,18 +377,18 @@ async function main() {
     else {
       safeLog("openslin-device-agent 命令：");
       safeLog("  pair --pairingCode <配对码> [--apiBase <地址>] [--config <路径>] [--deviceType desktop|mobile]");
-      safeLog("        配对设备到服务器");
+      safeLog("        配对设备到服务器（自动根据设备类型加载对应插件）");
       safeLog("  run [--config <路径>] [--heartbeatMs <毫秒>] [--pollMs <毫秒>] [--idleTimeoutMs <毫秒>]");
-      safeLog("        命令行模式运行（空闲5分钟自动退出）");
+      safeLog("        命令行模式运行（从配置文件元数据加载插件策略）");
       safeLog("  tray");
       safeLog("        托盘模式运行（常驻后台，右键菜单控制）");
       safeLog("");
-      safeLog("外部插件：设置 DEVICE_AGENT_PLUGIN_DIRS 环境变量指向插件目录");
-      safeLog("环境变量：");
-      safeLog("  DEVICE_AGENT_BUILTIN_PLUGINS  内置插件（默认 none；如需桌面能力可设为 desktop 或 desktop,gui-automation）");
-      safeLog("  DEVICE_AGENT_LIGHTWEIGHT=true 轻量模式（跳过 accessControl/taskQueue）");
-      safeLog("  DEVICE_AGENT_TRANSPORT       传输模式: auto(WS优先,降级HTTP) | ws | http");
-      safeLog(`已加载插件：${listPlugins().map((p) => p.name).join(", ")}（别名: desktop → file,browser,desktop-control,clipboard,evidence）`);
+      safeLog("插件治理（元数据驱动，无需手动设置环境变量）：");
+      safeLog("  配对时根据设备类型自动确定内置插件 → 写入配置文件");
+      safeLog("  运行时从配置文件读取 pluginConfig，支持云端策略动态下发");
+      safeLog("  设备类型默认插件: desktop→[desktop] | mobile/iot/robot→[]");
+      safeLog(`  别名展开: desktop → file,browser,desktop-control,clipboard,evidence`);
+      safeLog(`已加载插件：${listPlugins().map((p) => p.name).join(", ")} (${listPlugins().length} 个)`);
     }
   } catch (e: any) {
     safeError(String(e?.message ?? "失败"));

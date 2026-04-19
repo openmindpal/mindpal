@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { getAuthTokenByHash, sha256Hex, touchAuthTokenLastUsed } from "./tokenRepo";
+import { getAuthTokenByHash, touchAuthTokenLastUsed } from "./tokenRepo";
+import { sha256Hex } from "@openslin/shared";
 
 export type Subject = {
   subjectId: string;

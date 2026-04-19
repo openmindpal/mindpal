@@ -122,8 +122,8 @@ export async function apiFetch(
 
   /* Inject traceId for observability (§06) */
   if (!hdrs["x-trace-id"]) {
-    hdrs["x-trace-id"] = typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
-      ? (crypto as any).randomUUID() : `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    hdrs["x-trace-id"] = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID() : `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
   /* Inject idempotency key for write operations (§02§5.3) */

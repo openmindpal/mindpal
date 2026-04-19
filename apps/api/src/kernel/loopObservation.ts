@@ -3,6 +3,7 @@
  */
 import type { Pool } from "pg";
 import type { StepObservation } from "./loopTypes";
+import { errorActionHint } from "@openslin/shared";
 
 /* ================================================================== */
 /*  Observe — 收集上一步执行结果                                         */
@@ -64,29 +65,46 @@ export async function buildObservation(
 const STEP_HISTORY_RECENT_WINDOW = Math.max(1, Number(process.env.AGENT_LOOP_RECENT_WINDOW ?? "3"));
 const STEP_HISTORY_COMPRESSED_OUTPUT_LIMIT = Math.max(0, Number(process.env.AGENT_LOOP_COMPRESSED_OUTPUT_LIMIT ?? "80"));
 const STEP_HISTORY_RECENT_OUTPUT_LIMIT = Math.max(50, Number(process.env.AGENT_LOOP_RECENT_OUTPUT_LIMIT ?? "400"));
+const STEP_HISTORY_FAILED_OUTPUT_LIMIT = Math.max(50, Number(process.env.AGENT_LOOP_FAILED_OUTPUT_LIMIT ?? "200"));
+const STEP_HISTORY_FAILED_PRESERVE = (process.env.AGENT_LOOP_FAILED_PRESERVE ?? "true") !== "false";
 
 /**
  * 将步骤列表分为"压缩历史"和"近期步骤"两部分。
  * - 近期步骤保留完整输出（供 LLM 精确决策）
  * - 早期步骤仅保留 status + toolRef + error 摘要（大幅降低 token 消耗）
+ * - **失败/deadletter 步骤始终保留完整信息**（不参与压缩）
  *
  * 当步骤数 <= RECENT_WINDOW 时，所有步骤均视为近期，不做压缩。
  */
 export function compressStepHistory(steps: StepObservation[], recentWindow?: number): {
   compressed: StepObservation[];
   recent: StepObservation[];
+  preserved: StepObservation[];
   totalCount: number;
 } {
   const window = recentWindow ?? STEP_HISTORY_RECENT_WINDOW;
   const totalCount = steps.length;
   if (totalCount <= window) {
-    return { compressed: [], recent: steps, totalCount };
+    return { compressed: [], recent: steps, preserved: [], totalCount };
   }
-  return {
-    compressed: steps.slice(0, totalCount - window),
-    recent: steps.slice(totalCount - window),
-    totalCount,
-  };
+
+  const earlySteps = steps.slice(0, totalCount - window);
+  const recentSteps = steps.slice(totalCount - window);
+
+  if (STEP_HISTORY_FAILED_PRESERVE) {
+    const preserved: StepObservation[] = [];
+    const compressed: StepObservation[] = [];
+    for (const step of earlySteps) {
+      if (step.status === "failed" || step.status === "deadletter") {
+        preserved.push(step);
+      } else {
+        compressed.push(step);
+      }
+    }
+    return { compressed, recent: recentSteps, preserved, totalCount };
+  }
+
+  return { compressed: earlySteps, recent: recentSteps, preserved: [], totalCount };
 }
 
 /**
@@ -102,13 +120,20 @@ export function renderCompressedSteps(steps: StepObservation[]): string {
     else if (step.status === "failed") failedCount++;
     const icon = step.status === "succeeded" ? "✅" : step.status === "failed" ? "❌" : "⏳";
     let line = `${icon} Step ${step.seq}: ${step.toolRef} → ${step.status}`;
-    if (step.errorCategory) line += ` (error: ${step.errorCategory})`;
-    // 对压缩步骤：只保留极短的输出片段（仅供回溯参考）
-    if (STEP_HISTORY_COMPRESSED_OUTPUT_LIMIT > 0) {
+    if (step.errorCategory) {
+      const hint = errorActionHint(step.errorCategory);
+      line += ` (error: ${step.errorCategory})${hint ? " " + hint : ""}`;
+    }
+    // 根据步骤状态选择不同的截断限制
+    const outputLimit = (step.status === "failed" || step.status === "deadletter")
+      ? STEP_HISTORY_FAILED_OUTPUT_LIMIT
+      : STEP_HISTORY_COMPRESSED_OUTPUT_LIMIT;
+    if (outputLimit > 0) {
       const outputData = step.output ?? step.outputDigest;
       if (outputData) {
-        const snippet = JSON.stringify(outputData).slice(0, STEP_HISTORY_COMPRESSED_OUTPUT_LIMIT);
-        line += ` [${snippet}${JSON.stringify(outputData).length > STEP_HISTORY_COMPRESSED_OUTPUT_LIMIT ? "…" : ""}]`;
+        const raw = JSON.stringify(outputData);
+        const snippet = raw.slice(0, outputLimit);
+        line += ` [${snippet}${raw.length > outputLimit ? "…" : ""}]`;
       }
     }
     lines.push(line);
@@ -119,9 +144,11 @@ export function renderCompressedSteps(steps: StepObservation[]): string {
 
 /**
  * 将近期步骤渲染为带完整输出的详细格式（供 LLM 精确决策）
+ * @param labelPrefix 可选前缀标签，用于区分历史失败步骤等
  */
-export function renderRecentSteps(steps: StepObservation[]): string {
+export function renderRecentSteps(steps: StepObservation[], labelPrefix?: string): string {
   if (steps.length === 0) return "";
+  const prefix = labelPrefix ?? "";
   const lines: string[] = [];
   for (const step of steps) {
     const statusIcon = step.status === "succeeded" ? "✅" : step.status === "failed" ? "❌" : "⏳";
@@ -129,10 +156,14 @@ export function renderRecentSteps(steps: StepObservation[]): string {
     const outputSummary = outputData
       ? JSON.stringify(outputData).slice(0, STEP_HISTORY_RECENT_OUTPUT_LIMIT)
       : "(no output)";
-    let line = `${statusIcon} Step ${step.seq}: ${step.toolRef} → ${step.status}`;
-    if (step.errorCategory) line += ` (error: ${step.errorCategory})`;
+    let line = `${prefix}${statusIcon} Step ${step.seq}: ${step.toolRef} → ${step.status}`;
+    if (step.errorCategory) {
+      const hint = errorActionHint(step.errorCategory);
+      line += ` (error: ${step.errorCategory})${hint ? " " + hint : ""}`;
+    }
     line += `\n   Output: ${outputSummary}`;
     lines.push(line);
   }
-  return `### Recent Steps (detailed)\n${lines.join("\n")}\n`;
+  const header = labelPrefix ? `### Preserved Failed Steps (detailed)` : `### Recent Steps (detailed)`;
+  return `${header}\n${lines.join("\n")}\n`;
 }

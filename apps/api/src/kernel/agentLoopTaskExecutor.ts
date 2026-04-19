@@ -343,7 +343,9 @@ export class AgentLoopTaskExecutor implements TaskExecutor {
       } else if (!isControlledAbort) {
         // 后台任务：仅对真实错误调用 onFailed，受控 abort 不触发
         if (this.callbacks) {
-          await this.callbacks.onFailed(entry.entryId, errMsg).catch(() => {});
+          await this.callbacks.onFailed(entry.entryId, errMsg).catch((e2: unknown) => {
+            _logger.warn("callbacks.onFailed fire-and-forget failed", { err: (e2 as Error)?.message, entryId: entry.entryId });
+          });
         }
       } else {
         log("info", `Task execution aborted (controlled)`, {

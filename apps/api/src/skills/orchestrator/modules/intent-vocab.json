@@ -36,11 +36,11 @@
 
   "executeActionVerbs": [
     "创建", "生成", "搜索", "查找", "打开", "运行", "部署", "发送",
-    "安装", "下载", "编写", "修改", "更新", "上传", "导出", "导入",
-    "构建", "编译", "启动", "重启", "配置", "设置", "添加", "新建",
+    "安装", "下载", "上传", "导出", "导入",
+    "构建", "编译", "启动", "重启", "新建",
     "create", "generate", "search", "find", "open", "run", "deploy",
-    "send", "install", "download", "write", "update", "upload",
-    "export", "import", "build", "compile", "start", "restart", "setup"
+    "send", "install", "download", "upload",
+    "export", "import", "build", "compile", "start", "restart"
   ],
 
   "questionIndicators": [

@@ -1,8 +1,29 @@
+import type { Pool } from "pg";
 import { Errors } from "../../../lib/errors";
 import { isNativeProtocolProvider, isOpenAiCompatibleProvider } from "./catalog";
 import { anthropicChatStreamWithSecretRotation, anthropicChatWithSecretRotation } from "./anthropicChat";
 import { geminiChatStreamWithSecretRotation, geminiChatWithSecretRotation } from "./geminiChat";
 import { openAiChatStreamWithSecretRotation, openAiChatWithSecretRotation } from "./openaiChat";
+
+/* ── protocol family DB cache ─────────────────────────────────── */
+let _protocolCache: Map<string, string> | null = null;
+let _cacheTs: number = 0;
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+
+export async function loadProtocolFamilyCache(pool: Pool): Promise<void> {
+  try {
+    const { rows } = await pool.query<{ provider: string; protocol_family: string }>(
+      `SELECT provider, protocol_family FROM model_provider_registry WHERE status='enabled'`,
+    );
+    const m = new Map<string, string>();
+    for (const r of rows) m.set(r.provider, r.protocol_family);
+    _protocolCache = m;
+    _cacheTs = Date.now();
+  } catch {
+    // DB unavailable – keep previous cache or null; callers fall back to hardcoded logic
+  }
+}
 
 export type ProviderChatContentPart =
   | { type: "text"; text: string }
@@ -38,6 +59,12 @@ type StreamInvokeParams = CommonInvokeParams & {
 };
 
 export function getProviderProtocolFamily(provider: string) {
+  // Prefer DB-driven cache when available and fresh
+  if (_protocolCache && (Date.now() - _cacheTs < CACHE_TTL_MS)) {
+    const cached = _protocolCache.get(provider);
+    if (cached) return cached;
+  }
+  // Hardcoded fallback
   if (provider === "openai" || provider === "mock" || isOpenAiCompatibleProvider(provider)) return "openai";
   if (provider === "anthropic" || provider === "custom_anthropic") return "anthropic";
   if (provider === "gemini" || provider === "custom_gemini") return "gemini";

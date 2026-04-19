@@ -20,7 +20,7 @@ import type {
   TaskQueueState,
   MultiTaskProgress,
 } from "./homeHelpers";
-import { TERMINAL_QUEUE_STATUSES } from "./homeHelpers";
+import { TERMINAL_QUEUE_STATUSES, type TaskStepEntry } from "./homeHelpers";
 import type { SessionSSEEvent } from "./useSessionSSE";
 
 const TASK_QUEUE_KEY = "openslin_task_queue_state";
@@ -101,32 +101,25 @@ function toDep(raw: any): FrontendTaskDependency {
   };
 }
 
-function readSavedTaskQueueState(sessionId: string): {
-  entries: Map<string, FrontendTaskQueueEntry>;
-  dependencies: FrontendTaskDependency[];
-  foregroundEntryId: string | null;
-  activeCount: number;
-  queuedCount: number;
-} {
-  if (typeof window === "undefined") {
-    return {
-      entries: new Map(),
-      dependencies: [],
-      foregroundEntryId: null,
-      activeCount: 0,
-      queuedCount: 0,
-    };
-  }
+const EMPTY_QUEUE_STATE = {
+  entries: new Map<string, FrontendTaskQueueEntry>(),
+  dependencies: [] as FrontendTaskDependency[],
+  foregroundEntryId: null as string | null,
+  activeCount: 0,
+  queuedCount: 0,
+};
+
+function readSavedTaskQueueState(sessionId: string): typeof EMPTY_QUEUE_STATE {
   try {
     const raw = localStorage.getItem(TASK_QUEUE_KEY);
-    if (!raw) throw new Error("empty");
+    if (!raw) return { ...EMPTY_QUEUE_STATE, entries: new Map() };
     const saved = JSON.parse(raw) as {
       sessionId?: string;
       pendingEntries?: FrontendTaskQueueEntry[];
       dependencies?: FrontendTaskDependency[];
       foregroundEntryId?: string | null;
     };
-    if (saved.sessionId && saved.sessionId !== sessionId) throw new Error("session mismatch");
+    if (saved.sessionId && saved.sessionId !== sessionId) return { ...EMPTY_QUEUE_STATE, entries: new Map() };
     const entries = new Map<string, FrontendTaskQueueEntry>();
     let activeCount = 0;
     let queuedCount = 0;
@@ -142,14 +135,8 @@ function readSavedTaskQueueState(sessionId: string): {
       activeCount,
       queuedCount,
     };
-  } catch {
-    return {
-      entries: new Map(),
-      dependencies: [],
-      foregroundEntryId: null,
-      activeCount: 0,
-      queuedCount: 0,
-    };
+  } catch { // expected: JSON.parse may throw
+    return { ...EMPTY_QUEUE_STATE, entries: new Map() };
   }
 }
 
@@ -157,17 +144,31 @@ function readSavedTaskQueueState(sessionId: string): {
 
 export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
   const { sessionId, locale } = params;
-  const [initialState] = useState(() => readSavedTaskQueueState(sessionId));
 
-  // 核心队列状态
+  // 核心队列状态（初始为空，异步恢复后更新）
   const [queueState, setQueueState] = useState<TaskQueueState>({
     sessionId,
-    entries: initialState.entries,
-    dependencies: initialState.dependencies,
-    foregroundEntryId: initialState.foregroundEntryId,
-    activeCount: initialState.activeCount,
-    queuedCount: initialState.queuedCount,
+    entries: new Map(),
+    dependencies: [],
+    foregroundEntryId: null,
+    activeCount: 0,
+    queuedCount: 0,
   });
+
+  // 同步恢复已保存的任务队列状态
+  useEffect(() => {
+    const saved = readSavedTaskQueueState(sessionId);
+    if (saved.entries.size > 0 || saved.dependencies.length > 0) {
+      setQueueState({
+        sessionId,
+        entries: saved.entries,
+        dependencies: saved.dependencies,
+        foregroundEntryId: saved.foregroundEntryId,
+        activeCount: saved.activeCount,
+        queuedCount: saved.queuedCount,
+      });
+    }
+  }, [sessionId]);
 
   // 多任务进度聚合
   const [multiProgress, setMultiProgress] = useState<MultiTaskProgress>({
@@ -206,8 +207,8 @@ export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
   /* ─── 从快照初始化 ─── */
 
   const applySnapshot = useCallback((data: Record<string, unknown>) => {
-    const rawEntries = (data.entries ?? data.queue ?? []) as any[];
-    const rawDeps = (data.dependencies ?? []) as any[];
+    const rawEntries = (data.entries ?? data.queue ?? []) as Record<string, unknown>[];
+    const rawDeps = (data.dependencies ?? []) as Record<string, unknown>[];
     const entries = new Map<string, FrontendTaskQueueEntry>();
     let fgEntryId: string | null = null;
     let active = 0;
@@ -311,16 +312,16 @@ export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
         setMultiProgress((prev) => {
           const newMap = new Map(prev.progressMap);
           const existing = newMap.get(taskId);
-          const step = data.step as any;
+          const step = data.step as Record<string, unknown> | undefined;
           if (existing && step) {
             const steps = [...existing.steps];
             const idx = steps.findIndex((s) => s.seq === step.seq);
             const newStep = {
               id: `ts-${Date.now()}`,
-              seq: step.seq,
-              toolRef: step.toolRef ?? "unknown",
-              status: step.status ?? "running",
-              reasoning: step.reasoning?.slice(0, 200),
+              seq: step.seq as number,
+              toolRef: String(step.toolRef ?? "unknown"),
+              status: (step.status as TaskStepEntry["status"]) ?? "running",
+              reasoning: typeof step.reasoning === "string" ? step.reasoning.slice(0, 200) : undefined,
               ts: Date.now(),
             };
             if (idx >= 0) steps[idx] = newStep; else steps.push(newStep);
@@ -408,7 +409,6 @@ export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
   }, [applySnapshot]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
     try {
       const pendingEntries = Array.from(queueState.entries.values()).filter(
         (entry) => !TERMINAL_QUEUE_STATUSES.has(entry.status),
@@ -423,9 +423,7 @@ export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
         dependencies: queueState.dependencies,
         foregroundEntryId: queueState.foregroundEntryId,
       }));
-    } catch {
-      // ignore local storage failures
-    }
+    } catch { /* expected: storage may fail silently */ }
   }, [queueState, sessionId]);
 
   /* ─── API 操作 ─── */
@@ -441,6 +439,7 @@ export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
       });
       return res.ok;
     } catch {
+      console.warn("[task-queue] API action failed");
       return false;
     } finally {
       setOperating(false);
@@ -463,8 +462,9 @@ export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
         });
         if (!res.ok) return 0;
         const json = await res.json().catch(() => ({}));
-        return (json as any).cancelledCount ?? 0;
+        return Number((json as Record<string, unknown>).cancelledCount ?? 0);
       } catch {
+        console.warn("[task-queue] cancelAll failed");
         return 0;
       } finally {
         setOperating(false);
@@ -505,7 +505,7 @@ export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
         const json = await res.json();
         applySnapshot(json as Record<string, unknown>);
       } catch {
-        // ignore
+        console.warn("[task-queue] refresh failed");
       }
     }, [locale, applySnapshot]),
 
@@ -524,8 +524,8 @@ export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
           body: JSON.stringify({ sessionId: sessionIdRef.current, ...params }),
         });
         if (!res.ok) {
-          const json = await res.json().catch(() => ({})) as any;
-          return { ok: false, error: json?.message ?? "Failed" };
+          const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+          return { ok: false, error: String(json?.message ?? "Failed") };
         }
         return { ok: true };
       } catch (err) {
@@ -554,9 +554,10 @@ export default function useSessionTaskQueue(params: UseSessionTaskQueueParams) {
           body: JSON.stringify({ sessionId: sessionIdRef.current }),
         });
         if (!res.ok) return { valid: false, errors: ["API error"] };
-        const json = await res.json() as any;
-        return { valid: json.valid ?? false, errors: json.errors ?? [] };
+        const json = await res.json() as Record<string, unknown>;
+        return { valid: (json.valid as boolean) ?? false, errors: (json.errors as string[]) ?? [] };
       } catch {
+        console.warn("[task-queue] validateDeps failed");
         return { valid: false, errors: ["Network error"] };
       }
     }, [locale]),

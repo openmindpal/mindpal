@@ -10,6 +10,9 @@
  *   - onFailure: 步骤失败时的恢复建议
  */
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:collabRoles" });
 
 /* ================================================================== */
 /*  Core Interface                                                      */
@@ -84,7 +87,7 @@ const roleRegistry = new Map<string, CollabRole>();
 
 export function registerRole(role: CollabRole): void {
   if (roleRegistry.has(role.name)) {
-    console.warn(`[roles] Role "${role.name}" already registered, overwriting`);
+    _logger.warn("role already registered, overwriting", { roleName: role.name });
   }
   roleRegistry.set(role.name, role);
 }

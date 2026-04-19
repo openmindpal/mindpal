@@ -6,7 +6,7 @@ describe("toSessionContextListItem", () => {
     const item = toSessionContextListItem({
       sessionId: "conv_1",
       context: {
-        v: 1,
+        v: 2,
         messages: [
           { role: "assistant", content: "latest reply" },
           { role: "user", content: "latest user question" },
@@ -29,7 +29,7 @@ describe("toSessionContextListItem", () => {
     const item = toSessionContextListItem({
       sessionId: "conv_2",
       context: {
-        v: 1,
+        v: 2,
         messages: [
           { role: "system", content: "system" },
           { role: "user", content: "   第一条用户消息\n\n带换行   " },

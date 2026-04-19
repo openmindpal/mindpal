@@ -16,6 +16,9 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:keyRotationTicker" });
 import { encryptJson } from "../secrets/crypto";
 
 // ── 配置常量 ─────────────────────────────────────────────
@@ -243,10 +246,7 @@ export async function tickKeyRotation(params: {
           newKeyVersion: newKey.keyVersion,
         });
 
-        console.log(
-          `[key-rotation-ticker] AUTO-ROTATED: tenant=${tenantId} scope=${scopeType}:${scopeId} ` +
-          `v${keyVersion}→v${newKey.keyVersion} age=${Math.floor(ageDays)}d`,
-        );
+        _logger.info("key auto-rotated", { tenantId, scopeType, scopeId, oldVersion: keyVersion, newVersion: newKey.keyVersion, ageDays: Math.floor(ageDays) });
       } catch (err: any) {
         result.failed++;
         result.details.push({
@@ -254,10 +254,7 @@ export async function tickKeyRotation(params: {
           action: "failed",
           error: String(err?.message ?? err),
         });
-        console.error(
-          `[key-rotation-ticker] ROTATION FAILED: tenant=${tenantId} scope=${scopeType}:${scopeId} v${keyVersion}`,
-          err,
-        );
+        _logger.error("key rotation failed", { tenantId, scopeType, scopeId, keyVersion, err: err?.message ?? String(err) });
       }
     } else if (ageDays >= KEY_MAX_AGE_DAYS - WARN_BEFORE_DAYS) {
       // ── 预警：即将到期 ──────────────────────────────────
@@ -312,18 +309,11 @@ export async function tickKeyRotation(params: {
         action: "failed",
         error: String(err?.message ?? err),
       });
-      console.error(
-        `[key-rotation-ticker] PENDING REENCRYPT ENQUEUE FAILED: tenant=${pendingScope.tenantId} scope=${pendingScope.scopeType}:${pendingScope.scopeId}`,
-        err,
-      );
+      _logger.error("pending reencrypt enqueue failed", { tenantId: pendingScope.tenantId, scopeType: pendingScope.scopeType, scopeId: pendingScope.scopeId, err: err?.message ?? String(err) });
     }
   }
   if (result.rotated > 0 || result.warned > 0 || result.reencryptJobsEnqueued > 0 || result.failed > 0) {
-    console.log(
-      `[key-rotation-ticker] tick complete: scanned=${result.scanned} ` +
-      `rotated=${result.rotated} warned=${result.warned} failed=${result.failed} ` +
-      `reencryptJobs=${result.reencryptJobsEnqueued}`,
-    );
+    _logger.info("tick complete", { scanned: result.scanned, rotated: result.rotated, warned: result.warned, failed: result.failed, reencryptJobs: result.reencryptJobsEnqueued });
   }
 
   return result;
@@ -448,7 +438,7 @@ async function writeRotationAudit(
     );
   } catch (err) {
     // 审计写入失败不应影响轮换流程
-    console.error("[key-rotation-ticker] audit write failed", err);
+    _logger.error("audit write failed", { err: (err as Error)?.message ?? err });
   }
 }
 

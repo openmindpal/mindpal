@@ -1,4 +1,7 @@
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "subjectRepo" });
 
 /**
  * 确保 subject 存在于数据库中。
@@ -21,7 +24,7 @@ export async function ensureSubject(params: { pool: Pool; tenantId: string; subj
     if (tenantId !== params.tenantId) return { ok: false as const };
   } else {
     await params.pool.query("INSERT INTO subjects (id, tenant_id) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING", [params.subjectId, params.tenantId]);
-    console.log(`[ensureSubject] created new subject: ${params.subjectId} (tenant: ${params.tenantId})`);
+        _logger.info("created new subject", { subjectId: params.subjectId, tenantId: params.tenantId });
   }
 
   return { ok: true as const, created: isNew };

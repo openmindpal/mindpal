@@ -74,7 +74,7 @@ export async function handleImmediateAction(params: {
   message: string;
   conversationId: string;
   resolution: {
-    nl2uiTool: { inputDraft: Record<string, unknown> } | null;
+    separatePipelineTool: { inputDraft: Record<string, unknown> } | null;
     inlineTools: Array<{ toolRef: string; inputDraft: Record<string, unknown> }>;
   };
   toolDiscovery: { tools: any[] };
@@ -99,11 +99,11 @@ export async function handleImmediateAction(params: {
   };
   sse.sendEvent("status", { phase: "executing", executionClass: "immediate_action" });
 
-  // NL2UI 生成
-  if (resolution.nl2uiTool) {
+  // 标记 execution:separate-pipeline 的工具有独立执行管线
+  if (resolution.separatePipelineTool) {
     try {
-      const nlInput = typeof resolution.nl2uiTool.inputDraft?.userInput === "string"
-        ? resolution.nl2uiTool.inputDraft.userInput
+      const nlInput = typeof resolution.separatePipelineTool.inputDraft?.userInput === "string"
+        ? resolution.separatePipelineTool.inputDraft.userInput
         : message;
       const cfg = await generateUiFromNaturalLanguage(
         app.db,
@@ -141,7 +141,7 @@ export async function handleImmediateAction(params: {
       traceId: req.ctx.traceId,
       defaultModelRef,
     });
-  } else if (!resolution.nl2uiTool) {
+  } else if (!resolution.separatePipelineTool) {
     sse.sendEvent("delta", {
       text: locale !== "en-US"
         ? "已完成即时操作。"

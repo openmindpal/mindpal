@@ -5,48 +5,18 @@
  * so that core modules (governance, metadata, workflow, tools) do not depend on
  * Skill-level modules (channels, notifications).
  */
-import crypto from "node:crypto";
-
-/* ------------------------------------------------------------------ */
-/*  stableStringify – deterministic JSON for content-addressing        */
-/* ------------------------------------------------------------------ */
-
-export function stableStringify(value: any): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const keys = Object.keys(value).sort();
-  const parts = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`);
-  return `{${parts.join(",")}}`;
-}
-
-/* ------------------------------------------------------------------ */
-/*  sha256Hex                                                          */
-/* ------------------------------------------------------------------ */
-
-export function sha256Hex(input: string) {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
-}
+import { sha256Hex, stableStringifyValue } from "@openslin/shared";
+export { sha256Hex, stableStringify } from "@openslin/shared";
 
 /* ------------------------------------------------------------------ */
 /*  digestParams / digestInputV1 – audit & idempotency helpers         */
 /* ------------------------------------------------------------------ */
 
-function stable(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stable);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stable(v[k]);
-  return out;
-}
-
 export function digestParams(params: any) {
   if (!params || typeof params !== "object" || Array.isArray(params))
     return { keyCount: 0, keys: [] as string[], sha256_8: sha256Hex("null").slice(0, 8) };
   const keys = Object.keys(params).slice(0, 50);
-  const h = sha256Hex(JSON.stringify(stable(params)));
+  const h = sha256Hex(JSON.stringify(stableStringifyValue(params)));
   return { keyCount: Object.keys(params).length, keys, sha256_8: h.slice(0, 8) };
 }
 

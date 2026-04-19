@@ -1,5 +1,8 @@
 import { Pool } from "pg";
 import type { WorkerConfig } from "../config";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:dbPool" });
 
 /**
  * Worker 侧连接池——复用 DbConfig.pool 参数，
@@ -23,20 +26,22 @@ export function createPool(cfg: WorkerConfig): Pool {
 
   // ─ 连接池可观测性日志 ─
   pool.on("connect", () => {
-    console.log(`[db:worker] new connection established (total=${pool.totalCount}, idle=${pool.idleCount}, waiting=${pool.waitingCount})`);
+    _logger.info("new connection established", { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount });
   });
   pool.on("error", (err) => {
-    console.error(`[db:worker] pool background error: ${err.message}`, { code: (err as any).code });
+    _logger.error("pool background error", { error: err.message, code: (err as any).code });
   });
   pool.on("remove", () => {
-    console.log(`[db:worker] connection removed (total=${pool.totalCount}, idle=${pool.idleCount})`);
+    _logger.info("connection removed", { total: pool.totalCount, idle: pool.idleCount });
   });
 
-  console.log(
-    `[db:worker] pool created — max=${db.pool.max}, min=${db.pool.min}, ` +
-    `idle=${db.pool.idleTimeoutMs}ms, connect=${db.pool.connectionTimeoutMs}ms, ` +
-    `statement=${db.pool.statementTimeoutMs}ms`
-  );
+  _logger.info("pool created", {
+    max: db.pool.max,
+    min: db.pool.min,
+    idleTimeoutMs: db.pool.idleTimeoutMs,
+    connectTimeoutMs: db.pool.connectionTimeoutMs,
+    statementTimeoutMs: db.pool.statementTimeoutMs,
+  });
 
   return pool;
 }

@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { computeMinhash, minhashOverlapScore, MINHASH_K } from "@openslin/shared";
+import { computeMinhash, minhashOverlapScore, MINHASH_K, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:memoryLifecycle" });
 
 /* ── Memory Lifecycle Worker ── */
 
@@ -91,11 +93,13 @@ export async function summarizeWithLlm(
         temperature: 0.3,
       }),
       signal: controller.signal,
-    } as any);
+    } as RequestInit);
     if (!res.ok) return null;
-    const json = (await res.json()) as any;
-    const text = json?.choices?.[0]?.message?.content;
-    return typeof text === "string" && text.trim() ? text.trim() : null;
+    const json = (await res.json()) as Record<string, unknown>;
+    const choices = Array.isArray(json?.choices) ? json.choices : [];
+    const text = (choices[0] as Record<string, unknown>)?.message;
+    const content = text && typeof text === "object" ? (text as Record<string, unknown>).content : undefined;
+    return typeof content === "string" && content.trim() ? content.trim() : null;
   } catch {
     return null;
   } finally {
@@ -153,7 +157,7 @@ export async function purgeExpiredMemories(params: {
 
     // 执行软删除
     if (!config.dryRun) {
-      const ids = (expiredRes.rows as any[]).map((r) => r.id);
+      const ids = (expiredRes.rows as Record<string, unknown>[]).map((r) => r.id);
       const deleteRes = await params.pool.query(
         `
           UPDATE memory_entries
@@ -170,7 +174,7 @@ export async function purgeExpiredMemories(params: {
     }
 
     // 记录详情
-    for (const row of expiredRes.rows as any[]) {
+    for (const row of expiredRes.rows as Record<string, unknown>[]) {
       details.push({
         id: String(row.id),
         action: config.dryRun ? "would_purge" : "purged",
@@ -178,12 +182,10 @@ export async function purgeExpiredMemories(params: {
       });
     }
 
-    console.log(
-      `[memory-lifecycle] purge_expired: processed=${processed}, affected=${affected}, dryRun=${config.dryRun}, durationMs=${Date.now() - startTime}`,
-    );
+        _logger.info("purge_expired", { processed, affected, dryRun: config.dryRun, durationMs: Date.now() - startTime });
   } catch (err) {
     errors++;
-    console.error("[memory-lifecycle] purge_expired error:", err);
+        _logger.error("purge_expired error", { err: (err as Error)?.message });
   }
 
   return {
@@ -232,7 +234,7 @@ export async function compactSimilarMemories(params: {
       [params.tenantId, params.spaceId, config.batchSize * 2],
     );
 
-    const rows = candidateRes.rows as any[];
+    const rows = candidateRes.rows as Record<string, unknown>[];
     processed = rows.length;
 
     if (processed < 2) {
@@ -247,7 +249,7 @@ export async function compactSimilarMemories(params: {
     }
 
     // 按 type 分组
-    const byType = new Map<string, any[]>();
+    const byType = new Map<string, Record<string, unknown>[]>();
     for (const r of rows) {
       const type = String(r.type);
       if (!byType.has(type)) byType.set(type, []);
@@ -261,13 +263,13 @@ export async function compactSimilarMemories(params: {
     for (const [_, typeRows] of byType) {
       for (let i = 0; i < typeRows.length; i++) {
         const a = typeRows[i];
-        if (processed_set.has(a.id)) continue;
+        if (processed_set.has(String(a.id))) continue;
         const mhA = Array.isArray(a.embedding_minhash) ? (a.embedding_minhash as number[]) : [];
         if (!mhA.length) continue;
 
         for (let j = i + 1; j < typeRows.length; j++) {
           const b = typeRows[j];
-          if (processed_set.has(b.id)) continue;
+          if (processed_set.has(String(b.id))) continue;
           const mhB = Array.isArray(b.embedding_minhash) ? (b.embedding_minhash as number[]) : [];
           if (!mhB.length) continue;
 
@@ -277,11 +279,11 @@ export async function compactSimilarMemories(params: {
             const aTime = Date.parse(String(a.updated_at ?? a.created_at));
             const bTime = Date.parse(String(b.updated_at ?? b.created_at));
             if (aTime >= bTime) {
-              toMerge.push({ keepId: a.id, removeId: b.id, score });
-              processed_set.add(b.id);
+              toMerge.push({ keepId: String(a.id), removeId: String(b.id), score });
+              processed_set.add(String(b.id));
             } else {
-              toMerge.push({ keepId: b.id, removeId: a.id, score });
-              processed_set.add(a.id);
+              toMerge.push({ keepId: String(b.id), removeId: String(a.id), score });
+              processed_set.add(String(a.id));
             }
             break; // 一个记忆只合并一次
           }
@@ -317,12 +319,10 @@ export async function compactSimilarMemories(params: {
       });
     }
 
-    console.log(
-      `[memory-lifecycle] compact_similar: processed=${processed}, pairs=${toMerge.length}, affected=${affected}, dryRun=${config.dryRun}, durationMs=${Date.now() - startTime}`,
-    );
+        _logger.info("compact_similar", { processed, pairs: toMerge.length, affected, dryRun: config.dryRun, durationMs: Date.now() - startTime });
   } catch (err) {
     errors++;
-    console.error("[memory-lifecycle] compact_similar error:", err);
+        _logger.error("compact_similar error", { err: (err as Error)?.message });
   }
 
   return {
@@ -384,7 +384,7 @@ export async function distillSessionSummaries(params: {
       [params.tenantId, params.spaceId, minEntries],
     );
 
-    const typesToDistill = (statsRes.rows as any[]).map((r) => ({
+    const typesToDistill = (statsRes.rows as Record<string, unknown>[]).map((r) => ({
       type: String(r.type),
       count: Number(r.cnt),
     }));
@@ -418,7 +418,7 @@ export async function distillSessionSummaries(params: {
         [params.tenantId, params.spaceId, type, config.batchSize],
       );
 
-      const entries = (entriesRes.rows as any[]).map((r) => ({
+      const entries = (entriesRes.rows as Record<string, unknown>[]).map((r) => ({
         id: String(r.id),
         title: r.title ? String(r.title) : null,
         content: String(r.content_text ?? ""),
@@ -498,12 +498,10 @@ export async function distillSessionSummaries(params: {
       }
     }
 
-    console.log(
-      `[memory-lifecycle] distill_summaries: types=${typesToDistill.length}, processed=${processed}, affected=${affected}, dryRun=${config.dryRun}, durationMs=${Date.now() - startTime}`,
-    );
+        _logger.info("distill_summaries", { types: typesToDistill.length, processed, affected, dryRun: config.dryRun, durationMs: Date.now() - startTime });
   } catch (err) {
     errors++;
-    console.error("[memory-lifecycle] distill_summaries error:", err);
+        _logger.error("distill_summaries error", { err: (err as Error)?.message });
   }
 
   return {
@@ -633,12 +631,12 @@ export async function distillUpgradeMemories(params: {
       [params.tenantId, params.spaceId, config.batchSize],
     );
 
-    const episodicRows = episodicRes.rows as any[];
+    const episodicRows = episodicRes.rows as Record<string, unknown>[];
     processed += episodicRows.length;
 
     if (episodicRows.length >= episodicThreshold) {
       // 按 type 分组蒸馏
-      const byType = new Map<string, any[]>();
+      const byType = new Map<string, Record<string, unknown>[]>();
       for (const r of episodicRows) {
         const t = String(r.type ?? "general");
         if (!byType.has(t)) byType.set(t, []);
@@ -649,26 +647,26 @@ export async function distillUpgradeMemories(params: {
         if (rows.length < Math.min(3, episodicThreshold)) continue;
 
         // 生成蒸馏摘要
-        const entriesText = rows.map((r: any) =>
+        const entriesText = rows.map((r: Record<string, unknown>) =>
           `[${r.title ?? "无标题"}] ${String(r.content_text ?? "").slice(0, 200)}`
         ).join("\n");
 
         let summary: string | null = null;
         try {
           summary = await summarizeWithLlm(
-            rows.map((r: any) => ({ title: r.title ?? null, content: String(r.content_text ?? "").slice(0, 200) }))
+            rows.map((r: Record<string, unknown>) => ({ title: r.title ? String(r.title) : null, content: String(r.content_text ?? "").slice(0, 200) }))
           );
         } catch { /* LLM 失败降级 */ }
 
         if (!summary) {
-          summary = rows.map((r: any) => String(r.content_text ?? "").slice(0, 100)).join("; ").slice(0, 500);
+          summary = rows.map((r: Record<string, unknown>) => String(r.content_text ?? "").slice(0, 100)).join("; ").slice(0, 500);
         }
 
         if (!config.dryRun) {
           const minhash = computeMinhash(summary);
           const summaryTitle = `[经验蒸馏] ${type} (${rows.length} 条事件)`;
-          const sourceIds = rows.map((r: any) => String(r.id));
-          const maxGen = Math.max(...rows.map((r: any) => Number(r.distillation_generation ?? 0)), 0);
+          const sourceIds = rows.map((r: Record<string, unknown>) => String(r.id));
+          const maxGen = Math.max(...rows.map((r: Record<string, unknown>) => Number(r.distillation_generation ?? 0)), 0);
 
           // 创建 semantic 记忆
           const insertRes = await params.pool.query(
@@ -683,7 +681,7 @@ export async function distillUpgradeMemories(params: {
               params.tenantId, params.spaceId, `${type}_experience`, summaryTitle,
               summary, crypto.createHash("sha256").update(summary, "utf8").digest("hex"),
               "minhash:16@1", minhash, sourceIds, maxGen + 1,
-              Math.min(0.9, Math.max(...rows.map((r: any) => Number(r.confidence ?? 0.5)), 0.5) + 0.1),
+              Math.min(0.9, Math.max(...rows.map((r: Record<string, unknown>) => Number(r.confidence ?? 0.5)), 0.5) + 0.1),
             ],
           );
           const targetId = String(insertRes.rows[0]?.id);
@@ -723,29 +721,29 @@ export async function distillUpgradeMemories(params: {
       [params.tenantId, params.spaceId, config.batchSize],
     );
 
-    const semanticRows = semanticRes.rows as any[];
+    const semanticRows = semanticRes.rows as Record<string, unknown>[];
     processed += semanticRows.length;
 
     if (semanticRows.length >= semanticThreshold) {
-      const entriesText = semanticRows.map((r: any) =>
+      const entriesText = semanticRows.map((r: Record<string, unknown>) =>
         `[${r.title ?? "无标题"}] ${String(r.content_text ?? "").slice(0, 300)}`
       ).join("\n");
 
       let summary: string | null = null;
       try {
         summary = await summarizeWithLlm(
-          semanticRows.map((r: any) => ({ title: r.title ?? null, content: `[策略升华] ${String(r.content_text ?? "").slice(0, 300)}` }))
+          semanticRows.map((r: Record<string, unknown>) => ({ title: r.title ? String(r.title) : null, content: `[策略升华] ${String(r.content_text ?? "").slice(0, 300)}` }))
         );
       } catch { /* LLM 失败降级 */ }
 
       if (!summary) {
-        summary = semanticRows.map((r: any) => String(r.content_text ?? "").slice(0, 150)).join("; ").slice(0, 500);
+        summary = semanticRows.map((r: Record<string, unknown>) => String(r.content_text ?? "").slice(0, 150)).join("; ").slice(0, 500);
       }
 
       if (!config.dryRun) {
         const minhash = computeMinhash(summary);
-        const sourceIds = semanticRows.map((r: any) => String(r.id));
-        const maxGen = Math.max(...semanticRows.map((r: any) => Number(r.distillation_generation ?? 0)), 0);
+        const sourceIds = semanticRows.map((r: Record<string, unknown>) => String(r.id));
+        const maxGen = Math.max(...semanticRows.map((r: Record<string, unknown>) => Number(r.distillation_generation ?? 0)), 0);
 
         const insertRes = await params.pool.query(
           `INSERT INTO memory_entries (
@@ -782,12 +780,10 @@ export async function distillUpgradeMemories(params: {
       }
     }
 
-    console.log(
-      `[memory-lifecycle] distill_upgrade: processed=${processed}, affected=${affected}, dryRun=${config.dryRun}, durationMs=${Date.now() - startTime}`,
-    );
+        _logger.info("distill_upgrade", { processed, affected, dryRun: config.dryRun, durationMs: Date.now() - startTime });
   } catch (err) {
     errors++;
-    console.error("[memory-lifecycle] distill_upgrade error:", err);
+        _logger.error("distill_upgrade error", { err: (err as Error)?.message });
   }
 
   return { operation: "distill_upgrade", processed, affected, errors, details, durationMs: Date.now() - startTime, distilledEntryIds: distilledEntryIds.length > 0 ? distilledEntryIds : undefined };
@@ -834,7 +830,7 @@ export async function updateMemoryDecayScores(params: {
       args,
     );
 
-    const rows = res.rows as any[];
+    const rows = res.rows as Record<string, unknown>[];
     processed = rows.length;
 
     if (processed === 0) {
@@ -916,12 +912,10 @@ export async function updateMemoryDecayScores(params: {
     }
     details.push({ id: "-", action: "decay_stats", reason: JSON.stringify(byClass) });
 
-    console.log(
-      `[memory-lifecycle] decay_update: processed=${processed}, affected=${affected}, dryRun=${config.dryRun}, durationMs=${Date.now() - startTime}`,
-    );
+        _logger.info("decay_update", { processed, affected, dryRun: config.dryRun, durationMs: Date.now() - startTime });
   } catch (err) {
     errors++;
-    console.error("[memory-lifecycle] decay_update error:", err);
+        _logger.error("decay_update error", { err: (err as Error)?.message });
   }
 
   return { operation: "decay_update", processed, affected, errors, details, durationMs: Date.now() - startTime };

@@ -308,8 +308,12 @@ describe.sequential("e2e:orchestrator", { timeout: 60_000 }, () => {
     const events = parseSseEvents(r.body);
     const taskCreatedIndex = events.findIndex((e) => e.event === "taskCreated");
     const planStepIndex = events.findIndex((e) => e.event === "planStep");
-    expect(taskCreatedIndex).toBeGreaterThanOrEqual(0);
-    expect(planStepIndex).toBeGreaterThanOrEqual(0);
+    const eventNames = events.map((e) => e.event);
+    const doneData = events.find((e) => e.event === "done")?.data;
+    const errorData = events.find((e) => e.event === "error")?.data;
+    const deltaTexts = events.filter((e) => e.event === "delta").map((e) => String(e.data?.text ?? "")).join("");
+    expect(taskCreatedIndex, `No taskCreated event. Events: ${JSON.stringify(eventNames)} | done: ${JSON.stringify(doneData)} | error: ${JSON.stringify(errorData)} | delta: ${deltaTexts.slice(0, 200)}`).toBeGreaterThanOrEqual(0);
+    expect(planStepIndex, `No planStep event. Events: ${JSON.stringify(eventNames)}`).toBeGreaterThanOrEqual(0);
     expect(taskCreatedIndex).toBeLessThan(planStepIndex);
   });
 
@@ -339,11 +343,15 @@ describe.sequential("e2e:orchestrator", { timeout: 60_000 }, () => {
     const classifiedIndex = events.findIndex((e) => e.event === "status" && e.data?.phase === "classified");
     const planningIndex = events.findIndex((e) => e.event === "phaseIndicator" && e.data?.phase === "planning");
     const taskCreatedIndex = events.findIndex((e) => e.event === "taskCreated");
+    const eventNames = events.map((e) => e.event);
+    const doneData = events.find((e) => e.event === "done")?.data;
+    const errorData = events.find((e) => e.event === "error")?.data;
+    const deltaTexts = events.filter((e) => e.event === "delta").map((e) => String(e.data?.text ?? "")).join("");
 
     expect(startedIndex).toBeGreaterThanOrEqual(0);
     expect(classifiedIndex).toBeGreaterThanOrEqual(0);
     expect(planningIndex).toBeGreaterThanOrEqual(0);
-    expect(taskCreatedIndex).toBeGreaterThanOrEqual(0);
+    expect(taskCreatedIndex, `No taskCreated event. Events: ${JSON.stringify(eventNames)} | done: ${JSON.stringify(doneData)} | error: ${JSON.stringify(errorData)} | delta: ${deltaTexts.slice(0, 200)}`).toBeGreaterThanOrEqual(0);
     expect(startedIndex).toBeLessThan(classifiedIndex);
     expect(classifiedIndex).toBeLessThan(planningIndex);
     expect(planningIndex).toBeLessThan(taskCreatedIndex);

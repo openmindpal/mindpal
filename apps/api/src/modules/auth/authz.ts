@@ -1,8 +1,135 @@
 import type { Pool } from "pg";
 import type { PolicyDecision, AbacEvaluationRequest, AbacEvaluationResult, AbacPolicySet, AbacPolicyRule } from "@openslin/shared";
-import { validatePolicyExpr, evaluateAbacPolicySet, buildPolicySetIndex } from "@openslin/shared";
+import { validatePolicyExpr, evaluateAbacPolicySet, buildPolicySetIndex, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "authz" });
 import { createPolicySnapshot } from "./policySnapshotRepo";
 import { getPolicyCacheEpoch } from "./policyCacheEpochRepo";
+
+// ─── RBAC 缓存失效 Pub/Sub ────────────────────────────────────────
+const RBAC_CACHE_INVALIDATE_CHANNEL = "rbac:cache:invalidate";
+
+export interface RbacCacheInvalidation {
+  tenantId: string;
+  subjectId?: string;
+  scope: "subject" | "tenant";
+  reason: string;
+}
+
+/** Redis 客户端引用（由 initRbacCacheSubscriber 注入） */
+let _redis: { publish(channel: string, message: string): Promise<number> } | null = null;
+/** 专用 subscriber 连接（ioredis 要求 subscribe 模式用独立连接） */
+let _subClient: any = null;
+let _subReady = false;
+
+/**
+ * 发布 RBAC 缓存失效消息：
+ * 1. 本地立即清除匹配条目
+ * 2. 通过 Redis PUBLISH 广播到所有 API 实例
+ */
+export async function invalidateRbacCache(msg: RbacCacheInvalidation): Promise<void> {
+  // 本地清除
+  _applyInvalidation(msg);
+
+  // 广播
+  if (_redis) {
+    try {
+      await _redis.publish(RBAC_CACHE_INVALIDATE_CHANNEL, JSON.stringify(msg));
+      _logger.info("rbac_cache_invalidation_published", {
+        tenantId: msg.tenantId,
+        subjectId: msg.subjectId ?? null,
+        scope: msg.scope,
+        reason: msg.reason,
+      });
+    } catch (err: any) {
+      _logger.warn("rbac_cache_invalidation_publish_failed", {
+        tenantId: msg.tenantId,
+        reason: msg.reason,
+        error: err?.message ?? String(err),
+      });
+    }
+  }
+}
+
+/** 按失效消息清除本地缓存条目 */
+function _applyInvalidation(msg: RbacCacheInvalidation): void {
+  const prefix = `${msg.tenantId}|`;
+  if (msg.scope === "tenant") {
+    // 清除该租户所有缓存
+    for (const key of authzCache.keys()) {
+      if (key.startsWith(prefix)) authzCache.delete(key);
+    }
+    for (const key of abacPolicySetCache.keys()) {
+      if (key.startsWith(`abac|${msg.tenantId}|`)) abacPolicySetCache.delete(key);
+    }
+    _logger.info("rbac_cache_invalidated_tenant", { tenantId: msg.tenantId, reason: msg.reason });
+  } else if (msg.scope === "subject" && msg.subjectId) {
+    // 清除该租户下特定 subject 的缓存
+    const subjectToken = `|${msg.subjectId}|`;
+    for (const key of authzCache.keys()) {
+      if (key.startsWith(prefix) && key.includes(subjectToken)) authzCache.delete(key);
+    }
+    _logger.info("rbac_cache_invalidated_subject", { tenantId: msg.tenantId, subjectId: msg.subjectId, reason: msg.reason });
+  }
+}
+
+/**
+ * 初始化 RBAC 缓存 Pub/Sub 订阅。
+ * 在 API 服务启动时调用一次，注入 Redis publish 客户端 + 创建独立 subscriber。
+ */
+export async function initRbacCacheSubscriber(redis: { publish(channel: string, message: string): Promise<number> }): Promise<void> {
+  _redis = redis;
+  try {
+    const { default: Redis } = await import("ioredis");
+    const redisCfg = {
+      host: process.env.REDIS_HOST ?? "127.0.0.1",
+      port: Number(process.env.REDIS_PORT ?? 6379),
+      maxRetriesPerRequest: null as null,
+      lazyConnect: true,
+      connectTimeout: 500,
+    };
+    _subClient = new Redis(redisCfg);
+    _subClient.on("error", () => undefined);
+    _subClient.on("close", () => { _subReady = false; });
+    _subClient.on("ready", () => {
+      _subReady = true;
+      // 重连后重新订阅
+      _subClient.subscribe(RBAC_CACHE_INVALIDATE_CHANNEL).catch(() => {});
+    });
+    _subClient.on("message", (_ch: string, raw: string) => {
+      try {
+        const msg: RbacCacheInvalidation = JSON.parse(raw);
+        if (msg.tenantId) _applyInvalidation(msg);
+      } catch { /* ignore malformed */ }
+    });
+    await _subClient.connect();
+    await _subClient.subscribe(RBAC_CACHE_INVALIDATE_CHANNEL);
+    _subReady = true;
+    _logger.info("rbac_cache_subscriber_started", { channel: RBAC_CACHE_INVALIDATE_CHANNEL });
+  } catch (err: any) {
+    _logger.warn("rbac_cache_subscriber_failed", { error: err?.message ?? String(err) });
+  }
+}
+
+/**
+ * 关闭 RBAC 缓存 Pub/Sub 订阅（graceful shutdown 时调用）。
+ */
+export async function stopRbacCacheSubscriber(): Promise<void> {
+  if (_subClient) {
+    try {
+      const quitP = (async () => {
+        await _subClient.unsubscribe(RBAC_CACHE_INVALIDATE_CHANNEL);
+        await _subClient.quit();
+      })().catch(() => {});
+      await Promise.race([quitP, new Promise<void>((r) => setTimeout(r, 1_000))]);
+    } catch { /* ignore */ }
+    try { _subClient.disconnect(); } catch { /* ignore */ }
+    _subClient = null;
+    _subReady = false;
+    _logger.info("rbac_cache_subscriber_stopped");
+  }
+  _redis = null;
+}
 
 export type ResourceAction = {
   resourceType: string;
@@ -362,7 +489,7 @@ export async function authorize(params: {
       [params.subjectId, params.tenantId, params.spaceId ?? null],
     );
     roleIds = rolesRes.rows.map((r) => r.role_id as string);
-    console.log(`[AUTHZ] subjectId=${params.subjectId}, tenantId=${params.tenantId}, spaceId=${params.spaceId}, roleIds=`, roleIds);
+        _logger.info("authorize", { subjectId: params.subjectId, tenantId: params.tenantId, spaceId: params.spaceId, roleIds });
     if (roleIds.length === 0) {
       perms = [];
     } else {
@@ -543,7 +670,7 @@ export async function authorize(params: {
     } catch (err) {
       /* ABAC 新表可能尚未迁移 — 优雅降级，记录错误日志 */
       if (process.env.NODE_ENV !== "test") {
-        console.error("[authz] ABAC 策略集评估异常，降级跳过:", err instanceof Error ? err.message : err);
+                _logger.error("ABAC policy evaluation failed, degrading to skip", { err: err instanceof Error ? err.message : String(err) });
       }
     }
   }

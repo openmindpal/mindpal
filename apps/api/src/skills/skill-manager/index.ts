@@ -13,7 +13,7 @@ import { skillManagerRoutes } from "./routes";
 const plugin: BuiltinSkillPlugin = {
   manifest: {
     identity: { name: "skill.manager", version: "1.0.0" },
-    layer: "kernel", // 治理工具默认启用
+    layer: "optional",
     routes: ["/skill-manager"],
     dependencies: ["audit", "rbac"],
     tools: [

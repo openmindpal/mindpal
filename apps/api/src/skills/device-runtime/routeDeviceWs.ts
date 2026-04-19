@@ -9,6 +9,18 @@
  */
 import type { FastifyPluginAsync } from "fastify";
 import {
+  StructuredLogger,
+  PROTOCOL_VERSIONS,
+  DEVICE_PROTOCOL_VERSION,
+  MIN_SUPPORTED_PROTOCOL_VERSION,
+  negotiateVersion,
+  isVersionCompatible,
+  type ProtocolHandshake,
+  type ProtocolHandshakeAck,
+} from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:deviceWs" });
+import {
   registerDeviceConnection,
   unregisterDeviceConnection,
   touchDeviceHeartbeat,
@@ -40,6 +52,16 @@ function requireDeviceFromReq(req: any) {
     ownerScope: string;
     ownerSubjectId: string | null;
   };
+}
+
+/** 协议握手超时（毫秒）：5s 内未收到握手消息则断开连接 */
+const HANDSHAKE_TIMEOUT_MS = 5_000;
+
+/** 每个连接的协议上下文 */
+interface DeviceWsProtocolContext {
+  negotiatedVersion: string;
+  agentVersion: string;
+  handshakeCompleted: boolean;
 }
 
 export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
@@ -75,7 +97,27 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
       lastHeartbeatAt: now,
     });
 
-    console.log(`[deviceWs] connected: deviceId=${deviceId}`);
+    _logger.info("connected", { deviceId });
+
+    // ── 协议握手 ──────────────────────────────────────────────────
+    const protocolCtx: DeviceWsProtocolContext = {
+      negotiatedVersion: DEVICE_PROTOCOL_VERSION,
+      agentVersion: "unknown",
+      handshakeCompleted: false,
+    };
+
+    // 握手超时计时器：未在规定时间内完成握手 → 直接断开
+    const handshakeTimeout = setTimeout(() => {
+      if (!protocolCtx.handshakeCompleted) {
+        _logger.warn("Handshake timeout, closing connection", {
+          deviceId,
+          timeoutMs: HANDSHAKE_TIMEOUT_MS,
+        });
+        try {
+          socket.close(4003, "handshake_timeout");
+        } catch { /* ignore */ }
+      }
+    }, HANDSHAKE_TIMEOUT_MS);
 
     // ── Redis 订阅：接收跨设备消息并通过 WS 推送 ────────
     let unsubscribe: (() => void) | null = null;
@@ -125,7 +167,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
             limit: 50,
           });
           if (pending.length > 0) {
-            console.log(`[deviceWs] delivering ${pending.length} pending D2D messages to deviceId=${deviceId}`);
+            _logger.info("delivering pending D2D messages", { count: pending.length, deviceId });
             for (const env of pending) {
               try {
                 socket.send(JSON.stringify({ type: "d2d_message", payload: env }));
@@ -133,7 +175,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
             }
           }
         } catch (pendingErr: any) {
-          console.warn(`[deviceWs] pending D2D delivery failed: ${pendingErr?.message}`);
+          _logger.warn("pending D2D delivery failed", { error: pendingErr?.message });
         }
 
         // 当 socket 关闭时清理 Redis 订阅
@@ -145,7 +187,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
           d2dRedis.quit().catch(() => {});
         });
       } catch (subErr: any) {
-        console.error(`[deviceWs] Redis subscribe failed for deviceId=${deviceId}:`, subErr?.message);
+        _logger.error("Redis subscribe failed", { deviceId, error: subErr?.message });
       }
     })();
 
@@ -157,6 +199,55 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
         const type = String(msg?.type ?? "");
 
         switch (type) {
+          // ── 协议握手 ──────────────────────────────────────────
+          case "protocol.handshake": {
+            clearTimeout(handshakeTimeout);
+            const handshake = msg as unknown as ProtocolHandshake;
+            const clientVersion = String(handshake.protocolVersion ?? "1.0");
+            protocolCtx.agentVersion = String(handshake.agentVersion ?? "unknown");
+
+            const negotiated = negotiateVersion(clientVersion, PROTOCOL_VERSIONS);
+            const compatible = negotiated !== null && isVersionCompatible(clientVersion, MIN_SUPPORTED_PROTOCOL_VERSION);
+
+            const ack: ProtocolHandshakeAck = {
+              type: "protocol.handshake.ack",
+              negotiatedVersion: negotiated ?? DEVICE_PROTOCOL_VERSION,
+              serverVersion: DEVICE_PROTOCOL_VERSION,
+              compatible,
+            };
+
+            if (compatible && negotiated) {
+              protocolCtx.negotiatedVersion = negotiated;
+              protocolCtx.handshakeCompleted = true;
+              _logger.info("protocol handshake ok", {
+                deviceId,
+                clientVersion,
+                negotiatedVersion: negotiated,
+                agentVersion: protocolCtx.agentVersion,
+                capabilities: handshake.capabilities ?? [],
+              });
+            } else {
+              _logger.warn("protocol handshake incompatible", {
+                deviceId,
+                clientVersion,
+                minSupported: MIN_SUPPORTED_PROTOCOL_VERSION,
+                agentVersion: protocolCtx.agentVersion,
+              });
+            }
+
+            try {
+              socket.send(JSON.stringify(ack));
+            } catch { /* ignore */ }
+
+            // 不兼容：发送 ack 后关闭连接
+            if (!compatible) {
+              try {
+                socket.close(4002, `incompatible_protocol: client=${clientVersion} min=${MIN_SUPPORTED_PROTOCOL_VERSION}`);
+              } catch { /* ignore */ }
+            }
+            break;
+          }
+
           case "heartbeat":
             touchDeviceHeartbeat(deviceId);
             // 回复心跳 ACK
@@ -172,17 +263,13 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
             touchDeviceHeartbeat(deviceId);
             // task_result 已通过 HTTP /device-agent/executions/:id/result 持久化，
             // WS 通道仅作低延迟通知，此处记录日志
-            console.log(
-              `[deviceWs] task_result via WS: deviceId=${deviceId} executionId=${msg?.payload?.executionId ?? "?"}`,
-            );
+            _logger.info("task_result via WS", { deviceId, executionId: msg?.payload?.executionId ?? "?" });
             break;
 
           // P1: 流式控制状态上报
           case "streaming_status":
             touchDeviceHeartbeat(deviceId);
-            console.log(
-              `[deviceWs] streaming_status: deviceId=${deviceId} sessionId=${msg?.payload?.sessionId ?? "?"} state=${msg?.payload?.state ?? msg?.payload?.type ?? "?"}`,
-            );
+            _logger.info("streaming_status", { deviceId, sessionId: msg?.payload?.sessionId ?? "?", state: msg?.payload?.state ?? msg?.payload?.type ?? "?" });
             // 可转发给 orchestrator 或前端 WS 订阅者
             break;
 
@@ -190,9 +277,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
             touchDeviceHeartbeat(deviceId);
             // 高频步骤进度，仅记录调试日志（生产环境可缓存/采样）
             if (process.env.DEVICE_WS_STREAMING_VERBOSE === "true") {
-              console.log(
-                `[deviceWs] streaming_progress: deviceId=${deviceId} step=${msg?.payload?.stepIndex ?? "?"} action=${msg?.payload?.action ?? "?"}`,
-              );
+              _logger.info("streaming_progress", { deviceId, step: msg?.payload?.stepIndex ?? "?", action: msg?.payload?.action ?? "?" });
             }
             break;
 
@@ -228,7 +313,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
                   }));
                 } catch { /* ignore */ }
               }).catch((err) => {
-                console.error(`[deviceWs] d2d_send failed: deviceId=${deviceId}`, err?.message);
+                _logger.error("d2d_send failed", { deviceId, error: err?.message });
                 try {
                   socket.send(JSON.stringify({
                     type: "d2d_send_nack",
@@ -257,7 +342,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
                   reason: ackPayload.reason ? String(ackPayload.reason) : undefined,
                 },
               }).catch((err) => {
-                console.warn(`[deviceWs] delivery receipt failed: ${err?.message}`);
+                _logger.warn("delivery receipt failed", { error: err?.message });
               });
             }
             break;
@@ -274,7 +359,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
                 deviceId,
                 messageIds: ids.map(String),
               }).catch((err) => {
-                console.warn(`[deviceWs] d2d_batch_ack failed: ${err?.message}`);
+                _logger.warn("d2d_batch_ack failed", { error: err?.message });
               });
             }
             break;
@@ -307,7 +392,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
                   }));
                 } catch { /* ignore */ }
               }).catch((err) => {
-                console.warn(`[deviceWs] subscribe_topic failed: ${err?.message}`);
+                _logger.warn("subscribe_topic failed", { error: err?.message });
               });
             }
             break;
@@ -337,28 +422,29 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
                   }));
                 } catch { /* ignore */ }
               }).catch((err) => {
-                console.warn(`[deviceWs] unsubscribe_topic failed: ${err?.message}`);
+                _logger.warn("unsubscribe_topic failed", { error: err?.message });
               });
             }
             break;
           }
 
           default:
-            console.log(`[deviceWs] unknown message type: ${type} from deviceId=${deviceId}`);
+            _logger.info("unknown message type", { type, deviceId });
         }
       } catch (err: any) {
-        console.error(`[deviceWs] message parse error: deviceId=${deviceId}`, err?.message);
+        _logger.error("message parse error", { deviceId, error: err?.message });
       }
     });
 
     // ── 断开 / 错误清理 ──────────────────────────────────────────
     socket.on("close", () => {
+      clearTimeout(handshakeTimeout);
       unregisterDeviceConnection(deviceId, socket as any);
-      console.log(`[deviceWs] disconnected: deviceId=${deviceId}`);
+      _logger.info("disconnected", { deviceId });
     });
 
     socket.on("error", (err: any) => {
-      console.error(`[deviceWs] error: deviceId=${deviceId}`, err?.message);
+      _logger.error("ws error", { deviceId, error: err?.message });
       unregisterDeviceConnection(deviceId, socket as any);
     });
   });

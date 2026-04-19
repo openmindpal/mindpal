@@ -15,6 +15,7 @@
  */
 
 import crypto from "node:crypto";
+import { resolveNumber, resolveString, resolveBoolean } from "./runtimeConfig";
 
 // ─── 类型定义 ──────────────────────────────────────────────────
 
@@ -1084,14 +1085,14 @@ export function listSupportedFormats(): DocumentFormatName[] {
 /** 从环境变量解析文档解析配置 */
 export function resolveParseConfigFromEnv(): Partial<DocumentParseConfig> {
   const config: Partial<DocumentParseConfig> = {};
-  const maxFileSize = Number(process.env.DOCUMENT_PARSER_MAX_FILE_SIZE_MB ?? 0);
+  const maxFileSize = resolveNumber("DOCUMENT_PARSER_MAX_FILE_SIZE_MB").value;
   if (maxFileSize > 0) config.maxFileSizeBytes = maxFileSize * 1024 * 1024;
-  const maxTextLen = Number(process.env.DOCUMENT_PARSER_MAX_TEXT_LENGTH ?? 0);
+  const maxTextLen = resolveNumber("DOCUMENT_PARSER_MAX_TEXT_LENGTH").value;
   if (maxTextLen > 0) config.maxTextLength = maxTextLen;
-  if (process.env.DOCUMENT_PARSER_OCR_FALLBACK === "1") config.ocrFallback = true;
-  const ocrEndpoint = String(process.env.DOCUMENT_PARSER_OCR_ENDPOINT ?? "").trim();
+  if (resolveBoolean("DOCUMENT_PARSER_OCR_FALLBACK").value) config.ocrFallback = true;
+  const ocrEndpoint = resolveString("DOCUMENT_PARSER_OCR_ENDPOINT").value;
   if (ocrEndpoint) config.ocrEndpoint = ocrEndpoint;
-  const timeout = Number(process.env.DOCUMENT_PARSER_TIMEOUT_MS ?? 0);
+  const timeout = resolveNumber("DOCUMENT_PARSER_TIMEOUT_MS").value;
   if (timeout > 0) config.timeoutMs = timeout;
   return config;
 }

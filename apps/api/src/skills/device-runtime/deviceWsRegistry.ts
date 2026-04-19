@@ -8,6 +8,10 @@
  * 单实例部署时行为与原版一致，Redis 不可用时降级到纯本地模式。
  */
 
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:deviceWsRegistry" });
+
 /**
  * 最小 WebSocket 接口 — 仅声明 registry 需要的方法，
  * 避免引入 @types/ws 开发依赖。
@@ -140,9 +144,9 @@ export async function startCrossNodeSubscriber(): Promise<void> {
         }
       } catch { /* ignore malformed */ }
     });
-    console.log(`[deviceWsRegistry] cross-node subscriber started, nodeId=${NODE_ID}`);
+    _logger.info("cross-node subscriber started", { nodeId: NODE_ID });
   } catch (err: any) {
-    console.warn(`[deviceWsRegistry] cross-node subscriber failed: ${err?.message}`);
+    _logger.warn("cross-node subscriber failed", { error: err?.message });
     _crossNodeSetup = false;
   }
 }
@@ -262,7 +266,7 @@ export function startHeartbeatCleanup(): void {
     const timeout = heartbeatTimeoutMs();
     for (const [deviceId, conn] of connections) {
       if (now - conn.lastHeartbeatAt > timeout) {
-        console.log(`[deviceWsRegistry] heartbeat timeout: deviceId=${deviceId}, closing`);
+        _logger.info("heartbeat timeout, closing", { deviceId });
         try { conn.socket.close(1000, "heartbeat_timeout"); } catch { /* ignore */ }
         connections.delete(deviceId);
         // 从 Redis 移除

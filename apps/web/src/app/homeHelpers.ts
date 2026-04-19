@@ -23,7 +23,7 @@ export type ChatAttachment = {
   duration?: number;
 };
 
-export type FlowMessage = { id: string; role: "user" | "assistant"; text: string; attachments?: ChatAttachment[]; createdAt?: number };
+export type FlowMessage = { id: string; role: "user" | "assistant"; text: string; attachments?: ChatAttachment[]; createdAt?: number; /** 后端实时处理阶段（如 started/classified/thinking/planning/executing/reviewing） */ phase?: string };
 export type FlowError = { id: string; role: "assistant"; errorCode: string; message: string; traceId: string; retryMessage?: string; createdAt?: number };
 export type UiDirectiveTarget = { kind: "page"; name: string } | { kind: "workbench"; key: string };
 export type FlowDirective = { id: string; role: "assistant"; kind: "uiDirective"; directive: unknown; target: UiDirectiveTarget | null; createdAt?: number };
@@ -212,19 +212,19 @@ const MAX_RECENT = 12;
 export function loadRecent(): RecentEntry[] {
   if (typeof window === "undefined") return [];
   try { const raw = localStorage.getItem(RECENT_KEY); return raw ? (JSON.parse(raw) as RecentEntry[]) : []; }
-  catch { return []; }
+  catch { return []; /* expected: localStorage/JSON.parse may throw in restricted env */ }
 }
 
 export function addRecent(entry: Omit<RecentEntry, "ts">) {
   const list = loadRecent().filter((r) => !(r.kind === entry.kind && r.name === entry.name));
   list.unshift({ ...entry, ts: Date.now() });
   if (list.length > MAX_RECENT) list.length = MAX_RECENT;
-  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch {}
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch { /* expected: localStorage may be restricted */ }
   return list;
 }
 
 export function clearRecent() {
-  try { localStorage.removeItem(RECENT_KEY); } catch {}
+    try { localStorage.removeItem(RECENT_KEY); } catch { /* expected: localStorage may be restricted */ }
 }
 
 /* ─── Favorites (localStorage) ───────────────────────────────────────── */
@@ -235,20 +235,20 @@ const MAX_FAVORITES = 20;
 
 export function loadFavorites(): FavoriteEntry[] {
   try { const raw = localStorage.getItem(FAVORITES_KEY); return raw ? (JSON.parse(raw) as FavoriteEntry[]) : []; }
-  catch { return []; }
+  catch { return []; /* expected: localStorage/JSON.parse may throw in restricted env */ }
 }
 
 export function addFavorite(entry: Omit<FavoriteEntry, "addedAt">): FavoriteEntry[] {
   const list = loadFavorites().filter((f) => !(f.kind === entry.kind && f.name === entry.name));
   list.unshift({ ...entry, addedAt: Date.now() });
   if (list.length > MAX_FAVORITES) list.length = MAX_FAVORITES;
-  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(list)); } catch {}
+  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(list)); } catch { /* expected: localStorage may be restricted */ }
   return list;
 }
 
 export function removeFavorite(kind: string, name: string): FavoriteEntry[] {
   const list = loadFavorites().filter((f) => !(f.kind === kind && f.name === name));
-  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(list)); } catch {}
+  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(list)); } catch { /* expected: localStorage may be restricted */ }
   return list;
 }
 
@@ -257,7 +257,7 @@ export function isFavorite(kind: string, name: string): boolean {
 }
 
 export function clearFavorites() {
-  try { localStorage.removeItem(FAVORITES_KEY); } catch {}
+    try { localStorage.removeItem(FAVORITES_KEY); } catch { /* expected: localStorage may be restricted */ }
 }
 
 /* ─── Tool helpers ───────────────────────────────────────────────────── */
@@ -287,7 +287,7 @@ export function riskBadgeKey(risk: string): string {
 export function friendlyOutputSummary(locale: string, toolRef: string, outputDigest: unknown): { text: string; latencyMs?: number } {
   const toolName = friendlyToolName(locale, toolRef);
   const text = t(locale, "chat.toolSuggestion.outputSummary").replace("{tool}", toolName);
-  const latencyMs = isPlainObject(outputDigest) && typeof (outputDigest as any).latencyMs === "number" ? (outputDigest as any).latencyMs as number : undefined;
+  const latencyMs = isPlainObject(outputDigest) && typeof (outputDigest as Record<string, unknown>).latencyMs === "number" ? (outputDigest as Record<string, unknown>).latencyMs as number : undefined;
   return { text, latencyMs };
 }
 

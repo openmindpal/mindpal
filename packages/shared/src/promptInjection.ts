@@ -1,4 +1,5 @@
 import { normalizeStringSet } from "./runtime";
+import { resolveString, resolveNumber } from "./runtimeConfig";
 
 export type PromptInjectionHitSeverity = "low" | "medium" | "high";
 export type PromptInjectionMode = "audit_only" | "deny";
@@ -22,8 +23,8 @@ export type PromptInjectionPolicy = {
   denyScore: number;
 };
 
-const DEFAULT_PI_DENY_TARGETS = "tool:execute,orchestrator:execute";
-const DEFAULT_PI_DENY_SCORE = 6;
+const FALLBACK_PI_DENY_TARGETS = "tool:execute,orchestrator:execute";
+const FALLBACK_PI_DENY_SCORE = 6;
 
 /**
  * Unicode 同形字映射表 — 将常见的视觉欺骗字符还原为 ASCII 等价字符
@@ -89,17 +90,21 @@ export function resolvePromptInjectionPolicy(input?: {
   return {
     version: input?.version === "v1" ? "v1" : "v1",
     mode: normalizePromptInjectionMode(input?.mode),
-    denyTargets: normalizeStringSet(input?.denyTargets, DEFAULT_PI_DENY_TARGETS),
-    denyScore: Number.isFinite(score) && score > 0 ? score : DEFAULT_PI_DENY_SCORE,
+    denyTargets: normalizeStringSet(input?.denyTargets, FALLBACK_PI_DENY_TARGETS),
+    denyScore: Number.isFinite(score) && score > 0 ? score : FALLBACK_PI_DENY_SCORE,
   };
 }
 
 export function resolvePromptInjectionPolicyFromEnv(env: NodeJS.ProcessEnv = process.env): PromptInjectionPolicy {
+  const { value: mode } = resolveString("SAFETY_PI_MODE", env as Record<string, string | undefined>);
+  const { value: denyTargets } = resolveString("SAFETY_PI_DENY_TARGETS", env as Record<string, string | undefined>);
+  const { value: denyScore } = resolveNumber("SAFETY_PI_DENY_SCORE", env as Record<string, string | undefined>);
+
   return resolvePromptInjectionPolicy({
     version: "v1",
-    mode: env.SAFETY_PI_MODE,
-    denyTargets: env.SAFETY_PI_DENY_TARGETS,
-    denyScore: env.SAFETY_PI_DENY_SCORE,
+    mode,
+    denyTargets: denyTargets || FALLBACK_PI_DENY_TARGETS,
+    denyScore: denyScore || FALLBACK_PI_DENY_SCORE,
   });
 }
 

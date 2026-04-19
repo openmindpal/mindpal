@@ -1,5 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:nl2uiRoutes" });
 import { Errors } from "../../lib/errors";
 import { requirePermission } from "../../modules/auth/guard";
 import { setAuditContext } from "../../modules/audit/context";
@@ -77,7 +80,7 @@ export const nl2uiRoutes: FastifyPluginAsync = async (app) => {
         return reply.status(error.statusCode).send(error.payload);
       }
 
-      console.error("NL2UI generation error:", error?.message ?? error, error?.stack);
+      _logger.error("NL2UI generation error", { error: error?.message ?? error });
       
       req.ctx.audit!.resourceType = "nl2ui_generation";
       req.ctx.audit!.action = "generate";

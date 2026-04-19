@@ -1,9 +1,9 @@
 /**
  * Unified Event Bus — 统一事件总线实现
  *
- * P1-01: 基于 @openslin/shared 核心类型，Redis Pub/Sub + DB outbox + 进程内分发。
+ * P1-01: 基于 @openslin/shared 核心类型，Redis Streams + DB outbox + 进程内分发。
  * P2-触发器: 增强 — Webhook 出站分发 + 事件确认/重试 + 通配符通道 + 统一内外分发。
- * 支持连接复用、自动重连、可靠投递。
+ * 所有事件统一使用 Redis Streams 投递（at-least-once 语义）。
  */
 import type { Pool } from "pg";
 import type {
@@ -71,7 +71,7 @@ export function channelMatchesPattern(channel: string, pattern: string): boolean
 
 export function createEventBus(params: {
   pool: Pool;
-  redis?: { publish(channel: string, message: string): Promise<number> };
+  redis?: { publish(channel: string, message: string): Promise<number>; xadd(...args: (string | number)[]): Promise<string> };
 }): ExtendedEventBus {
   const { pool, redis } = params;
   const handlers = new Map<string, Set<EventHandler>>();
@@ -229,11 +229,14 @@ export function createEventBus(params: {
         // DB outbox 表可能不存在，降级到仅 Redis
       }
 
-      // Redis Pub/Sub（实时推送）
+      // Redis Streams（统一通道，at-least-once 语义）
       if (redis) {
         try {
-          await redis.publish(eventBusRedisChannel(event.channel), JSON.stringify(envelope));
-        } catch { /* Redis 发布失败不影响主流程 */ }
+          await redis.xadd(
+            `eventstream:${event.channel}`, "MAXLEN", "~", "10000",
+            "*", "payload", JSON.stringify(envelope),
+          );
+        } catch { /* Streams 写入失败不影响主流程，DB outbox 可兜底 */ }
       }
 
       // 进程内分发（含通配符）
@@ -376,10 +379,13 @@ export function createEventBus(params: {
           timestamp: Date.now(),
           requiresAck: row.requires_ack,
         };
-        // 重新通过 Redis + 进程内分发
+        // 重新通过 Streams + 进程内分发
         if (redis) {
           try {
-            await redis.publish(eventBusRedisChannel(row.channel), JSON.stringify(envelope));
+            await redis.xadd(
+              `eventstream:${row.channel}`, "MAXLEN", "~", "10000",
+              "*", "payload", JSON.stringify(envelope),
+            );
           } catch { /* ignore */ }
         }
         dispatchInProcess(envelope);

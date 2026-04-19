@@ -5,6 +5,25 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import DynamicBlockRenderer, { type Nl2UiConfig } from "./DynamicBlockRenderer";
+import { LRUCache } from "@/lib/lruCache";
+
+// ─── Module-level LRU cache for generated NL2UI configs (client-only) ────────
+
+/** Cache key = sha-like hash of userInput; value = generated Nl2UiConfig */
+const nl2uiConfigCache: LRUCache<string, Nl2UiConfig> | null =
+  typeof window !== "undefined"
+    ? new LRUCache<string, Nl2UiConfig>({ maxSize: 100, ttlMs: 30 * 60 * 1000 })
+    : null;
+
+/** Simple string hash for cache keys (FNV-1a inspired, fast & collision-resistant enough) */
+function hashInput(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
 
 interface Nl2UiGeneratorProps {
   locale: string;
@@ -23,6 +42,16 @@ export function Nl2UiGenerator(props: Nl2UiGeneratorProps) {
   const handleGenerate = useCallback(async () => {
     if (!input.trim()) return;
     
+    const cacheKey = hashInput(input.trim());
+
+    // Check LRU cache first
+    const cached = nl2uiConfigCache?.get(cacheKey);
+    if (cached) {
+      setConfig(cached);
+      setSavedPage(null);
+      return;
+    }
+
     setLoading(true);
     setError("");
     
@@ -42,6 +71,8 @@ export function Nl2UiGenerator(props: Nl2UiGeneratorProps) {
       
       const data = await res.json();
       if (data.success && data.config) {
+        // Populate LRU cache
+        nl2uiConfigCache?.set(cacheKey, data.config);
         setConfig(data.config);
         setSavedPage(null);
       } else {

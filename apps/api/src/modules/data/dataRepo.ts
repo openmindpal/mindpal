@@ -427,6 +427,25 @@ function compileFilters(params: {
   return { sql: compile(params.expr), idx, args };
 }
 
+/**
+ * 通过记录 ID 查找该记录的 entity_name。
+ * 用于 LLM 生成的工具调用缺少 entityName 时的自动推断。
+ */
+export async function lookupEntityNameByRecordId(params: {
+  pool: Pool | PoolClient;
+  tenantId: string;
+  spaceId?: string;
+  id: string;
+}): Promise<string | null> {
+  const res = await params.pool.query(
+    `SELECT entity_name FROM entity_records 
+     WHERE tenant_id = $1 AND ($2::text IS NULL OR space_id = $2) AND id = $3 
+     LIMIT 1`,
+    [params.tenantId, params.spaceId ?? null, params.id],
+  );
+  return res.rows[0]?.entity_name ?? null;
+}
+
 export async function queryRecords(params: {
   pool: Pool | PoolClient;
   tenantId: string;

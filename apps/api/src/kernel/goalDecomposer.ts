@@ -189,7 +189,7 @@ export async function decomposeGoal(params: DecomposeGoalParams): Promise<Decomp
         repairApplied: false,
       });
     }
-    result.graph.decomposedByModel = (llmResult as any).modelRef ?? defaultModelRef ?? undefined;
+    result.graph.decomposedByModel = (llmResult.modelRef as string | undefined) ?? defaultModelRef ?? undefined;
     // P0-2: 目标分解指标（策略来自三级评估）
     app.metrics.observeGoalDecompose({
       result: result.ok ? "ok" : "fallback",

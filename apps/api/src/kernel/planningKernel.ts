@@ -80,6 +80,12 @@ export interface BuildPromptParams {
   toolCatalog: string;
   /** Optional: role prefix for the system prompt ("agent" / "collaborative agent"). */
   plannerRole?: string;
+  /** Optional: recalled memory context containing existing entity records and their IDs. */
+  memoryContext?: string;
+  /** Optional: recent task history context. */
+  taskContext?: string;
+  /** Optional: knowledge base retrieval results. */
+  knowledgeContext?: string;
 }
 
 /**
@@ -94,10 +100,13 @@ export function buildPlannerPrompt(params: BuildPromptParams): string {
   if (!params.toolCatalog) {
     return `You are ${article} ${role} planner. No tools are currently available.`;
   }
+  const memorySection = params.memoryContext ? `\n\n## Recalled Memory\n${params.memoryContext}` : "";
+  const taskSection = params.taskContext ? `\n\n## Recent Tasks\n${params.taskContext}` : "";
+  const knowledgeSection = params.knowledgeContext ? `\n\n## Relevant Knowledge\n${params.knowledgeContext}` : "";
   return `You are ${article} ${role} planner. Given the user message and available tools, suggest which tools to invoke.
 
 ## Available Tools
-${params.toolCatalog}
+${params.toolCatalog}${memorySection}${taskSection}${knowledgeSection}
 
 Output tool suggestions in this format:
 \`\`\`tool_call
@@ -304,6 +313,12 @@ export interface RunPlanningParams {
   actorRole?: string;
   /** Extra headers passed to model gateway (e.g. budget). */
   headers?: Record<string, string>;
+  /** Optional: recalled memory context (existing entity records with IDs). */
+  memoryContext?: string;
+  /** Optional: recent task history context. */
+  taskContext?: string;
+  /** Optional: knowledge base retrieval results. */
+  knowledgeContext?: string;
 }
 
 /**
@@ -342,7 +357,7 @@ export async function runPlanningPipeline(params: RunPlanningParams): Promise<Pl
   }
 
   // Phase 2: build planner prompt (use enhanced catalog with semantic hints)
-  const systemPrompt = buildPlannerPrompt({ toolCatalog: enhancedCatalog, plannerRole });
+  const systemPrompt = buildPlannerPrompt({ toolCatalog: enhancedCatalog, plannerRole, memoryContext: params.memoryContext, taskContext: params.taskContext, knowledgeContext: params.knowledgeContext });
 
   // Phase 3: invoke LLM
   const llmResult = await invokePlannerLlm({
@@ -388,7 +403,7 @@ export async function runPlanningPipeline(params: RunPlanningParams): Promise<Pl
     }
     // P0-2: 规划流水线失败指标
     app.metrics.observePlanningPipeline({
-      result: (failureCategory as any) ?? "empty",
+      result: (failureCategory ?? "empty") as "ok" | "error" | "no_tools" | "no_enabled_suggestion" | "empty",
       latencyMs: Date.now() - pipelineStartMs,
       stepCount: 0,
       droppedCount: parseResult.droppedToolCalls.length,

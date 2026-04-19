@@ -12,6 +12,9 @@
 import http from "node:http";
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:healthServer" });
 
 export interface WorkerHealthParams {
   pool: Pool;
@@ -101,11 +104,11 @@ export function startHealthServer(params: WorkerHealthParams): http.Server {
   });
 
   _server.listen(port, "127.0.0.1", () => {
-    console.log(`[worker] health server listening on 127.0.0.1:${port}`);
+    _logger.info("health server listening", { host: "127.0.0.1", port });
   });
 
   _server.on("error", (err: any) => {
-    console.error(`[worker] health server error: ${err?.message}`);
+    _logger.error("health server error", { error: err?.message });
   });
 
   return _server;

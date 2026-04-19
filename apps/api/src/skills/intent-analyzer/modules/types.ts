@@ -1,6 +1,9 @@
 import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:intentAnalyzerTypes" });
 
 /**
  * Intent Analyzer - 意图分析类型定义
@@ -103,7 +106,7 @@ function _loadIntentKeywords(): Record<IntentType, string[]> {
       return merged;
     }
   } catch (err) {
-    console.warn(`[intent-analyzer] Failed to load keywords config: ${(err as Error)?.message}`);
+    _logger.warn("failed to load keywords config", { error: (err as Error)?.message });
   }
   return _BUILTIN_INTENT_KEYWORDS;
 }

@@ -1,5 +1,8 @@
 import { Pool } from "pg";
 import type { ApiConfig } from "../config";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "db:pool" });
 
 export function createPool(cfg: ApiConfig): Pool {
   const { db } = cfg;
@@ -19,20 +22,22 @@ export function createPool(cfg: ApiConfig): Pool {
 
   // ─ 连接池可观测性日志 ─
   pool.on("connect", () => {
-    console.log(`[db:api] new connection established (total=${pool.totalCount}, idle=${pool.idleCount}, waiting=${pool.waitingCount})`);
+    _logger.info("new connection established", { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount });
   });
   pool.on("error", (err) => {
-    console.error(`[db:api] pool background error: ${err.message}`, { code: (err as any).code });
+    _logger.error("pool background error", { err: err.message, code: (err as NodeJS.ErrnoException).code });
   });
   pool.on("remove", () => {
-    console.log(`[db:api] connection removed (total=${pool.totalCount}, idle=${pool.idleCount})`);
+    _logger.info("connection removed", { total: pool.totalCount, idle: pool.idleCount });
   });
 
-  console.log(
-    `[db:api] pool created — max=${db.pool.max}, min=${db.pool.min}, ` +
-    `idle=${db.pool.idleTimeoutMs}ms, connect=${db.pool.connectionTimeoutMs}ms, ` +
-    `statement=${db.pool.statementTimeoutMs}ms`
-  );
+  _logger.info("pool created", {
+    max: db.pool.max,
+    min: db.pool.min,
+    idleMs: db.pool.idleTimeoutMs,
+    connectMs: db.pool.connectionTimeoutMs,
+    statementMs: db.pool.statementTimeoutMs,
+  });
 
   return pool;
 }

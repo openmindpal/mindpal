@@ -11,6 +11,9 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:advancedRetrieval" });
 import { searchChunksHybrid } from "./repo";
 
 // ─── 通用类型 ──────────────────────────────────────────────────
@@ -108,7 +111,7 @@ export class HyDERetriever implements Retriever {
         timeoutMs: cfg.llmTimeoutMs,
       });
     } catch (e: any) {
-      console.warn(`[HyDE] LLM 生成失败，降级到原始查询: ${e?.message}`);
+      _logger.warn("HyDE LLM generation failed, fallback to raw query", { error: e?.message });
       return this.fallbackSearch(params);
     }
 
@@ -301,7 +304,7 @@ export async function compressContext(params: {
     if (compressed.length > 0) return compressed.slice(0, cfg.maxExtractedFragments);
     // LLM 输出格式不匹配，降级返回原始结果
   } catch (e: any) {
-    console.warn(`[ContextCompression] LLM 压缩失败，降级返回原始结果: ${e?.message}`);
+    _logger.warn("context compression LLM failed, fallback to raw results", { error: e?.message });
   }
 
   return params.documents.slice(0, cfg.maxExtractedFragments).map(d => ({
@@ -419,7 +422,7 @@ export class EnsembleRetriever implements Retriever {
           const items = await r.retrieve(subParams);
           return { source: r.name, items };
         } catch (e: any) {
-          console.warn(`[Ensemble] 检索器 ${r.name} 失败: ${e?.message}`);
+          _logger.warn("ensemble retriever failed", { retriever: r.name, error: e?.message });
           return { source: r.name, items: [] };
         }
       });
@@ -431,7 +434,7 @@ export class EnsembleRetriever implements Retriever {
           const items = await r.retrieve(subParams);
           resultSets.push({ source: r.name, items });
         } catch (e: any) {
-          console.warn(`[Ensemble] 检索器 ${r.name} 失败: ${e?.message}`);
+          _logger.warn("ensemble retriever failed", { retriever: r.name, error: e?.message });
           resultSets.push({ source: r.name, items: [] });
         }
       }
@@ -551,7 +554,7 @@ export async function advancedRetrieve(params: RetrieverInput & {
   // 获取检索器
   let retriever = getRetriever(retrieverName);
   if (!retriever) {
-    console.warn(`[advancedRetrieve] 检索器 ${retrieverName} 不存在，降级到 hybrid`);
+    _logger.warn("retriever not found, fallback to hybrid", { retrieverName });
     retriever = getRetriever("hybrid")!;
   }
 

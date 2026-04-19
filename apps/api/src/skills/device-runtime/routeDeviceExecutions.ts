@@ -1,5 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:deviceExecutions" });
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
@@ -448,12 +451,12 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
               [String((bj as any).id), done.stepId],
             );
             workflowResumed = true;
-            console.log(`[device-result] workflow resumed: runId=${done.runId} stepId=${done.stepId} deviceExecutionId=${done.deviceExecutionId} jobId=${jobId}`);
+            _logger.info("workflow resumed", { runId: done.runId, stepId: done.stepId, deviceExecutionId: done.deviceExecutionId, jobId });
           }
         }
       } catch (resumeErr) {
         // 恢复失败不影响 result 返回，Worker ticker 会兜底
-        console.error(`[device-result] workflow resume failed: runId=${done.runId} stepId=${done.stepId}`, resumeErr);
+        _logger.error("workflow resume failed", { runId: done.runId, stepId: done.stepId, error: (resumeErr as Error)?.message ?? resumeErr });
       }
     }
 

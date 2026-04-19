@@ -8,6 +8,9 @@
  * 无需改动 jobDispatcher.ts 分发逻辑。
  */
 import { registerJobHandler, type JobDeps } from "./jobDispatcher";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:builtinJobHandlers" });
 import { processGovernanceEvalRun } from "../governance/evalExecutor";
 import { processAuditExport } from "../audit/exportProcessor";
 import { reencryptSecrets } from "../keyring/reencrypt";
@@ -82,13 +85,9 @@ const BUILTIN_JOB_DEFS: BuiltinJobDef[] = [
     handler: async (data, { pool }) => {
       const result = await processLoopResume(data, { pool });
       if (!result.ok) {
-        console.warn(
-          `[worker] loop_resume failed: loopId=${result.loopId} error=${result.error}`,
-        );
+        _logger.warn("loop_resume failed", { loopId: result.loopId, error: result.error });
       } else {
-        console.log(
-          `[worker] loop_resume dispatched: loopId=${result.loopId} apiNode=${result.apiNode ?? "local"} durationMs=${result.durationMs}`,
-        );
+        _logger.info("loop_resume dispatched", { loopId: result.loopId, apiNode: result.apiNode ?? "local", durationMs: result.durationMs });
       }
     },
   },

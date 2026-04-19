@@ -20,6 +20,9 @@ import fs from "node:fs/promises";
 import fss from "node:fs";
 import path from "node:path";
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:dbBackupTicker" });
 
 // ── 配置常量 ─────────────────────────────────────────────
 
@@ -245,7 +248,7 @@ export async function tickDbBackup(params: {
       `SELECT id FROM db_backups WHERE status = 'running' AND started_at > now() - interval '2 hours' LIMIT 1`,
     );
     if (runningCheck.rowCount && runningCheck.rowCount > 0) {
-      console.log("[db-backup-ticker] Another backup is already running, skipping");
+      _logger.info("another backup is already running, skipping");
       return result;
     }
 
@@ -300,7 +303,7 @@ export async function tickDbBackup(params: {
     result.backupId = backupId;
 
     // ── Step 4: 执行 pg_dump ─────────────────────────────
-    console.log(`[db-backup-ticker] Starting ${backupType} backup → ${storagePath}`);
+    _logger.info("starting backup", { backupType, storagePath });
     const startMs = Date.now();
 
     try {
@@ -337,10 +340,7 @@ export async function tickDbBackup(params: {
         [backupId, fileSize, sha256, pgVersion, durationMs],
       );
 
-      console.log(
-        `[db-backup-ticker] ${backupType} backup completed: ${storagePath} ` +
-        `(${(fileSize / 1024 / 1024).toFixed(1)}MB, ${durationMs}ms, sha256=${sha256.slice(0, 16)}...)`,
-      );
+      _logger.info("backup completed", { backupType, storagePath, sizeMB: (fileSize / 1024 / 1024).toFixed(1), durationMs, sha256: sha256.slice(0, 16) });
 
       // ── Step 7: 写入审计 ────────────────────────────────
       await writeBackupAudit(pool, {
@@ -368,7 +368,7 @@ export async function tickDbBackup(params: {
         [backupId, errMsg, Date.now() - startMs],
       );
 
-      console.error(`[db-backup-ticker] ${backupType} backup FAILED: ${errMsg}`);
+      _logger.error("backup FAILED", { backupType, err: errMsg });
 
       await writeBackupAudit(pool, {
         backupId,
@@ -387,7 +387,7 @@ export async function tickDbBackup(params: {
   } catch (tickError: any) {
     const errMsg = String(tickError?.message ?? tickError);
     result.errors.push(errMsg);
-    console.error("[db-backup-ticker] tick failed:", errMsg);
+    _logger.error("tick failed", { error: errMsg });
   }
 
   return result;
@@ -426,7 +426,7 @@ async function cleanupExpiredBackups(pool: Pool, result: DbBackupTickResult): Pr
         } catch (unlinkErr: any) {
           // 文件可能已被手动删除，记录但不阻塞
           if (unlinkErr.code !== "ENOENT") {
-            console.warn(`[db-backup-ticker] Failed to delete backup file ${rec.storagePath}: ${unlinkErr.message}`);
+            _logger.warn("failed to delete backup file", { path: rec.storagePath, error: unlinkErr.message });
           }
         }
 
@@ -438,13 +438,13 @@ async function cleanupExpiredBackups(pool: Pool, result: DbBackupTickResult): Pr
 
         cleaned++;
       } catch (err: any) {
-        console.error(`[db-backup-ticker] cleanup failed for backup ${rec.id}: ${err.message}`);
+        _logger.error("cleanup failed for backup", { backupId: rec.id, error: err.message });
       }
     }
 
     if (cleaned > 0) {
       result.cleanedUp = cleaned;
-      console.log(`[db-backup-ticker] Cleaned up ${cleaned} expired backup(s)`);
+      _logger.info("cleaned up expired backups", { count: cleaned });
 
       await writeBackupAudit(pool, {
         action: "db_backup.cleanup",
@@ -452,7 +452,7 @@ async function cleanupExpiredBackups(pool: Pool, result: DbBackupTickResult): Pr
       });
     }
   } catch (err: any) {
-    console.error("[db-backup-ticker] cleanup scan failed:", err.message);
+    _logger.error("cleanup scan failed", { error: err.message });
   }
 }
 
@@ -481,7 +481,7 @@ async function writeBackupAudit(
     );
   } catch (err) {
     // 审计写入失败不应影响备份流程
-    console.error("[db-backup-ticker] audit write failed", err);
+    _logger.error("audit write failed", { error: (err as Error)?.message ?? err });
   }
 }
 

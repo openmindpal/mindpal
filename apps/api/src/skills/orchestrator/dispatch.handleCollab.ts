@@ -12,9 +12,8 @@ import { upsertTaskState } from "../../modules/memory/repo";
 import { runPlanningPipeline } from "../../kernel/planningKernel";
 import { createTask } from "../task-manager/modules/taskRepo";
 import { requirePermission } from "../../modules/auth/guard";
-import { validateToolInput } from "../../modules/tools/validate";
 import type { WorkflowQueue } from "../../modules/workflow/queue";
-import { admitAndBuildStepEnvelope, buildStepInputPayload, generateIdempotencyKey, resolveAndValidateTool, submitStepToExistingRun } from "../../kernel/executionKernel";
+import { prepareToolStep, submitStepToExistingRun } from "../../kernel/executionKernel";
 
 export async function handleCollabMode(ctx: DispatchContext): Promise<DispatchResponse> {
   const { app, req, subject, body, locale, message, conversationId, classification, messageDigest, piSummary, authorization, traceId } = ctx;
@@ -141,39 +140,20 @@ export async function handleCollabMode(ctx: DispatchContext): Promise<DispatchRe
     });
     const firstPlanStep = planResult.planSteps[0];
     if (firstPlanStep) {
-      const resolved = await resolveAndValidateTool({
+      const { resolved, opDecision, stepInput } = await prepareToolStep({
         pool: app.db,
         tenantId: subject.tenantId,
         spaceId: subject.spaceId,
+        subjectId: subject.subjectId,
         rawToolRef: firstPlanStep.toolRef,
-      });
-      const inputDraft = firstPlanStep.inputDraft ?? {};
-      validateToolInput(resolved.version.inputSchema, inputDraft);
-
-      const opDecision = await requirePermission({
-        req,
-        resourceType: resolved.resourceType,
-        action: resolved.action,
-      });
-      const admitted = await admitAndBuildStepEnvelope({
-        pool: app.db,
-        tenantId: subject.tenantId,
-        spaceId: subject.spaceId,
-        subjectId: subject.subjectId,
-        resolved,
-        opDecision,
-      });
-      const stepInput = buildStepInputPayload({
+        inputDraft: firstPlanStep.inputDraft ?? {},
+        checkPermission: (p) => requirePermission({ req, resourceType: p.resourceType, action: p.action }),
         kind: "collab.run.step",
-        resolved,
-        admitted,
-        input: inputDraft,
-        idempotencyKey: generateIdempotencyKey({ resolved, prefix: "dispatch-collab", runId, seq: 1 }),
-        tenantId: subject.tenantId,
-        spaceId: subject.spaceId,
-        subjectId: subject.subjectId,
         traceId,
         extra: { actorRole: "planner", collabRunId },
+        idempotencyKeyPrefix: "dispatch-collab",
+        runId,
+        seq: 1,
       });
       const submitResult = await submitStepToExistingRun({
         pool: app.db,

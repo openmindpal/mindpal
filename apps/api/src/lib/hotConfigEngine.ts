@@ -17,16 +17,19 @@
 
 import type { Pool } from "pg";
 import type { RuntimeConfigOverrides } from "@openslin/shared";
+import { resolveNumber, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "hotConfigEngine" });
 
 // ── 常量 ──────────────────────────────────────────────────
 
 const REDIS_CONFIG_CHANNEL_PREFIX = "openslin:config:changed:";
 
-/** 本地缓存 TTL — 超时后强制从 DB 重新加载（兜底机制） */
-const CACHE_TTL_MS = Number(process.env.CONFIG_CACHE_TTL_MS) || 60_000; // 60s
+/** 本地缓存 TTL — 超时后强制从 DB 重新加载（兜底机制）— bootstrap 级别，不做热更新自举 */
+const CACHE_TTL_MS = resolveNumber("CONFIG_CACHE_TTL_MS").value;
 
-/** 定期轮询间隔 — 作为 Pub/Sub 的兜底 */
-const POLL_INTERVAL_MS = Number(process.env.CONFIG_POLL_INTERVAL_MS) || 30_000; // 30s
+/** 定期轮询间隔 — 作为 Pub/Sub 的兜底 — bootstrap 级别，不做热更新自举 */
+const POLL_INTERVAL_MS = resolveNumber("CONFIG_POLL_INTERVAL_MS").value;
 
 // ── 类型 ──────────────────────────────────────────────────
 
@@ -101,22 +104,22 @@ export class HotConfigEngine {
       await this.redisSub.psubscribe(`${REDIS_CONFIG_CHANNEL_PREFIX}*`);
       this.redisSub.on("pmessage", (_pattern: string, channel: string, message: string) => {
         this.handleRedisMessage(channel, message).catch((err) => {
-          console.error("[hot-config] Redis message handler error", err);
+          _logger.error("Redis message handler error", { err: (err as Error)?.message });
         });
       });
     } catch (err) {
-      console.error("[hot-config] Failed to subscribe to Redis config channel", err);
+      _logger.error("Failed to subscribe to Redis config channel", { err: (err as Error)?.message });
     }
 
     // 启动定期轮询兜底
     this.pollTimer = setInterval(() => {
       this.pollAllCachedTenants().catch((err) => {
-        console.error("[hot-config] Poll error", err);
+        _logger.error("Poll error", { err: (err as Error)?.message });
       });
     }, POLL_INTERVAL_MS);
     this.pollTimer.unref();
 
-    console.log(`[hot-config] Engine started (instance=${this.instanceId}, poll=${POLL_INTERVAL_MS}ms, cacheTTL=${CACHE_TTL_MS}ms)`);
+    _logger.info("Engine started", { instanceId: this.instanceId, pollMs: POLL_INTERVAL_MS, cacheTtlMs: CACHE_TTL_MS });
   }
 
   /**
@@ -137,7 +140,7 @@ export class HotConfigEngine {
 
     this.cache.clear();
     this.listeners.length = 0;
-    console.log("[hot-config] Engine stopped");
+    _logger.info("Engine stopped");
   }
 
   // ── 配置读取（带缓存） ───────────────────────────────────
@@ -188,7 +191,7 @@ export class HotConfigEngine {
     try {
       await this.redisPub.publish(channel, JSON.stringify(fullEvent));
     } catch (err) {
-      console.error("[hot-config] Failed to publish config change", err);
+      _logger.error("Failed to publish config change", { err: (err as Error)?.message });
     }
 
     // 本地也立即刷新
@@ -256,7 +259,7 @@ export class HotConfigEngine {
 
       return overrides;
     } catch (err) {
-      console.error(`[hot-config] Failed to load overrides for tenant=${tenantId}`, err);
+      _logger.error("Failed to load overrides", { tenantId, err: (err as Error)?.message });
       // 返回旧缓存或空
       return this.cache.get(tenantId)?.overrides ?? {};
     }
@@ -279,12 +282,9 @@ export class HotConfigEngine {
       // 通知本地监听器
       await this.notifyListeners(event);
 
-      console.log(
-        `[hot-config] Config reloaded: tenant=${event.tenantId} key=${event.configKey} ` +
-        `action=${event.action} from=${event.source}`,
-      );
+      _logger.info("Config reloaded", { tenantId: event.tenantId, configKey: event.configKey, action: event.action, source: event.source });
     } catch (err) {
-      console.error("[hot-config] Failed to handle Redis message", err);
+      _logger.error("Failed to handle Redis message", { err: (err as Error)?.message });
     }
   }
 
@@ -293,7 +293,7 @@ export class HotConfigEngine {
       try {
         await listener(event);
       } catch (err) {
-        console.error("[hot-config] Listener error", err);
+        _logger.error("Listener error", { err: (err as Error)?.message });
       }
     }
   }

@@ -5,6 +5,9 @@
  * 对超过升级阈值的标记为 escalated。
  */
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:approvalExpiry" });
 
 const DEFAULT_EXPIRATION_MINUTES = 1440; // 24h
 const DEFAULT_ESCALATION_MINUTES = 240;  // 4h
@@ -33,11 +36,11 @@ export async function tickApprovalExpiry(params: { pool: Pool }): Promise<void> 
       );
       const cnt = res.rowCount ?? 0;
       if (cnt > 0) {
-        console.log(`[tickApprovalExpiry] escalated ${cnt} approvals`);
+        _logger.info("escalated approvals", { count: cnt });
         processed += cnt;
       }
     } catch (e: any) {
-      console.warn("[tickApprovalExpiry] escalation failed", { error: String(e?.message ?? e) });
+      _logger.warn("escalation failed", { error: String(e?.message ?? e) });
     }
   }
 
@@ -69,10 +72,10 @@ export async function tickApprovalExpiry(params: { pool: Pool }): Promise<void> 
       }
 
       if (toExpire.rowCount && toExpire.rowCount > 0) {
-        console.log(`[tickApprovalExpiry] expired ${toExpire.rowCount} approvals`);
+        _logger.info("expired approvals", { count: toExpire.rowCount });
       }
     } catch (e: any) {
-      console.warn("[tickApprovalExpiry] expiry processing failed", { error: String(e?.message ?? e) });
+      _logger.warn("expiry processing failed", { error: String(e?.message ?? e) });
     }
   }
 }

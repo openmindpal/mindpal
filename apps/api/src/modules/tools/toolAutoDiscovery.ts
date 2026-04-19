@@ -22,87 +22,96 @@ import path from "node:path";
 import type { Pool } from "pg";
 import { getBuiltinSkills, isBuiltinSkillRegistrySealed, resolveSkillLayer } from "../../lib/skillPlugin";
 import type { SkillLayer } from "../../lib/skillPlugin";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "toolAutoDiscovery" });
+
+/* ------------------------------------------------------------------ */
+/*  Fallback 常量（DB resource_type_profiles 不可用时的降级）                */
+/*                                                                      */
+/*  元数据驱动原则：                                                  */
+/*   1. 优先从 manifest 声明中读取 category / priority / tags             */
+/*   2. 其次从 DB resource_type_profiles 表中读取                        */
+/*   3. fallback 仅提供无语义的安全默认值，不内置业务语义判断        */
+/* ------------------------------------------------------------------ */
+
+const FALLBACK_CATEGORY = "uncategorized";
+const FALLBACK_PRIORITY = 5;
+const FALLBACK_TAGS: string[] = [];
+
+/* ------------------------------------------------------------------ */
+/*  DB 驱动的 ResourceTypeProfile 缓存                                 */
+/* ------------------------------------------------------------------ */
+
+interface ResourceTypeProfile {
+  resource_type: string;
+  default_category: string;
+  default_priority: number;
+  default_tags: string[];
+}
+
+let _profileCache: Map<string, ResourceTypeProfile> | null = null;
+let _profileCacheAt = 0;
+const PROFILE_CACHE_TTL_MS = 60_000;
+
+async function loadResourceTypeProfiles(pool: Pool): Promise<Map<string, ResourceTypeProfile>> {
+  if (_profileCache && Date.now() - _profileCacheAt < PROFILE_CACHE_TTL_MS) {
+    return _profileCache;
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT resource_type, default_category, default_priority, default_tags
+       FROM resource_type_profiles WHERE tenant_id = $1`,
+      ["tenant_dev"],
+    );
+    _profileCache = new Map(
+      rows.map((r: any) => [
+        r.resource_type,
+        {
+          resource_type: r.resource_type,
+          default_category: r.default_category,
+          default_priority: r.default_priority,
+          default_tags: r.default_tags ?? [],
+        },
+      ]),
+    );
+    _profileCacheAt = Date.now();
+    return _profileCache;
+  } catch {
+    // DB 不可用时静默降级
+    if (!_profileCache) _profileCache = new Map();
+    return _profileCache;
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helper: Infer category/priority/tags from resourceType             */
 /* ------------------------------------------------------------------ */
 
-function inferCategoryFromResourceType(resourceType: string): string {
-  const mapping: Record<string, string> = {
-    model: "ai",
-    embedding: "ai",
-    knowledge: "ai",
-    memory: "ai",
-    intent: "ai",
-    nl2ui: "ai",
-    media: "ai",
-    schema: "database",
-    entity: "database",
-    channel: "communication",
-    federation: "integration",
-    rbac: "governance",
-    governance: "governance",
-    agent_runtime: "governance",
-    agent: "workflow",
-    browser: "integration",
-    desktop: "integration",
-    skill: "governance",
-    tool: "integration",
-    workbench: "integration",
-  };
-  return mapping[resourceType] ?? "integration";
+function inferCategoryFromResourceType(
+  resourceType: string,
+  profiles?: Map<string, ResourceTypeProfile>,
+): string {
+  return profiles?.get(resourceType)?.default_category
+    ?? FALLBACK_CATEGORY;
 }
 
-function inferPriorityFromResourceType(resourceType: string): number {
-  const mapping: Record<string, number> = {
-    model: 9,
-    embedding: 8,
-    knowledge: 8,
-    memory: 8,
-    intent: 9,
-    nl2ui: 9,
-    media: 7,
-    schema: 9,
-    entity: 8,
-    channel: 7,
-    federation: 7,
-    rbac: 8,
-    governance: 9,
-    agent_runtime: 8,
-    agent: 7,
-    browser: 6,
-    desktop: 6,
-    skill: 7,
-    tool: 6,
-    workbench: 6,
-  };
-  return mapping[resourceType] ?? 5;
+function inferPriorityFromResourceType(
+  resourceType: string,
+  profiles?: Map<string, ResourceTypeProfile>,
+): number {
+  return profiles?.get(resourceType)?.default_priority
+    ?? FALLBACK_PRIORITY;
 }
 
-function inferTagsFromResourceType(resourceType: string, action: string): string[] {
-  const baseTags: Record<string, string[]> = {
-    model: ["llm", "model", "generation"],
-    embedding: ["embedding", "vector", "ai"],
-    knowledge: ["knowledge", "rag", "search"],
-    memory: ["memory", "context", "recall"],
-    intent: ["intent", "analysis", "nlp"],
-    nl2ui: ["nl2ui", "page-generation", "frontend"],
-    media: ["media", "multimodal", "vision"],
-    schema: ["schema", "database", "ddl"],
-    entity: ["entity", "data", "crud"],
-    channel: ["channel", "im", "messaging"],
-    federation: ["federation", "cross-tenant", "bridge"],
-    rbac: ["rbac", "permission", "authorization"],
-    governance: ["governance", "audit", "compliance"],
-    agent_runtime: ["agent", "runtime", "orchestration"],
-    agent: ["agent", "reflection", "learning"],
-    browser: ["browser", "automation", "web"],
-    desktop: ["desktop", "automation", "application"],
-    skill: ["skill", "management"],
-    tool: ["tool", "discovery"],
-    workbench: ["workbench", "plugin"],
-  };
-  return [...(baseTags[resourceType] ?? ["tool"]), action];
+function inferTagsFromResourceType(
+  resourceType: string,
+  action: string,
+  profiles?: Map<string, ResourceTypeProfile>,
+): string[] {
+  const baseTags = profiles?.get(resourceType)?.default_tags
+    ?? FALLBACK_TAGS;
+  return baseTags.length > 0 ? [...baseTags, action] : [action];
 }
 
 /* ------------------------------------------------------------------ */
@@ -132,6 +141,8 @@ interface DiscoveredTool {
   tags?: string[];
   /** 额外权限声明 [{resourceType, action}] */
   extraPermissions?: Array<{ resourceType: string; action: string }>;
+  /** 工具执行超时时间(毫秒) */
+  executionTimeoutMs?: number;
 }
 
 type CachedManifestTool = {
@@ -164,6 +175,13 @@ let _scanSkillDirectoriesInFlight: Promise<DiscoveredTool[]> | null = null;
 let _lastScanSnapshot = "";
 let _lastScannedSkills: DiscoveredTool[] = [];
 
+/** 发现版本戳：每次 rescan 完成时递增，用于缓存一致性检测 */
+let _discoveryVersion = 0;
+/** 当 scanSkillDirectories 缓存生成时的版本号 */
+let _cacheVersion = 0;
+/** rescan 异步锁：防止并发 rescan 导致缓存混乱 */
+let _rescanLock: Promise<{ registered: number; skipped: number }> | null = null;
+
 function cloneDiscoveredTool(tool: DiscoveredTool): DiscoveredTool {
   return {
     ...tool,
@@ -177,6 +195,11 @@ export function invalidateToolDiscoveryCache(): void {
   _scanSkillDirectoriesInFlight = null;
   _lastScanSnapshot = "";
   _lastScannedSkills = [];
+  _profileCache = null;
+  _profileCacheAt = 0;
+  // 不递增 _discoveryVersion（由 rescan 完成后递增）
+  // 但清理缓存版本标记，迫使下次扫描重新检查
+  _cacheVersion = -1;
 }
 
 /**
@@ -189,10 +212,19 @@ export function invalidateToolDiscoveryCache(): void {
  *     先失效文件缓存再扫描，确保新包被发现
  */
 export async function rescanAndRegisterTools(pool: Pool): Promise<{ registered: number; skipped: number }> {
-  // 1. 失效文件系统扫描缓存，确保新包被发现
-  invalidateToolDiscoveryCache();
-  // 2. 重新执行发现 + 注册
-  return autoDiscoverAndRegisterTools(pool);
+  // 防止并发 rescan：若已有 rescan 进行中，等待其完成
+  if (_rescanLock) return _rescanLock;
+  _rescanLock = (async () => {
+    try {
+      invalidateToolDiscoveryCache();
+      const result = await autoDiscoverAndRegisterTools(pool);
+      _discoveryVersion++;  // rescan 完成后递增版本戳
+      return result;
+    } finally {
+      _rescanLock = null;
+    }
+  })();
+  return _rescanLock;
 }
 
 async function scanSkillDirectories(): Promise<DiscoveredTool[]> {
@@ -255,6 +287,7 @@ async function scanSkillDirectories(): Promise<DiscoveredTool[]> {
                   category: manifest.category ?? undefined,
                   priority: manifest.priority ?? undefined,
                   tags: Array.isArray(manifest.tags) ? manifest.tags : undefined,
+                  executionTimeoutMs: manifest.executionTimeoutMs ?? contract.executionTimeoutMs ?? undefined,
                 },
               };
             }
@@ -272,11 +305,17 @@ async function scanSkillDirectories(): Promise<DiscoveredTool[]> {
     }
 
     const snapshot = snapshotParts.join("|");
+    // 如果版本戳已变（有新的 rescan 完成），则缓存无效
+    if (_cacheVersion !== _discoveryVersion) {
+      _lastScanSnapshot = "";
+      _lastScannedSkills = [];
+    }
     if (snapshot === _lastScanSnapshot) {
       return _lastScannedSkills.map(cloneDiscoveredTool);
     }
     _lastScanSnapshot = snapshot;
     _lastScannedSkills = skills.map(cloneDiscoveredTool);
+    _cacheVersion = _discoveryVersion;
     return skills;
   })();
   try {
@@ -290,12 +329,12 @@ async function scanSkillDirectories(): Promise<DiscoveredTool[]> {
 /*  Collect from built-in skill plugin registry (manifest.tools)       */
 /* ------------------------------------------------------------------ */
 
-function collectBuiltinSkillTools(seen: Set<string>): DiscoveredTool[] {
+function collectBuiltinSkillTools(seen: Set<string>, profiles?: Map<string, ResourceTypeProfile>): DiscoveredTool[] {
   const tools: DiscoveredTool[] = [];
   if (!isBuiltinSkillRegistrySealed()) {
     // Registry not yet initialized — this is a programming error if called after server startup.
     // During seed (before buildServer) this is expected; log and skip.
-    console.warn("[tool-discovery] built-in skill registry not sealed yet — skipping builtin tools. " +
+        _logger.warn("built-in skill registry not sealed yet — skipping builtin tools. " +
       "If this happens during server startup, it indicates a startup-ordering bug.");
     return tools;
   }
@@ -309,9 +348,9 @@ function collectBuiltinSkillTools(seen: Set<string>): DiscoveredTool[] {
       seen.add(td.name);
       
       // P2: Auto-infer category/priority from resourceType for built-in tools
-      const inferredCategory = inferCategoryFromResourceType(td.resourceType);
-      const inferredPriority = inferPriorityFromResourceType(td.resourceType);
-      const mergedTags = Array.from(new Set([...(td.tags ?? []), ...inferTagsFromResourceType(td.resourceType, td.action)]));
+      const inferredCategory = inferCategoryFromResourceType(td.resourceType, profiles);
+      const inferredPriority = inferPriorityFromResourceType(td.resourceType, profiles);
+      const mergedTags = Array.from(new Set([...(td.tags ?? []), ...inferTagsFromResourceType(td.resourceType, td.action, profiles)]));
       
       tools.push({
         name: td.name,
@@ -366,6 +405,9 @@ let _discoveryInFlight: Promise<{ registered: number; skipped: number }> | null 
 export async function autoDiscoverAndRegisterTools(pool: Pool): Promise<{ registered: number; skipped: number }> {
   if (_discoveryInFlight) return _discoveryInFlight;
   _discoveryInFlight = (async () => {
+    // 0. Load resource type profiles from DB (fallback to empty if DB unavailable)
+    const profiles = await loadResourceTypeProfiles(pool);
+
     // 1. Find all tenants
     const tenantRes = await pool.query("SELECT id FROM tenants ORDER BY id");
     if (!tenantRes.rowCount) return { registered: 0, skipped: 0 };
@@ -376,7 +418,7 @@ export async function autoDiscoverAndRegisterTools(pool: Pool): Promise<{ regist
     const allTools: DiscoveredTool[] = [];
 
     // Source A: Built-in skill plugin manifest.tools (e.g. entity.create, memory.read, nl2ui.generate)
-    const builtinTools = collectBuiltinSkillTools(seen);
+    const builtinTools = collectBuiltinSkillTools(seen, profiles);
     allTools.push(...builtinTools);
 
     // Source B: External skill packages from skills/ directories (e.g. collab.guard, sleep, math.add)
@@ -400,8 +442,8 @@ export async function autoDiscoverAndRegisterTools(pool: Pool): Promise<{ regist
           // Upsert tool_definitions
           await pool.query(
             `
-              INSERT INTO tool_definitions (tenant_id, name, display_name, description, scope, resource_type, action, idempotency_required, risk_level, approval_required, source_layer, category, priority, tags, extra_permissions)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+              INSERT INTO tool_definitions (tenant_id, name, display_name, description, scope, resource_type, action, idempotency_required, risk_level, approval_required, source_layer, category, priority, tags, extra_permissions, execution_timeout_ms)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
               ON CONFLICT (tenant_id, name) DO UPDATE
               SET display_name = COALESCE(tool_definitions.display_name, EXCLUDED.display_name),
                   description = COALESCE(tool_definitions.description, EXCLUDED.description),
@@ -416,6 +458,7 @@ export async function autoDiscoverAndRegisterTools(pool: Pool): Promise<{ regist
                   priority = COALESCE(EXCLUDED.priority, tool_definitions.priority),
                   tags = COALESCE(EXCLUDED.tags, tool_definitions.tags),
                   extra_permissions = COALESCE(EXCLUDED.extra_permissions, tool_definitions.extra_permissions),
+                  execution_timeout_ms = COALESCE(EXCLUDED.execution_timeout_ms, tool_definitions.execution_timeout_ms),
                   updated_at = now()
             `,
             [
@@ -434,6 +477,7 @@ export async function autoDiscoverAndRegisterTools(pool: Pool): Promise<{ regist
               tool.priority ?? 5,
               tool.tags ?? [],
               tool.extraPermissions ? JSON.stringify(tool.extraPermissions) : null,
+              tool.executionTimeoutMs ?? null,
             ],
           );
 
@@ -486,7 +530,7 @@ export async function autoDiscoverAndRegisterTools(pool: Pool): Promise<{ regist
 
           registered++;
         } catch (err: any) {
-          console.error(`[tool-discovery] failed to register tool "${tool.name}": ${err?.message ?? err}`);
+                    _logger.error(`failed to register tool "${tool.name}"`, { err: err?.message ?? err });
           skipped++;
         }
       }

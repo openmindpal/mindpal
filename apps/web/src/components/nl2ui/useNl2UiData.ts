@@ -3,6 +3,21 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch, text as i18nText } from "@/lib/api";
 import type { EffectiveSchema, FieldDef } from "@/lib/types";
+import { LRUCache } from "@/lib/lruCache";
+
+// ─── Module-level LRU caches (client-only, SSR-safe via typeof check) ────────
+
+/** Cache for effective schema results: key = "entityName::schemaName" */
+const schemaCache: LRUCache<string, EffectiveSchema> | null =
+  typeof window !== "undefined"
+    ? new LRUCache<string, EffectiveSchema>({ maxSize: 100, ttlMs: 30 * 60 * 1000 })
+    : null;
+
+/** Cache for resolved reference labels: key = "entity::id" */
+const refRecordCache: LRUCache<string, Record<string, unknown> | null> | null =
+  typeof window !== "undefined"
+    ? new LRUCache<string, Record<string, unknown> | null>({ maxSize: 100, ttlMs: 30 * 60 * 1000 })
+    : null;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -297,6 +312,14 @@ async function fetchEffectiveSchema(
   timeoutMs: number,
   schemaName?: string,
 ): Promise<Omit<BindingResult, "loading">> {
+  const cacheKey = `${entityName}::${schemaName ?? ""}`;
+
+  // LRU hit — return cached schema
+  const cached = schemaCache?.get(cacheKey);
+  if (cached) {
+    return { error: null, items: [], schema: cached, nextCursor: null, totalHint: null };
+  }
+
   try {
     const query = schemaName ? `?schemaName=${encodeURIComponent(schemaName)}` : "";
     const res = await apiFetchWithTimeout(`/schemas/${encodeURIComponent(entityName)}/effective${query}`, {
@@ -310,6 +333,10 @@ async function fetchEffectiveSchema(
     }
 
     const schema = (await res.json()) as EffectiveSchema;
+
+    // Populate LRU cache
+    schemaCache?.set(cacheKey, schema);
+
     return { error: null, items: [], schema, nextCursor: null, totalHint: null };
   } catch (err) {
     const isAbort = err instanceof DOMException && err.name === "AbortError";
@@ -628,13 +655,23 @@ async function resolveClientRefLabels(
 
   if (Object.keys(groups).length === 0) return result;
 
-  // Deduplicate fetches: entity+id → promise
-  const cache = new Map<string, Promise<Record<string, unknown> | null>>();
+  // Deduplicate fetches: entity+id → promise (also check LRU cache)
+  const fetchDedup = new Map<string, Promise<Record<string, unknown> | null>>();
   const fetchOne = async (entity: string, id: string): Promise<Record<string, unknown> | null> => {
+    const cacheKey = `${entity}::${id}`;
+    // Check module-level LRU first
+    const cached = refRecordCache?.get(cacheKey);
+    if (cached !== undefined) return cached;
+
     try {
       const res = await apiFetch(`/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`);
-      if (!res.ok) return null;
-      return (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        refRecordCache?.set(cacheKey, null);
+        return null;
+      }
+      const rec = (await res.json()) as Record<string, unknown>;
+      refRecordCache?.set(cacheKey, rec);
+      return rec;
     } catch {
       return null;
     }
@@ -643,16 +680,16 @@ async function resolveClientRefLabels(
   for (const group of Object.values(groups)) {
     for (const id of group.ids) {
       const key = `${group.entity}::${id}`;
-      if (!cache.has(key)) cache.set(key, fetchOne(group.entity, id));
+      if (!fetchDedup.has(key)) fetchDedup.set(key, fetchOne(group.entity, id));
     }
   }
 
-  await Promise.all(cache.values());
+  await Promise.all(fetchDedup.values());
 
   for (const [fieldName, group] of Object.entries(groups)) {
     result[fieldName] = {};
     for (const id of group.ids) {
-      const rec = await cache.get(`${group.entity}::${id}`);
+      const rec = await fetchDedup.get(`${group.entity}::${id}`);
       if (rec) {
         const payload = rec.payload && typeof rec.payload === "object" ? (rec.payload as Record<string, unknown>) : rec;
         result[fieldName][id] = String(payload[group.displayField] ?? payload.name ?? id);

@@ -13,7 +13,9 @@ import { getSecretRecordEncryptedPayload } from "../../../modules/secrets/secret
 import { getCollabRun } from "./collabRepo";
 import { appendCollabEnvelope } from "./collabEnvelopeRepo";
 import { appendCollabRunEvent } from "./collabEventRepo";
-import { getOrCreateBreaker } from "@openslin/shared";
+import { getOrCreateBreaker, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:federationGateway" });
 import { safeCompare, verifyWebhookSignature } from "../../../lib/webhookVerification";
 
 /** 联邦出站熔断器默认参数 */
@@ -22,7 +24,7 @@ const FED_BREAKER_DEFAULTS = {
   resetTimeoutMs: 60_000,
   halfOpenMaxAttempts: 1,
   onStateChange: (e: { name: string; from: string; to: string; consecutiveFailures: number }) => {
-    console.warn(`[federation:circuit-breaker] ${e.name}: ${e.from} → ${e.to} (failures=${e.consecutiveFailures})`);
+    _logger.warn("circuit-breaker state change", { name: e.name, from: e.from, to: e.to, consecutiveFailures: e.consecutiveFailures });
   },
 } as const;
 
@@ -422,7 +424,7 @@ export async function sendToFederationNode(params: {
   // P0-02: 按 nodeId 维度熔断，OPEN 时快速失败
   const breaker = getOrCreateBreaker(`federation:${params.nodeId}`, FED_BREAKER_DEFAULTS);
   if (breaker.getState() === "open") {
-    console.warn(`[federation] circuit breaker OPEN for node ${params.nodeId} — skipping outbound`);
+    _logger.warn("circuit breaker OPEN, skipping outbound", { nodeId: params.nodeId });
     return { delivered: false, nodeId: node.nodeId, reason: "circuit_breaker_open" };
   }
 
@@ -621,7 +623,7 @@ export async function handleInboundFederationEnvelope(params: {
 
   if (!collab) {
     // 协作运行不存在，记录警告并返回
-    console.warn(`[federation:inbound] CollabRun not found: ${params.envelope.collabRunId}`);
+    _logger.warn("CollabRun not found", { collabRunId: params.envelope.collabRunId });
     return { accepted: false, reason: "collab_run_not_found" };
   }
 
@@ -662,7 +664,7 @@ export async function handleInboundFederationEnvelope(params: {
     },
   });
 
-  console.log(`[federation:inbound] Envelope accepted: ${envelope.envelopeId} for collab ${collab.collabRunId}`);
+  _logger.info("envelope accepted", { envelopeId: envelope.envelopeId, collabRunId: collab.collabRunId });
   return { accepted: true };
 }
 

@@ -105,12 +105,12 @@ export function ApprovalNodeRenderer(props: { item: FlowApprovalNode; locale: st
       {item.status === "pending" && (
         <div className={styles.approvalNodeActions}>
           {onApprove && (
-            <button className={styles.approvalBtnApprove} onClick={onApprove}>
+            <button className={styles.approvalBtnApprove} onClick={onApprove} aria-label="批准">
               <IconCheck /> {t(locale, "flowItem.approval.approve")}
             </button>
           )}
           {onReject && (
-            <button className={styles.approvalBtnReject} onClick={onReject}>
+            <button className={styles.approvalBtnReject} onClick={onReject} aria-label="拒绝">
               <IconX /> {t(locale, "flowItem.approval.reject")}
             </button>
           )}

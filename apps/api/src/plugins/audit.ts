@@ -1,19 +1,19 @@
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { Errors } from "../lib/errors";
 import { AuditContractError, insertAuditEvent, isHighRiskAuditAction, normalizeAuditErrorCategory } from "../modules/audit/auditRepo";
 import { enqueueAuditOutbox } from "../modules/audit/outboxRepo";
 import { buildAuditEventFromRequest } from "../modules/audit/requestOutbox";
 import { digestBody, digestPayload, mergeOutputDigest } from "./digests";
 
-function resolveAuditCorrelation(req: any) {
-  const audit = req?.ctx?.audit as any;
+function resolveAuditCorrelation(req: FastifyRequest) {
+  const audit = req?.ctx?.audit;
   const runId = String(audit?.runId ?? "").trim() || null;
   const stepId = String(audit?.stepId ?? "").trim() || null;
   const policySnapshotRef = String(audit?.policySnapshotRef ?? "").trim() || null;
   return { runId, stepId, policySnapshotRef };
 }
 
-function buildAuditContextRequiredResponse(params: { req: any; missing: string[] }) {
+function buildAuditContextRequiredResponse(params: { req: FastifyRequest; missing: string[] }) {
   return {
     errorCode: "AUDIT_CONTEXT_REQUIRED",
     message: {
@@ -26,7 +26,7 @@ function buildAuditContextRequiredResponse(params: { req: any; missing: string[]
   };
 }
 
-async function enqueueReadAuditOutboxFallback(app: any, params: { req: any; result: "success" | "denied" | "error" }) {
+async function enqueueReadAuditOutboxFallback(app: FastifyInstance, params: { req: FastifyRequest; result: "success" | "denied" | "error" }) {
   const subject = params.req.ctx.subject;
   if (!subject?.tenantId) throw new Error("subject_missing");
   const event = buildAuditEventFromRequest({ req: params.req, result: params.result });
@@ -72,8 +72,8 @@ async function enqueueReadAuditOutboxFallback(app: any, params: { req: any; resu
   return { mode: "enqueued" as const, outboxId: r.outboxId };
 }
 
-async function tryWriteAuditEvent(app: any, params: { req: any; reply: any; result: "success" | "denied" | "error"; latencyMs?: number }) {
-  const audit = params.req.ctx.audit;
+async function tryWriteAuditEvent(app: FastifyInstance, params: { req: FastifyRequest; reply: FastifyReply; result: "success" | "denied" | "error"; latencyMs?: number }) {
+  const audit = params.req.ctx.audit!;
   const corr = resolveAuditCorrelation(params.req);
   const missing: string[] = [];
   if (isHighRiskAuditAction({ resourceType: audit.resourceType, action: audit.action })) {
@@ -91,8 +91,8 @@ async function tryWriteAuditEvent(app: any, params: { req: any; reply: any; resu
       subjectId: params.req.ctx.subject?.subjectId,
       tenantId: params.req.ctx.subject?.tenantId,
       spaceId: params.req.ctx.subject?.spaceId,
-      resourceType: audit.resourceType,
-      action: audit.action,
+      resourceType: audit.resourceType!,
+      action: audit.action!,
       toolRef: audit.toolRef,
       workflowRef: audit.workflowRef,
       policyDecision: audit.policyDecision,
@@ -108,13 +108,13 @@ async function tryWriteAuditEvent(app: any, params: { req: any; reply: any; resu
       errorCategory: normalizeAuditErrorCategory(audit.errorCategory) ?? undefined,
       latencyMs: params.latencyMs,
     });
-    (audit as any).auditWritten = true;
+    audit.auditWritten = true;
     return null;
   } catch (e: any) {
     if (e instanceof AuditContractError && e.errorCode === "AUDIT_CONTEXT_REQUIRED") {
       audit.errorCategory = "policy_violation";
       params.reply.status(409);
-      const missingFromError = Array.isArray((e as any).details?.missing) ? ((e as any).details.missing as string[]) : ["runId", "stepId", "policySnapshotRef"];
+      const missingFromError = Array.isArray((e as Error & { details?: { missing?: string[] } }).details?.missing) ? ((e as Error & { details: { missing: string[] } }).details.missing) : ["runId", "stepId", "policySnapshotRef"];
       return buildAuditContextRequiredResponse({ req: params.req, missing: missingFromError });
     }
     const mustSucceed = audit.action !== "read";
@@ -134,7 +134,7 @@ async function tryWriteAuditEvent(app: any, params: { req: any; reply: any; resu
       audit.outboxEnqueued = true;
       audit.skipAuditWrite = true;
       app.metrics.incAuditOutboxEnqueue({ result: "ok", kind: "read_fallback" });
-      audit.outputDigest = mergeOutputDigest(audit.outputDigest, { auditOutbox: { mode: r.mode, outboxId: (r as any).outboxId ?? null } });
+      audit.outputDigest = mergeOutputDigest(audit.outputDigest, { auditOutbox: { mode: r.mode, outboxId: 'outboxId' in r ? r.outboxId : null } });
       return null;
     } catch {
       audit.skipAuditWrite = true;
@@ -150,7 +150,7 @@ async function tryWriteAuditEvent(app: any, params: { req: any; reply: any; resu
   }
 }
 
-function resolveResult(reply: any): "success" | "denied" | "error" {
+function resolveResult(reply: FastifyReply): "success" | "denied" | "error" {
   return reply.statusCode >= 200 && reply.statusCode < 400
     ? "success"
     : reply.statusCode === 401 || reply.statusCode === 403
@@ -158,13 +158,13 @@ function resolveResult(reply: any): "success" | "denied" | "error" {
       : "error";
 }
 
-async function finalizeAudit(app: any, params: { req: any; reply: any; payload: any; mergeDigest: boolean }): Promise<any> {
+async function finalizeAudit(app: FastifyInstance, params: { req: FastifyRequest; reply: FastifyReply; payload: unknown; mergeDigest: boolean }): Promise<unknown> {
   const audit = params.req.ctx.audit;
   if (!audit?.resourceType || !audit?.action) return params.payload;
-  if ((audit as any).auditWritten) return params.payload;
+  if (audit.auditWritten) return params.payload;
 
   if (params.mergeDigest) {
-    audit.outputDigest = mergeOutputDigest(audit.outputDigest, digestPayload(params.payload) ?? digestBody(params.payload));
+    audit.outputDigest = mergeOutputDigest(audit.outputDigest, digestPayload(params.payload) ?? digestBody(params.payload as Record<string, unknown>));
   }
 
   const latencyMs = audit.startedAtMs ? Date.now() - audit.startedAtMs : undefined;
@@ -196,7 +196,7 @@ async function finalizeAudit(app: any, params: { req: any; reply: any; payload: 
   return params.payload;
 }
 
-export async function finalizeAuditForStream(app: any, params: { req: any; reply: any }) {
+export async function finalizeAuditForStream(app: FastifyInstance, params: { req: FastifyRequest; reply: FastifyReply }) {
   await finalizeAudit(app, { ...params, payload: "", mergeDigest: false });
 }
 

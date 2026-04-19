@@ -2,26 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveSupplyChainPolicy } from "@openslin/shared";
-
-function stableStringify(v: any): string {
-  if (v === null || v === undefined) return "null";
-  if (typeof v !== "object" || Array.isArray(v)) return JSON.stringify(v);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stableStringifyValue((v as any)[k]);
-  return JSON.stringify(out);
-}
-
-function stableStringifyValue(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stableStringifyValue);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stableStringifyValue(v[k]);
-  return out;
-}
+import { resolveSupplyChainPolicy, stableStringify } from "@openslin/shared";
 
 export function resolveArtifactDir(artifactRef: string) {
   const trimmed = artifactRef.trim();

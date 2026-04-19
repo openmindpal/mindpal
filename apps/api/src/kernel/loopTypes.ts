@@ -84,6 +84,8 @@ export interface AgentLoopParams {
   defaultModelRef?: string;
   /** 执行约束：限制 Agent Loop 可调用的工具与写操作 */
   executionConstraints?: ExecutionConstraints;
+  /** 调度优先级（越小越优先，默认 5） */
+  priority?: number;
   /** 回调：每步完成后通知调用方（支持异步，循环会等待回调完成后再继续下一步） */
   onStepComplete?: (obs: StepObservation, decision: AgentDecision) => void | Promise<void>;
   /** 回调：循环结束后通知 */
@@ -102,6 +104,8 @@ export interface AgentLoopParams {
     memoryContext?: string | null;
     taskHistory?: string | null;
     knowledgeContext?: string | null;
+    /** 策略上下文：上次中断时的动态策略信息 */
+    strategyContext?: string | null;
   };
 }
 

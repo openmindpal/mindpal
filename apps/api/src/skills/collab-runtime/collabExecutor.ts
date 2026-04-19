@@ -16,7 +16,7 @@ import type { Queue } from "bullmq";
 import { Errors } from "../../lib/errors";
 import { resolveEffectiveToolRef } from "../../modules/tools/resolve";
 import { isToolEnabled } from "../../modules/governance/toolGovernanceRepo";
-import { resolveAndValidateTool, admitAndBuildStepEnvelope, buildStepInputPayload, generateIdempotencyKey } from "../../kernel/executionKernel";
+import { prepareToolStep } from "../../kernel/executionKernel";
 import { appendStepToRun } from "../../modules/workflow/jobRepo";
 import { enqueueWorkflowStep, setRunAndJobStatus } from "../../modules/workflow/queue";
 import { updateCollabRunStatus } from "./modules/collabRepo";
@@ -256,10 +256,33 @@ export async function executeCollabPipeline(params: CollabExecutionParams): Prom
   for (let i = 0; i < pipeline.length; i++) {
     const p = pipeline[i]!;
 
-    const resolved = await resolveAndValidateTool({ pool, tenantId, spaceId, rawToolRef: String(p.toolRef) });
-    const opDecision = await checkPermission({ resourceType: resolved.resourceType, action: resolved.action });
-    const idempotencyKey = generateIdempotencyKey({ resolved, prefix: "idem-collab", runId, seq: i + 1 });
-    const admitted = await admitAndBuildStepEnvelope({ pool, tenantId, spaceId, subjectId, resolved, opDecision });
+    const { resolved, opDecision, stepInput } = await prepareToolStep({
+      pool, tenantId, spaceId, subjectId,
+      rawToolRef: String(p.toolRef),
+      inputDraft: p.input ?? {},
+      checkPermission,
+      kind: "agent.run.step",
+      traceId,
+      extra: {
+        collabRunId, taskId,
+        planStepId: p.planStepId, actorRole: p.actorRole, stepKind: p.stepKind, dependsOn: p.dependsOn,
+        ...(p.stepKind === "guard" ? { autoArbiter: arbiterAuto, correlationId } : {}),
+        // P1-2 FIX: 绑定角色权限上下文，供worker执行时校验
+        rolePermissionContext: String(p.actorRole ?? "").trim() ? {
+          roleName: String(p.actorRole ?? "").trim(),
+          allowedTools: permByRole.get(String(p.actorRole ?? "").trim())?.map(tc => tc.toolRef) ?? [],
+          policySnapshotRef: null, // will be filled after opDecision
+        } : null,
+      },
+      idempotencyKeyPrefix: "idem-collab",
+      runId,
+      seq: i + 1,
+    });
+
+    // Update rolePermissionContext with actual policySnapshotRef
+    if (stepInput.rolePermissionContext) {
+      stepInput.rolePermissionContext.policySnapshotRef = opDecision.snapshotRef ?? null;
+    }
 
     const roleKey = String(p.actorRole ?? "").trim();
     if (roleKey) {
@@ -273,23 +296,6 @@ export async function executeCollabPipeline(params: CollabExecutionParams): Prom
       });
       permByRole.set(roleKey, list);
     }
-
-    const stepInput = buildStepInputPayload({
-      kind: "agent.run.step", resolved, admitted,
-      input: p.input ?? {}, idempotencyKey,
-      tenantId, spaceId, subjectId, traceId,
-      extra: {
-        collabRunId, taskId,
-        planStepId: p.planStepId, actorRole: p.actorRole, stepKind: p.stepKind, dependsOn: p.dependsOn,
-        ...(p.stepKind === "guard" ? { autoArbiter: arbiterAuto, correlationId } : {}),
-        // P1-2 FIX: 绑定角色权限上下文，供worker执行时校验
-        rolePermissionContext: roleKey ? {
-          roleName: roleKey,
-          allowedTools: permByRole.get(roleKey)?.map(tc => tc.toolRef) ?? [],
-          policySnapshotRef: opDecision.snapshotRef ?? null,
-        } : null,
-      },
-    });
 
     const step = await appendStepToRun({
       pool, tenantId, jobType: "agent.run", runId,

@@ -8,6 +8,9 @@ import crypto from "node:crypto";
 import type { Pool } from "pg";
 import type { SsoProviderConfigRow } from "./ssoScimRepo";
 import { ensureSubject } from "./subjectRepo";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "samlRuntime" });
 
 /* ─── SAML Types ─── */
 
@@ -154,7 +157,7 @@ export function verifySamlSignature(xml: string, certificate: string): boolean {
     const signatureValueMatch = xml.match(/<(?:\w+:)?SignatureValue[^>]*>([^<]+)<\/(?:\w+:)?SignatureValue>/i);
 
     if (!signedInfoMatch || !signatureValueMatch) {
-      console.warn("[saml] Missing SignedInfo or SignatureValue");
+            _logger.warn("Missing SignedInfo or SignatureValue");
       return false;
     }
 
@@ -177,7 +180,7 @@ export function verifySamlSignature(xml: string, certificate: string): boolean {
     verifier.update(canonicalizedSignedInfo);
     return verifier.verify(certPem, signatureBuffer);
   } catch (err) {
-    console.error("[saml] Signature verification error:", err);
+        _logger.error("Signature verification error", { err: (err as Error)?.message });
     return false;
   }
 }

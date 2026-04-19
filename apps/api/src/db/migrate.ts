@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:migrate" });
 
 function extractMigrationAliases(sql: string): string[] {
   const aliases = new Set<string>();
@@ -50,7 +53,7 @@ export async function migrate(pool: Pool, migrationsDir: string) {
     }
     for (const [prefix, group] of prefixMap) {
       if (group.length > 1) {
-        console.warn(`[migrate] WARNING: numbering prefix collision on "${prefix}": ${group.join(", ")}`);
+        _logger.warn("numbering prefix collision", { prefix, files: group.join(", ") });
       }
     }
 
@@ -75,21 +78,21 @@ export async function migrate(pool: Pool, migrationsDir: string) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        console.log(`[migrate] applying: ${file}`);
+        _logger.info("applying", { file });
         await client.query(sql);
         await client.query("INSERT INTO migrations (id) VALUES ($1)", [id]);
         await client.query("COMMIT");
-        console.log(`[migrate] done: ${file}`);
+        _logger.info("done", { file });
       } catch (err) {
         await client.query("ROLLBACK").catch(() => {});
-        console.error(`[migrate] FAILED on: ${file}`, err);
+        _logger.error("FAILED", { file, error: (err as Error)?.message ?? err });
         throw err;
       } finally {
         client.release();
       }
     }
     const aliasSummary = formatAliasSyncSummary(aliasSyncedPairs);
-    if (aliasSummary) console.log(aliasSummary);
+    if (aliasSummary) _logger.info("alias sync summary", { summary: aliasSummary });
   } finally {
     await pool.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]).catch(() => {});
   }

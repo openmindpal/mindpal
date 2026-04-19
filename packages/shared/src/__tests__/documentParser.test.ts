@@ -4,7 +4,7 @@
  * 覆盖每种格式的：正常解析、空内容、损坏文件容错、超大文本截断、
  * 注册表操作、统一入口 parseDocument 行为。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll } from "vitest";
 import {
   parseDocument,
   findParserByMimeType,
@@ -17,11 +17,15 @@ import {
   detectFormat,
   dataUrlToBuffer,
   DEFAULT_PARSE_CONFIG,
+  registerBuiltinDocumentParsers,
 } from "../documentParser";
 
 // ─── 注册表测试 ──────────────────────────────────────────────────
 
 describe("DocumentParser 注册表", () => {
+  beforeAll(() => {
+    registerBuiltinDocumentParsers();
+  });
   it("应注册至少 7 个内置解析器", () => {
     const parsers = listDocumentParsers();
     expect(parsers.length).toBeGreaterThanOrEqual(7);

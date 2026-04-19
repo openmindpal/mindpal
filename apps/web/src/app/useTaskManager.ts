@@ -7,6 +7,29 @@ import { t } from "@/lib/i18n";
 import type { TaskState } from "@/lib/types";
 import type { ChatFlowItem, TaskProgress, TaskStepEntry } from "./homeHelpers";
 
+/* ─── Poll Backoff Config ─── */
+
+const POLL_CONFIG = {
+  ACTIVE_INTERVAL_MS: 500,     // 活跃执行时：500ms
+  BASE_INTERVAL_MS: 1000,      // 退避基础间隔
+  MAX_INTERVAL_MS: 10000,      // 最大间隔 10s
+  MULTIPLIER: 2,               // 退避倍率
+  ERROR_INTERVAL_MS: 4000,     // 错误重试间隔
+} as const;
+
+/** 根据任务阶段和连续无变化次数计算下次轮询间隔 */
+function computePollInterval(phase: string, consecutiveNoChange: number): number {
+  // 活跃执行阶段：固定短间隔
+  if (phase === "executing" || phase === "planning" || phase === "running") {
+    return POLL_CONFIG.ACTIVE_INTERVAL_MS;
+  }
+  // 等待/暂停/完成阶段：指数退避
+  return Math.min(
+    POLL_CONFIG.BASE_INTERVAL_MS * Math.pow(POLL_CONFIG.MULTIPLIER, consecutiveNoChange),
+    POLL_CONFIG.MAX_INTERVAL_MS,
+  );
+}
+
 /* ─── Types ─── */
 
 /** 单个任务的完整状态 */
@@ -72,7 +95,6 @@ export default function useTaskManager({
     // 若已有该 runId 的轮询，不重复启动
     if (pollTimersRef.current.has(runId)) return;
 
-    const POLL_INTERVAL = 2000;
     const MAX_POLLS = 150;
     let pollCount = 0;
     let lastPhase = "";
@@ -84,16 +106,30 @@ export default function useTaskManager({
     const MAX_CONTINUE_RETRIES = 3;
     const NO_PROGRESS_WARN_MS = 15000;
 
+    // 指数退避状态
+    let consecutiveNoChange = 0;
+
+    const scheduleNext = (phase: string, isError = false) => {
+      pollCount++;
+      if (pollCount >= MAX_POLLS) {
+        console.log(`[pollTaskState] Polling timed out, stopping runId=${runId}`);
+        pollTimersRef.current.delete(runId);
+        return;
+      }
+      const interval = isError
+        ? POLL_CONFIG.ERROR_INTERVAL_MS
+        : computePollInterval(phase, consecutiveNoChange);
+      const timer = setTimeout(poll, interval);
+      pollTimersRef.current.set(runId, timer);
+    };
+
     const poll = async () => {
       try {
         const res = await apiFetch(`/runs/${runId}`, { method: "GET", locale, cache: "no-store" });
         if (!res.ok) {
           console.error("[pollTaskState] Failed to fetch task status:", res.status);
-          pollCount++;
-          if (pollCount < MAX_POLLS) {
-            const retryTimer = setTimeout(poll, POLL_INTERVAL * 2);
-            pollTimersRef.current.set(runId, retryTimer);
-          }
+          consecutiveNoChange++;
+          scheduleNext(lastPhase, true);
           return;
         }
         const data = await res.json();
@@ -105,7 +141,11 @@ export default function useTaskManager({
         const blockReason = data?.blockReason ?? undefined;
         const nextAction = data?.nextAction ?? undefined;
 
+        // 检测是否有状态变化，用于退避计算
+        let hasChange = false;
+
         if (stepCount > lastStepCount || succeededCount > lastCurrentStep) {
+          hasChange = true;
           lastStatusChangeAt = Date.now();
           noProgressWarned = false;
 
@@ -131,10 +171,18 @@ export default function useTaskManager({
         }
 
         if (phase !== lastPhase) {
+          hasChange = true;
           lastStatusChangeAt = Date.now();
           noProgressWarned = false;
           lastPhase = phase;
           continueTries = 0;
+        }
+
+        // 更新退避计数器
+        if (hasChange) {
+          consecutiveNoChange = 0;
+        } else {
+          consecutiveNoChange++;
         }
 
         if (!noProgressWarned && Date.now() - lastStatusChangeAt > NO_PROGRESS_WARN_MS && status === "running") {
@@ -217,25 +265,15 @@ export default function useTaskManager({
           }
         }
 
-        pollCount++;
-        if (pollCount < MAX_POLLS) {
-          const timer = setTimeout(poll, POLL_INTERVAL);
-          pollTimersRef.current.set(runId, timer);
-        } else {
-          console.log(`[pollTaskState] Polling timed out, stopping runId=${runId}`);
-          pollTimersRef.current.delete(runId);
-        }
+        scheduleNext(phase);
       } catch (err) {
         console.error("[pollTaskState] Polling error:", err);
-        pollCount++;
-        if (pollCount < MAX_POLLS) {
-          const errTimer = setTimeout(poll, POLL_INTERVAL * 2);
-          pollTimersRef.current.set(runId, errTimer);
-        }
+        consecutiveNoChange++;
+        scheduleNext(lastPhase, true);
       }
     };
 
-    const timer = setTimeout(poll, 1000);
+    const timer = setTimeout(poll, POLL_CONFIG.ACTIVE_INTERVAL_MS);
     pollTimersRef.current.set(runId, timer);
   }, [getTaskControlRequest, locale]);
 
@@ -244,7 +282,7 @@ export default function useTaskManager({
     if (!runId) return;
     try {
       if (action === "stop") {
-        try { abortRef.current?.abort(); } catch {}
+        try { abortRef.current?.abort(); } catch { /* expected: abort may throw if already aborted */ }
 
         const res = await apiFetch(`/runs/${runId}/cancel`, {
           method: "POST",
@@ -262,26 +300,26 @@ export default function useTaskManager({
             text: t(locale, "taskAction.stopped"), createdAt: Date.now(),
           }]);
         } else {
-          const err = await res.json().catch(() => null);
-          const errorCode = (err as any)?.errorCode ?? "";
+          const err = await res.json().catch(() => null) as Record<string, unknown> | null;
+          const errorCode = String(err?.errorCode ?? "");
 
           if (res.status === 409 || errorCode === "RUN_NOT_CANCELABLE") {
             console.log("[taskAction] stop: run is already terminal, cancellation not required");
-            const terminalPhase = (err as any)?.run?.status ?? "stopped";
+            const terminalPhase = String((err?.run as Record<string, unknown> | undefined)?.status ?? "stopped");
             setActiveTask((prev) => prev ? { ...prev, taskState: { ...prev.taskState, phase: terminalPhase } } : prev);
             setTaskProgress((prev) => prev ? { ...prev, phase: terminalPhase } : prev);
             setFlow((prev) => [...prev, { kind: "message", id: nextId("m"), role: "assistant",
               text: t(locale, "taskAction.completed"), createdAt: Date.now(),
             }]);
           } else {
-            const errMsg = typeof (err as any)?.message === "object"
-              ? ((err as any).message as Record<string, string>)?.[locale] ?? ((err as any).message as Record<string, string>)?.["zh-CN"] ?? res.statusText
-              : String((err as any)?.message ?? res.statusText ?? t(locale, "taskAction.stopFailed"));
+            const errMsg = typeof err?.message === "object"
+              ? ((err.message as Record<string, string>)?.[locale] ?? (err.message as Record<string, string>)?.["zh-CN"] ?? res.statusText)
+              : String(err?.message ?? res.statusText ?? t(locale, "taskAction.stopFailed"));
             console.error(`[taskAction] stop failed (${res.status}):`, errMsg);
             setFlow((prev) => [...prev, { kind: "error", id: nextId("e"), role: "assistant",
               errorCode: "TASK_ACTION_FAILED",
               message: t(locale, "taskAction.failed").replace("{action}", t(locale, "common.stop")).replace("{message}", errMsg),
-              traceId: String((err as any)?.traceId ?? ""),
+              traceId: String(err?.traceId ?? ""),
               createdAt: Date.now(),
             }]);
           }
@@ -304,14 +342,14 @@ export default function useTaskManager({
         }
         void pollTaskState(runId);
       } else {
-        const err = await res.json().catch(() => ({}));
+        const err = await res.json().catch(() => ({})) as Record<string, unknown>;
         console.error(`[taskAction] ${action} failed:`, err);
         setFlow((prev) => [...prev, { kind: "error", id: nextId("e"), role: "assistant",
           errorCode: "TASK_ACTION_FAILED",
           message: t(locale, "taskAction.failed")
             .replace("{action}", action === "continue" ? t(locale, "action.continue") : action === "retry" ? t(locale, "common.retry") : action)
-            .replace("{message}", String((err as any)?.message ?? res.statusText)),
-          traceId: String((err as any)?.traceId ?? ""),
+            .replace("{message}", String(err?.message ?? res.statusText)),
+          traceId: String(err?.traceId ?? ""),
           createdAt: Date.now(),
         }]);
       }

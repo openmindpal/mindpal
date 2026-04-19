@@ -11,7 +11,9 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import { redactValue } from "@openslin/shared";
+import { redactValue, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:eventReasoning" });
 import { invokeModelChat } from "../../../lib/llm";
 import {
   listEnabledRules,
@@ -331,7 +333,7 @@ async function tier3LlmReasoning(ctx: ReasoningContext, event: EventEnvelope): P
       latencyMs: Date.now() - startMs,
     };
   } catch (err: any) {
-    console.error("ai-event-reasoning: LLM tier failed", err?.message ?? err);
+    _logger.error("LLM tier failed", { error: err?.message ?? err });
     return {
       tier: "llm",
       decision: "error",
@@ -405,6 +407,6 @@ async function persistDecision(ctx: ReasoningContext, event: EventEnvelope, deci
     };
     await insertReasoningLog({ pool: ctx.pool, log });
   } catch (err) {
-    console.error("ai-event-reasoning: failed to persist decision log", err);
+    _logger.error("failed to persist decision log", { error: (err as Error)?.message ?? err });
   }
 }

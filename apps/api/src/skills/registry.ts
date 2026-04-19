@@ -1,3 +1,7 @@
+import { StructuredLogger, resolveString } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:skillRegistry" });
+
 /**
  * Built-in Skill Registry.
  *
@@ -35,125 +39,59 @@
 import { isBuiltinSkillRegistrySealed, registerBuiltinSkill, sealBuiltinSkillRegistry } from "../lib/skillPlugin";
 import type { BuiltinSkillPlugin } from "../lib/skillPlugin";
 import type { FastifyPluginAsync } from "fastify";
+import * as path from "node:path";
+
+// ── Manifest-driven skill loading ─────────────────────────────────
+import manifestEntries from "./builtin-skills-manifest.json";
 
 // ── Cross-layer contracts ─────────────────────────────────────────
 import { registerPageConfigContract } from "../modules/contracts/pageConfigContract";
 import { registerWorkbenchContract } from "../modules/contracts/workbenchContract";
 import { registerKnowledgeContract } from "../modules/contracts/knowledgeContract";
 
-// ── Kernel Layer (Phase 0) ──────────────────────────────────────────
-// (entityKernel is defined inline below)
-// Layer structure: ./kernel/
-
-// ── Builtin Core Layer ─────────────────────────────────────────────
-// Layer structure: ./builtin/core/
-import {
-  orchestrator,
-  modelGateway,
-  knowledgeRag,
-  memoryManager,
-  safetyPolicy,
-  connectorManager,
-  taskManager,
-  channelGateway,
-  triggerEngine,
-} from "./builtin/core";
-
-// ── Builtin Optional Layer ─────────────────────────────────────────
-// Layer structure: ./builtin/optional/
-import {
-  nl2uiGenerator,
-  intentAnalyzer,
-  uiPageConfig,
-  workbenchManager,
-  oauthProvider,
-  ssoProvider,
-  notificationOutbox,
-  subscriptionRunner,
-  deviceRuntime,
-  collabRuntime,
-  syncEngine,
-  agentRuntime,
-  yjsCollab,
-  skillManager,
-  rbacManager,
-  federationGateway,
-  observabilityDashboard,
-} from "./builtin/optional";
-
-// ── Extension Layer ────────────────────────────────────────────────
-// Layer structure: ./extension/
-import {
-  mediaPipeline,
-  backupManager,
-  replayViewer,
-  artifactManager,
-  analyticsEngine,
-  identityLink,
-  userViewPrefs,
-  aiEventReasoning,
-  embeddingProvider,
-  browserAutomation,
-  desktopAutomation,
-} from "./extension";
-
 /* ------------------------------------------------------------------ */
 /*  ALL_AVAILABLE_PLUGINS — 所有可用插件的统一目录                     */
-/*  key 与插件 identity 对齐，新增插件只需在此添加                       */
-/*  延迟初始化：依赖 entityKernel/toolGovernanceKernel 定义后调用       */
+/*  从 builtin-skills-manifest.json 驱动，新增插件只需修改 manifest    */
+/*  延迟初始化：首次调用时加载 manifest 中声明的模块                    */
 /* ------------------------------------------------------------------ */
+
+/** 内联定义的 kernel 插件映射（无独立模块文件） */
+const INLINE_PLUGINS: Record<string, () => BuiltinSkillPlugin> = {
+  "entity.kernel": () => entityKernel,
+  "system.tool.governance": () => toolGovernanceKernel,
+};
 
 let _allAvailablePlugins: ReadonlyMap<string, BuiltinSkillPlugin> | null = null;
 
-/** 获取所有可用插件的统一目录（延迟初始化） */
+/** 获取所有可用插件的统一目录（延迟初始化，manifest 驱动） */
 function getAllAvailablePlugins(): ReadonlyMap<string, BuiltinSkillPlugin> {
-  if (!_allAvailablePlugins) {
-    _allAvailablePlugins = new Map([
-      // Kernel（定义在文件底部）
-      ["entity.kernel", entityKernel],
-      ["system.tool.governance", toolGovernanceKernel],
-      // Core
-      ["orchestrator", orchestrator],
-      ["model.gateway", modelGateway],
-      ["knowledge.rag", knowledgeRag],
-      ["memory.manager", memoryManager],
-      ["safety.policy", safetyPolicy],
-      ["connector.manager", connectorManager],
-      ["task.manager", taskManager],
-      ["channel.gateway", channelGateway],
-      ["trigger.engine", triggerEngine],
-      // Optional
-      ["nl2ui.generator", nl2uiGenerator],
-      ["intent.analyzer", intentAnalyzer],
-      ["ui.page.config", uiPageConfig],
-      ["workbench.manager", workbenchManager],
-      ["oauth.provider", oauthProvider],
-      ["sso.provider", ssoProvider],
-      ["notification.outbox", notificationOutbox],
-      ["subscription.runner", subscriptionRunner],
-      ["device.runtime", deviceRuntime],
-      ["collab.runtime", collabRuntime],
-      ["sync.engine", syncEngine],
-      ["agent.runtime", agentRuntime],
-      ["yjs.collab", yjsCollab],
-      ["skill.manager", skillManager],
-      ["rbac.manager", rbacManager],
-      ["federation.gateway", federationGateway],
-      ["observability.dashboard", observabilityDashboard],
-      // Extension
-      ["media.pipeline", mediaPipeline],
-      ["backup.manager", backupManager],
-      ["replay.viewer", replayViewer],
-      ["artifact.manager", artifactManager],
-      ["analytics.engine", analyticsEngine],
-      ["identity.link", identityLink],
-      ["user.view.prefs", userViewPrefs],
-      ["ai.event.reasoning", aiEventReasoning],
-      ["embedding.provider", embeddingProvider],
-      ["browser.automation", browserAutomation],
-      ["desktop.automation", desktopAutomation],
-    ]);
+  if (_allAvailablePlugins) return _allAvailablePlugins;
+
+  const map = new Map<string, BuiltinSkillPlugin>();
+  for (const entry of manifestEntries) {
+    try {
+      if (entry.module === "__inline__") {
+        const factory = INLINE_PLUGINS[entry.key];
+        if (factory) {
+          map.set(entry.key, factory());
+        } else {
+          _logger.warn("[SkillRegistry] No inline plugin for manifest key", { key: entry.key });
+        }
+        continue;
+      }
+      const resolved = path.resolve(__dirname, entry.module);
+      const mod = require(resolved);
+      const plugin: BuiltinSkillPlugin = mod.default ?? mod;
+      map.set(entry.key, plugin);
+    } catch (err) {
+      _logger.warn("[SkillRegistry] Failed to load skill from manifest", {
+        key: entry.key,
+        module: entry.module,
+        error: String(err),
+      });
+    }
   }
+  _allAvailablePlugins = map;
   return _allAvailablePlugins;
 }
 
@@ -184,30 +122,19 @@ export function checkSkillLayerConsistency(): SkillLayerCheckResult {
   const layerMismatches: SkillLayerCheckResult["layerMismatches"] = [];
   const orphanedDirs: string[] = [];
 
-  // 桶分配映射（从桶文件 import 结构推断）
+  // 桶分配映射（从 manifest 读取 tier）
   const bucketMap: Record<string, "kernel" | "core" | "optional" | "extension"> = {};
+  const manifestTierMap = new Map(manifestEntries.map(e => [e.key, e.tier as "kernel" | "core" | "optional" | "extension"]));
   for (const key of plugins.keys()) {
-    if (key === "entity.kernel" || key === "system.tool.governance") {
-      bucketMap[key] = "kernel";
-    } else if (CORE_PLUGIN_KEYS.has(key)) {
-      bucketMap[key] = "core";
-    } else if ([
-      "media.pipeline", "backup.manager", "replay.viewer", "artifact.manager",
-      "analytics.engine", "identity.link", "user.view.prefs", "ai.event.reasoning",
-      "embedding.provider", "browser.automation", "desktop.automation",
-    ].includes(key)) {
-      bucketMap[key] = "extension";
-    } else {
-      bucketMap[key] = "optional";
-    }
+    bucketMap[key] = manifestTierMap.get(key) ?? "optional";
   }
 
   // 校验 layer 声明一致性
   for (const [key, plugin] of plugins) {
-    const declaredLayer = plugin.manifest.layer ?? "builtin";
+    const declaredLayer = plugin.manifest.layer ?? "optional";
     const bucket = bucketMap[key];
-    // 归一化比较：builtin 视为 optional
-    const normalizedDeclared = declaredLayer === "builtin" ? "optional" : declaredLayer;
+    // 向后兼容："builtin" 统一归一化为 "optional"
+    const normalizedDeclared = (declaredLayer as string) === "builtin" ? "optional" : declaredLayer;
     if (normalizedDeclared !== bucket) {
       layerMismatches.push({ key, declaredLayer, actualBucket: bucket });
     }
@@ -268,29 +195,19 @@ export type SkillManifestRow = {
   status: "enabled" | "disabled";
 };
 
-const CORE_PLUGIN_KEYS = new Set([
-  "orchestrator",
-  "model.gateway",
-  "knowledge.rag",
-  "memory.manager",
-  "safety.policy",
-  "connector.manager",
-  "task.manager",
-  "channel.gateway",
-  "trigger.engine",
-]);
+/** Manifest 驱动的 tier 映射 */
+const _manifestTierLookup = new Map(
+  manifestEntries.map(e => [e.key, e.tier as "kernel" | "core" | "optional" | "extension"]),
+);
 
-/** 从插件自描述构建内置 Skill manifests。 */
+/** 从 manifest 构建内置 Skill manifests。 */
 function buildBuiltinManifests(): SkillManifestRow[] {
-  const tierMap: Record<string, "kernel" | "core" | "optional" | "extension"> = {};
-  for (const [key, plugin] of getAllAvailablePlugins()) {
-    const layer = plugin.manifest.layer ?? "builtin";
-    if (layer === "kernel") tierMap[key] = "kernel";
-    else if (layer === "extension") tierMap[key] = "extension";
-    else if (CORE_PLUGIN_KEYS.has(key)) tierMap[key] = "core";
-    else tierMap[key] = "optional";
+  const rows: SkillManifestRow[] = [];
+  for (const [key] of getAllAvailablePlugins()) {
+    const tier = _manifestTierLookup.get(key) ?? "optional";
+    rows.push({ skillKey: key, tier, status: "enabled" });
   }
-  return Object.entries(tierMap).map(([skillKey, tier]) => ({ skillKey, tier, status: "enabled" as const }));
+  return rows;
 }
 
 /* ------------------------------------------------------------------ */
@@ -373,7 +290,7 @@ function parseEnvDisabledBuiltins(): Set<string> {
 
 /** 解析 ENABLED_EXTENSIONS 环境变量，返回额外启用的 extension skill key 集合 */
 function parseEnvEnabledExtensions(manifests: SkillManifestRow[]): Set<string> {
-  const raw = process.env.ENABLED_EXTENSIONS || "";
+  const raw = resolveString("ENABLED_EXTENSIONS").value;
   const enabled = new Set(raw.split(",").map(s => s.trim()).filter(Boolean));
   // 只保留 manifests 中存在的 extension 层 skill
   const extKeys = new Set(manifests.filter(m => m.tier === "extension").map(m => m.skillKey));
@@ -399,7 +316,7 @@ export async function initBuiltinSkills(): Promise<void> {
   for (const m of manifests) {
     const plugin = getAllAvailablePlugins().get(m.skillKey);
     if (!plugin) {
-      console.warn(`[registry] unknown builtin skill_key: ${m.skillKey}, skipping`);
+      _logger.warn("unknown builtin skill_key, skipping", { skillKey: m.skillKey });
       continue;
     }
 
@@ -412,7 +329,7 @@ export async function initBuiltinSkills(): Promise<void> {
     // optional — 环境变量覆盖
     if (m.tier === "optional") {
       if (m.status === "disabled" || envDisabled.has(m.skillKey)) {
-        console.log(`[registry] optional skill skipped: ${m.skillKey}`);
+        _logger.info("optional skill skipped", { skillKey: m.skillKey });
         continue;
       }
       registerBuiltinSkill(plugin);

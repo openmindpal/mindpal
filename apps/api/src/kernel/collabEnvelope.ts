@@ -36,6 +36,10 @@ export async function writeCollabEnvelope(params: {
     totalIterations: result.iterations ?? 0,
     observations: result.observations ?? [],
     runId,
+    // ── 新增：结构化输出，Agent 间可传递工具执行结果的精确引用 ──
+    structuredOutputs: extractStructuredOutputs(result.observations ?? []),
+    // ── 新增：失败工具信息，下游 Agent 可感知并避免重复尝试 ──
+    failedTools: extractFailedTools(result.observations ?? []),
   };
   try {
     await pool.query(
@@ -54,7 +58,9 @@ export async function writeCollabEnvelope(params: {
     fromAgent: fromRole, fromRole,
     result: { ok: result.ok, endReason: result.endReason, message: result.message, succeededSteps: result.succeededSteps, failedSteps: result.failedSteps, iterations: result.iterations },
     runId,
-  }).catch(() => {}); // Redis 失败不影响主流程
+  }).catch((e: unknown) => {
+    logger.warn("publishAgentResult fire-and-forget failed", { err: (e as Error)?.message, collabRunId });
+  }); // Redis 失败不影响主流程
 }
 
 /** 读取已完成 Agent 的结构化结果，供下游 Agent 参考 */
@@ -98,9 +104,46 @@ export function buildEnvelopeContext(envelopes: Array<{ fromRole: string; kind: 
     const observations = Array.isArray(d.observations) && d.observations.length > 0
       ? `\n    Observations: ${JSON.stringify(d.observations.slice(-5))}`
       : "";
-    return `  [${e.fromRole}] (${e.kind}): ok=${d.ok ?? "unknown"}, steps=${d.totalSteps ?? "?"}, summary=${summary}${observations}`;
+    const structured = d.structuredOutputs && Object.keys(d.structuredOutputs).length > 0
+      ? `\n    StructuredOutputs: ${JSON.stringify(d.structuredOutputs)}`
+      : "";
+    const failed = Array.isArray(d.failedTools) && d.failedTools.length > 0
+      ? `\n    FailedTools: ${JSON.stringify(d.failedTools)}`
+      : "";
+    return `  [${e.fromRole}] (${e.kind}): ok=${d.ok ?? "unknown"}, steps=${d.totalSteps ?? "?"}, summary=${summary}${observations}${structured}${failed}`;
   });
   return "\n\n## Structured Results from Previous Agents\n" + sections.join("\n");
+}
+
+// ── 辅助函数：结构化输出提取 ─────────────────────────────────────
+
+/**
+ * 从观察序列中提取结构化工具输出（如创建的 entity ID、文件路径等）
+ */
+function extractStructuredOutputs(observations: any[]): Record<string, unknown> {
+  const outputs: Record<string, unknown> = {};
+  for (const obs of observations) {
+    if (obs.status === "succeeded" && obs.toolRef && obs.outputDigest) {
+      outputs[obs.toolRef] = {
+        stepId: obs.stepId,
+        output: obs.outputDigest,
+      };
+    }
+  }
+  return outputs;
+}
+
+/**
+ * 从观察序列中提取失败的工具调用信息，供下游 Agent 感知
+ */
+function extractFailedTools(observations: any[]): Array<{ toolRef: string; errorCategory: string | null; error: unknown }> {
+  return observations
+    .filter((obs: any) => obs.status === "failed" || obs.status === "deadletter")
+    .map((obs: any) => ({
+      toolRef: obs.toolRef ?? "unknown",
+      errorCategory: obs.errorCategory ?? null,
+      error: obs.outputDigest?.error ?? obs.outputDigest ?? null,
+    }));
 }
 
 // ── 共享信念状态（collab_shared_state）──────────────────────────

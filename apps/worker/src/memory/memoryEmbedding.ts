@@ -1,5 +1,7 @@
 import type { Pool } from "pg";
-import { computeMinhash } from "@openslin/shared";
+import { computeMinhash, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:memoryEmbedding" });
 
 /* ── Memory Embedding Worker ──
  * 蒸馏后的记忆仅有 minhash 近似向量（embedding_model_ref = 'minhash:16@1'），
@@ -103,15 +105,13 @@ async function fetchEmbeddings(
         headers,
         body: JSON.stringify(payload),
         signal: controller.signal,
-      } as any);
+      } as RequestInit);
       if (!res.ok) {
         const errBody = await res.text().catch(() => "");
-        console.error(
-          `[memory:embedding] 外部 Embedding API 返回 ${res.status}: ${errBody.slice(0, 500)}`,
-        );
+                _logger.error("embedding API returned error", { status: res.status, body: errBody.slice(0, 500) });
         throw new Error(`memory_embedding_api_http_${res.status}`);
       }
-      const json = (await res.json()) as any;
+      const json = (await res.json()) as Record<string, unknown>;
       const data = Array.isArray(json?.data) ? json.data : [];
       const sorted = data.sort(
         (a: any, b: any) => Number(a?.index ?? 0) - Number(b?.index ?? 0),
@@ -124,9 +124,7 @@ async function fetchEmbeddings(
       }
     } catch (e: any) {
       if (e?.name === "AbortError") {
-        console.error(
-          `[memory:embedding] 外部 Embedding API 超时 (${cfg.timeoutMs}ms)`,
-        );
+                _logger.error("embedding API timeout", { timeoutMs: cfg.timeoutMs });
         throw new Error("memory_embedding_api_timeout");
       }
       throw e;
@@ -174,9 +172,7 @@ export async function processMemoryEmbeddingJob(params: {
   const cfg = resolveMemoryEmbeddingConfig();
 
   if (!cfg) {
-    console.log(
-      "[memory:embedding] 未配置外部 Embedding API，跳过密集向量计算",
-    );
+        _logger.info("no external embedding API configured, skipping dense vectors");
     return {
       processed: params.memoryEntryIds.length,
       updated: 0,
@@ -203,7 +199,7 @@ export async function processMemoryEmbeddingJob(params: {
     [params.tenantId, params.spaceId, params.memoryEntryIds],
   );
 
-  const rows = res.rows as any[];
+  const rows = res.rows as Record<string, unknown>[];
   if (rows.length === 0) {
     return {
       processed: 0,
@@ -256,9 +252,7 @@ export async function processMemoryEmbeddingJob(params: {
   try {
     vectors = await fetchEmbeddings(cfg, orderedTexts);
   } catch (e: any) {
-    console.error(
-      `[memory:embedding] 外部 Embedding API 调用失败: ${e?.message ?? e}`,
-    );
+        _logger.error("embedding API call failed", { err: e?.message ?? e });
     // 降级：保持 minhash 不变，不阻断蒸馏流程
     return {
       processed: rows.length,
@@ -296,18 +290,12 @@ export async function processMemoryEmbeddingJob(params: {
       );
       updated++;
     } catch (e: any) {
-      console.error(
-        `[memory:embedding] 更新记忆 ${id} 向量失败: ${e?.message ?? e}`,
-      );
+            _logger.error("update memory vector failed", { id, err: e?.message ?? e });
       errors++;
     }
   }
 
-  console.log(
-    `[memory:embedding] tenant=${params.tenantId} space=${params.spaceId} ` +
-      `processed=${rows.length} updated=${updated} skipped=${skipped} errors=${errors} ` +
-      `modelRef=${modelRef} durationMs=${Date.now() - startTime}`,
-  );
+  _logger.info("embedding batch complete", { tenantId: params.tenantId, spaceId: params.spaceId, processed: rows.length, updated, skipped, errors, modelRef, durationMs: Date.now() - startTime });
 
   return {
     processed: rows.length,
@@ -355,7 +343,7 @@ export async function backfillMemoryEmbeddings(params: {
 
   // 按 tenant+space 分组处理
   const groups = new Map<string, { tenantId: string; spaceId: string; ids: string[] }>();
-  for (const r of res.rows as any[]) {
+  for (const r of res.rows as Record<string, unknown>[]) {
     const key = `${r.tenant_id}:${r.space_id}`;
     if (!groups.has(key)) {
       groups.set(key, { tenantId: String(r.tenant_id), spaceId: String(r.space_id), ids: [] });

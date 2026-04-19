@@ -12,6 +12,8 @@
  *   Layer 5: Debate — 自主辩论与仲裁
  */
 
+import { resolveNumber } from "./runtimeConfig";
+
 /* ================================================================== */
 /*  Layer 1: Message Protocol                                          */
 /* ================================================================== */
@@ -444,7 +446,7 @@ export function createDebateSessionV2(params: {
   arbiter: string;
   maxRounds?: number;
 }): DebateSession {
-  const maxRounds = params.maxRounds ?? Math.max(1, Number(process.env.DEBATE_MAX_ROUNDS ?? "5"));
+  const maxRounds = params.maxRounds ?? Math.max(1, resolveNumber("DEBATE_MAX_ROUNDS").value);
   const parties: DebateParty[] = params.parties.map(p => ({
     partyId: p.partyId,
     role: p.role,

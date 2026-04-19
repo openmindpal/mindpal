@@ -177,7 +177,7 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
         headers: { ...h, "idempotency-key": `idem-dual-${crypto.randomUUID()}`, "x-trace-id": `t-dual-${crypto.randomUUID()}` },
         payload: JSON.stringify({ toolRef: "entity.create@1", input: { schemaName: TEST_SCHEMA_NAME, entityName: "test_items", payload: { title: "dual-approval" } } }),
       });
-      expect(created.statusCode).toBe(200);
+      expect(created.statusCode, `[dual] Expected 200 but got ${created.statusCode}: ${created.body}`).toBe(200);
       const runId = String((created.json() as any).runId);
       const approvalId = String((created.json() as any).approvalId ?? "");
       expect(approvalId).toBeTruthy();
@@ -256,7 +256,7 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
         headers: { ...h, "idempotency-key": `idem-dupe-${crypto.randomUUID()}`, "x-trace-id": `t-dupe-${crypto.randomUUID()}` },
         payload: JSON.stringify({ toolRef: "entity.create@1", input: { schemaName: TEST_SCHEMA_NAME, entityName: "test_items", payload: { title: "duplicate-approver" } } }),
       });
-      expect(created.statusCode).toBe(200);
+      expect(created.statusCode, `[dupe] Expected 200 but got ${created.statusCode}: ${created.body}`).toBe(200);
       const approvalId = String((created.json() as any).approvalId ?? "");
       expect(approvalId).toBeTruthy();
 
@@ -315,7 +315,7 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
         headers: { ...h, "idempotency-key": `idem-enqueue-fail-${crypto.randomUUID()}`, "x-trace-id": `t-enqueue-fail-${crypto.randomUUID()}` },
         payload: JSON.stringify({ toolRef: "entity.create@1", input: { schemaName: TEST_SCHEMA_NAME, entityName: "test_items", payload: { title: "enqueue-fail" } } }),
       });
-      expect(created.statusCode).toBe(200);
+      expect(created.statusCode, `[enqueue] Expected 200 but got ${created.statusCode}: ${created.body}`).toBe(200);
       const runId = String((created.json() as any).runId);
       const approvalId = String((created.json() as any).approvalId ?? "");
       expect(approvalId).toBeTruthy();
@@ -517,7 +517,7 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
       headers: { ...h, "idempotency-key": `idem-bind-${crypto.randomUUID()}`, "x-trace-id": `t-bind-create-${crypto.randomUUID()}` },
       payload: JSON.stringify({ toolRef: "entity.create@1", input: { schemaName: TEST_SCHEMA_NAME, entityName: "test_items", payload: { title: "approval-binding" } } }),
     });
-    expect(created.statusCode).toBe(200);
+    expect(created.statusCode, `[bind] Expected 200 but got ${created.statusCode}: ${created.body}`).toBe(200);
     const runId = String((created.json() as any).runId);
     const approvalId = String((created.json() as any).approvalId ?? "");
     expect(approvalId).toBeTruthy();

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
+import { resolveString } from "@openslin/shared";
 
 function apiBase() {
   const raw = String(process.env.WORKER_API_BASE ?? process.env.API_BASE ?? "http://localhost:3001").trim();
@@ -7,7 +8,7 @@ function apiBase() {
 }
 
 function authnMode() {
-  const mode = String(process.env.AUTHN_MODE ?? "").trim().toLowerCase();
+  const mode = resolveString("AUTHN_MODE").value.toLowerCase();
   if (mode === "pat") return "pat" as const;
   if (mode === "hmac") return "hmac" as const;
   return "dev" as const;
@@ -23,7 +24,7 @@ function buildDevToken(params: { subjectId: string; spaceId?: string | null }) {
 }
 
 function buildHmacToken(params: { tenantId: string; subjectId: string; spaceId?: string | null; ttlSec: number }) {
-  const secret = String(process.env.AUTHN_HMAC_SECRET ?? "");
+  const secret = resolveString("AUTHN_HMAC_SECRET").value;
   if (!secret) throw new Error("policy_violation:missing_authn_hmac_secret");
   const exp = Math.floor(Date.now() / 1000) + Math.max(10, Math.min(3600, Math.floor(params.ttlSec)));
   const payload = {

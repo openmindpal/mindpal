@@ -20,10 +20,10 @@ const plugin: BuiltinSkillPlugin = {
       },
       {
         name: "memory.write",
-        displayName: { "zh-CN": "写入记忆", "en-US": "Write memory" },
+        displayName: { "zh-CN": "写入/修改记忆", "en-US": "Write/Update memory" },
         description: {
-          "zh-CN": "写入长期记忆条目（风险等级根据记忆类型动态评估：preference=low, fact/identity=medium, relationship/credential=high）",
-          "en-US": "Write a long-term memory entry (risk level dynamically evaluated by type: preference=low, fact/identity=medium, relationship/credential=high)",
+          "zh-CN": "写入或修改长期记忆条目。不传 id 则新建；传入 id 则定向更新已有条目（风险等级根据记忆类型动态评估：preference=low, fact/identity=medium, relationship/credential=high）",
+          "en-US": "Write or update a long-term memory entry. Omit id to create; provide id to update an existing entry (risk level dynamically evaluated by type: preference=low, fact/identity=medium, relationship/credential=high)",
         },
         scope: "write",
         resourceType: "memory",
@@ -33,6 +33,7 @@ const plugin: BuiltinSkillPlugin = {
         extraPermissions: [{ resourceType: "memory", action: "write" }],
         inputSchema: {
           fields: {
+            id: { type: "string", description: "已有记忆条目 ID（传入则更新该条目，不传则新建）" },
             scope: { type: "string" },
             type: { type: "string", required: true, description: "记忆类型：preference(low)/fact(medium)/identity(medium)/relationship(high)/credential(high)" },
             title: { type: "string" },

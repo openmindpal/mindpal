@@ -69,6 +69,10 @@ vi.mock("./dispatch.stream", () => ({
   registerStreamRoute: vi.fn(),
 }));
 
+vi.mock("../../modules/memory/sessionContextRepo", () => ({
+  getSessionContext: vi.fn(async () => null),
+}));
+
 import { orchestratorDispatchRoutes } from "./routes.dispatch";
 
 function buildTestApp(options?: { withZodErrorMapping?: boolean }): FastifyInstance {
@@ -87,6 +91,10 @@ function buildTestApp(options?: { withZodErrorMapping?: boolean }): FastifyInsta
       : undefined,
     decorate: (app) => {
       app.db = { query: vi.fn() };
+      app.metrics = {
+        observeIntentRoute: vi.fn(),
+        incIntentRuleMatch: vi.fn(),
+      };
     },
   });
 }
@@ -136,8 +144,8 @@ describe("routes.dispatch", () => {
   it("auto 模式下低置信或无需任务时回落到 answer", async () => {
     mockClassifyIntentTwoLevel.mockResolvedValue({
       mode: "execute",
-      confidence: 0.99,
-      reason: "looks like task",
+      confidence: 0.6,
+      reason: "llm_uncertain",
       needsTask: false,
       needsApproval: false,
       complexity: "moderate",
@@ -158,7 +166,7 @@ describe("routes.dispatch", () => {
     expect(mockHandleExecuteMode).not.toHaveBeenCalled();
   });
 
-  it("auto 模式下高置信且需要任务时进入 execute", async () => {
+  it("auto 模式下高置信且需要任务时仍然走 answer（依赖 auto-upgrade）", async () => {
     mockClassifyIntentTwoLevel.mockResolvedValue({
       mode: "execute",
       confidence: 0.95,
@@ -175,6 +183,32 @@ describe("routes.dispatch", () => {
       payload: {
         message: "帮我批量整理知识库",
         mode: "auto",
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    // 架构决策：auto 模式强制走 answer，依靠 auto-upgrade 机制处理执行
+    expect(mockHandleAnswerMode).toHaveBeenCalledTimes(1);
+    expect(mockHandleExecuteMode).not.toHaveBeenCalled();
+  });
+
+  it("显式指定 mode=execute 时直接进入 execute", async () => {
+    mockClassifyIntentTwoLevel.mockResolvedValue({
+      mode: "execute",
+      confidence: 0.95,
+      reason: "definitely execute",
+      needsTask: true,
+      needsApproval: false,
+      complexity: "moderate",
+      classifierUsed: "two_level",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/orchestrator/dispatch",
+      payload: {
+        message: "帮我批量整理知识库",
+        mode: "execute",
       },
     });
 

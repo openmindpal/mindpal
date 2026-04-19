@@ -12,6 +12,9 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:evalEnhanced" });
 
 // ═══════════════════════════════════════════════════════════════
 //  P1-3c: 高级评测指标
@@ -328,7 +331,7 @@ export async function llmAssistedAnnotation(params: {
       return grades;
     }
   } catch (e: any) {
-    console.warn(`[EvalEnhanced] LLM 标注失败: ${e?.message}`);
+    _logger.warn("LLM annotation failed", { error: e?.message });
   }
   return {};
 }
@@ -712,7 +715,7 @@ export async function recordABResult(params: {
       ],
     );
   } catch (e: any) {
-    console.warn(`[ABExperiment] 记录失败: ${e?.message}`);
+    _logger.warn("AB experiment record failed", { error: e?.message });
   }
 }
 

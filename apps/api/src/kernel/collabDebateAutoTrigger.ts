@@ -126,20 +126,26 @@ Side B (${sideBState.role}) 结论: ${sideBState.result?.message?.slice(0, 300) 
     await persistDebateCorrections({
       pool: orchestratorParams.pool, tenantId,
       debateId: debateSession.debateId, corrections: debateSession.corrections ?? [],
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      orchestratorParams.app.log.warn({ err: (e as Error)?.message, debateId: debateSession.debateId }, "[CollabOrchestrator] persistDebateCorrections failed");
+    });
   }
 
   if ((debateSession.consensusEvolution?.length ?? 0) > 0) {
     await persistDebateConsensusEvolution({
       pool: orchestratorParams.pool, tenantId,
       debateId: debateSession.debateId, entries: debateSession.consensusEvolution ?? [],
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      orchestratorParams.app.log.warn({ err: (e as Error)?.message, debateId: debateSession.debateId }, "[CollabOrchestrator] persistDebateConsensusEvolution failed");
+    });
   }
 
   for (const round of debateSession.rounds) {
     await persistDebateRound({
       pool: orchestratorParams.pool, tenantId, debateId: debateSession.debateId, round,
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      orchestratorParams.app.log.warn({ err: (e as Error)?.message, debateId: debateSession.debateId }, "[CollabOrchestrator] persistDebateRound failed");
+    });
     for (const position of round.positions) {
       const matchingParty = (debateSession.parties ?? []).find((party) => party.role === position.fromRole);
       const correctionRefs = (debateSession.corrections ?? [])
@@ -151,14 +157,18 @@ Side B (${sideBState.role}) 结论: ${sideBState.result?.message?.slice(0, 300) 
         partyId: matchingParty?.partyId ?? null,
         rebuttalTargets: position.rebuttalTo ? [position.rebuttalTo] : [],
         correctionRefs,
-      }).catch(() => {});
+      }).catch((e: unknown) => {
+        orchestratorParams.app.log.warn({ err: (e as Error)?.message, debateId: debateSession.debateId }, "[CollabOrchestrator] persistDebatePosition failed");
+      });
     }
   }
 
   if (debateSession.verdict) {
     await persistDebateVerdict({
       pool: orchestratorParams.pool, tenantId, debateId: debateSession.debateId, verdict: debateSession.verdict,
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      orchestratorParams.app.log.warn({ err: (e as Error)?.message, debateId: debateSession.debateId }, "[CollabOrchestrator] persistDebateVerdict failed");
+    });
   }
 
   return {

@@ -11,6 +11,7 @@
 import type { Pool } from "pg";
 import { notifyApprovalRequired } from "./completionNotifier";
 import { assessToolExecutionRisk, type ToolExecutionAssessment } from "./approvalRuleEngine";
+import { addDecision, createApproval, getApproval } from "../modules/workflow/approvalRepo";
 
 /* ================================================================== */
 /*  Types                                                               */
@@ -85,7 +86,7 @@ export async function processBatchApproval(params: {
   decidedBySubjectId: string;
   traceId: string | null;
 }): Promise<BatchApprovalResult> {
-  const { pool, tenantId, spaceId, approvalIds, decision, reason, decidedBySubjectId, traceId } = params;
+  const { pool, tenantId, spaceId, approvalIds, decision, reason, decidedBySubjectId } = params;
   
   const result: BatchApprovalResult = {
     total: approvalIds.length,
@@ -97,77 +98,84 @@ export async function processBatchApproval(params: {
   
   for (const approvalId of approvalIds) {
     try {
-      // 获取审批请求
-      const res = await pool.query<{
-        status: string;
-        run_id: string;
-        step_id: string | null;
-        space_id: string | null;
-      }>(
-        "SELECT status, run_id, step_id, space_id FROM approvals WHERE tenant_id = $1 AND approval_id = $2 LIMIT 1",
-        [tenantId, approvalId]
-      );
-      
-      if (!res.rowCount) {
+      const approval = await getApproval({ pool, tenantId, approvalId });
+      if (!approval) {
         result.failed++;
         result.errors.push({ approvalId, error: "审批请求不存在" });
         continue;
       }
-      
-      const approval = res.rows[0];
-      
+
       // 检查空间权限
-      if (approval.space_id && spaceId && approval.space_id !== spaceId) {
+      if (approval.spaceId && spaceId && approval.spaceId !== spaceId) {
         result.failed++;
         result.errors.push({ approvalId, error: "无权访问此审批请求" });
         continue;
       }
-      
+
       // 检查状态
       if (approval.status !== "pending") {
         result.failed++;
         result.errors.push({ approvalId, error: `审批请求已处理 (status=${approval.status})` });
         continue;
       }
-      
-      // 更新审批状态
-      await pool.query(
-        `UPDATE approvals 
-         SET status = $1, decision = $2, reason = $3, decided_by_subject_id = $4, decided_at = now(), updated_at = now()
-         WHERE tenant_id = $5 AND approval_id = $6`,
-        [decision === "approve" ? "approved" : "rejected", decision, reason, decidedBySubjectId, tenantId, approvalId]
-      );
-      
-      // 更新运行状态（如果是批准）
+
+      const decided = await addDecision({
+        pool,
+        tenantId,
+        approvalId,
+        decision,
+        reason,
+        decidedBySubjectId,
+      });
+      if (!decided) {
+        result.failed++;
+        result.errors.push({ approvalId, error: "审批请求不存在" });
+        continue;
+      }
+      if (!decided.ok) {
+        result.failed++;
+        const errMsg =
+          "reason" in decided && decided.reason === "duplicate_approver"
+            ? "双人审批需要不同审批人"
+            : `审批请求已处理 (status=${approval.status})`;
+        result.errors.push({ approvalId, error: errMsg });
+        continue;
+      }
+
+      if (decision === "approve" && !decided.finalized) {
+        result.approved++;
+        continue;
+      }
+
       if (decision === "approve") {
         await pool.query(
           "UPDATE runs SET status = 'queued', updated_at = now() WHERE tenant_id = $1 AND run_id = $2 AND status = 'needs_approval'",
-          [tenantId, approval.run_id]
+          [tenantId, approval.runId]
         );
         await pool.query(
           "UPDATE jobs SET status = 'queued', updated_at = now() WHERE tenant_id = $1 AND run_id = $2 AND status = 'needs_approval'",
-          [tenantId, approval.run_id]
+          [tenantId, approval.runId]
         );
-        if (approval.step_id) {
+        if (approval.stepId) {
           await pool.query(
-            "UPDATE steps SET status = 'pending', updated_at = now(), queue_job_id = NULL WHERE step_id = $1 AND status IN ('pending', 'needs_approval')",
-            [approval.step_id]
+            "UPDATE steps SET status = 'pending', updated_at = now(), queue_job_id = NULL WHERE step_id = $1 AND status IN ('pending', 'needs_approval', 'paused')",
+            [approval.stepId]
           );
         }
         result.approved++;
       } else {
         await pool.query(
           "UPDATE runs SET status = 'canceled', finished_at = now(), updated_at = now() WHERE tenant_id = $1 AND run_id = $2 AND status = 'needs_approval'",
-          [tenantId, approval.run_id]
+          [tenantId, approval.runId]
         );
         await pool.query(
           "UPDATE jobs SET status = 'canceled', updated_at = now() WHERE tenant_id = $1 AND run_id = $2 AND status IN ('needs_approval', 'queued', 'pending', 'running')",
-          [tenantId, approval.run_id]
+          [tenantId, approval.runId]
         );
-        if (approval.step_id) {
+        if (approval.stepId) {
           await pool.query(
-            "UPDATE steps SET status = 'canceled', finished_at = now(), updated_at = now() WHERE step_id = $1 AND status IN ('needs_approval', 'pending', 'running')",
-            [approval.step_id]
+            "UPDATE steps SET status = 'canceled', finished_at = now(), updated_at = now() WHERE step_id = $1 AND status IN ('needs_approval', 'pending', 'running', 'paused')",
+            [approval.stepId]
           );
         }
         result.rejected++;
@@ -403,17 +411,19 @@ export async function createApprovalWithNotification(params: {
     ? new Date(Date.now() + policy.expirationMinutes * 60 * 1000).toISOString()
     : null;
   
-  // 创建审批请求
-  const res = await pool.query<{ approval_id: string }>(
-    `INSERT INTO approvals 
-     (tenant_id, space_id, run_id, step_id, tool_ref, policy_snapshot_ref, input_digest, 
-      requested_by_subject_id, status, expires_at, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, now(), now())
-     RETURNING approval_id`,
-    [tenantId, spaceId, runId, stepId, toolRef, policySnapshotRef, JSON.stringify(inputDigest), requestedBySubjectId, expiresAt]
-  );
-  
-  const approvalId = res.rows[0].approval_id;
+  const approval = await createApproval({
+    pool,
+    tenantId,
+    spaceId,
+    runId,
+    stepId,
+    requestedBySubjectId,
+    toolRef,
+    policySnapshotRef,
+    inputDigest,
+    expiresAt,
+  });
+  const approvalId = approval.approvalId;
   
   // 发送通知
   const notifications = await notifyApprovalRequired({

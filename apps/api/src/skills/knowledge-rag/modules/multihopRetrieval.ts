@@ -11,6 +11,9 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
+import { StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "api:multihopRetrieval" });
 import { searchChunksHybrid } from "./repo";
 
 // ─── 类型定义 ────────────────────────────────────────────────
@@ -208,7 +211,7 @@ export async function multihopRetrieve(params: {
         break;
       }
     } catch (e: any) {
-      console.warn(`[MultihopRetrieval] Hop ${hopIdx} failed: ${e?.message}`);
+      _logger.warn("multihop hop failed", { hopIdx, error: e?.message });
       terminationReason = "error";
       break;
     }
@@ -302,7 +305,7 @@ async function analyzeHopEvidences(params: {
       };
     }
   } catch (e: any) {
-    console.warn(`[MultihopRetrieval] LLM analysis failed: ${e?.message}`);
+    _logger.warn("multihop LLM analysis failed", { error: e?.message });
   }
 
   // 降级：简单启发式

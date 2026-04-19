@@ -3,7 +3,9 @@
  * 从 processStep.ts 拆分出来
  */
 
-import { validateCapabilityEnvelopeV1 } from "@openslin/shared";
+import { validateCapabilityEnvelopeV1, StructuredLogger } from "@openslin/shared";
+
+const _logger = new StructuredLogger({ module: "worker:stepValidation" });
 import { stableStringify } from "./common";
 import type { NetworkPolicy, RuntimeLimits } from "./runtime";
 
@@ -48,7 +50,7 @@ export function checkExecutionInvariants(input: InvariantCheckInput): InvariantV
   }
 
   for (const v of violations) {
-    console.warn(`[invariant] ${v.code}: ${v.message}`);
+    _logger.warn("execution invariant violation", { code: v.code, message: v.message });
   }
 
   return violations;

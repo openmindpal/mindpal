@@ -34,13 +34,13 @@ interface AnchorRulesJson {
 /** 内置默认禁令规则（配置文件不存在时回退）
  * 注意：正则不带 /g 标志，使用时按需添加以避免 lastIndex 状态残留 */
 export const BUILTIN_PROHIBITION_PATTERNS: AnchorPatternRule[] = [
-  { re: /(?:不要|禁止|避免|切勿)\s*(.+)/, type: "prohibition", priority: 10 },
-  { re: /(?:don't|do not|avoid|never)\s+(.+)/i, type: "prohibition", priority: 10 },
+  { re: /(?:不要|禁止|避免|切勿)\s*([^，。！？,!?\n]+)/, type: "prohibition", priority: 10 },
+  { re: /(?:don't|do not|avoid|never)\s+([^,.\n!?]+)/i, type: "prohibition", priority: 10 },
 ];
 
 export const BUILTIN_CONSTRAINT_PATTERNS: AnchorPatternRule[] = [
-  { re: /(?:必须|一定要|务必|需要)\s*(.+)/, type: "constraint", priority: 20 },
-  { re: /(?:must|have to|need to|should)\s+(.+)/i, type: "constraint", priority: 20 },
+  { re: /(?:必须|一定要|务必|需要)\s*([^，。！？,!?\n]+)/, type: "constraint", priority: 20 },
+  { re: /(?:must|have to|need to|should)\s+([^,.\n!?]+)/i, type: "constraint", priority: 20 },
 ];
 
 /* ------------------------------------------------------------------ */

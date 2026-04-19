@@ -8,12 +8,15 @@ import {
   evaluateMemoryRisk,
   memorySha256 as sha256,
   computeMemoryRerankScore,
+  StructuredLogger,
   escapeIlikePat,
   type WriteProof,
   type MemoryRerankInput,
   APPROVAL_REQUIRED_RISK_LEVELS,
 } from "@openslin/shared";
 import { encryptMemoryContent, decryptMemoryContent, isMemoryEncryptionEnabled } from "./memoryEncryption";
+
+const _logger = new StructuredLogger({ module: "worker:memoryProcessor" });
 
 export async function memoryWrite(params: {
   pool: Pool;
@@ -123,7 +126,7 @@ export async function memoryWrite(params: {
       [params.tenantId, params.spaceId, type, minhash],
     );
     const newContentLower = contentText.toLowerCase().trim();
-    for (const row of conflictCandRes.rows as any[]) {
+    for (const row of conflictCandRes.rows as Record<string, unknown>[]) {
       const mh = Array.isArray(row.embedding_minhash) ? (row.embedding_minhash as number[]) : [];
       const overlapScore = minhashOverlapScore(minhash, mh);
       if (overlapScore >= CONFLICT_THRESHOLD) {
@@ -168,7 +171,7 @@ export async function memoryWrite(params: {
     );
     let bestId: string | null = null;
     let bestScore = 0;
-    for (const r of candRes.rows as any[]) {
+    for (const r of candRes.rows as Record<string, unknown>[]) {
       const mh = Array.isArray(r.embedding_minhash) ? (r.embedding_minhash as number[]) : [];
       const score = minhashOverlapScore(minhash, mh);
       if (score > bestScore) {
@@ -185,7 +188,7 @@ export async function memoryWrite(params: {
         ...(priority !== null ? { priority } : {}),
         ...(confidence !== null ? { confidence } : {}),
       };
-      await params.pool.query(
+      const mergeRes = await params.pool.query(
         `
           UPDATE memory_entries
           SET title = $3,
@@ -205,14 +208,23 @@ export async function memoryWrite(params: {
               resolution_status = CASE WHEN $14 IS NOT NULL THEN 'pending' ELSE resolution_status END,
               updated_at = now()
           WHERE id = $1 AND tenant_id = $2
-          RETURNING id, scope, type, title, created_at, fact_version
+          RETURNING id, scope, type, title, created_at, fact_version, content_text, updated_at
         `,
         [bestId, params.tenantId, title, storedContentText, digest, retentionDays, expiresAt, writeProof.policy, JSON.stringify(writeProof), JSON.stringify(src), MINHASH_MODEL_REF, minhash, confidence, conflictMarker],
       );
-      return { entry: { id: bestId, scope, type, title, createdAt: new Date().toISOString() }, dlpSummary: redacted.summary, riskEvaluation, conflictDetected };
+      if (!mergeRes.rows.length) {
+        throw new Error(`memory merge update returned no rows: id=${bestId}, tenant=${params.tenantId}`);
+      }
+      const merged = mergeRes.rows[0] as Record<string, unknown>;
+      // P0-FIX: 解密 RETURNING 的 content_text（可能为列级加密密文）
+      const mergedContentText = await decryptMemoryContent({
+        pool: params.pool, tenantId: params.tenantId, value: merged.content_text,
+        options: { onFailure: "placeholder" },
+      });
+      return { entry: { id: String(merged.id), scope: String(merged.scope), type: String(merged.type), title: merged.title != null ? String(merged.title) : null, contentText: mergedContentText, createdAt: String(merged.created_at), factVersion: Number(merged.fact_version), updatedAt: String(merged.updated_at) }, dlpSummary: redacted.summary, riskEvaluation, conflictDetected };
     }
   } catch (mergeErr) {
-    console.warn("[memory/processor] merge candidate query failed, falling through to INSERT:", (mergeErr as Error)?.message);
+        _logger.warn("merge candidate query failed, falling through to INSERT", { err: (mergeErr as Error)?.message });
   }
 
   const res = await params.pool.query(
@@ -246,8 +258,8 @@ export async function memoryWrite(params: {
       conflictMarker ? "pending" : null,
     ],
   );
-  const row = res.rows[0] as any;
-  return { entry: { id: row.id, scope: row.scope, type: row.type, title: row.title, createdAt: row.created_at }, dlpSummary: redacted.summary, riskEvaluation, conflictDetected };
+  const row = res.rows[0] as Record<string, unknown>;
+  return { entry: { id: String(row.id), scope: String(row.scope), type: String(row.type), title: row.title != null ? String(row.title) : null, createdAt: String(row.created_at) }, dlpSummary: redacted.summary, riskEvaluation, conflictDetected };
 }
 
 export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId: string; subjectId: string; input: any }) {
@@ -282,7 +294,7 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
       [...recentArgs, limit],
     );
     const evidence: Array<{ id: string; type: string; scope: string; title: string | null; snippet: string; createdAt: string }> = [];
-    for (const r of recentRes.rows as any[]) {
+    for (const r of recentRes.rows as Record<string, unknown>[]) {
       // P2-03b: 解密 content_text（自动检测明文/密文）
       const decryptedContent = await decryptMemoryContent({
         pool: params.pool, tenantId: params.tenantId, value: r.content_text,
@@ -292,12 +304,12 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
       const clipped = snippetRaw.slice(0, 280);
       const redacted = redactValue(clipped);
       evidence.push({
-        id: r.id,
-        type: r.type,
-        scope: r.scope,
-        title: r.title,
+        id: String(r.id),
+        type: String(r.type),
+        scope: String(r.scope),
+        title: r.title != null ? String(r.title) : null,
         snippet: String(redacted.value ?? ""),
-        createdAt: r.created_at,
+        createdAt: String(r.created_at),
       });
     }
     return { evidence, candidateCount: evidence.length };
@@ -345,7 +357,7 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
   // Stage 2: Semantic (minhash overlap)
   const qMinhash = computeMinhash(query);
   const vecLimit = Math.max(limit, limit * 3);
-  let vecRows: any[] = [];
+  let vecRows: Record<string, unknown>[] = [];
   try {
     const vecIdx = scopeNextIdx;
     const vecRes = await params.pool.query(
@@ -362,14 +374,14 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
       `,
       [...scopeArgs, qMinhash, vecLimit],
     );
-    vecRows = vecRes.rows as any[];
+    vecRows = vecRes.rows as Record<string, unknown>[];
   } catch {
     // 向量通道降级
   }
 
   // Merge + Dedup
-  const seen = new Map<string, any>();
-  for (const r of lexRes.rows as any[]) {
+  const seen = new Map<string, Record<string, unknown>>();
+  for (const r of lexRes.rows as Record<string, unknown>[]) {
     const id = String(r.id);
     if (!seen.has(id)) seen.set(id, { ...r, _stage: "lexical" });
   }
@@ -388,21 +400,21 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
   const nowMs = Date.now();
 
   const scored = candidates.map((c) => {
-    const src = c.source_ref && typeof c.source_ref === "object" ? c.source_ref : null;
+    const src = c.source_ref && typeof c.source_ref === "object" ? (c.source_ref as Record<string, unknown>) : null;
     const input: MemoryRerankInput = {
       contentText: String(c.content_text ?? ""),
-      title: c.title ?? null,
+      title: c.title != null ? String(c.title) : null,
       createdAt: String(c.created_at ?? ""),
       embeddingMinhash: Array.isArray(c.embedding_minhash) ? (c.embedding_minhash as number[]) : [],
       denseScore: 0,
       stage: String(c._stage ?? "lexical"),
       confidence: typeof c.confidence === "number" && Number.isFinite(c.confidence) ? c.confidence : 0.5,
       factVersion: typeof c.fact_version === "number" && Number.isFinite(c.fact_version) ? c.fact_version : 1,
-      conflictMarker: c.conflict_marker ?? null,
-      resolutionStatus: c.resolution_status ?? null,
+      conflictMarker: c.conflict_marker != null ? String(c.conflict_marker) : null,
+      resolutionStatus: c.resolution_status != null ? String(c.resolution_status) : null,
       memoryClass: String(c.memory_class ?? "semantic"),
       decayScore: typeof c.decay_score === "number" && Number.isFinite(c.decay_score) ? c.decay_score : 1.0,
-      distilledTo: c.distilled_to ?? null,
+      distilledTo: c.distilled_to != null ? String(c.distilled_to) : null,
       sourcePriority: src && typeof src.priority === "number" ? src.priority : 0,
     };
     const score = computeMemoryRerankScore(input, query, qMinhash, nowMs);
@@ -413,7 +425,7 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
   const topRows = scored.slice(0, limit);
 
   const evidence: Array<{ id: string; type: string; scope: string; title: string | null; snippet: string; createdAt: string }> = [];
-  for (const r of topRows) {
+  for (const r of topRows as Array<Record<string, unknown> & { _score: number }>) {
     // P2-03b: 解密 content_text（自动检测明文/密文）
     const decryptedContent = await decryptMemoryContent({
       pool: params.pool, tenantId: params.tenantId, value: r.content_text,
@@ -423,12 +435,12 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
     const clipped = snippetRaw.slice(0, 280);
     const redacted = redactValue(clipped);
     evidence.push({
-      id: r.id,
-      type: r.type,
-      scope: r.scope,
-      title: r.title,
+      id: String(r.id),
+      type: String(r.type),
+      scope: String(r.scope),
+      title: r.title != null ? String(r.title) : null,
       snippet: String(redacted.value ?? ""),
-      createdAt: r.created_at,
+      createdAt: String(r.created_at),
     });
   }
 

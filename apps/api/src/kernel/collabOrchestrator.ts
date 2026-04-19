@@ -205,7 +205,9 @@ export async function runCollabOrchestrator(params: CollabOrchestratorParams): P
     },
     result: "success",
     traceId: traceId ?? "",
-  }).catch(() => {});
+  }).catch((e: unknown) => {
+    app.log.warn({ err: (e as Error)?.message, collabRunId }, "[CollabOrchestrator] audit event failed");
+  });
 
   await setCollabRunPrimaryRun({
     pool, tenantId: subject.tenantId, collabRunId,
