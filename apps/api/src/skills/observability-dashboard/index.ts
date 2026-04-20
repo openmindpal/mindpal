@@ -10,6 +10,8 @@ import { observabilityRoutes } from "./routes";
 const plugin: BuiltinSkillPlugin = {
   manifest: {
     identity: { name: "observability.dashboard", version: "1.0.0" },
+    displayName: { "zh-CN": "可观测性仪表盘", "en-US": "Observability Dashboard" },
+    description: { "zh-CN": "系统监控指标、质量告警和运行状态的可视化", "en-US": "Visualize system monitoring metrics, quality alerts and runtime status" },
     routes: ["/governance/observability", "/governance/run-metrics"],
     frontend: ["/gov/observability"],
     dependencies: ["audit", "rbac"],

@@ -60,6 +60,7 @@ export async function executeDynamicSkillRemote(params: {
   depsDigest: string;
   trustedKeys: Map<string, crypto.KeyObject>;
   signal: AbortSignal;
+  context?: { locale: string; apiBaseUrl?: string; authToken?: string };
 }): Promise<DynamicSkillExecResult> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (params.bearerToken) headers.authorization = `Bearer ${params.bearerToken}`;
@@ -85,6 +86,7 @@ export async function executeDynamicSkillRemote(params: {
     inputDigest: { sha256: `sha256:${inputSha}`, sha256_8: inputSha.slice(0, 8), bytes: inputBytes },
     capabilityEnvelope: params.capabilityEnvelope,
     policyDigests: { networkPolicySha256_8: sha256Hex(stableStringify(params.capabilityEnvelope.egressDomain.networkPolicy)).slice(0, 8) },
+    context: params.context,
   };
   const sk = workerSigningKey();
   if (sk) reqObj.signature = signRunnerRequestV1({ req: reqObj, keyId: sk.keyId, privateKeyPem: sk.privateKeyPem });

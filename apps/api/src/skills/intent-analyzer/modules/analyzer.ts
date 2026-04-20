@@ -20,6 +20,7 @@ import {
   INTENT_KEYWORDS,
   CONFIDENCE_THRESHOLDS,
 } from "./types";
+import { buildStandardRules, matchStandardRules } from "../../../kernel/intentRuleStandard";
 
 // ─── LLM Configuration ─────────────────────────────────────────────────
 
@@ -205,113 +206,41 @@ export function detectIntentByRules(message: string, dbStandaloneRules?: IntentR
     if (dbResult) return dbResult;
     // DB 规则未命中，继续走关键词打分逻辑
   } else {
-    // Fallback：无 DB 规则时使用硬编码正则（原始逻辑）
+    // Fallback：无 DB 规则时使用统一规则库（词表驱动，无硬编码）
     if (/^[.…!！?？.]+$/.test(trimmed)) {
       return { intent: "chat", confidence: 0.05, matchedKeywords: [] };
     }
-    if (/^(你好|您好|hello|hi|hey)$/i.test(trimmed)) {
-      return { intent: "chat", confidence: 0.85, matchedKeywords: [trimmed] };
-    }
-    if (/^(谢谢|感谢).*(清楚|明白|解释|帮助|啦)?$/i.test(trimmed) || /^(好的|好吧|明白了|我知道了|收到|可以吗|行吗)([，,。.!！]|$)/i.test(trimmed)) {
-      return { intent: "chat", confidence: 0.85, matchedKeywords: [trimmed] };
-    }
-    if (/什么是|区别|怎么|怎样|为什么|缺点|优点|详细|例子|展开讲讲|还有其他方法|跟上一个方案比|天气怎么样|架构是怎样|我想了解|解释一下|你觉得.+更好|推荐.+框架/i.test(trimmed)) {
-      return { intent: "chat", confidence: 0.72, matchedKeywords: ["chat_qa_pattern"] };
-    }
-    if (/协作|多智能体|多角色|多个 agent|多个智能体|一起调查|一起评审|并行处理|团队讨论|组织一场.+讨论|发起.+讨论/i.test(trimmed)) {
-      return { intent: "collab", confidence: 0.78, matchedKeywords: ["collab_pattern"] };
-    }
-    if (/查询并.*(删除|创建|审批|通知)|删除然后创建|执行审批最后发通知|把.+改为.+|改成发邮件|约一下|安排一下|排查一下|弄一下吧|换个思路|不要继续了/i.test(trimmed)) {
-      return { intent: "task", confidence: 0.76, matchedKeywords: ["task_explicit_pattern"] };
-    }
-    if (/^有个东西需要你帮忙$/i.test(trimmed)) {
-      return { intent: "task", confidence: 0.46, matchedKeywords: ["task_vague_request"] };
-    }
-    if (/^帮我看看数据$/i.test(trimmed)) {
-      return { intent: "query", confidence: 0.45, matchedKeywords: ["看看数据"] };
-    }
-    if (/弄一下报表|做一下报表|生成报表|报表界面/i.test(trimmed)) {
-      return { intent: "ui", confidence: 0.66, matchedKeywords: ["ui_report_pattern"] };
-    }
-    if (/上个月的报表|查一下.+报表|按时间排序|上个月的数据|这个月的数据|搞定了没有|把.+联系方式给我|查.+联系方式|结果有问题/i.test(trimmed)) {
-      return { intent: "query", confidence: 0.72, matchedKeywords: ["query_explicit_pattern"] };
-    }
-    if (/生成.+(面板|页面|界面)|显示.+(看板|dashboard|图表|面板)|show me.+(dashboard|page|panel)|左边.+右边.+|上面.+下面.+|三栏布局|仪表盘|dashboard/i.test(trimmed)) {
-      return { intent: "ui", confidence: 0.82, matchedKeywords: ["ui_explicit_pattern"] };
-    }
-    if (/界面|页面|面板|布局|表单|仪表盘|dashboard|图表|看板|左边.*右边|上面.*下面/i.test(trimmed)) {
-      return { intent: "ui", confidence: 0.76, matchedKeywords: ["ui_pattern"] };
-    }
-    if (/查询|查找|搜索|列出|统计|汇总|找下|找找|看看|看下|拉一下|找出来|翻翻|有哪些|还在不在|历史订单|最近\d+条|数据不对劲|给我拉|帮我看下|报表|联系方式|再多看几条/i.test(trimmed)) {
-      return { intent: "query", confidence: 0.72, matchedKeywords: ["query_pattern"] };
-    }
-    if (/创建|新建|更新|修改|删除|审批|发送|发一封|导入|安排|处理|转给|设置|发布|标记|撤回|重新来过|停止|取消|暂停|回滚|执行|通知|跳过审批|继续这个任务|排查|约一下|弄一下|改成|换个思路/i.test(trimmed)) {
-      return { intent: "task", confidence: 0.74, matchedKeywords: ["task_pattern"] };
+    const standardRules = buildStandardRules();
+    const standardResult = matchStandardRules(trimmed, standardRules);
+    if (standardResult) {
+      const kw: string[] = [`standard_rule:${standardResult.matchedRule}`];
+      if (standardResult.matchedText) kw.push(standardResult.matchedText);
+      return {
+        intent: standardResult.intent,
+        confidence: standardResult.confidence,
+        matchedKeywords: kw,
+      };
     }
   }
 
-  const lowerMsg = message.toLowerCase();
-  const scores: Record<IntentType, number> = {
-    chat: 0.1, // 默认基础分
-    ui: 0,
-    query: 0,
-    task: 0,
-    collab: 0,
-  };
-
-  const matchedKeywords: Record<IntentType, string[]> = {
-    chat: [],
-    ui: [],
-    query: [],
-    task: [],
-    collab: [],
-  };
-
-  // 关键词匹配
-  for (const [intent, keywords] of Object.entries(INTENT_KEYWORDS)) {
-    for (const keyword of keywords) {
-      if (lowerMsg.includes(keyword.toLowerCase())) {
-        scores[intent as IntentType] += 0.3;
-        matchedKeywords[intent as IntentType].push(keyword);
-      }
-    }
+  // DB 规则命中后或两个分支均未命中时，使用统一规则库兜底
+  const standardRules = buildStandardRules();
+  const standardResult = matchStandardRules(message, standardRules);
+  if (standardResult) {
+    const kw: string[] = [`standard_rule:${standardResult.matchedRule}`];
+    if (standardResult.matchedText) kw.push(standardResult.matchedText);
+    return {
+      intent: standardResult.intent,
+      confidence: standardResult.confidence,
+      matchedKeywords: kw,
+    };
   }
 
-  // 正则模式增强
-  const patterns: Array<{ intent: IntentType; regex: RegExp; score: number }> = [
-    { intent: "ui", regex: /显示.*(?:笔记|订单|任务|数据)/, score: 0.4 },
-    { intent: "ui", regex: /生成.*(?:页面|界面|dashboard)/, score: 0.5 },
-    { intent: "query", regex: /查询.*(?:数量|统计|汇总)/, score: 0.4 },
-    { intent: "task", regex: /(?:创建|更新|删除).*(?:记录|条目)/, score: 0.4 },
-    { intent: "collab", regex: /邀请.*(?:参与|协作)/, score: 0.5 },
-  ];
-
-  for (const { intent, regex, score } of patterns) {
-    if (regex.test(message)) {
-      scores[intent] += score;
-    }
-  }
-
-  // 找出最高分的意图
-  let bestIntent: IntentType = "chat";
-  let maxScore = scores.chat;
-
-  for (const [intent, score] of Object.entries(scores)) {
-    if (score > maxScore) {
-      maxScore = score;
-      bestIntent = intent as IntentType;
-    }
-  }
-
-  // 归一化置信度到 [0, 1]
-  // 最高可能分数: 默认 0.1 + 多个关键词匹配 (每个 0.3) + 正则匹配 (最多 0.5)
-  // 假设最多 3 个关键词 + 1 个正则 = 0.1 + 0.9 + 0.5 = 1.5
-  const confidence = Math.min(1.0, maxScore);
-
+  // 所有规则均未命中 → 默认 chat
   return {
-    intent: bestIntent,
-    confidence,
-    matchedKeywords: matchedKeywords[bestIntent],
+    intent: "chat",
+    confidence: 0.1,
+    matchedKeywords: [],
   };
 }
 

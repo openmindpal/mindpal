@@ -14,7 +14,6 @@ export const openaiCompatibleProviders = [
   "zhipu",
   "doubao",
   "kimi",
-  "kimimax",
   "custom_openai",
 ] as const;
 

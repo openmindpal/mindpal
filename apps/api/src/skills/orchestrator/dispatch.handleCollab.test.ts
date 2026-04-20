@@ -14,6 +14,7 @@ const mockAdmitAndBuildStepEnvelope = vi.fn();
 const mockBuildStepInputPayload = vi.fn();
 const mockGenerateIdempotencyKey = vi.fn();
 const mockSubmitStepToExistingRun = vi.fn();
+const mockPrepareToolStep = vi.fn();
 
 vi.mock("./dispatch.helpers", () => ({
   buildExecutionReplyText: (...args: any[]) => mockBuildExecutionReplyText(...args),
@@ -53,6 +54,7 @@ vi.mock("../../kernel/executionKernel", () => ({
   buildStepInputPayload: (...args: any[]) => mockBuildStepInputPayload(...args),
   generateIdempotencyKey: (...args: any[]) => mockGenerateIdempotencyKey(...args),
   submitStepToExistingRun: (...args: any[]) => mockSubmitStepToExistingRun(...args),
+  prepareToolStep: (...args: any[]) => mockPrepareToolStep(...args),
 }));
 
 import { handleCollabMode } from "./dispatch.handleCollab";
@@ -114,6 +116,22 @@ describe("dispatch.handleCollab", () => {
     mockSubmitStepToExistingRun.mockResolvedValue({ outcome: "needs_approval", stepId: "step_1", approvalId: "approval_1" });
     mockBuildExecutionReplyText.mockReturnValue("协作计划已生成");
     mockCreateOrchestratorTurn.mockResolvedValue({ turnId: "turn_1" });
+    mockPrepareToolStep.mockResolvedValue({
+      resolved: {
+        toolRef: "entity.create@1",
+        toolName: "entity.create",
+        scope: "write",
+        resourceType: "entity",
+        action: "create",
+        version: { inputSchema: {} },
+        definition: { riskLevel: "high", approvalRequired: true },
+        idempotencyRequired: true,
+      },
+      opDecision: { snapshotRef: "snap_1" },
+      admitted: { capabilityEnvelope: { format: "capabilityEnvelope.v1" } },
+      stepInput: { toolRef: "entity.create@1", input: { entityName: "tasks", payload: { title: "collab" } } },
+      idempotencyKey: "idem_collab",
+    });
   });
 
   it("首个协作步骤走统一执行内核并将审批态返回给前端", async () => {

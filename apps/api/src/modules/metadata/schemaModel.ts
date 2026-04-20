@@ -9,20 +9,8 @@ export const fieldDefSchema = z.object({
   description: i18nTextSchema.optional(),
   /** For type=="reference": the target entity name (e.g. "customer") */
   referenceEntity: z.string().min(1).optional(),
-  /** For type=="reference": which field of the target entity to display in the picker (e.g. "name") */
-  displayField: z.string().min(1).optional(),
-  /** For type=="reference": which fields to search against when filtering (defaults to [displayField]) */
-  searchFields: z.array(z.string().min(1)).optional(),
-  /**
-   * Cascading dependency: when another field in the same entity changes,
-   * this picker should re-filter its options.
-   * - field: the sibling field name whose value this depends on (e.g. "customerId")
-   * - filterField: the field on the referenced entity to match against (e.g. "customer_id")
-   */
-  dependsOn: z.object({
-    field: z.string().min(1),
-    filterField: z.string().min(1),
-  }).optional(),
+  /** Vendor extensions keyed by namespace (e.g. "io.openslin.ui") */
+  extensions: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const entityDefSchema = z.object({

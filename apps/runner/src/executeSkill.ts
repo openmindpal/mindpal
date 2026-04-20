@@ -104,6 +104,7 @@ export async function executeSkillInSandbox(params: {
   artifactRef: string;
   expectedDepsDigest: string | null;
   signal: AbortSignal;
+  context?: { locale: string; apiBaseUrl?: string; authToken?: string };
 }): Promise<{ output: any; egress: EgressEvent[]; depsDigest: string }> {
   const artifactDir = resolveArtifactDir(params.artifactRef);
   const roots = getSkillRoots();
@@ -162,6 +163,7 @@ export async function executeSkillInSandbox(params: {
         artifactRef: params.artifactRef,
         depsDigest,
         entryPath,
+        context: params.context,
       },
     });
   }).finally(() => {

@@ -263,7 +263,7 @@ function InlineRecordForm({
   // T12: Field-level security - in create mode show only writable fields; in edit mode show all readable fields but lock non-writable ones.
   const fieldKeys = Object.keys(fields)
     .filter((k) => !['id', 'createdAt', 'updatedAt', 'revision'].includes(k))
-    .filter((k) => isEditMode ? true : fields[k]?.writable !== false)
+    .filter((k) => isEditMode ? true : (fields[k]?.extensions?.["io.openslin.access"] as any)?.writable !== false)
     .slice(0, 10);
   const [values, setValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -288,7 +288,7 @@ function InlineRecordForm({
 
   const loadReferenceLabel = async (fieldKey: string, fieldDef: any, id: string) => {
     const entityName = fieldDef.referenceEntity;
-    const displayField = fieldDef.displayField ?? "name";
+    const displayField = fieldDef.displayField ?? (fieldDef.extensions?.["io.openslin.ui"] as any)?.reference?.displayField ?? "name";
     if (!entityName || !id) return;
     try {
       const res = await import("@/lib/api").then((m) => m.apiFetch(`/entities/${encodeURIComponent(entityName)}/${encodeURIComponent(id)}`));
@@ -324,7 +324,8 @@ function InlineRecordForm({
           const labelText = i18nText(fields[k]?.displayName ?? k, locale) || k;
           
           if (isRef) {
-            const dep = fields[k]?.dependsOn;
+            const fUiExt = (fields[k]?.extensions?.["io.openslin.ui"] as any) ?? undefined;
+            const dep = fUiExt?.reference?.dependsOn;
             const cascadeFilter = dep && values[dep.field]
               ? { field: dep.filterField, value: String(values[dep.field]) }
               : null;
@@ -337,16 +338,15 @@ function InlineRecordForm({
                 <ReferencePicker
                   fieldDef={{
                     referenceEntity: fields[k]?.referenceEntity ?? "",
-                    displayField: fields[k]?.displayField ?? "name",
-                    searchFields: fields[k]?.searchFields,
                     required: fields[k]?.required,
+                    extensions: fields[k]?.extensions,
                   }}
                   value={values[k]}
                   onChange={(val) => {
                     setValues((v) => ({ ...v, [k]: val }));
                     setReferenceLabels((prev) => ({ ...prev, [k]: val }));
                   }}
-                  disabled={fields[k]?.writable === false}
+                  disabled={(fields[k]?.extensions?.["io.openslin.access"] as any)?.writable === false}
                   placeholder={`Search ${fields[k]?.referenceEntity ?? "..."}`}
                   cascadeFilter={cascadeFilter}
                 />
@@ -368,13 +368,13 @@ function InlineRecordForm({
                 type={fType === "number" ? "number" : "text"}
                 value={values[k] ?? ""}
                 onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
-                readOnly={fields[k]?.writable === false}
+                readOnly={(fields[k]?.extensions?.["io.openslin.access"] as any)?.writable === false}
                 style={{
                   width: "100%", padding: "5px 8px", borderRadius: 6,
                   border: "1px solid var(--sl-border, #e2e8f0)", fontSize: 12,
-                  background: fields[k]?.writable === false ? "var(--sl-surface, #f1f5f9)" : "white",
-                  color: fields[k]?.writable === false ? "var(--sl-muted, #94a3b8)" : "var(--sl-fg, #1e293b)",
-                  cursor: fields[k]?.writable === false ? "not-allowed" : "text",
+                  background: (fields[k]?.extensions?.["io.openslin.access"] as any)?.writable === false ? "var(--sl-surface, #f1f5f9)" : "white",
+                  color: (fields[k]?.extensions?.["io.openslin.access"] as any)?.writable === false ? "var(--sl-muted, #94a3b8)" : "var(--sl-fg, #1e293b)",
+                  cursor: (fields[k]?.extensions?.["io.openslin.access"] as any)?.writable === false ? "not-allowed" : "text",
                 }}
               />
             </div>

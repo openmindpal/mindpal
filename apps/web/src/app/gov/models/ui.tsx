@@ -18,7 +18,6 @@ type ProviderKey =
   | "doubao"
   | "zhipu"
   | "kimi"
-  | "kimimax"
   | "custom_openai"
   | "anthropic"
   | "custom_anthropic"
@@ -33,7 +32,6 @@ const PROVIDER_OPTIONS: ProviderKey[] = [
   "doubao",
   "zhipu",
   "kimi",
-  "kimimax",
   "openai_compatible",
   "custom_openai",
   "anthropic",
@@ -49,7 +47,6 @@ const PROVIDER_BASE_URLS: Record<ProviderKey, string> = {
   doubao: "https://ark.cn-beijing.volces.com/api/v3",
   zhipu: "https://open.bigmodel.cn/api/paas/v4",
   kimi: "https://api.moonshot.cn/v1",
-  kimimax: "https://api.moonshot.cn/v1",
   openai_compatible: "https://api.openai.com/v1",
   custom_openai: "https://your-proxy.example.com/v1",
   anthropic: "https://api.anthropic.com",
@@ -65,7 +62,6 @@ const PROVIDER_PATHS: Record<ProviderKey, string> = {
   doubao: "/chat/completions",
   zhipu: "/chat/completions",
   kimi: "/chat/completions",
-  kimimax: "/chat/completions",
   openai_compatible: "/chat/completions",
   custom_openai: "/chat/completions",
   anthropic: "/v1/messages",

@@ -14,6 +14,7 @@ import { runAgentLoop } from "./agentLoop";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import type { AgentState, CollabResult, CollabOrchestratorParams } from "./collabTypes";
 import { writeCollabEnvelope } from "./collabEnvelope";
+import { collabConfig } from "@openslin/shared";
 
 // ── 交叉验证执行阶段 ──────────────────────────────────────────
 
@@ -133,16 +134,35 @@ export async function runDynamicCorrectionPhase(params: {
     let currentVerdict = cv.verdict;
     let retriesAttempted = 0;
     let corrected = false;
+    let lastCorrectionSignature = "";
 
     for (let retry = 0; retry < maxRetries; retry++) {
       if (orchestratorParams.signal?.aborted) break;
 
+      // 指数退避：第一次重试不延迟，后续按 1s → 2s → 4s → 8s → 10s(cap) 递增
+      if (retry > 0) {
+        const backoffMs = Math.min(1000 * Math.pow(2, retry - 1), 10000);
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, backoffMs);
+          if (orchestratorParams.signal) {
+            const onAbort = () => { clearTimeout(timer); resolve(); };
+            if (orchestratorParams.signal.aborted) { clearTimeout(timer); resolve(); return; }
+            orchestratorParams.signal.addEventListener("abort", onAbort, { once: true });
+          }
+        });
+        if (orchestratorParams.signal?.aborted) break;
+      }
+
       retriesAttempted = retry + 1;
+
+      const backoffMs = retry > 0 ? Math.min(1000 * Math.pow(2, retry - 1), 10000) : 0;
       app.log.info({
+        event: "collab.correction.retry",
         agentId: targetState.agentId,
         retry: retriesAttempted,
         maxRetries,
         previousVerdict: currentVerdict,
+        backoffMs,
       }, "[CollabOrchestrator] 纠错重试");
 
       // 构建带纠错建议的增强目标
@@ -237,6 +257,33 @@ export async function runDynamicCorrectionPhase(params: {
 
       currentVerdict = revalidation.verdict;
 
+      // 基于裁决 + 反馈内容的稳定签名进行"纠错信号未变"检测
+      const currentSignature = `${revalidation.verdict}::${revalidation.reasoning}`;
+      if (currentSignature === lastCorrectionSignature) {
+        app.log.warn({
+          event: "collab.correction.goal_unchanged",
+          agentId: targetState.agentId,
+          retry: retriesAttempted,
+          msg: "Correction signal unchanged from previous retry, aborting retry loop",
+        }, "[CollabOrchestrator] 纠错信号未变化，中止重试");
+        // 仍然记录本轮纠错日志后再中止
+        await pool.query(
+          `INSERT INTO collab_cross_validation_log
+           (tenant_id, collab_run_id, validated_agent, validated_run_id,
+            validator_agent, validator_run_id, verdict, confidence, reasoning, revision_count)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [subject.tenantId, orchestratorParams.collabRunId,
+           targetState.agentId, correctionRunId,
+           validatorState.agentId, revalidationRunId,
+           revalidation.verdict, revalidation.confidence,
+           revalidation.reasoning.slice(0, 1000), retriesAttempted],
+        ).catch((e: unknown) => {
+          app.log.warn({ err: (e as Error)?.message, collabRunId: orchestratorParams.collabRunId }, "[CollabValidation] cross_validation_log insert failed");
+        });
+        break;
+      }
+      lastCorrectionSignature = currentSignature;
+
       // 记录纠错日志到交叉验证表
       await pool.query(
         `INSERT INTO collab_cross_validation_log
@@ -264,6 +311,15 @@ export async function runDynamicCorrectionPhase(params: {
         break;
       }
     }
+
+    app.log.info({
+      event: "collab.correction.completed",
+      agentId: targetState.agentId,
+      originalVerdict: cv.verdict,
+      finalVerdict: currentVerdict,
+      retriesAttempted,
+      corrected,
+    }, "[CollabOrchestrator] 单Agent纠错流程完成");
 
     corrections.push({
       agentId: targetState.agentId,
@@ -301,10 +357,10 @@ function buildCorrectionGoal(params: {
 Your previous output was reviewed by Agent "${validatorRole}" and was judged as: **${verdict}**.
 
 ### Reviewer's Feedback
-${validatorReasoning.slice(0, 800)}
+${validatorReasoning.slice(0, collabConfig("COLLAB_CORRECTION_FEEDBACK_MAX_LEN"))}
 
 ### Your Previous Output (Summary)
-${originalResult.slice(0, 500)}
+${originalResult.slice(0, collabConfig("COLLAB_CORRECTION_PREV_OUTPUT_MAX_LEN"))}
 
 ### Instructions
 - Carefully address the reviewer's feedback

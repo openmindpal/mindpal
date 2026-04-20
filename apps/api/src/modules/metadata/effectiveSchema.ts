@@ -54,10 +54,18 @@ export function buildEffectiveEntitySchema(params: {
 
     fields[name] = {
       ...def,
-      writable,
-      ...(conditionalAnnotations.length > 0 ? { conditionalAccess: conditionalAnnotations } : {}),
+      extensions: {
+        ...def.extensions,
+        "io.openslin.access": {
+          writable,
+          ...(conditionalAnnotations.length > 0 ? { conditionalAccess: conditionalAnnotations } : {}),
+        },
+      },
     };
   }
+
+  const entityExtensions = (entity as any).extensions;
+  const schemaExtensions = (params.schema as any).extensions;
 
   return {
     schemaName: params.schema.name,
@@ -66,6 +74,12 @@ export function buildEffectiveEntitySchema(params: {
     displayName: entity.displayName,
     description: entity.description,
     fields,
+    ...(entityExtensions && Object.keys(entityExtensions).length > 0
+      ? { extensions: entityExtensions }
+      : {}),
+    ...(schemaExtensions && Object.keys(schemaExtensions).length > 0
+      ? { schemaExtensions }
+      : {}),
   };
 }
 

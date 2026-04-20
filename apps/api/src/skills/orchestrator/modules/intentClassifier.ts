@@ -27,10 +27,11 @@ import {
   HIGH_RISK_KEYWORDS, hasHighRiskKeyword,
   EXECUTE_REQUEST_RE, EXECUTE_ACTION_RE,
   QUESTION_INDICATOR_RE, OPINION_PREFIX_RE, FOLLOW_UP_RE,
+  getActiveVocab,
 } from "./intentVocabulary";
 
-// P0-6: 通过 kernel 契约获取 intent-analyzer 规则引擎（避免跨 skill 直接 import）
-import { getIntentRuleDetector } from "../../../kernel/intentRuleEngineContract";
+// P0-6→P3: 统一规则库替代跨 skill 契约调用，消除 analyzer ↔ classifier 规则重叠
+import { buildStandardRules, matchStandardRules } from "../../../kernel/intentRuleStandard";
 
 /* ================================================================== */
 /*  P4-6: 配置中心灰度开关 — 允许逐项控制新功能上线                         */
@@ -307,6 +308,8 @@ export interface ClassifyIntentParams {
   locale?: string;
   authorization?: string | null;
   traceId?: string | null;
+  /** 多模态附件元数据（可选，用于多模态意图感知） */
+  attachments?: AttachmentMeta[];
 }
 
 /**
@@ -522,6 +525,13 @@ export async function classifyIntent(params: ClassifyIntentParams): Promise<Inte
 /**
  * 快速分类器的可选上下文（跨轮状态感知）
  */
+/** 多模态附件摘要（仅传递分类器所需的轻量元数据） */
+export interface AttachmentMeta {
+  type: string;
+  mimeType?: string;
+  name?: string;
+}
+
 export interface FastClassifyContext {
   /** 是否有活跃任务 */
   hasActiveTask?: boolean;
@@ -553,6 +563,7 @@ export function classifyIntentFast(
   message: string,
   explicitMode?: IntentMode,
   context?: FastClassifyContext,
+  attachments?: AttachmentMeta[],
 ): IntentClassification | null {
   // 用户显式指定模式时直接尊重
   if (explicitMode) {
@@ -697,27 +708,97 @@ export function classifyIntentFast(
     return r;
   }
 
-  // ────── 无法快速短路 → P0-6: 尝试 intent-analyzer 规则引擎作为倒数第二层 ──────
+  // ────── 无法快速短路 → 使用统一规则库作为倒数第二层 ──────
+  let _analyzerResult: IntentClassification | null = null;
   try {
-    const _analyzerDetect = getIntentRuleDetector();
-    if (_analyzerDetect) {
-      const analyzerResult = _analyzerDetect(message);
-      if (analyzerResult.confidence >= 0.5 && analyzerResult.intent !== "chat") {
-        const mappedMode = _intentTypeToMode[analyzerResult.intent] ?? "answer";
-        const r: IntentClassification = {
+    const standardRules = buildStandardRules();
+    const standardResult = matchStandardRules(message, standardRules);
+    if (standardResult && standardResult.confidence >= 0.5 && standardResult.intent !== "chat") {
+      const mappedMode = _intentTypeToMode[standardResult.intent as keyof typeof _intentTypeToMode];
+      if (mappedMode) {
+        _analyzerResult = {
           mode: mappedMode,
-          confidence: Math.min(analyzerResult.confidence, 0.72),  // 封顶以留灰区给 LLM
-          reason: `analyzer_rule:${analyzerResult.intent}(${analyzerResult.matchedKeywords.join(",")})`,
+          confidence: Math.min(standardResult.confidence, 0.72),
+          reason: `standard_rule:${standardResult.matchedRule}`,
           needsTask: mappedMode === "execute" || mappedMode === "collab",
           needsApproval: false,
           complexity: mappedMode === "collab" ? "complex" : "moderate",
           hasToolIntent: mappedMode === "execute" || mappedMode === "collab",
         };
-        _logClassification(message, r, { analyzerIntent: analyzerResult.intent, analyzerKeywords: analyzerResult.matchedKeywords });
-        return r;
+        // 先不返回，继续到多模态层
       }
     }
-  } catch { /* intent-analyzer 未注册或不可用时静默降级 */ }
+  } catch { /* 统一规则库不可用时静默降级 */ }
+
+  // ────── 多模态附件感知（补充性，词表驱动，无硬编码） ──────
+  if (attachments && attachments.length > 0) {
+    const vocab = getActiveVocab();
+    const hints = vocab.multimodalHints ?? [];
+    let bestBoost: { intent: string; confidence: number; attachmentType: string } | null = null;
+
+    for (const attachment of attachments) {
+      for (const hint of hints) {
+        if (attachment.type === hint.attachmentType) {
+          // 如果有文本模式要求，检查消息是否匹配
+          if (hint.textPattern) {
+            try {
+              const textRe = new RegExp(hint.textPattern, "i");
+              if (!textRe.test(message)) continue;
+            } catch { continue; }
+          }
+          // 取最大 boost
+          if (!bestBoost || hint.boostConfidence > bestBoost.confidence) {
+            bestBoost = { intent: hint.boostIntent, confidence: hint.boostConfidence, attachmentType: hint.attachmentType };
+          }
+        }
+      }
+    }
+
+    if (bestBoost) {
+      // 如果 analyzer 已有结果，应用 boost 微调
+      if (_analyzerResult) {
+        _analyzerResult.confidence = Math.min(1.0, _analyzerResult.confidence + bestBoost.confidence);
+        _analyzerResult.reason += ` +multimodal:${bestBoost.attachmentType}`;
+        _logClassification(message, _analyzerResult);
+        return _analyzerResult;
+      }
+      // 如果没有任何规则命中，多模态提示提供分类线索
+      const boostMode = (bestBoost.intent === "execute" ? "execute" : bestBoost.intent === "collab" ? "collab" : "answer") as IntentMode;
+      const r: IntentClassification = {
+        mode: boostMode,
+        confidence: Math.min(0.70, 0.50 + bestBoost.confidence),
+        reason: `multimodal_hint:${bestBoost.attachmentType}`,
+        needsTask: boostMode === "execute" || boostMode === "collab",
+        needsApproval: false,
+        complexity: "moderate",
+        hasToolIntent: boostMode === "execute" || boostMode === "collab",
+      };
+      _logClassification(message, r);
+      return r;
+    }
+  }
+
+  // 如果 analyzer 有结果但无多模态 boost，返回 analyzer 结果
+  if (_analyzerResult) {
+    _logClassification(message, _analyzerResult);
+    return _analyzerResult;
+  }
+
+  // --- 上下文感知兜底规则（减少灰区LLM调用）---
+
+  // 规则B：问号结尾 — 几乎一定是提问（补充覆盖前置规则未命中的场景）
+  if (/[?？]$/.test(msg)) {
+    const r: IntentClassification = { mode: "answer", confidence: 0.80, reason: "question_mark_ending", needsTask: false, needsApproval: false, complexity: "simple", hasToolIntent: false };
+    _logClassification(message, r);
+    return r;
+  }
+
+  // 规则C：不含任何执行动作词的纯文本 — 大概率是对话
+  if (!EXECUTE_ACTION_RE.test(msg) && !EXECUTE_REQUEST_RE.test(msg)) {
+    const r: IntentClassification = { mode: "answer", confidence: 0.78, reason: "no_action_verb", needsTask: false, needsApproval: false, complexity: "simple", hasToolIntent: false };
+    _logClassification(message, r);
+    return r;
+  }
 
   // ────── 所有规则均未命中 → 返回 null，交给 LLM ──────
   _logClassification(message, { mode: "answer", confidence: 0, reason: "fast_no_match_delegate_to_llm", needsTask: false, needsApproval: false, complexity: "simple" });
@@ -921,7 +1002,7 @@ export async function classifyIntentTwoLevel(
     hasActiveTask,
     activeTaskCount: params.activeTaskIds?.length ?? (params.activeRunContext ? 1 : 0),
   };
-  const fastResult = classifyIntentFast(params.message, params.explicitMode, fastCtx);
+  const fastResult = classifyIntentFast(params.message, params.explicitMode, fastCtx, params.attachments);
 
   // 用户显式指定，直接信任
   if (params.explicitMode && fastResult) {

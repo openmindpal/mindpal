@@ -20,11 +20,19 @@ vi.mock("./governance/toolGovernanceRepo", () => ({
   isToolEnabled: (...args: any[]) => mockIsToolEnabled(...args),
 }));
 
+const mockPoolQuery = vi.fn();
+
 import { discoverEnabledTools } from "./agentContext";
 
 describe("discoverEnabledTools", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPoolQuery.mockResolvedValue({
+      rows: [
+        { rule_type: "hidden", match_field: "tag", match_pattern: "planner:hidden", effect: {}, enabled: true },
+        { rule_type: "hidden", match_field: "prefix", match_pattern: "device.", effect: {}, enabled: true },
+      ],
+    });
     mockListToolDefinitions.mockResolvedValue([
       {
         name: "browser.navigate",
@@ -66,7 +74,7 @@ describe("discoverEnabledTools", () => {
 
   it("默认隐藏 planner:hidden 标签和 device.* 内部工具", async () => {
     const result = await discoverEnabledTools({
-      pool: {} as any,
+      pool: { query: mockPoolQuery } as any,
       tenantId: "tenant-1",
       spaceId: "space-1",
       locale: "zh-CN",
@@ -81,7 +89,7 @@ describe("discoverEnabledTools", () => {
 
   it("显式包含隐藏工具时返回完整端侧工具集合", async () => {
     const result = await discoverEnabledTools({
-      pool: {} as any,
+      pool: { query: mockPoolQuery } as any,
       tenantId: "tenant-1",
       spaceId: "space-1",
       locale: "zh-CN",
@@ -98,7 +106,7 @@ describe("discoverEnabledTools", () => {
 
   it("分类过滤时仍保持默认隐藏规则", async () => {
     const result = await discoverEnabledTools({
-      pool: {} as any,
+      pool: { query: mockPoolQuery } as any,
       tenantId: "tenant-1",
       spaceId: "space-1",
       locale: "zh-CN",

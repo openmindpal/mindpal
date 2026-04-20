@@ -22,7 +22,7 @@ export function ReferencePicker({
   placeholder,
   cascadeFilter,
 }: {
-  fieldDef: Pick<FieldDef, "referenceEntity" | "displayField" | "searchFields"> & { required?: boolean };
+  fieldDef: Pick<FieldDef, "referenceEntity" | "extensions"> & { required?: boolean };
   value?: string;
   onChange: (value: string) => void;
   disabled?: boolean;
@@ -39,10 +39,16 @@ export function ReferencePicker({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const entityName = fieldDef.referenceEntity ?? "";
-  const displayField = fieldDef.displayField ?? "name";
+  // Dual-read: prefer extensions["io.openslin.ui"], fallback to legacy top-level fields
+  const uiExt = (fieldDef.extensions?.["io.openslin.ui"] as any) ?? undefined;
+  const displayField = uiExt?.reference?.displayField ?? "name";
   const searchFields = useMemo(
-    () => (Array.isArray(fieldDef.searchFields) && fieldDef.searchFields.length ? fieldDef.searchFields : [displayField]),
-    [displayField, fieldDef.searchFields],
+    () => {
+      const extSf = uiExt?.reference?.searchFields;
+      if (Array.isArray(extSf) && extSf.length) return extSf as string[];
+      return [displayField];
+    },
+    [displayField, uiExt],
   );
   const cascadeField = cascadeFilter?.field ?? "";
   const cascadeValue = cascadeFilter?.value ?? "";

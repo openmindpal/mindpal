@@ -1,7 +1,7 @@
 import type { ApiError } from "@/lib/apiError";
 
-export type ToolRollout = { scope_type?: string; scope_id?: string; tool_ref?: string; enabled?: boolean; created_at?: string; updated_at?: string };
-export type ActiveToolRef = { name?: string; active_tool_ref?: string; updated_at?: string };
+export type ToolRollout = { scopeType?: string; scopeId?: string; toolRef?: string; enabled?: boolean; disableMode?: string; graceDeadline?: string; createdAt?: string; updatedAt?: string };
+export type ActiveToolRef = { name?: string; activeToolRef?: string; updatedAt?: string };
 export type ToolDef = {
   name?: string;
   displayName?: unknown;

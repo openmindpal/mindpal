@@ -14,6 +14,32 @@
 
 import { resolveNumber } from "./runtimeConfig";
 
+/* ── Collab 配置键注册（三级优先级：governance > env > default） ── */
+
+/** 协作模块配置默认值，可通过环境变量或 governance 热覆盖 */
+export const COLLAB_CONFIG_DEFAULTS: Record<string, number> = {
+  COLLAB_CONFIDENCE_THRESHOLD: 0.7,     // 辩论收敛最低置信度
+  COLLAB_CONSENSUS_THRESHOLD: 0.6,      // 共识度收敛阈值
+  COLLAB_DIVERGENCE_CONF_DIFF: 0.15,    // 分歧检测置信度差上限
+  COLLAB_DIVERGENCE_MIN_CONF: 0.8,      // 双方收敛最低置信度
+  COLLAB_PENALTY_SEVERE: 0.06,          // 事实错误/幻觉惩罚系数
+  COLLAB_PENALTY_MILD: 0.03,            // 其他错误类型惩罚系数
+  COLLAB_BUS_MAX_IN_FLIGHT: 100,        // 背压最大并发消息数
+  COLLAB_BUS_RESUME_THRESHOLD: 0.7,     // 背压恢复消费阈值
+  COLLAB_BUS_POLL_MS: 20,               // Redis Stream 轮询间隔(ms)
+  COLLAB_AUTO_DEBATE_MAX_ROUNDS: 3,     // 自动辩论最大轮次
+  COLLAB_AUTO_DEBATE_MAX_PARTIES: 6,    // 自动辩论最大参与方
+  COLLAB_CORRECTION_FEEDBACK_MAX_LEN: 800,   // 纠错建议截断长度
+  COLLAB_CORRECTION_PREV_OUTPUT_MAX_LEN: 500, // 上一轮输出截断长度
+  COLLAB_ENVELOPE_OBSERVATION_LIMIT: 5, // Envelope 包含的前述结果数
+};
+
+/** 获取协作模块配置值，自动走 governance > env > default 三级解析 */
+export function collabConfig(key: string): number {
+  const defaultVal = COLLAB_CONFIG_DEFAULTS[key] ?? 0;
+  return resolveNumber(key, undefined, undefined, defaultVal).value;
+}
+
 /* ================================================================== */
 /*  Layer 1: Message Protocol                                          */
 /* ================================================================== */
@@ -490,10 +516,10 @@ export function computeDebateConsensusScore(session: DebateSession): number {
   const corrections = session.corrections ?? [];
   const severePenalty = corrections.filter(
     c => c.correctionType === "factual_error" || c.correctionType === "hallucination",
-  ).length * 0.06;
+  ).length * collabConfig("COLLAB_PENALTY_SEVERE");
   const mildPenalty = corrections.filter(
     c => c.correctionType !== "factual_error" && c.correctionType !== "hallucination",
-  ).length * 0.03;
+  ).length * collabConfig("COLLAB_PENALTY_MILD");
   const correctionPenalty = severePenalty + mildPenalty;
 
   // 置信度方差因子：各方置信度越接近，共识度越高
@@ -508,8 +534,8 @@ export function computeDebateConsensusScore(session: DebateSession): number {
 /** v2: 检查 N 方辩论是否已收敛 */
 export function isDebateConvergedV2(
   session: DebateSession,
-  confidenceThreshold = 0.7,
-  consensusThreshold = 0.6,
+  confidenceThreshold = collabConfig("COLLAB_CONFIDENCE_THRESHOLD"),
+  consensusThreshold = collabConfig("COLLAB_CONSENSUS_THRESHOLD"),
 ): boolean {
   if (session.rounds.length === 0) return false;
   const lastRound = session.rounds[session.rounds.length - 1]!;

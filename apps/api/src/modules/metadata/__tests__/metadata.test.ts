@@ -98,22 +98,22 @@ describe("metadata/effectiveSchema", () => {
     it("should mark write-denied fields as not writable", () => {
       const decision: PolicyDecision = { decision: "allow", fieldRules: { write: { deny: ["priority"] } } };
       const result = buildEffectiveEntitySchema({ schema, entityName: "Task", decision });
-      expect(result!.fields.priority.writable).toBe(false);
-      expect(result!.fields.title.writable).toBe(true);
+      expect((result!.fields.priority as any).extensions["io.openslin.access"].writable).toBe(false);
+      expect((result!.fields.title as any).extensions["io.openslin.access"].writable).toBe(true);
     });
 
     it("should support write allow list", () => {
       const decision: PolicyDecision = { decision: "allow", fieldRules: { write: { allow: ["title"] } } };
       const result = buildEffectiveEntitySchema({ schema, entityName: "Task", decision });
-      expect(result!.fields.title.writable).toBe(true);
-      expect(result!.fields.secret.writable).toBe(false);
+      expect((result!.fields.title as any).extensions["io.openslin.access"].writable).toBe(true);
+      expect((result!.fields.secret as any).extensions["io.openslin.access"].writable).toBe(false);
     });
 
     it("should mark all writable with wildcard", () => {
       const decision: PolicyDecision = { decision: "allow", fieldRules: { write: { allow: ["*"] } } };
       const result = buildEffectiveEntitySchema({ schema, entityName: "Task", decision });
       for (const f of Object.values(result!.fields)) {
-        expect((f as any).writable).toBe(true);
+        expect((f as any).extensions["io.openslin.access"].writable).toBe(true);
       }
     });
 
@@ -126,8 +126,8 @@ describe("metadata/effectiveSchema", () => {
       };
       const result = buildEffectiveEntitySchema({ schema, entityName: "Task", decision });
       // secret field should have conditionalAccess because the conditional rule denies it
-      expect(result!.fields.secret.conditionalAccess).toBeDefined();
-      expect(result!.fields.secret.conditionalAccess[0].readable).toBe(false);
+      expect((result!.fields.secret as any).extensions["io.openslin.access"].conditionalAccess).toBeDefined();
+      expect((result!.fields.secret as any).extensions["io.openslin.access"].conditionalAccess[0].readable).toBe(false);
     });
 
     it("should return schema metadata", () => {

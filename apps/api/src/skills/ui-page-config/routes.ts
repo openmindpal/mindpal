@@ -161,7 +161,10 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
     const hasUpdatedAt = fieldKeys.includes("updatedAt");
     const preferred = ["title", "name", "status", "createdAt", "updatedAt"];
     const defaultSelect = Array.from(new Set([...preferred.filter((k) => fieldKeys.includes(k)), ...fieldKeys])).slice(0, 20);
-    const writableFields = fieldKeys.filter((k) => Boolean((effective.fields as any)?.[k]?.writable));
+    const writableFields = fieldKeys.filter((k) => {
+      const access = (effective.fields as any)?.[k]?.extensions?.["io.openslin.access"];
+      return access?.writable !== false;
+    });
 
     const createTool = await getLatestReleasedToolVersion(app.db, subject.tenantId, "entity.create");
     if (!createTool) throw Errors.uiConfigDenied("缺少已发布工具 entity.create");

@@ -20,6 +20,17 @@ import type { CollabAgentRole, PermissionDelegation, CollabArbitrationStrategy }
 import { upsertCollabSharedState } from "./collabEnvelope";
 import { queryRolePerformanceHistory } from "./collabValidation";
 
+// ── 仲裁 Agent 系统级权限约束 ────────────────────────
+
+/** 仲裁 Agent 的系统级权限约束 */
+export const ARBITER_ROLE_CONSTRAINTS = {
+  role: "orchestrator_arbiter",
+  maxBudget: null,           // 无预算限制
+  allowedTools: ["*"],       // 全部工具
+  auditLevel: "strict",      // 严格审计
+  canDelegateToOthers: false, // 不能再委派
+} as const;
+
 // ── P1-4: 角色权限执行层 ───────────────────────────
 
 /** P1-4: 持久化角色权限到 DB */
@@ -41,46 +52,67 @@ export async function persistRolePermissions(params: {
   }
 }
 
-/** P1-4: 检查 Agent 是否有权使用某工具 */
+/** P1-4: 检查 Agent 是否有权使用某工具（含三级隔离 + 过期检查） */
 export async function checkAgentToolPermission(params: {
   pool: Pool;
   tenantId: string;
   collabRunId: string;
   agentId: string;
   toolName: string;
+  /** 可选: 启用 space 级隔离 */
+  spaceId?: string;
 }): Promise<{ allowed: boolean; reason?: string }> {
+  // 三级隔离查询: tenant + space (通过 JOIN collab_runs) + collabRun
+  // 同时 LEFT JOIN collab_permission_contexts 以检查委派过期时间
   const res = await params.pool.query(
-    `SELECT allowed_tools, max_budget, used_budget FROM collab_role_permissions
-     WHERE tenant_id = $1 AND collab_run_id = $2 AND agent_id = $3`,
-    [params.tenantId, params.collabRunId, params.agentId],
+    `SELECT crp.allowed_tools, crp.max_budget, crp.used_budget, cpc.expires_at
+     FROM collab_role_permissions crp
+     JOIN collab_runs cr
+       ON cr.collab_run_id = crp.collab_run_id AND cr.tenant_id = crp.tenant_id
+     LEFT JOIN collab_permission_contexts cpc
+       ON cpc.tenant_id = crp.tenant_id AND cpc.collab_run_id = crp.collab_run_id AND cpc.role_name = crp.agent_id
+     WHERE crp.tenant_id = $1 AND crp.collab_run_id = $2 AND crp.agent_id = $3
+       AND ($4::text IS NULL OR cr.space_id = $4)`,
+    [params.tenantId, params.collabRunId, params.agentId, params.spaceId ?? null],
   );
   if (!res.rowCount) return { allowed: true }; // 无权限记录 = 不限制
 
-  const perm = res.rows[0] as any;
+  const perm = res.rows[0] as Record<string, unknown>;
+
+  // 检查委派权限过期
+  if (perm.expires_at && new Date(perm.expires_at as string) < new Date()) {
+    return { allowed: false, reason: "permission_delegation_expired" };
+  }
   // 检查工具限制
-  if (Array.isArray(perm.allowed_tools) && perm.allowed_tools.length > 0) {
-    if (!perm.allowed_tools.includes(params.toolName)) {
+  const allowedTools = perm.allowed_tools as string[] | null;
+  if (Array.isArray(allowedTools) && allowedTools.length > 0) {
+    if (!allowedTools.includes(params.toolName)) {
       return { allowed: false, reason: `Agent ${params.agentId} 无权使用工具 ${params.toolName}` };
     }
   }
   // 检查预算限制
-  if (perm.max_budget != null && perm.used_budget >= perm.max_budget) {
+  if (perm.max_budget != null && (perm.used_budget as number) >= (perm.max_budget as number)) {
     return { allowed: false, reason: `Agent ${params.agentId} 已超出预算限制 (${perm.used_budget}/${perm.max_budget})` };
   }
   return { allowed: true };
 }
 
-/** P1-4: 增加 Agent 预算使用计数 */
+/** P1-4: 增加 Agent 预算使用计数（含三级隔离） */
 export async function incrementAgentBudget(params: {
   pool: Pool;
   tenantId: string;
   collabRunId: string;
   agentId: string;
+  /** 可选: 启用 space 级隔离 */
+  spaceId?: string;
 }) {
   await params.pool.query(
-    `UPDATE collab_role_permissions SET used_budget = used_budget + 1
-     WHERE tenant_id = $1 AND collab_run_id = $2 AND agent_id = $3`,
-    [params.tenantId, params.collabRunId, params.agentId],
+    `UPDATE collab_role_permissions crp SET used_budget = used_budget + 1
+     FROM collab_runs cr
+     WHERE cr.collab_run_id = crp.collab_run_id AND cr.tenant_id = crp.tenant_id
+       AND crp.tenant_id = $1 AND crp.collab_run_id = $2 AND crp.agent_id = $3
+       AND ($4::text IS NULL OR cr.space_id = $4)`,
+    [params.tenantId, params.collabRunId, params.agentId, params.spaceId ?? null],
   );
 }
 
@@ -103,22 +135,31 @@ export async function delegatePermissions(params: {
 }): Promise<{ ok: boolean; reason?: string }> {
   const { pool, tenantId, collabRunId, delegation } = params;
 
-  // 1. 查询父Agent的权限
+  // 0. 仲裁 Agent 禁止委派
+  // 查询父Agent的权限（含 role 以检查仲裁约束，JOIN collab_runs 实现 space 隔离）
   const parentRes = await pool.query(
-    `SELECT allowed_tools, allowed_resources, max_budget, used_budget
-     FROM collab_role_permissions
-     WHERE tenant_id = $1 AND collab_run_id = $2 AND agent_id = $3`,
+    `SELECT crp.role, crp.allowed_tools, crp.allowed_resources, crp.max_budget, crp.used_budget
+     FROM collab_role_permissions crp
+     JOIN collab_runs cr
+       ON cr.collab_run_id = crp.collab_run_id AND cr.tenant_id = crp.tenant_id
+     WHERE crp.tenant_id = $1 AND crp.collab_run_id = $2 AND crp.agent_id = $3`,
     [tenantId, collabRunId, delegation.parentAgentId],
   );
   if (!parentRes.rowCount) {
     return { ok: false, reason: `父Agent ${delegation.parentAgentId} 无权限记录` };
   }
 
-  const parentPerm = parentRes.rows[0] as any;
-  const parentTools: string[] | null = parentPerm.allowed_tools;
-  const parentResources: string[] | null = parentPerm.allowed_resources;
-  const parentMaxBudget: number | null = parentPerm.max_budget;
-  const parentUsedBudget: number = parentPerm.used_budget ?? 0;
+  const parentPerm = parentRes.rows[0] as Record<string, unknown>;
+  const parentRole = parentPerm.role as string;
+
+  // 仲裁 Agent 不允许再委派权限
+  if (parentRole === ARBITER_ROLE_CONSTRAINTS.role && ARBITER_ROLE_CONSTRAINTS.canDelegateToOthers === false) {
+    return { ok: false, reason: "arbiter_cannot_delegate" };
+  }
+  const parentTools = parentPerm.allowed_tools as string[] | null;
+  const parentResources = parentPerm.allowed_resources as string[] | null;
+  const parentMaxBudget = parentPerm.max_budget as number | null;
+  const parentUsedBudget = (parentPerm.used_budget as number) ?? 0;
 
   // 2. 验证工具子集合规性
   if (parentTools && parentTools.length > 0) {
@@ -221,22 +262,27 @@ export async function checkAgentPermissionContext(params: {
   /** 要访问的字段名 */
   fieldName?: string;
   /** 行级过滤条件（用于检查是否匹配 row_filters） */
-  rowContext?: Record<string, any>;
-}): Promise<{ allowed: boolean; reason?: string; effectivePermissions?: any }> {
+  rowContext?: Record<string, unknown>;
+  /** 可选: 启用 space 级隔离 */
+  spaceId?: string;
+}): Promise<{ allowed: boolean; reason?: string; effectivePermissions?: unknown }> {
   const { pool, tenantId, collabRunId, agentId } = params;
 
-  // 1. 检查基础工具/资源权限
+  // 1. 检查基础工具/资源权限（传递 spaceId 实现三级隔离）
   const toolCheck = params.resourceType
-    ? await checkAgentToolPermission({ pool, tenantId, collabRunId, agentId, toolName: params.resourceType })
+    ? await checkAgentToolPermission({ pool, tenantId, collabRunId, agentId, toolName: params.resourceType, spaceId: params.spaceId })
     : { allowed: true };
   if (!toolCheck.allowed) return toolCheck;
 
-  // 2. 查询细粒度权限上下文
+  // 2. 查询细粒度权限上下文（JOIN collab_runs 实现 space 隔离）
   const ctxRes = await pool.query(
-    `SELECT effective_permissions, field_rules, row_filters, expires_at
-     FROM collab_permission_contexts
-     WHERE tenant_id = $1 AND collab_run_id = $2 AND role_name = $3`,
-    [tenantId, collabRunId, agentId],
+    `SELECT cpc.effective_permissions, cpc.field_rules, cpc.row_filters, cpc.expires_at
+     FROM collab_permission_contexts cpc
+     JOIN collab_runs cr
+       ON cr.collab_run_id = cpc.collab_run_id AND cr.tenant_id = cpc.tenant_id
+     WHERE cpc.tenant_id = $1 AND cpc.collab_run_id = $2 AND cpc.role_name = $3
+       AND ($4::text IS NULL OR cr.space_id = $4)`,
+    [tenantId, collabRunId, agentId, params.spaceId ?? null],
   );
 
   if (!ctxRes.rowCount) {
@@ -244,30 +290,32 @@ export async function checkAgentPermissionContext(params: {
     return { allowed: true };
   }
 
-  const ctx = ctxRes.rows[0] as any;
+  const ctx = ctxRes.rows[0] as Record<string, unknown>;
 
   // 3. 检查过期
-  if (ctx.expires_at && new Date(ctx.expires_at) < new Date()) {
-    return { allowed: false, reason: `Agent ${agentId} 的委派权限已过期` };
+  if (ctx.expires_at && new Date(ctx.expires_at as string) < new Date()) {
+    return { allowed: false, reason: "permission_delegation_expired" };
   }
 
   // 4. 字段级检查
   if (params.fieldName && ctx.field_rules) {
-    const rules = typeof ctx.field_rules === "string" ? JSON.parse(ctx.field_rules) : ctx.field_rules;
-    if (rules.deny && Array.isArray(rules.deny) && rules.deny.includes(params.fieldName)) {
+    const rules = typeof ctx.field_rules === "string" ? JSON.parse(ctx.field_rules) : ctx.field_rules as Record<string, unknown>;
+    const rulesDeny = (rules as Record<string, unknown>).deny;
+    const rulesAllow = (rules as Record<string, unknown>).allow;
+    if (rulesDeny && Array.isArray(rulesDeny) && rulesDeny.includes(params.fieldName)) {
       return { allowed: false, reason: `字段 ${params.fieldName} 被显式禁止访问` };
     }
-    if (rules.allow && Array.isArray(rules.allow) && !rules.allow.includes(params.fieldName)) {
+    if (rulesAllow && Array.isArray(rulesAllow) && !rulesAllow.includes(params.fieldName)) {
       return { allowed: false, reason: `字段 ${params.fieldName} 不在允许列表中` };
     }
   }
 
   // 5. 行级检查
   if (params.rowContext && ctx.row_filters) {
-    const filters = typeof ctx.row_filters === "string" ? JSON.parse(ctx.row_filters) : ctx.row_filters;
+    const filters: Record<string, unknown> = typeof ctx.row_filters === "string" ? JSON.parse(ctx.row_filters) : ctx.row_filters as Record<string, unknown>;
     for (const [key, expected] of Object.entries(filters)) {
       if (params.rowContext[key] !== undefined && params.rowContext[key] !== expected) {
-        return { allowed: false, reason: `行级过滤不匹配: ${key}=${params.rowContext[key]}, 期望=${expected}` };
+        return { allowed: false, reason: `行级过滤不匹配: ${key}=${String(params.rowContext[key])}, 期望=${String(expected)}` };
       }
     }
   }
@@ -287,21 +335,29 @@ export async function revokePermissionDelegation(params: {
   collabRunId: string;
   parentAgentId: string;
   childAgentId: string;
+  /** 可选: 启用 space 级隔离 */
+  spaceId?: string;
 }): Promise<void> {
   const { pool, tenantId, collabRunId, parentAgentId, childAgentId } = params;
 
-  // 删除子Agent权限记录
+  // 删除子Agent权限记录（JOIN collab_runs 实现 space 隔离）
   await pool.query(
-    `DELETE FROM collab_role_permissions
-     WHERE tenant_id = $1 AND collab_run_id = $2 AND agent_id = $3`,
-    [tenantId, collabRunId, childAgentId],
+    `DELETE FROM collab_role_permissions crp
+     USING collab_runs cr
+     WHERE cr.collab_run_id = crp.collab_run_id AND cr.tenant_id = crp.tenant_id
+       AND crp.tenant_id = $1 AND crp.collab_run_id = $2 AND crp.agent_id = $3
+       AND ($4::text IS NULL OR cr.space_id = $4)`,
+    [tenantId, collabRunId, childAgentId, params.spaceId ?? null],
   );
 
-  // 删除细粒度权限上下文
+  // 删除细粒度权限上下文（JOIN collab_runs 实现 space 隔离）
   await pool.query(
-    `DELETE FROM collab_permission_contexts
-     WHERE tenant_id = $1 AND collab_run_id = $2 AND role_name = $3`,
-    [tenantId, collabRunId, childAgentId],
+    `DELETE FROM collab_permission_contexts cpc
+     USING collab_runs cr
+     WHERE cr.collab_run_id = cpc.collab_run_id AND cr.tenant_id = cpc.tenant_id
+       AND cpc.tenant_id = $1 AND cpc.collab_run_id = $2 AND cpc.role_name = $3
+       AND ($4::text IS NULL OR cr.space_id = $4)`,
+    [tenantId, collabRunId, childAgentId, params.spaceId ?? null],
   );
 
   // 审计撤销事件
@@ -328,40 +384,49 @@ export async function getAgentPermissionChain(params: {
   tenantId: string;
   collabRunId: string;
   agentId: string;
+  /** 可选: 启用 space 级隔离 */
+  spaceId?: string;
 }): Promise<{
   permissions: { tools: string[] | null; resources: string[] | null; budget: number | null; usedBudget: number };
-  context: { fieldRules: any; rowFilters: any; expiresAt: string | null } | null;
+  context: { fieldRules: unknown; rowFilters: unknown; expiresAt: string | null } | null;
   parentAgent: string | null;
 }> {
   const { pool, tenantId, collabRunId, agentId } = params;
 
-  // 查询基础权限
+  // 查询基础权限（JOIN collab_runs 实现 space 隔离）
   const permRes = await pool.query(
-    `SELECT role, allowed_tools, allowed_resources, max_budget, used_budget
-     FROM collab_role_permissions
-     WHERE tenant_id = $1 AND collab_run_id = $2 AND agent_id = $3`,
-    [tenantId, collabRunId, agentId],
+    `SELECT crp.role, crp.allowed_tools, crp.allowed_resources, crp.max_budget, crp.used_budget
+     FROM collab_role_permissions crp
+     JOIN collab_runs cr
+       ON cr.collab_run_id = crp.collab_run_id AND cr.tenant_id = crp.tenant_id
+     WHERE crp.tenant_id = $1 AND crp.collab_run_id = $2 AND crp.agent_id = $3
+       AND ($4::text IS NULL OR cr.space_id = $4)`,
+    [tenantId, collabRunId, agentId, params.spaceId ?? null],
   );
 
-  const perm = permRes.rows[0] as any;
-  const parentAgent = perm?.role?.startsWith("child_of_") ? perm.role.replace("child_of_", "") : null;
+  const perm = permRes.rows[0] as Record<string, unknown> | undefined;
+  const permRole = perm?.role as string | undefined;
+  const parentAgent = permRole?.startsWith("child_of_") ? permRole.replace("child_of_", "") : null;
 
-  // 查询细粒度上下文
+  // 查询细粒度上下文（JOIN collab_runs 实现 space 隔离）
   const ctxRes = await pool.query(
-    `SELECT effective_permissions, field_rules, row_filters, expires_at
-     FROM collab_permission_contexts
-     WHERE tenant_id = $1 AND collab_run_id = $2 AND role_name = $3`,
-    [tenantId, collabRunId, agentId],
+    `SELECT cpc.effective_permissions, cpc.field_rules, cpc.row_filters, cpc.expires_at
+     FROM collab_permission_contexts cpc
+     JOIN collab_runs cr
+       ON cr.collab_run_id = cpc.collab_run_id AND cr.tenant_id = cpc.tenant_id
+     WHERE cpc.tenant_id = $1 AND cpc.collab_run_id = $2 AND cpc.role_name = $3
+       AND ($4::text IS NULL OR cr.space_id = $4)`,
+    [tenantId, collabRunId, agentId, params.spaceId ?? null],
   );
 
-  const ctx = ctxRes.rows[0] as any;
+  const ctx = ctxRes.rows[0] as Record<string, unknown> | undefined;
 
   return {
     permissions: {
-      tools: perm?.allowed_tools ?? null,
-      resources: perm?.allowed_resources ?? null,
-      budget: perm?.max_budget ?? null,
-      usedBudget: perm?.used_budget ?? 0,
+      tools: (perm?.allowed_tools as string[] | null) ?? null,
+      resources: (perm?.allowed_resources as string[] | null) ?? null,
+      budget: (perm?.max_budget as number | null) ?? null,
+      usedBudget: (perm?.used_budget as number) ?? 0,
     },
     context: ctx ? {
       fieldRules: ctx.field_rules,
@@ -419,6 +484,26 @@ export async function arbitrateCollabConflict(params: {
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [tenantId, collabRunId, resourceKey, competingAgents.map(a => a.agentId), strategy, winnerAgent, reasoning],
   );
+
+  // 仲裁审计日志
+  insertAuditEvent(pool, {
+    subjectId: winnerAgent,
+    tenantId,
+    spaceId: undefined,
+    resourceType: "agent_runtime",
+    action: "collab.arbiter.commit",
+    inputDigest: {
+      collabRunId,
+      resourceKey,
+      strategy,
+      competingAgents: competingAgents.map(a => a.agentId),
+    },
+    outputDigest: { winnerAgent, reasoning },
+    result: "success",
+    traceId: "",
+  }).catch((e: unknown) => {
+    _logger.warn("audit event for arbitration failed", { err: (e as Error)?.message, collabRunId });
+  });
 
   // 将胜出者的值写入共享状态
   await upsertCollabSharedState({

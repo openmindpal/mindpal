@@ -214,6 +214,12 @@ export interface SkillExecuteParams {
     sha256_8: string;
     bytes: number;
   };
+  /** 可选执行上下文（可序列化部分，apiFetch 在沙箱中就地构造） */
+  context?: {
+    locale: string;
+    apiBaseUrl?: string;
+    authToken?: string;
+  };
 }
 
 /** Skill → Runner: 执行响应 */

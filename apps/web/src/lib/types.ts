@@ -10,20 +10,10 @@ export type FieldDef = {
   type?: FieldType;
   required?: boolean;
   displayName?: I18nText | string;
-  writable?: boolean;
   /** For type=="reference": the target entity name (e.g. "customer") */
   referenceEntity?: string;
-  /** For type=="reference": which field of the target entity to display in the picker (e.g. "name") */
-  displayField?: string;
-  /** For type=="reference": which fields to search against when filtering (defaults to [displayField]) */
-  searchFields?: string[];
-  /** Cascading dependency on a sibling field */
-  dependsOn?: {
-    /** sibling field name whose value this depends on */
-    field: string;
-    /** field on the referenced entity to match against */
-    filterField: string;
-  };
+  /** Vendor extensions keyed by namespace (e.g. "io.openslin.ui") */
+  extensions?: Record<string, unknown>;
 };
 
 export type EffectiveSchema = {

@@ -42,6 +42,18 @@ export interface SkillManifestV2 {
   };
 
   /**
+   * i18n display name for this skill.
+   * Used when the skill is registered as a tool without explicit tools declarations.
+   */
+  displayName?: Record<string, string>;
+
+  /**
+   * i18n description for this skill.
+   * Used when the skill is registered as a tool without explicit tools declarations.
+   */
+  description?: Record<string, string>;
+
+  /**
    * Classification layer for this skill.
    * Determines auto-enable policy, startup behaviour and governance defaults.
    * @default "builtin"

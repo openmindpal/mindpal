@@ -478,6 +478,8 @@ export {
   createDebateSessionV2,
   isDebateConvergedV2,
   computeDebateConsensusScore,
+  COLLAB_CONFIG_DEFAULTS,
+  collabConfig,
 } from "./collabProtocol";
 export type {
   CollabMessageType,

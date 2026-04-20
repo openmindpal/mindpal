@@ -34,7 +34,7 @@ export const modelOnboardRoutes: FastifyPluginAsync = async (app) => {
     const scope = resolveScope(subject);
     const body = z
       .object({
-        provider: z.enum(["openai_compatible", "deepseek", "hunyuan", "qianwen", "doubao", "zhipu", "kimi", "kimimax", "custom_openai", "anthropic", "custom_anthropic", "gemini", "custom_gemini"]),
+        provider: z.enum(["openai_compatible", "deepseek", "hunyuan", "qianwen", "doubao", "zhipu", "kimi", "custom_openai", "anthropic", "custom_anthropic", "gemini", "custom_gemini"]),
         baseUrl: z.string().min(1),
         chatCompletionsPath: z.string().max(200).optional(),
         apiKey: z.string().min(1),

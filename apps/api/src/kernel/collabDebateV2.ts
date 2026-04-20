@@ -14,6 +14,7 @@ import {
   type DebateSession, type DebatePosition, type DebateRound,
   type DebateVerdict, type DebateParty, type DebateCorrection,
   type ConsensusEvolutionEntry,
+  collabConfig,
 } from "@openslin/shared";
 import type { DebateV2PhaseParams } from "./collabTypes";
 import { buildDebateHistoryContext, writeDebateEnvelope } from "./collabDebate";
@@ -103,7 +104,7 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
     if (!session.consensusEvolution) session.consensusEvolution = [];
     session.consensusEvolution.push(consensusEntry);
 
-    if (isDebateConvergedV2(session, 0.7, consensusThreshold)) {
+    if (isDebateConvergedV2(session, collabConfig("COLLAB_CONFIDENCE_THRESHOLD"), consensusThreshold)) {
       session.status = "converged";
       break;
     }

@@ -15,7 +15,7 @@
  * Stream 键名：collabstream:{collabRunId}:{role|"broadcast"}
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, collabConfig } from "@openslin/shared";
 
 const logger = new StructuredLogger({ module: "collabBus" });
 
@@ -52,8 +52,8 @@ export interface BackpressureConfig {
 }
 
 const DEFAULT_BACKPRESSURE: BackpressureConfig = {
-  maxInFlight: 100,
-  resumeThreshold: 0.7,
+  maxInFlight: collabConfig("COLLAB_BUS_MAX_IN_FLIGHT"),
+  resumeThreshold: collabConfig("COLLAB_BUS_RESUME_THRESHOLD"),
 };
 
 // ── Redis 频道/Stream 命名 ──────────────────────────────────
@@ -203,43 +203,85 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
   /** Layer 2: 写 Redis Stream */
   async function writeRedisStream(msg: CollabMessage): Promise<void> {
     const redis = config.redis;
+    const channel = msg.toRole
+      ? roleChannel(msg.collabRunId, msg.toRole)
+      : broadcastChannel(msg.collabRunId);
+
     if (!redis?.xadd) {
-      // 降级到 Pub/Sub
+      // 无 xadd 支持，直接降级到 Pub/Sub
       if (redis?.publish) {
         const json = JSON.stringify(msg);
         try {
-          if (msg.toRole) {
-            await redis.publish(roleChannel(msg.collabRunId, msg.toRole), json);
-          } else {
-            await redis.publish(broadcastChannel(msg.collabRunId), json);
-          }
-        } catch (e: unknown) { logger.warn("Redis publish fallback failed", { collabRunId: msg.collabRunId, error: (e as Error)?.message }); }
+          await redis.publish(channel, json);
+        } catch (e: unknown) {
+          logger.warn("collab.bus.degradation", {
+            layer: "redis_to_pubsub",
+            channel,
+            priority: msg.priority ?? "normal",
+            errorMessage: (e as Error)?.message,
+          });
+        }
       }
       return;
     }
-    // 写 Redis Stream
+
+    // 写 Redis Stream（带 1 次快速重试）
+    const target = msg.toRole ?? "broadcast";
+    const sKey = streamKey(msg.collabRunId, target);
+    const json = JSON.stringify(msg);
+    let streamSent = false;
+
     try {
-      const target = msg.toRole ?? "broadcast";
-      const key = streamKey(msg.collabRunId, target);
-      const json = JSON.stringify(msg);
-      await redis.xadd(key, "MAXLEN", "~", "5000", "*",
+      await redis.xadd(sKey, "MAXLEN", "~", "5000", "*",
         "data", json,
         "priority", String(msg.priority ?? "normal"),
         "kind", msg.kind,
         "from", msg.fromRole,
       );
-    } catch (e: unknown) {
-      // Stream 写入失败，降级到 Pub/Sub
-      logger.warn("Redis Stream xadd failed, falling back to Pub/Sub", { collabRunId: msg.collabRunId, error: (e as Error)?.message });
+      streamSent = true;
+    } catch (err1: unknown) {
+      // 快速重试一次（50ms 延迟）
+      try {
+        await new Promise(r => setTimeout(r, 50));
+        await redis.xadd(sKey, "MAXLEN", "~", "5000", "*",
+          "data", json,
+          "priority", String(msg.priority ?? "normal"),
+          "kind", msg.kind,
+          "from", msg.fromRole,
+        );
+        streamSent = true;
+      } catch (err2: unknown) {
+        logger.warn("collab.bus.redis_retry_exhausted", {
+          channel,
+          error: (err2 as Error)?.message,
+        });
+      }
+    }
+
+    if (!streamSent) {
+      // Redis Streams 失败，降级到 Pub/Sub
       if (redis?.publish) {
-        const json = JSON.stringify(msg);
         try {
-          if (msg.toRole) {
-            await redis.publish(roleChannel(msg.collabRunId, msg.toRole), json);
-          } else {
-            await redis.publish(broadcastChannel(msg.collabRunId), json);
-          }
-        } catch (e2: unknown) { logger.warn("Redis Pub/Sub fallback also failed", { collabRunId: msg.collabRunId, error: (e2 as Error)?.message }); }
+          await redis.publish(channel, json);
+          logger.warn("collab.bus.degradation", {
+            layer: "redis_to_pubsub",
+            channel,
+            priority: msg.priority ?? "normal",
+            errorMessage: "xadd failed after retry, fell back to Pub/Sub",
+          });
+        } catch (e2: unknown) {
+          logger.error("collab.bus.all_layers_failed", {
+            channel,
+            priority: msg.priority ?? "normal",
+            errorMessage: (e2 as Error)?.message,
+          });
+        }
+      } else {
+        logger.error("collab.bus.all_layers_failed", {
+          channel,
+          priority: msg.priority ?? "normal",
+          errorMessage: "xadd failed and no Pub/Sub available",
+        });
       }
     }
   }
@@ -314,7 +356,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
             }
           } catch { /* stream read failed for this key */ }
         }
-      }, 20); // 20ms 轮询间隔
+      }, collabConfig("COLLAB_BUS_POLL_MS")); // Redis Stream 轮询间隔
     } catch {
       streamConsumerReady = false;
     }

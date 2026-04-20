@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import { redactValue, parseDocument, dataUrlToBuffer, StructuredLogger, resolveNumber } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "api:dispatch.streamAnswer" });
-import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, buildLightChatPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, type ContextMeta, shouldTriggerEventDrivenSummary } from "./modules/orchestrator";
+import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, type ContextMeta, shouldTriggerEventDrivenSummary } from "./modules/orchestrator";
 import { createOrchestratorTurn } from "./modules/turnRepo";
 import { getSessionContext, upsertSessionContext, type SessionMessage } from "../../modules/memory/sessionContextRepo";
 import { digestParams, sha256Hex } from "../../lib/digest";
@@ -48,25 +48,56 @@ export async function handleStreamAnswerMode(params: {
   sse.sendEvent("safety", { promptInjection: piSummary });
   sse.sendEvent("status", { phase: "thinking" });
 
-  // 1. 并行加载记忆/任务/工具上下文 + 会话历史
+  // 1. 分层加载上下文
   const spaceId = subject.spaceId!;
   const auditCtx = traceId ? { traceId, requestId: req.ctx.requestId } : undefined;
   const redactedMsg = redactValue(message);
   const userContent = String(redactedMsg.value ?? "");
   const historyLimit = Math.max(4, Math.min(64, resolveNumber("ORCHESTRATOR_CONVERSATION_WINDOW").value));
 
-  const [memoryRecall, taskRecall, knowledgeRecall, toolDiscovery, prevSession] = await Promise.all([
+  // --- Tier-1: 加载LLM必需的核心上下文（会话历史 + 记忆召回 + 工具发现）---
+  const [prevSession, memoryRecall, toolDiscovery] = await Promise.all([
+    getSessionContext({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, sessionId: conversationId }),
     recallRelevantMemory({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, message, auditContext: auditCtx }),
+    discoverEnabledTools({ pool: app.db, tenantId: subject.tenantId, spaceId, locale }),
+  ]);
+
+  app.log.info({
+    traceId, conversationId,
+    hasMemory: !!memoryRecall?.text,
+    memoryLen: memoryRecall?.text?.length ?? 0,
+    toolCount: toolDiscovery?.tools?.length ?? 0,
+  }, "[dispatch.streamAnswer] Tier-1核心上下文加载完成（会话+记忆+工具）");
+
+  // --- Tier-2: 异步启动增强上下文（知识库+任务历史，非必需）---
+  const enrichPromise = Promise.all([
     recallRecentTasks({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, auditContext: auditCtx }),
     recallRelevantKnowledge({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, message, auditContext: auditCtx }),
-    discoverEnabledTools({ pool: app.db, tenantId: subject.tenantId, spaceId, locale }),
-    getSessionContext({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, sessionId: conversationId }),
-  ]);
-  const knowledgeContext = knowledgeRecall.text;
+  ]).catch((err) => {
+    app.log.warn({ err }, "[dispatch.streamAnswer] enrichment context load failed, proceeding without");
+    return [null, null] as const;
+  });
+
+  // --- 短等待：给知识库和任务100ms机会到达 ---
+  const ENRICH_WAIT_MS = parseInt(process.env.CONTEXT_ENRICH_WAIT_MS ?? "100", 10);
+  const enrichTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), ENRICH_WAIT_MS));
+  const earlyEnrich = await Promise.race([enrichPromise, enrichTimeout]);
+
+  let taskRecall: Awaited<ReturnType<typeof recallRecentTasks>> | null = null;
+  let knowledgeRecall: Awaited<ReturnType<typeof recallRelevantKnowledge>> | null = null;
+  let knowledgeContext: string = "";
+
+  if (earlyEnrich !== null && Array.isArray(earlyEnrich)) {
+    [taskRecall, knowledgeRecall] = earlyEnrich;
+    knowledgeContext = knowledgeRecall?.text ?? "";
+    app.log.info({ traceId, conversationId, enrichWaitMs: ENRICH_WAIT_MS }, "[dispatch.streamAnswer] Tier-2增强上下文在短等待窗口内到达，将注入prompt");
+  } else {
+    app.log.info({ traceId, conversationId, enrichWaitMs: ENRICH_WAIT_MS }, "[dispatch.streamAnswer] Tier-2增强上下文未在短等待窗口内到达，LLM流完成后补充");
+  }
 
   sse.sendEvent("status", { phase: "context_ready" });
 
-  const prevMsgs = Array.isArray(prevSession?.context?.messages) ? prevSession!.context.messages : [];
+  const prevMsgs = Array.isArray(prevSession?.context?.messages) ? prevSession.context.messages : [];
   const droppedCount = Math.max(0, prevMsgs.length - (historyLimit - 2));
   const clippedPrev = prevMsgs.slice(droppedCount);
   const droppedMsgs = droppedCount > 0 ? prevMsgs.slice(0, droppedCount) : [];
@@ -124,25 +155,30 @@ export async function handleStreamAnswerMode(params: {
     traceId, conversationId,
     totalMessages: prevMsgs.length, droppedCount, windowSize: clippedPrev.length,
     historyLimit, totalTurnCount, hasSummary: !!newSummary, summaryLen: newSummary.length,
-    memoryRecallLen: memoryRecall.text.length, taskRecallLen: taskRecall.text.length,
-  }, "[context-debug] 对话上下文组装详情");
+  }, "[context-debug] 对话上下文组装详情（Tier-2增强上下文异步加载中）");
 
-  // 2. 构建系统提示词
-  // answer 模式始终提供完整工具目录，由 LLM 自主决定是否调用工具
+  // 2. 构建系统提示词（记忆和工具已在Tier-1保证加载，始终使用完整prompt）
   const contextMeta: ContextMeta = {
     totalTurnCount,
     windowMessageCount: clippedPrev.length,
     summary: newSummary || undefined,
   };
-  // answer 模式始终提供完整工具目录，让 LLM 自主决定是否调用工具
-  const systemPrompt = toolDiscovery.catalog
-    ? buildSystemPrompt(locale, memoryRecall.text, taskRecall.text, toolDiscovery.catalog, contextMeta, knowledgeContext)
-    : buildLightChatPrompt(locale, memoryRecall.text, contextMeta, toolDiscovery.tools, undefined, knowledgeContext);  // catalog 不可用时降级
+  const systemPrompt = buildSystemPrompt(
+    locale,
+    memoryRecall?.text ?? "",
+    taskRecall?.text ?? "",
+    toolDiscovery?.catalog ?? "",
+    contextMeta,
+    knowledgeContext || undefined,
+  );
   app.log.info({
     traceId, conversationId,
-    promptType: toolDiscovery.catalog ? "full_with_tools" : "light_chat",
-    hasToolDiscovery: !!toolDiscovery.catalog,
-  }, "[dispatch.streamAnswer] 系统提示词类型选择");
+    promptType: "full_enriched",
+    hasToolDiscovery: !!(toolDiscovery?.tools?.length),
+    hasMemory: !!memoryRecall?.text,
+    hasKnowledge: !!knowledgeContext,
+    hasTaskRecall: !!taskRecall?.text,
+  }, "[dispatch.streamAnswer] 系统提示词构建完成（Tier-1记忆+工具已注入）");
   const modelMessages: { role: string; content: string | Array<{type: string; [k: string]: any}> }[] = [
     { role: "system", content: systemPrompt },
     ...clippedPrev
@@ -249,6 +285,28 @@ export async function handleStreamAnswerMode(params: {
     sse.sendEvent("delta", { text: replyText });
   }
 
+  // --- Tier-2 结果消费：LLM流式调用完成后，补充获取未在短等待窗口内到达的增强上下文 ---
+  if (!taskRecall && !knowledgeRecall) {
+    const lateEnrich = await enrichPromise;
+    if (lateEnrich && Array.isArray(lateEnrich)) {
+      [taskRecall, knowledgeRecall] = lateEnrich;
+      knowledgeContext = knowledgeRecall?.text ?? "";
+    }
+    app.log.info({
+      traceId, conversationId,
+      enrichSource: "late",
+      taskRecallLen: taskRecall?.text?.length ?? 0,
+      knowledgeContextLen: knowledgeContext.length,
+    }, "[context-debug] Tier-2增强上下文延迟加载完成（短等待未命中，LLM流完成后补充）");
+  } else {
+    app.log.info({
+      traceId, conversationId,
+      enrichSource: "early",
+      taskRecallLen: taskRecall?.text?.length ?? 0,
+      knowledgeContextLen: knowledgeContext.length,
+    }, "[context-debug] Tier-2增强上下文已在短等待窗口内注入prompt（无需延迟加载）");
+  }
+
   // 4. 持久化会话上下文
   if (!streamError) {
     try {
@@ -310,8 +368,8 @@ export async function handleStreamAnswerMode(params: {
   const toolRetryEnabled = (process.env.ORCHESTRATOR_TOOL_RETRY ?? "on") !== "off";
   const toolRetryTimeoutMs = Math.max(3000, Number(process.env.ORCHESTRATOR_TOOL_RETRY_TIMEOUT_MS) || 10000);
 
-  if (toolRetryEnabled && parsed.toolCalls.length === 0 && toolDiscovery.tools.length > 0) {
-    const toolNames = toolDiscovery.tools.map(t => t.name);
+  if (toolRetryEnabled && parsed.toolCalls.length === 0 && (toolDiscovery?.tools?.length ?? 0) > 0) {
+    const toolNames = toolDiscovery!.tools.map(t => t.name);
     const mentionedTool = toolNames.find(name => fullText.includes(name));
     
     // 场景 1：回复中提到了工具名称但未生成 tool_call → 强制重试（带超时 + AbortController）
@@ -384,7 +442,7 @@ export async function handleStreamAnswerMode(params: {
               { role: "assistant", content: fullText },
               { 
                 role: "user", 
-                content: `请分析您的回复是否需要调用工具来完成任务？如果需要，请生成 \`\`\`tool_call\`\`\` 代码块。可用工具：${toolDiscovery.catalog}`
+                content: `请分析您的回复是否需要调用工具来完成任务？如果需要，请生成 \`\`\`tool_call\`\`\` 代码块。可用工具：${toolDiscovery?.catalog ?? ""}`
               },
             ],
             stream: false,
@@ -412,7 +470,7 @@ export async function handleStreamAnswerMode(params: {
     }
   }
   
-  const enabledTools = toolDiscovery.tools ?? [];
+  const enabledTools = toolDiscovery?.tools ?? [];
   const enabledToolMap = new Map(enabledTools.map((tool) => [tool.toolRef, tool]));
 
   // ━━━ 输入补全：为缺少 entityName 的 entity 工具调用自动推断 ━━━

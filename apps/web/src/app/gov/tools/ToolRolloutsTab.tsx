@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { t } from "@/lib/i18n";
+import { t, boolLabel } from "@/lib/i18n";
 import { fmtDateTime } from "@/lib/fmtDateTime";
 import { Table } from "@/components/ui";
 import type { ToolsTabContext } from "./types";
@@ -44,11 +44,11 @@ export default function ToolRolloutsTab({ ctx }: { ctx: ToolsTabContext }) {
           {pagedRollouts.length === 0 ? (
             <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(locale, "widget.noData")}</td></tr>
           ) : pagedRollouts.map((r, idx) => (
-            <tr key={`${r.tool_ref ?? "x"}:${idx}`}>
-              <td>{r.scope_type ?? "-"}:{r.scope_id ?? "-"}</td>
-              <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{r.tool_ref ?? "-"}</td>
-              <td>{String(r.enabled ?? false)}</td>
-              <td>{fmtDateTime(r.updated_at, locale)}</td>
+            <tr key={`${r.toolRef ?? "x"}:${idx}`}>
+              <td>{r.scopeType ?? "-"}:{r.scopeId ?? "-"}</td>
+              <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{r.toolRef ?? "-"}</td>
+              <td>{boolLabel(r.enabled ?? false, locale)}</td>
+              <td>{fmtDateTime(r.updatedAt, locale)}</td>
             </tr>
           ))}
         </tbody>
@@ -82,8 +82,8 @@ export default function ToolRolloutsTab({ ctx }: { ctx: ToolsTabContext }) {
             ) : pagedActives.map((a, idx) => (
               <tr key={`${a.name ?? "x"}:${idx}`}>
                 <td>{a.name ?? "-"}</td>
-                <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{a.active_tool_ref ?? "-"}</td>
-                <td>{a.updated_at ?? "-"}</td>
+                <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{a.activeToolRef ?? "-"}</td>
+                <td>{fmtDateTime(a.updatedAt, locale)}</td>
               </tr>
             ))}
           </tbody>

@@ -60,8 +60,8 @@ export default function ToolManageTab({ ctx }: { ctx: ToolsTabContext }) {
     if (!toolRef.trim()) return null;
     const name = toolRef.split("@")[0] ?? toolRef;
     return rollouts.find((r) => {
-      const ref = r.tool_ref?.split("@")[0] ?? r.tool_ref;
-      return ref === name && r.scope_type === rolloutScope;
+      const ref = r.toolRef?.split("@")[0] ?? r.toolRef;
+      return ref === name && r.scopeType === rolloutScope;
     }) ?? null;
   }, [toolRef, rollouts, rolloutScope]);
   const selectedToolEnabled = selectedToolRollout?.enabled ?? null;

@@ -18,6 +18,8 @@ const compositeRoutes: FastifyPluginAsync = async (app) => {
 const plugin: BuiltinSkillPlugin = {
   manifest: {
     identity: { name: "device.runtime", version: "1.0.0" },
+    displayName: { "zh-CN": "设备运行时", "en-US": "Device Runtime" },
+    description: { "zh-CN": "管理端侧设备的运行状态和通信", "en-US": "Manage device agent runtime state and communication" },
     routes: ["/devices", "/device-agent", "/device-executions"],
     frontend: ["/gov/devices"],
     dependencies: ["schemas", "entities", "audit", "rbac"],

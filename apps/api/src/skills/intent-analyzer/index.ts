@@ -13,12 +13,6 @@
  */
 import type { BuiltinSkillPlugin } from "../../lib/skillPlugin";
 import { intentAnalyzerRoutes } from "./routes";
-import { detectIntentByRules } from "./modules/analyzer";
-import { registerIntentRuleDetector } from "../../kernel/intentRuleEngineContract";
-
-// 注册规则引擎到 kernel 契约，供 orchestrator 等消费方跨 skill 使用
-registerIntentRuleDetector(detectIntentByRules);
-
 const plugin: BuiltinSkillPlugin = {
   manifest: {
     identity: { name: "intent.analyzer", version: "1.0.0" },

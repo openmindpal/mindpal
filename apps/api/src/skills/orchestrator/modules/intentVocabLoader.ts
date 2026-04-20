@@ -26,6 +26,10 @@ import * as path from "path";
 /*  1. 类型定义                                                           */
 /* ================================================================== */
 
+/** 多模态提示规则类型（从 intentVocabulary 重导出，避免重复定义） */
+export type { MultimodalHintEntry } from "./intentVocabulary";
+import type { MultimodalHintEntry } from "./intentVocabulary";
+
 /** 词表 JSON 文件的结构（精简后仅保留快速短路规则所需字段） */
 export interface IntentVocabJson {
   version: number;
@@ -40,6 +44,12 @@ export interface IntentVocabJson {
   questionIndicators?: string[];
   opinionPrefixes?: string[];
   followUpConfirms?: string[];
+  queryKeywords?: string[];
+  uiPatternVerbs?: string[];
+  uiPatternTargets?: string[];
+  uiDisplayVerbs?: string[];
+  /** 多模态附件感知提示规则（词表驱动，支持 JSON 热更新） */
+  multimodalHints?: MultimodalHintEntry[];
 }
 
 /** 已加载并 merge 后的词表快照（精简后仅保留短路层所需字段） */
@@ -55,6 +65,11 @@ export interface VocabSnapshot {
   questionIndicators: string[];
   opinionPrefixes: string[];
   followUpConfirms: string[];
+  queryKeywords: string[];
+  uiPatternVerbs: string[];
+  uiPatternTargets: string[];
+  uiDisplayVerbs: string[];
+  multimodalHints: MultimodalHintEntry[];
 }
 
 /* ================================================================== */
@@ -66,8 +81,10 @@ import {
   HIGH_RISK_KEYWORDS,
   EXECUTE_REQUEST_PREFIXES, EXECUTE_ACTION_VERBS,
   QUESTION_INDICATORS, OPINION_PREFIXES, FOLLOW_UP_CONFIRMS,
+  QUERY_KEYWORDS, UI_PATTERN_VERBS, UI_PATTERN_TARGETS, UI_DISPLAY_VERBS,
   registerVocabProvider,
   _initVocabData,
+  DEFAULT_MULTIMODAL_HINTS,
 } from "./intentVocabulary";
 
 const DEFAULT_SNAPSHOT: VocabSnapshot = {
@@ -82,6 +99,11 @@ const DEFAULT_SNAPSHOT: VocabSnapshot = {
   questionIndicators: [...QUESTION_INDICATORS],
   opinionPrefixes: [...OPINION_PREFIXES],
   followUpConfirms: [...FOLLOW_UP_CONFIRMS],
+  queryKeywords: [...QUERY_KEYWORDS],
+  uiPatternVerbs: [...UI_PATTERN_VERBS],
+  uiPatternTargets: [...UI_PATTERN_TARGETS],
+  uiDisplayVerbs: [...UI_DISPLAY_VERBS],
+  multimodalHints: [...DEFAULT_MULTIMODAL_HINTS],
 };
 
 /* ================================================================== */
@@ -129,6 +151,11 @@ function mergeVocab(base: VocabSnapshot, overlay: Partial<IntentVocabJson>, sour
     questionIndicators: overlay.questionIndicators?.length ? overlay.questionIndicators : base.questionIndicators,
     opinionPrefixes: overlay.opinionPrefixes?.length ? overlay.opinionPrefixes : base.opinionPrefixes,
     followUpConfirms: overlay.followUpConfirms?.length ? overlay.followUpConfirms : base.followUpConfirms,
+    queryKeywords: overlay.queryKeywords?.length ? overlay.queryKeywords : base.queryKeywords,
+    uiPatternVerbs: overlay.uiPatternVerbs?.length ? overlay.uiPatternVerbs : base.uiPatternVerbs,
+    uiPatternTargets: overlay.uiPatternTargets?.length ? overlay.uiPatternTargets : base.uiPatternTargets,
+    uiDisplayVerbs: overlay.uiDisplayVerbs?.length ? overlay.uiDisplayVerbs : base.uiDisplayVerbs,
+    multimodalHints: overlay.multimodalHints?.length ? overlay.multimodalHints : base.multimodalHints,
   };
 }
 

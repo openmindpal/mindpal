@@ -16,6 +16,7 @@ const mockBuildStepInputPayload = vi.fn();
 const mockGenerateIdempotencyKey = vi.fn();
 const mockSubmitStepToExistingRun = vi.fn();
 const mockAppendStepToRun = vi.fn();
+const mockPrepareToolStep = vi.fn();
 
 vi.mock("./modules/turnRepo", () => ({
   createOrchestratorTurn: (...args: any[]) => mockCreateOrchestratorTurn(...args),
@@ -44,6 +45,7 @@ vi.mock("../../kernel/executionKernel", () => ({
   buildStepInputPayload: (...args: any[]) => mockBuildStepInputPayload(...args),
   generateIdempotencyKey: (...args: any[]) => mockGenerateIdempotencyKey(...args),
   submitStepToExistingRun: (...args: any[]) => mockSubmitStepToExistingRun(...args),
+  prepareToolStep: (...args: any[]) => mockPrepareToolStep(...args),
 }));
 
 vi.mock("../../kernel/planningKernel", () => ({
@@ -121,6 +123,21 @@ describe("dispatch.handleExecute", () => {
     mockGenerateIdempotencyKey.mockReturnValue("idem_test");
     mockSubmitStepToExistingRun.mockResolvedValue({ outcome: "queued", stepId: "step_1" });
     mockAppendStepToRun.mockResolvedValue({ stepId: "step_2" });
+    mockPrepareToolStep.mockResolvedValue({
+      resolved: {
+        toolRef: "knowledge.search@1",
+        toolName: "knowledge.search",
+        scope: "read",
+        resourceType: "knowledge",
+        action: "search",
+        version: { inputSchema: {} },
+        definition: { riskLevel: "low", approvalRequired: false },
+      },
+      opDecision: { snapshotRef: "snap_1" },
+      admitted: { capabilityEnvelope: { format: "capabilityEnvelope.v1" } },
+      stepInput: { kind: "execute", toolRef: "knowledge.search@1", input: {} },
+      idempotencyKey: "idem_test",
+    });
   });
 
   it("无预生成 toolSuggestions 时向 Agent Loop 透传 executionConstraints", async () => {

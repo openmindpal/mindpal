@@ -573,6 +573,11 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
 
         if (artifactRef) {
           const subjectId = rawInput?.subjectId ? String(rawInput?.subjectId) : null;
+          const skillContext = {
+            locale: typeof rawInput?.locale === "string" ? String(rawInput.locale) : "zh-CN",
+            apiBaseUrl: resolveString("API_BASE_URL").value || "http://localhost:4000",
+            authToken: masterKey || undefined,
+          };
           const dyn = await executeDynamicSkill({
             pool: params.pool,
             jobId: params.jobId,
@@ -593,6 +598,7 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
             depsDigest,
             egress,
             signal,
+            context: skillContext,
           });
           depsDigest = dyn.depsDigest;
           runtimeBackend = dyn.runtimeBackend;

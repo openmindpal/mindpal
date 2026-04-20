@@ -40,9 +40,10 @@ export async function resolveReferenceLabels(params: {
       if (typeof val === "string" && val) ids.add(val);
     }
     if (ids.size > 0) {
+      const uiExt = (def.extensions?.["io.openslin.ui"] as any) ?? undefined;
       groups[fieldName] = {
         referenceEntity: def.referenceEntity,
-        displayField: def.displayField ?? "name",
+        displayField: uiExt?.reference?.displayField ?? "name",
         ids,
       };
     }

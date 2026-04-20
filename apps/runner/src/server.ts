@@ -130,6 +130,9 @@ export function buildServer() {
           signature: z
             .object({ alg: z.literal("ed25519"), keyId: z.string().min(1), signedDigest: z.string().min(8), sigBase64: z.string().min(16) })
             .optional(),
+          context: z
+            .object({ locale: z.string(), apiBaseUrl: z.string().optional(), authToken: z.string().optional() })
+            .optional(),
         })
         .parse(body);
     } catch {
@@ -209,6 +212,7 @@ export function buildServer() {
             artifactRef: parsed.artifactRef!,
             expectedDepsDigest: parsed.depsDigest,
             signal,
+            context: parsed.context,
           });
         });
       });

@@ -9,7 +9,7 @@ import { ReferencePicker } from "../../../components/nl2ui/ReferencePicker";
 
 function isWritable(schema: EffectiveSchema | null, k: string) {
   const f = schema?.fields?.[k];
-  return Boolean(f?.writable);
+  return (f?.extensions?.["io.openslin.access"] as any)?.writable !== false;
 }
 
 function toPatch(fields: Record<string, FieldDef>, values: Record<string, unknown>) {
@@ -179,19 +179,22 @@ export default function EntityEditForm(props: {
         }
 
         if (type === "reference") {
-          const dep = def?.dependsOn;
+          // Dual-read: prefer extensions["io.openslin.ui"], fallback to legacy top-level fields
+          const uiExt = (def as any)?.extensions?.["io.openslin.ui"] as any;
+          const dep = uiExt?.reference?.dependsOn;
           const cascadeFilter = dep && values[dep.field]
             ? { field: dep.filterField, value: String(values[dep.field]) }
             : null;
+          const refDisplayField = uiExt?.reference?.displayField ?? "name";
+          const refSearchFields = uiExt?.reference?.searchFields;
           return (
             <label key={k} style={{ display: "grid", gap: 6, marginBottom: 12 }}>
               <div style={{ fontWeight: 600 }}>{text(fields[k]?.displayName ?? k, props.locale) || k}</div>
               <ReferencePicker
                 fieldDef={{
                   referenceEntity: fields[k]?.referenceEntity ?? "",
-                  displayField: fields[k]?.displayField ?? "name",
-                  searchFields: fields[k]?.searchFields,
                   required: fields[k]?.required,
+                  extensions: (fields[k] as any)?.extensions,
                 }}
                 value={values[k] as string | undefined}
                 onChange={(val) => {

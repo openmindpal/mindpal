@@ -7,7 +7,7 @@
 import type { Pool } from "pg";
 import type { AgentLoopResult } from "./agentLoop";
 import { publishAgentResult } from "./collabBus";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, collabConfig } from "@openslin/shared";
 
 const logger = new StructuredLogger({ module: "collabEnvelope" });
 
@@ -102,7 +102,7 @@ export function buildEnvelopeContext(envelopes: Array<{ fromRole: string; kind: 
     const d = e.payloadDigest;
     const summary = d.message || "";
     const observations = Array.isArray(d.observations) && d.observations.length > 0
-      ? `\n    Observations: ${JSON.stringify(d.observations.slice(-5))}`
+      ? `\n    Observations: ${JSON.stringify(d.observations.slice(-collabConfig("COLLAB_ENVELOPE_OBSERVATION_LIMIT")))}`
       : "";
     const structured = d.structuredOutputs && Object.keys(d.structuredOutputs).length > 0
       ? `\n    StructuredOutputs: ${JSON.stringify(d.structuredOutputs)}`

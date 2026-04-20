@@ -28,6 +28,7 @@ export async function executeDynamicSkillSandboxed(params: {
   depsDigest: string;
   entryPath: string;
   signal: AbortSignal;
+  context?: { locale: string; apiBaseUrl?: string; authToken?: string };
 }): Promise<DynamicSkillExecResult> {
   const childInfo = await resolveSandboxChildEntry();
   const memArgv =
@@ -80,6 +81,7 @@ export async function executeDynamicSkillSandboxed(params: {
         artifactRef: params.artifactRef,
         depsDigest: params.depsDigest,
         entryPath: params.entryPath,
+        context: params.context,
       },
     });
   }).finally(() => {

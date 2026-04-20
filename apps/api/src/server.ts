@@ -268,7 +268,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     app.log.info(startupCheck.summary, "[startup] Skill registry consistency check passed");
 
     // ── Skill Layer Consistency Check ─────────────────────────────
-    const layerCheck = checkSkillLayerConsistency();
+    const layerCheck = await checkSkillLayerConsistency();
     if (!layerCheck.ok) {
       app.log.warn({ mismatches: layerCheck.layerMismatches, orphans: layerCheck.orphanedDirs }, layerCheck.summary);
     } else {

@@ -20,6 +20,13 @@ const {
 
 vi.mock("@openslin/shared", () => ({
   getOrCreateBreaker: mockGetOrCreateBreaker,
+  StructuredLogger: vi.fn().mockImplementation(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+  })),
 }));
 
 vi.mock("./streamingPipeline", () => ({

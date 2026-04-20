@@ -39,6 +39,7 @@ export async function executeDynamicSkill(params: {
   depsDigest: string | null;
   egress: EgressEvent[];
   signal: AbortSignal;
+  context?: { locale: string; apiBaseUrl?: string; authToken?: string };
 }): Promise<{ output: any; depsDigest: string; runtimeBackend: DynamicSkillExecResult["runtimeBackend"]; degraded: boolean; runnerSummary: any | null }> {
   const policy = resolveSupplyChainPolicy();
   const unsafeAllowed = policy.unsafeAllowed;
@@ -178,6 +179,7 @@ export async function executeDynamicSkill(params: {
             depsDigest: computed,
             trustedKeys,
             signal: params.signal,
+            context: params.context,
           });
           executed = true;
         } catch (e) {
@@ -227,6 +229,7 @@ export async function executeDynamicSkill(params: {
           depsDigest: computed,
           entryPath,
           signal: params.signal,
+          context: params.context,
         });
         res = { ...tmp, runtimeBackend: "process", degraded: true };
       }
@@ -249,6 +252,7 @@ export async function executeDynamicSkill(params: {
         depsDigest: computed,
         entryPath,
         signal: params.signal,
+        context: params.context,
       });
     }
   } catch (e) {
@@ -294,6 +298,7 @@ export async function executeDynamicSkill(params: {
         networkPolicy: params.networkPolicy,
         artifactRef: params.artifactRef,
         depsDigest: computed,
+        context: params.context ? { locale: params.context.locale, apiFetch: wrappedFetch } : undefined,
       });
       res = { output, egress: localEgress, depsDigest: computed, runtimeBackend: "local", degraded: true };
     } finally {

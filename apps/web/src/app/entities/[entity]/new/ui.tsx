@@ -7,6 +7,9 @@ import { t } from "../../../../lib/i18n";
 import type { FieldDef, EffectiveSchema, UiFormUi } from "../../../../lib/types";
 import { ReferencePicker } from "../../../../components/nl2ui/ReferencePicker";
 
+const isFieldWritable = (def: FieldDef | undefined) =>
+  (def?.extensions?.["io.openslin.access"] as any)?.writable !== false;
+
 type Props = {
   locale: string;
   entity: string;
@@ -25,7 +28,7 @@ function validateAndBuildPayload(fields: Record<string, FieldDef>, values: Recor
   const out: Record<string, unknown> = {};
   const errors: Record<string, string> = {};
   for (const [name, def] of Object.entries(fields)) {
-    const writable = def?.writable !== false;
+    const writable = isFieldWritable(def);
     if (!writable) continue;
     const raw = values[name];
     const empty = raw === undefined || raw === "";
@@ -74,7 +77,7 @@ export function EntityForm(props: Props) {
       : entries;
     return base
       .filter(([, def]) => {
-        const writable = def?.writable !== false;
+        const writable = isFieldWritable(def);
         return writable || showReadOnly;
       })
       .map(([k]) => k);
@@ -195,7 +198,7 @@ export function EntityForm(props: Props) {
               const def = fields[name];
               if (!def) return null;
               const label = text(def?.displayName ?? name, props.locale) || name;
-              const writable = def?.writable !== false;
+              const writable = isFieldWritable(def);
               const type = def?.type ?? "string";
               const ferr = fieldErrors[name];
               if (!writable && !showReadOnly) return null;
@@ -251,8 +254,9 @@ export function EntityForm(props: Props) {
               }
 
               if (type === "reference") {
-                // Build cascadeFilter from dependsOn declaration
-                const dep = def.dependsOn;
+                // Build cascadeFilter from extensions
+                const uiExt = (def.extensions?.["io.openslin.ui"] as any) ?? undefined;
+                const dep = uiExt?.reference?.dependsOn;
                 const cascadeFilter = dep && values[dep.field]
                   ? { field: dep.filterField, value: String(values[dep.field]) }
                   : null;
@@ -265,9 +269,8 @@ export function EntityForm(props: Props) {
                     <ReferencePicker
                       fieldDef={{
                         referenceEntity: def.referenceEntity ?? "",
-                        displayField: def.displayField ?? "name",
-                        searchFields: def.searchFields,
                         required: def.required,
+                        extensions: def.extensions,
                       }}
                       value={values[name] as string | undefined}
                       onChange={(val) => {

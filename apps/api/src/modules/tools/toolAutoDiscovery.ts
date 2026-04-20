@@ -375,11 +375,13 @@ function collectBuiltinSkillTools(seen: Set<string>, profiles?: Map<string, Reso
     // 2. If no explicit tools and skill itself not yet registered, register the skill identity
     if (!declared.length && !seen.has(skillName)) {
       seen.add(skillName);
-      const displayName = skillName.replace(/\./g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      const manifestDisplayName = skill.manifest.displayName;
+      const manifestDescription = skill.manifest.description;
+      const fallbackName = skillName.replace(/\./g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
       tools.push({
         name: skillName,
-        displayName: { "zh-CN": displayName, "en-US": displayName },
-        description: null,
+        displayName: manifestDisplayName ?? { "zh-CN": fallbackName, "en-US": fallbackName },
+        description: manifestDescription ?? null,
         scope: "read",
         resourceType: "builtin_skill",
         action: "invoke",
@@ -445,8 +447,8 @@ export async function autoDiscoverAndRegisterTools(pool: Pool): Promise<{ regist
               INSERT INTO tool_definitions (tenant_id, name, display_name, description, scope, resource_type, action, idempotency_required, risk_level, approval_required, source_layer, category, priority, tags, extra_permissions, execution_timeout_ms)
               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
               ON CONFLICT (tenant_id, name) DO UPDATE
-              SET display_name = COALESCE(tool_definitions.display_name, EXCLUDED.display_name),
-                  description = COALESCE(tool_definitions.description, EXCLUDED.description),
+              SET display_name = COALESCE(EXCLUDED.display_name, tool_definitions.display_name),
+                  description = COALESCE(EXCLUDED.description, tool_definitions.description),
                   scope = COALESCE(tool_definitions.scope, EXCLUDED.scope),
                   resource_type = COALESCE(tool_definitions.resource_type, EXCLUDED.resource_type),
                   action = COALESCE(tool_definitions.action, EXCLUDED.action),

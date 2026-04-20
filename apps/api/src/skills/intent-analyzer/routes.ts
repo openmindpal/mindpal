@@ -49,17 +49,10 @@ export const intentAnalyzerRoutes: FastifyPluginAsync = async (app) => {
       const latencyMs = Date.now() - startedAt;
       const usedLLM = !!result.metadata?.modelUsed;
       
-      // P3-1: 记录意图分析指标
-      app.metrics.observeIntentAnalysis({
-        result: "ok",
-        latencyMs,
-        usedLLM,
-      });
-
-      // P3-4: 桥接统一意图路由指标，确保 intent-analyzer 产生的数据也流入 observeIntentRoute 漏斗
+      // P3-1: 统一指标入口（通过 source: "analyzer_context" 区分来自 intent-analyzer 的度量）
       app.metrics.observeIntentRoute({
-        source: "dispatch" as any,  // 复用 dispatch 源以统一指标
-        classifier: usedLLM ? "llm" as any : "fast" as any,
+        source: "analyzer_context",
+        classifier: usedLLM ? "llm" : "fast",
         mode: result.intent === "chat" ? "answer" : result.intent === "task" ? "execute" : result.intent as any,
         confidence: result.confidence,
         result: "ok",
@@ -81,11 +74,14 @@ export const intentAnalyzerRoutes: FastifyPluginAsync = async (app) => {
       const latencyMs = Date.now() - startedAt;
       app.log.error({ err: err?.message, traceId: req.ctx.traceId }, "[intent-analyzer] 分析失败");
       
-      // P3-1: 记录错误指标
-      app.metrics.observeIntentAnalysis({
+      // P3-1: 统一指标入口（错误场景）
+      app.metrics.observeIntentRoute({
+        source: "analyzer_context",
+        classifier: "fast",
+        mode: "answer",
+        confidence: 0,
         result: "error",
         latencyMs,
-        usedLLM: false,
       });
       
       throw Errors.internal();

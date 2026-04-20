@@ -58,7 +58,7 @@ const plugin: BuiltinSkillPlugin = {
             provider: {
               type: "string",
               required: true,
-              description: "模型提供商: openai_compatible / deepseek / hunyuan / qianwen / doubao / zhipu / kimi / kimimax",
+              description: "模型提供商: openai_compatible / deepseek / hunyuan / qianwen / doubao / zhipu / kimi",
             },
             baseUrl: { type: "string", required: true, description: "API 基础地址，如 https://api.deepseek.com" },
             apiKey: { type: "string", required: true, description: "API 密钥" },

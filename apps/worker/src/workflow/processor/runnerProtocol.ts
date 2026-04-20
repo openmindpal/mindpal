@@ -40,6 +40,7 @@ export type RunnerExecuteRequestV1 = {
   capabilityEnvelope: CapabilityEnvelopeV1;
   policyDigests: { networkPolicySha256_8: string };
   signature?: { alg: "ed25519"; keyId: string; signedDigest: string; sigBase64: string };
+  context?: { locale: string; apiBaseUrl?: string; authToken?: string };
 };
 
 export type RunnerExecuteResponseV1 = {

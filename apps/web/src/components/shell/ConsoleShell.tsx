@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
+import { type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { t } from "@/lib/i18n";
 import { AppShell, AppShellContent, AppShellHeader, AppShellSideNav } from "./AppShell";
 import { CommandPalette, useCommandPaletteShortcut, type CommandItem } from "./CommandPalette";
+import { NAV_CONFIG, EXTRA_PALETTE_ITEMS, type NavSubGroupConfig } from "./navConfig";
 import styles from "./ConsoleShell.module.css";
 
 const NAV_VISITS_KEY = "openslin_nav_visits";
@@ -17,6 +18,11 @@ function parseKeywords(locale: string, key: string): string[] {
     .split("|")
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** Build href with ?lang= query param */
+function buildHref(path: string, locale: string): string {
+  return `${path}?lang=${encodeURIComponent(locale)}`;
 }
 
 /* ─── Nav link with hover description ─── */
@@ -129,104 +135,71 @@ function RecentNavSection(props: { items: CommandItem[]; locale: string; pathnam
   );
 }
 
+/** Check if any item in a sub-group matches the current pathname */
+function isSubGroupActive(subGroup: NavSubGroupConfig, pathname: string): boolean {
+  return subGroup.items.some((item) => pathname.startsWith(item.path));
+}
+
 function ConsoleShellInner(props: { children: ReactNode }) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const locale = searchParams.get("lang") || "zh-CN";
-
-
-  const homeHref = `/?lang=${encodeURIComponent(locale)}`;
-  const docsHref = `/docs?lang=${encodeURIComponent(locale)}`;
-  const settingsHref = `/settings?lang=${encodeURIComponent(locale)}`;
-  const runsHref = `/runs?lang=${encodeURIComponent(locale)}`;
-  const tasksHref = `/tasks?lang=${encodeURIComponent(locale)}`;
-  const orchestratorHref = `/orchestrator?lang=${encodeURIComponent(locale)}`;
-    const adminRbacHref = `/admin/rbac?lang=${encodeURIComponent(locale)}`;
-    const adminSsoHref = `/admin/sso-providers?lang=${encodeURIComponent(locale)}`;
-    const adminScimHref = `/admin/scim?lang=${encodeURIComponent(locale)}`;
-    const adminOrgHref = `/admin/organizations?lang=${encodeURIComponent(locale)}`;
-  const memoryHref = `/memory?lang=${encodeURIComponent(locale)}`;
-  const adminBackupsHref = `/admin/backups?lang=${encodeURIComponent(locale)}`;
-  const govChangeSetsHref = `/gov/changesets?lang=${encodeURIComponent(locale)}`;
-  const govSchemasHref = `/gov/schemas?lang=${encodeURIComponent(locale)}`;
-  const govToolsHref = `/gov/tools?lang=${encodeURIComponent(locale)}`;
-  const govSafetyPoliciesHref = `/gov/safety-policies?lang=${encodeURIComponent(locale)}`;
-  const govApprovalsHref = `/gov/approvals?lang=${encodeURIComponent(locale)}`;
-  const govWorkflowDeadlettersHref = `/gov/workflow/deadletters?lang=${encodeURIComponent(locale)}`;
-  const govAuditHref = `/gov/audit?lang=${encodeURIComponent(locale)}`;
-  const govObservabilityHref = `/gov/observability?lang=${encodeURIComponent(locale)}`;
-  const govPolicySnapshotsHref = `/gov/policy-snapshots?lang=${encodeURIComponent(locale)}`;
-  const govPolicyDebuggerHref = `/gov/policy-debugger?lang=${encodeURIComponent(locale)}`;
-  const govSyncConflictsHref = `/gov/sync-conflicts?lang=${encodeURIComponent(locale)}`;
-  const govSkillPackagesHref = `/gov/skill-packages?lang=${encodeURIComponent(locale)}`;
-  const govSkillRuntimeHref = `/gov/skill-runtime?lang=${encodeURIComponent(locale)}`;
-  const govArtifactPolicyHref = `/gov/artifact-policy?lang=${encodeURIComponent(locale)}`;
-  const govModelsHref = `/gov/models?lang=${encodeURIComponent(locale)}`;
-  const govChannelsHref = `/gov/channels?lang=${encodeURIComponent(locale)}`;
-  const govNotificationsHref = `/gov/notifications?lang=${encodeURIComponent(locale)}`;
-  const govDevicesHref = `/gov/devices?lang=${encodeURIComponent(locale)}`;
-  const govTriggersHref = `/gov/triggers?lang=${encodeURIComponent(locale)}`;
-  const govKnowledgeDocsHref = `/gov/knowledge/documents?lang=${encodeURIComponent(locale)}`;
-  const govKnowledgeLogsHref = `/gov/knowledge/retrieval-logs?lang=${encodeURIComponent(locale)}`;
-  const govKnowledgeJobsHref = `/gov/knowledge/jobs?lang=${encodeURIComponent(locale)}`;
-  const govKnowledgeQualityHref = `/gov/knowledge/quality?lang=${encodeURIComponent(locale)}`;
-  const govKnowledgeEngineHref = `/gov/knowledge/engine?lang=${encodeURIComponent(locale)}`;
-  const govSyncHref = `/gov/sync?lang=${encodeURIComponent(locale)}`;
-  const govIntegrationsHref = `/gov/integrations?lang=${encodeURIComponent(locale)}`;
-  const govFederationHref = `/gov/federation?lang=${encodeURIComponent(locale)}`;
-  const govRoutingHref = `/gov/routing?lang=${encodeURIComponent(locale)}`;
-  const govWorkbenchesHref = `/gov/workbenches?lang=${encodeURIComponent(locale)}`;
-  const govUiPagesHref = `/gov/ui-pages?lang=${encodeURIComponent(locale)}`;
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const openPalette = useCallback(() => setPaletteOpen(true), []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   useCommandPaletteShortcut(openPalette);
 
-  const paletteItems: CommandItem[] = [
-    { id: "home", label: t(locale, "app.title"), group: t(locale, "shell.nav.console"), href: homeHref, keywords: parseKeywords(locale, "shell.keywords.home") },
-    { id: "docs", label: t(locale, "shell.nav.docs"), group: t(locale, "shell.nav.console"), href: docsHref, keywords: parseKeywords(locale, "shell.keywords.docs") },
-    { id: "runs", label: t(locale, "shell.nav.runs"), group: t(locale, "shell.nav.console"), href: runsHref, keywords: parseKeywords(locale, "shell.keywords.runs") },
-    { id: "tasks", label: t(locale, "shell.nav.tasks"), group: t(locale, "shell.nav.console"), href: tasksHref, keywords: parseKeywords(locale, "shell.keywords.tasks") },
-    { id: "orchestrator", label: t(locale, "shell.nav.orchestrator"), group: t(locale, "shell.nav.console"), href: orchestratorHref, keywords: parseKeywords(locale, "shell.keywords.orchestrator") },
-    { id: "settings", label: t(locale, "shell.nav.settings"), group: t(locale, "shell.nav.console"), href: settingsHref, keywords: parseKeywords(locale, "shell.keywords.settings") },
-    { id: "gov-changesets", label: t(locale, "gov.nav.changesets"), group: t(locale, "shell.nav.governance"), href: govChangeSetsHref, keywords: parseKeywords(locale, "shell.keywords.gov.changesets") },
-    { id: "gov-schemas", label: t(locale, "gov.nav.schemas"), group: t(locale, "shell.nav.governance"), href: govSchemasHref, keywords: parseKeywords(locale, "shell.keywords.gov.schemas") },
-    { id: "gov-tools", label: t(locale, "gov.nav.tools"), group: t(locale, "shell.nav.governance"), href: govToolsHref, keywords: parseKeywords(locale, "shell.keywords.gov.tools") },
-    { id: "gov-workbenches", label: t(locale, "gov.nav.workbenches"), group: t(locale, "shell.nav.governance"), href: govWorkbenchesHref, keywords: parseKeywords(locale, "shell.keywords.gov.workbenches") },
-    { id: "gov-ui-pages", label: t(locale, "gov.nav.uiPages"), group: t(locale, "shell.nav.governance"), href: govUiPagesHref, keywords: parseKeywords(locale, "shell.keywords.gov.uiPages") },
-    { id: "gov-safety", label: t(locale, "gov.nav.safetyPolicies"), group: t(locale, "shell.nav.governance"), href: govSafetyPoliciesHref, keywords: parseKeywords(locale, "shell.keywords.gov.safetyPolicies") },
-    { id: "gov-approvals", label: t(locale, "gov.nav.approvals"), group: t(locale, "shell.nav.governance"), href: govApprovalsHref, keywords: parseKeywords(locale, "shell.keywords.gov.approvals") },
-    { id: "gov-audit", label: t(locale, "gov.nav.audit"), group: t(locale, "shell.nav.governance"), href: govAuditHref, keywords: parseKeywords(locale, "shell.keywords.gov.audit") },
-    { id: "gov-observability", label: t(locale, "gov.nav.observability"), group: t(locale, "shell.nav.governance"), href: govObservabilityHref, keywords: parseKeywords(locale, "shell.keywords.gov.observability") },
-    { id: "gov-policy-snapshots", label: t(locale, "gov.nav.policySnapshots"), group: t(locale, "shell.nav.governance"), href: govPolicySnapshotsHref, keywords: parseKeywords(locale, "shell.keywords.gov.policySnapshots") },
-    { id: "gov-policy-debugger", label: t(locale, "gov.nav.policyDebugger"), group: t(locale, "shell.nav.governance"), href: govPolicyDebuggerHref, keywords: parseKeywords(locale, "shell.keywords.gov.policyDebugger") },
-    { id: "gov-skill-packages", label: t(locale, "gov.nav.skillPackages"), group: t(locale, "shell.nav.governance"), href: govSkillPackagesHref, keywords: parseKeywords(locale, "shell.keywords.gov.skillPackages") },
-    { id: "gov-skill-runtime", label: t(locale, "gov.nav.skillRuntime"), group: t(locale, "shell.nav.governance"), href: govSkillRuntimeHref, keywords: parseKeywords(locale, "shell.keywords.gov.skillRuntime") },
-    { id: "gov-models", label: t(locale, "gov.nav.models"), group: t(locale, "shell.nav.governance"), href: govModelsHref, keywords: parseKeywords(locale, "shell.keywords.gov.models") },
-    { id: "gov-channels", label: t(locale, "gov.nav.channels"), group: t(locale, "shell.nav.governance"), href: govChannelsHref, keywords: parseKeywords(locale, "shell.keywords.gov.channels") },
-    { id: "gov-notifications", label: t(locale, "gov.nav.notifications"), group: t(locale, "shell.nav.governance"), href: govNotificationsHref, keywords: parseKeywords(locale, "shell.keywords.gov.notifications") },
-    { id: "gov-devices", label: t(locale, "gov.nav.devices"), group: t(locale, "shell.nav.governance"), href: govDevicesHref, keywords: parseKeywords(locale, "shell.keywords.gov.devices") },
-    { id: "gov-triggers", label: t(locale, "gov.nav.triggers"), group: t(locale, "shell.nav.governance"), href: govTriggersHref, keywords: parseKeywords(locale, "shell.keywords.gov.triggers") },
-    { id: "gov-sync-conflicts", label: t(locale, "gov.nav.syncConflicts"), group: t(locale, "shell.nav.governance"), href: govSyncConflictsHref, keywords: parseKeywords(locale, "shell.keywords.gov.syncConflicts") },
-    { id: "gov-knowledge-docs", label: t(locale, "gov.nav.knowledgeDocs"), group: t(locale, "shell.nav.governance"), href: govKnowledgeDocsHref, keywords: parseKeywords(locale, "shell.keywords.gov.knowledgeDocs") },
-    { id: "gov-knowledge-logs", label: t(locale, "gov.nav.knowledgeLogs"), group: t(locale, "shell.nav.governance"), href: govKnowledgeLogsHref, keywords: parseKeywords(locale, "shell.keywords.gov.knowledgeLogs") },
-    { id: "gov-knowledge-jobs", label: t(locale, "gov.nav.knowledgeJobs"), group: t(locale, "shell.nav.governance"), href: govKnowledgeJobsHref, keywords: parseKeywords(locale, "shell.keywords.gov.knowledgeJobs") },
-    { id: "gov-knowledge-quality", label: t(locale, "gov.nav.knowledgeQuality"), group: t(locale, "shell.nav.governance"), href: govKnowledgeQualityHref, keywords: parseKeywords(locale, "shell.keywords.gov.knowledgeQuality") },
-    { id: "gov-knowledge-engine", label: t(locale, "gov.nav.knowledgeEngine"), group: t(locale, "shell.nav.governance"), href: govKnowledgeEngineHref, keywords: parseKeywords(locale, "shell.keywords.gov.knowledgeEngine") },
-    { id: "gov-sync", label: t(locale, "gov.nav.sync"), group: t(locale, "shell.nav.governance"), href: govSyncHref, keywords: parseKeywords(locale, "shell.keywords.gov.sync") },
-    { id: "gov-integrations", label: t(locale, "gov.nav.integrations"), group: t(locale, "shell.nav.governance"), href: govIntegrationsHref, keywords: parseKeywords(locale, "shell.keywords.gov.integrations") },
-    { id: "gov-federation", label: t(locale, "gov.nav.federation"), group: t(locale, "shell.nav.governance"), href: govFederationHref, keywords: parseKeywords(locale, "shell.keywords.gov.federation") },
-    { id: "gov-routing", label: t(locale, "gov.nav.routing"), group: t(locale, "shell.nav.governance"), href: govRoutingHref, keywords: parseKeywords(locale, "shell.keywords.gov.routing") },
-    { id: "gov-deadletters", label: t(locale, "gov.nav.workflowDeadletters"), group: t(locale, "shell.nav.governance"), href: govWorkflowDeadlettersHref, keywords: parseKeywords(locale, "shell.keywords.gov.workflowDeadletters") },
-    { id: "gov-artifact-policy", label: t(locale, "gov.nav.artifactPolicy"), group: t(locale, "shell.nav.governance"), href: govArtifactPolicyHref, keywords: parseKeywords(locale, "shell.keywords.gov.artifactPolicy") },
-    { id: "admin-rbac", label: t(locale, "home.adminRbac"), group: t(locale, "shell.nav.admin"), href: adminRbacHref, keywords: parseKeywords(locale, "shell.keywords.admin.rbac") },
-    { id: "admin-sso", label: t(locale, "admin.sso.title"), group: t(locale, "shell.nav.admin"), href: adminSsoHref, keywords: parseKeywords(locale, "shell.keywords.admin.sso") },
-    { id: "admin-scim", label: t(locale, "admin.scim.title"), group: t(locale, "shell.nav.admin"), href: adminScimHref, keywords: parseKeywords(locale, "shell.keywords.admin.scim") },
-    { id: "admin-org", label: t(locale, "admin.org.title"), group: t(locale, "shell.nav.admin"), href: adminOrgHref, keywords: parseKeywords(locale, "shell.keywords.admin.org") },
-    { id: "memory", label: t(locale, "shell.nav.memory"), group: t(locale, "shell.nav.console"), href: memoryHref, keywords: parseKeywords(locale, "shell.keywords.memory") },
-    { id: "admin-backups", label: t(locale, "shell.nav.backups"), group: t(locale, "shell.nav.admin"), href: adminBackupsHref, keywords: parseKeywords(locale, "shell.keywords.admin.backups") },
-  ];
+  /* ─── Generate paletteItems from config (memoized, Task #4) ─── */
+  const paletteItems: CommandItem[] = useMemo(() => {
+    const items: CommandItem[] = [];
+
+    // Extra palette-only items (home, docs)
+    for (const item of EXTRA_PALETTE_ITEMS) {
+      items.push({
+        id: item.id,
+        label: t(locale, item.labelKey),
+        group: t(locale, "shell.nav.console"),
+        href: buildHref(item.path, locale),
+        keywords: item.keywordsKey ? parseKeywords(locale, item.keywordsKey) : [],
+      });
+    }
+
+    // Items from NAV_CONFIG
+    for (const group of NAV_CONFIG) {
+      const groupLabel = t(locale, group.labelKey);
+      if (group.items) {
+        for (const item of group.items) {
+          items.push({
+            id: item.id,
+            label: t(locale, item.labelKey),
+            group: groupLabel,
+            href: buildHref(item.path, locale),
+            keywords: item.keywordsKey ? parseKeywords(locale, item.keywordsKey) : [],
+          });
+        }
+      }
+      if (group.subGroups) {
+        for (const sub of group.subGroups) {
+          for (const item of sub.items) {
+            items.push({
+              id: item.id,
+              label: t(locale, item.labelKey),
+              group: groupLabel,
+              href: buildHref(item.path, locale),
+              keywords: item.keywordsKey ? parseKeywords(locale, item.keywordsKey) : [],
+            });
+          }
+        }
+      }
+    }
+
+    return items;
+  }, [locale]);
+
+  /* ─── Helpers for rendering ─── */
+  const homeHref = buildHref("/", locale);
+  const docsHref = buildHref("/docs", locale);
 
   return (
     <AppShell
@@ -242,25 +215,21 @@ function ConsoleShellInner(props: { children: ReactNode }) {
               <details className={styles.mobileMenu}>
                 <summary>{t(locale, "shell.nav.menu")}</summary>
                 <div className={styles.mobileMenuPanel}>
-                  <Link href={runsHref}>{t(locale, "shell.nav.runs")}</Link>
-                  <Link href={tasksHref}>{t(locale, "shell.nav.tasks")}</Link>
-                  <Link href={govChangeSetsHref}>{t(locale, "gov.nav.changesets")}</Link>
-                  <Link href={govSchemasHref}>{t(locale, "gov.nav.schemas")}</Link>
-                  <Link href={govSafetyPoliciesHref}>{t(locale, "gov.nav.safetyPolicies")}</Link>
-                  <Link href={govToolsHref}>{t(locale, "gov.nav.tools")}</Link>
-                  <Link href={govWorkbenchesHref}>{t(locale, "gov.nav.workbenches")}</Link>
-                  <Link href={govUiPagesHref}>{t(locale, "gov.nav.uiPages")}</Link>
-                  <Link href={govSkillPackagesHref}>{t(locale, "gov.nav.skillPackages")}</Link>
-                  <Link href={govModelsHref}>{t(locale, "gov.nav.models")}</Link>
-                  <Link href={govChannelsHref}>{t(locale, "gov.nav.channels")}</Link>
-                  <Link href={govObservabilityHref}>{t(locale, "gov.nav.observability")}</Link>
-                  <Link href={govPolicyDebuggerHref}>{t(locale, "gov.nav.policyDebugger")}</Link>
-                  <Link href={orchestratorHref}>{t(locale, "shell.nav.orchestrator")}</Link>
-                  <Link href={adminRbacHref}>{t(locale, "home.adminRbac")}</Link>
-                  <Link href={adminSsoHref}>{t(locale, "admin.sso.title")}</Link>
-                  <Link href={adminScimHref}>{t(locale, "admin.scim.title")}</Link>
-                  <Link href={adminOrgHref}>{t(locale, "admin.org.title")}</Link>
-                  <Link href={settingsHref}>{t(locale, "home.settings")}</Link>
+                  {NAV_CONFIG.map((group) => {
+                    if (group.items) {
+                      return group.items.map((item) => (
+                        <Link key={item.id} href={buildHref(item.path, locale)}>{t(locale, item.labelKey)}</Link>
+                      ));
+                    }
+                    if (group.subGroups) {
+                      return group.subGroups.map((sub) =>
+                        sub.items.map((item) => (
+                          <Link key={item.id} href={buildHref(item.path, locale)}>{t(locale, item.labelKey)}</Link>
+                        ))
+                      );
+                    }
+                    return null;
+                  })}
                 </div>
               </details>
               <Link href={docsHref}>{t(locale, "shell.nav.docs")}</Link>
@@ -276,87 +245,49 @@ function ConsoleShellInner(props: { children: ReactNode }) {
         <AppShellSideNav>
           <RecentNavSection items={paletteItems} locale={locale} pathname={pathname} />
 
-          <div className={styles.navGroup}>
-            <div className={styles.navGroupTitle}>{t(locale, "shell.nav.console")}</div>
-            <ul className={styles.navList}>
-              <li><NavLink href={runsHref} label={t(locale, "shell.nav.runs")} desc={t(locale, "shell.desc.runs")} pathname={pathname} /></li>
-              <li><NavLink href={tasksHref} label={t(locale, "shell.nav.tasks")} desc={t(locale, "shell.desc.tasks")} pathname={pathname} /></li>
-              <li><NavLink href={settingsHref} label={t(locale, "shell.nav.settings")} desc={t(locale, "shell.desc.settings")} pathname={pathname} /></li>
-              <li><NavLink href={memoryHref} label={t(locale, "shell.nav.memory")} desc={t(locale, "shell.desc.memory")} pathname={pathname} /></li>
-              <li><NavLink href={orchestratorHref} label={t(locale, "shell.nav.orchestrator")} desc={t(locale, "shell.desc.orchestrator")} pathname={pathname} /></li>
-            </ul>
-          </div>
+          {NAV_CONFIG.map((group) => (
+            <div key={group.id} className={styles.navGroup}>
+              <div className={styles.navGroupTitle}>{t(locale, group.labelKey)}</div>
 
-          <div className={styles.navGroup}>
-            <div className={styles.navGroupTitle}>{t(locale, "shell.nav.governance")}</div>
+              {/* Direct items (console group) */}
+              {group.items && (
+                <ul className={styles.navList}>
+                  {group.items.map((item) => (
+                    <li key={item.id}>
+                      <NavLink
+                        href={buildHref(item.path, locale)}
+                        label={t(locale, item.labelKey)}
+                        desc={item.descKey ? t(locale, item.descKey) : undefined}
+                        pathname={pathname}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
 
-            <NavSubGroup groupKey="gov-data" label={t(locale, "gov.group.dataModel")} defaultOpen forceOpen={pathname.startsWith("/gov/schemas")}>
-              <li><NavLink href={govSchemasHref} label={t(locale, "gov.nav.schemas")} desc={t(locale, "gov.desc.schemas")} pathname={pathname} /></li>
-            </NavSubGroup>
-
-            <NavSubGroup groupKey="gov-security" label={t(locale, "gov.group.security")} forceOpen={pathname.startsWith("/gov/safety-policies") || pathname.startsWith("/gov/policy-snapshots") || pathname.startsWith("/gov/policy-debugger") || pathname.startsWith("/gov/artifact-policy")}>
-              <li><NavLink href={govSafetyPoliciesHref} label={t(locale, "gov.nav.safetyPolicies")} desc={t(locale, "gov.desc.safetyPolicies")} pathname={pathname} /></li>
-              <li><NavLink href={govPolicySnapshotsHref} label={t(locale, "gov.nav.policySnapshots")} desc={t(locale, "gov.desc.policySnapshots")} pathname={pathname} /></li>
-              <li><NavLink href={govPolicyDebuggerHref} label={t(locale, "gov.nav.policyDebugger")} desc={t(locale, "gov.desc.policyDebugger")} pathname={pathname} /></li>
-              <li><NavLink href={govArtifactPolicyHref} label={t(locale, "gov.nav.artifactPolicy")} desc={t(locale, "gov.desc.artifactPolicy")} pathname={pathname} /></li>
-            </NavSubGroup>
-
-            <NavSubGroup groupKey="gov-tools" label={t(locale, "gov.group.toolsSkills")} forceOpen={pathname.startsWith("/gov/tools") || pathname.startsWith("/gov/workbenches") || pathname.startsWith("/gov/ui-pages") || pathname.startsWith("/gov/skill-packages") || pathname.startsWith("/gov/skill-runtime")}>
-              <li><NavLink href={govToolsHref} label={t(locale, "gov.nav.tools")} desc={t(locale, "gov.desc.tools")} pathname={pathname} /></li>
-              <li><NavLink href={govWorkbenchesHref} label={t(locale, "gov.nav.workbenches")} desc={t(locale, "gov.desc.workbenches")} pathname={pathname} /></li>
-              <li><NavLink href={govUiPagesHref} label={t(locale, "gov.nav.uiPages")} desc={t(locale, "gov.desc.uiPages")} pathname={pathname} /></li>
-              <li><NavLink href={govSkillPackagesHref} label={t(locale, "gov.nav.skillPackages")} desc={t(locale, "gov.desc.skillPackages")} pathname={pathname} /></li>
-              <li><NavLink href={govSkillRuntimeHref} label={t(locale, "gov.nav.skillRuntime")} desc={t(locale, "gov.desc.skillRuntime")} pathname={pathname} /></li>
-            </NavSubGroup>
-
-            <NavSubGroup groupKey="gov-connectivity" label={t(locale, "gov.group.modelChannel")} forceOpen={pathname.startsWith("/gov/models") || pathname.startsWith("/gov/channels") || pathname.startsWith("/gov/triggers") || pathname.startsWith("/gov/devices") || pathname.startsWith("/gov/federation") || pathname.startsWith("/gov/routing")}>
-              <li><NavLink href={govModelsHref} label={t(locale, "gov.nav.models")} desc={t(locale, "gov.desc.models")} pathname={pathname} /></li>
-              <li><NavLink href={govChannelsHref} label={t(locale, "gov.nav.channels")} desc={t(locale, "gov.desc.channels")} pathname={pathname} /></li>
-              <li><NavLink href={govTriggersHref} label={t(locale, "gov.nav.triggers")} desc={t(locale, "gov.desc.triggers")} pathname={pathname} /></li>
-              <li><NavLink href={govDevicesHref} label={t(locale, "gov.nav.devices")} desc={t(locale, "gov.desc.devices")} pathname={pathname} /></li>
-              <li><NavLink href={govFederationHref} label={t(locale, "gov.nav.federation")} desc={t(locale, "gov.desc.federation")} pathname={pathname} /></li>
-              <li><NavLink href={govRoutingHref} label={t(locale, "gov.nav.routing")} desc={t(locale, "gov.desc.routing")} pathname={pathname} /></li>
-            </NavSubGroup>
-
-            <NavSubGroup groupKey="gov-integration" label={t(locale, "gov.group.integration")} forceOpen={pathname.startsWith("/gov/notifications") || pathname.startsWith("/gov/integrations")}>
-              <li><NavLink href={govNotificationsHref} label={t(locale, "gov.nav.notifications")} desc={t(locale, "gov.desc.notifications")} pathname={pathname} /></li>
-              <li><NavLink href={govIntegrationsHref} label={t(locale, "gov.nav.integrations")} desc={t(locale, "gov.desc.integrations")} pathname={pathname} /></li>
-            </NavSubGroup>
-
-            <NavSubGroup groupKey="gov-knowledge" label={t(locale, "gov.group.knowledge")} forceOpen={pathname.startsWith("/gov/knowledge")}>
-              <li><NavLink href={govKnowledgeDocsHref} label={t(locale, "gov.nav.knowledgeDocs")} desc={t(locale, "gov.desc.knowledgeDocs")} pathname={pathname} /></li>
-              <li><NavLink href={govKnowledgeLogsHref} label={t(locale, "gov.nav.knowledgeLogs")} desc={t(locale, "gov.desc.knowledgeLogs")} pathname={pathname} /></li>
-              <li><NavLink href={govKnowledgeJobsHref} label={t(locale, "gov.nav.knowledgeJobs")} desc={t(locale, "gov.desc.knowledgeJobs")} pathname={pathname} /></li>
-              <li><NavLink href={govKnowledgeQualityHref} label={t(locale, "gov.nav.knowledgeQuality")} desc={t(locale, "gov.desc.knowledgeQuality")} pathname={pathname} /></li>
-              <li><NavLink href={govKnowledgeEngineHref} label={t(locale, "gov.nav.knowledgeEngine")} desc={t(locale, "gov.desc.knowledgeEngine")} pathname={pathname} /></li>
-            </NavSubGroup>
-
-            <NavSubGroup groupKey="gov-audit" label={t(locale, "gov.group.auditOps")} forceOpen={pathname.startsWith("/gov/approvals") || pathname.startsWith("/gov/workflow") || pathname.startsWith("/gov/audit") || pathname.startsWith("/gov/observability") || pathname.startsWith("/gov/sync") || pathname.startsWith("/gov/changesets")}>
-              <li><NavLink href={govChangeSetsHref} label={t(locale, "gov.nav.changesets")} desc={t(locale, "gov.desc.changesets")} pathname={pathname} /></li>
-              <li><NavLink href={govApprovalsHref} label={t(locale, "gov.nav.approvals")} desc={t(locale, "gov.desc.approvals")} pathname={pathname} /></li>
-              <li><NavLink href={govWorkflowDeadlettersHref} label={t(locale, "gov.nav.workflowDeadletters")} desc={t(locale, "gov.desc.workflowDeadletters")} pathname={pathname} /></li>
-              <li><NavLink href={govAuditHref} label={t(locale, "gov.nav.audit")} desc={t(locale, "gov.desc.audit")} pathname={pathname} /></li>
-              <li><NavLink href={govObservabilityHref} label={t(locale, "gov.nav.observability")} desc={t(locale, "gov.desc.observability")} pathname={pathname} /></li>
-              <li><NavLink href={govSyncHref} label={t(locale, "gov.nav.sync")} desc={t(locale, "gov.desc.sync")} pathname={pathname} /></li>
-              <li><NavLink href={govSyncConflictsHref} label={t(locale, "gov.nav.syncConflicts")} desc={t(locale, "gov.desc.syncConflicts")} pathname={pathname} /></li>
-            </NavSubGroup>
-          </div>
-
-          <div className={styles.navGroup}>
-            <div className={styles.navGroupTitle}>{t(locale, "shell.nav.admin")}</div>
-
-            <NavSubGroup groupKey="admin-identity" label={t(locale, "admin.group.identity")} defaultOpen forceOpen={pathname.startsWith("/admin/sso") || pathname.startsWith("/admin/scim") || pathname.startsWith("/admin/organizations")}>
-              <li><NavLink href={adminSsoHref} label={t(locale, "admin.sso.title")} desc={t(locale, "admin.sso.desc")} pathname={pathname} /></li>
-              <li><NavLink href={adminScimHref} label={t(locale, "admin.scim.title")} desc={t(locale, "admin.scim.desc")} pathname={pathname} /></li>
-              <li><NavLink href={adminOrgHref} label={t(locale, "admin.org.title")} desc={t(locale, "admin.org.desc")} pathname={pathname} /></li>
-            </NavSubGroup>
-
-            <NavSubGroup groupKey="admin-system" label={t(locale, "admin.group.system")} forceOpen={pathname.startsWith("/admin/rbac") || pathname.startsWith("/admin/backups")}>
-              <li><NavLink href={adminRbacHref} label={t(locale, "home.adminRbac")} desc={t(locale, "admin.rbac.desc")} pathname={pathname} /></li>
-              <li><NavLink href={adminBackupsHref} label={t(locale, "shell.nav.backups")} desc={t(locale, "shell.desc.backups")} pathname={pathname} /></li>
-            </NavSubGroup>
-          </div>
-
+              {/* Sub-groups (governance, admin) */}
+              {group.subGroups?.map((sub) => (
+                <NavSubGroup
+                  key={sub.groupKey}
+                  groupKey={sub.groupKey}
+                  label={t(locale, sub.labelKey)}
+                  defaultOpen={sub.defaultOpen}
+                  forceOpen={isSubGroupActive(sub, pathname)}
+                >
+                  {sub.items.map((item) => (
+                    <li key={item.id}>
+                      <NavLink
+                        href={buildHref(item.path, locale)}
+                        label={t(locale, item.labelKey)}
+                        desc={item.descKey ? t(locale, item.descKey) : undefined}
+                        pathname={pathname}
+                      />
+                    </li>
+                  ))}
+                </NavSubGroup>
+              ))}
+            </div>
+          ))}
 
         </AppShellSideNav>
       }

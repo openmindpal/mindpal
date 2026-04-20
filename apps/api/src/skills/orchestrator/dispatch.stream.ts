@@ -10,7 +10,7 @@
  * - 保留流式 UX（delta/toolSuggestions/nl2uiResult/done事件）
  */
 import crypto from "node:crypto";
-import { redactValue, resolveToolAlias, isDeviceToolName, resolveNumber } from "@openslin/shared";
+import { redactValue, resolveToolAlias, isDeviceToolName, resolveNumber, extractTextContent } from "@openslin/shared";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
 import { PERM } from "@openslin/shared";
@@ -113,39 +113,73 @@ export function registerStreamRoute(app: any): void {
         // 只提取最近 _historyLimit 条，截取 role + content
         _sessionHistory = _prevMsgs.slice(-_historyLimit).map((m) => ({
           role: m.role as "user" | "assistant",
-          content: typeof m.content === "string" ? m.content : (m.content as Record<string, unknown>)?.text as string ?? "",
+          content: typeof m.content === "string" ? m.content : extractTextContent(m.content as any),
         })).filter((m) => m.role === "user" || m.role === "assistant");
       } catch {
         // 加载失败不影响分类
       }
 
-      let classification: IntentClassification = classifyIntentFast(message, explicitMode, { hasActiveTask: _hasActiveTask })
+      // 提取附件元数据用于多模态意图感知
+      const _attachmentsMeta = body.attachments?.map((a) => ({
+        type: a.type,
+        mimeType: a.mimeType,
+        name: a.name,
+      }));
+
+      let classification: IntentClassification = classifyIntentFast(message, explicitMode, { hasActiveTask: _hasActiveTask }, _attachmentsMeta)
         ?? { mode: "answer" as IntentMode, confidence: 0.5, reason: "fast_no_match", needsTask: false, needsApproval: false, complexity: "simple" as const };
       let classifierLabel: string = "fast";
 
       // P1-4: 当 fast 结果置信度低于阈值且非显式指定模式时，升级到 TwoLevel
-      const STREAM_UPGRADE_THRESHOLD = parseFloat(process.env.STREAM_CLASSIFY_UPGRADE_THRESHOLD ?? "0.75");
+      const STREAM_UPGRADE_THRESHOLD = parseFloat(process.env.STREAM_CLASSIFY_UPGRADE_THRESHOLD ?? "0.85");
       if (classification.confidence < STREAM_UPGRADE_THRESHOLD && !explicitMode) {
-        try {
-          const twoLevelParams = {
-            pool: app.db, app,
-            tenantId: subject.tenantId, spaceId: subject.spaceId,
-            subjectId: subject.subjectId, message, explicitMode, locale,
-            authorization: (req.headers.authorization as string | undefined) ?? null,
-            traceId: req.ctx.traceId,
-            activeRunContext: body.activeRunContext ? {
-              runId: body.activeRunContext.runId,
-              taskId: body.activeRunContext.taskId,
-              taskTitle: body.activeRunContext.taskTitle ?? "",
-              phase: body.activeRunContext.phase ?? "",
-            } : undefined,
-            activeTaskIds: body.activeTaskIds,
-            sessionHistory: _sessionHistory.length > 0 ? _sessionHistory : undefined,
-          };
+        const twoLevelParams = {
+          pool: app.db, app,
+          tenantId: subject.tenantId, spaceId: subject.spaceId,
+          subjectId: subject.subjectId, message, explicitMode, locale,
+          authorization: (req.headers.authorization as string | undefined) ?? null,
+          traceId: req.ctx.traceId,
+          activeRunContext: body.activeRunContext ? {
+            runId: body.activeRunContext.runId,
+            taskId: body.activeRunContext.taskId,
+            taskTitle: body.activeRunContext.taskTitle ?? "",
+            phase: body.activeRunContext.phase ?? "",
+          } : undefined,
+          activeTaskIds: body.activeTaskIds,
+          sessionHistory: _sessionHistory.length > 0 ? _sessionHistory : undefined,
+          attachments: _attachmentsMeta,
+        };
+
+        // P0: 超时竞争——LLM 分类最多阻塞 CLASSIFY_TIMEOUT ms，超时降级为 fast 结果
+        const CLASSIFY_TIMEOUT = parseInt(process.env.INTENT_CLASSIFY_TIMEOUT_MS ?? "300", 10);
+        const timeoutFallback = new Promise<null>((resolve) => setTimeout(() => resolve(null), CLASSIFY_TIMEOUT));
+
+        const llmClassifyPromise = (async (): Promise<{ classification: IntentClassification; classifierUsed: string }> => {
           const twoLevelResult = await classifyIntentTwoLevel(twoLevelParams);
           const reviewed = await reviewIntentDecision(twoLevelParams, twoLevelResult);
-          classification = intentDecisionToClassification(reviewed);
-          classifierLabel = reviewed.classifierUsed ?? "two_level";
+          return {
+            classification: intentDecisionToClassification(reviewed),
+            classifierUsed: reviewed.classifierUsed ?? "two_level",
+          };
+        })();
+
+        try {
+          const raceResult = await Promise.race([llmClassifyPromise, timeoutFallback]);
+
+          if (raceResult !== null) {
+            // LLM 在超时内返回了结果，使用 LLM 结果
+            classification = raceResult.classification;
+            classifierLabel = raceResult.classifierUsed;
+          } else {
+            // 超时降级：使用 fast 分类结果（默认 answer），记录日志
+            app.log.warn({ classifyTimeoutMs: CLASSIFY_TIMEOUT, fastMode: classification.mode },
+              "[dispatch.stream] intent classify LLM timeout, using fast result");
+            // 后台不 await，让 LLM 结果异步完成（用于统计/学习，不阻塞用户）
+            llmClassifyPromise.then((result) => {
+              app.log.info({ fastMode: classification.mode, llmMode: result.classification.mode, agreed: classification.mode === result.classification.mode },
+                "[dispatch.stream] deferred intent classify completed");
+            }).catch(() => {/* 静默忽略 */});
+          }
         } catch (err: any) {
           app.log.warn({ err: err?.message, traceId: req.ctx.traceId }, "[dispatch.stream] TwoLevel 升级失败，保持 fast 结果");
         }
@@ -171,8 +205,11 @@ export function registerStreamRoute(app: any): void {
       }
 
       // P0-1: 统一意图路由指标
+      const _routeSource = classifierLabel === "fast" ? "fast_rule"
+        : classifierLabel === "llm" ? "llm"
+        : "standard_rule"; // two_level / reviewer 均归入 standard_rule
       app.metrics.observeIntentRoute({
-        source: "dispatch.stream",
+        source: _routeSource as any,
         classifier: classifierLabel as "fast" | "llm" | "two_level" | "parallel_fast" | "reviewer",
         mode: classification.mode,
         confidence: classification.confidence,

@@ -5,6 +5,7 @@
  */
 import type { AgentState, CollabResult, CollabOrchestratorParams } from "./collabTypes";
 import { runDebatePhaseV2 } from "./collabDebateV2";
+import { collabConfig } from "@openslin/shared";
 import {
   persistDebateSession, persistDebateCorrections,
   persistDebateConsensusEvolution, persistDebateRound,
@@ -74,7 +75,7 @@ Side A (${sideAState.role}) 结论: ${sideAState.result?.message?.slice(0, 300) 
 
 Side B (${sideBState.role}) 结论: ${sideBState.result?.message?.slice(0, 300) ?? "N/A"}`;
 
-  const debateParties = doneStates.slice(0, 6).map((state) => ({
+  const debateParties = doneStates.slice(0, collabConfig("COLLAB_AUTO_DEBATE_MAX_PARTIES")).map((state) => ({
     agentId: state.agentId,
     role: state.role,
     goal: state.goal,
@@ -106,7 +107,7 @@ Side B (${sideBState.role}) 结论: ${sideBState.result?.message?.slice(0, 300) 
         stance: (sideBState.result?.message ?? sideBState.goal).replace(/\s+/g, " ").slice(0, 160) || sideBState.role,
       },
     ],
-    maxRounds: 3,
+    maxRounds: collabConfig("COLLAB_AUTO_DEBATE_MAX_ROUNDS"),
     maxIterationsPerRound: Math.min(5, maxIterationsPerAgent),
     enableCorrection: orchestratorParams.enableDynamicCorrection !== false,
     signal: orchestratorParams.signal,

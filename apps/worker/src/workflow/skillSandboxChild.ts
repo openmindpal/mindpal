@@ -15,6 +15,17 @@ import {
   createModuleLoadInterceptor,
 } from "@openslin/shared";
 
+function buildApiFetch(ctx: { apiBaseUrl?: string; authToken?: string; traceId?: string }) {
+  const baseUrl = ctx.apiBaseUrl || process.env.API_BASE_URL || "http://localhost:4000";
+  return async (path: string, init?: RequestInit): Promise<Response> => {
+    const url = path.startsWith("http") ? path : `${baseUrl}${path}`;
+    const headers = new Headers(init?.headers);
+    if (ctx.authToken) headers.set("authorization", `Bearer ${ctx.authToken}`);
+    if (ctx.traceId) headers.set("x-trace-id", ctx.traceId);
+    return fetch(url, { ...init, headers });
+  };
+}
+
 async function main() {
   process.on("message", async (m: any) => {
     if (!m || typeof m !== "object") return;
@@ -81,6 +92,9 @@ async function main() {
         networkPolicy: payload.networkPolicy,
         artifactRef: payload.artifactRef,
         depsDigest: payload.depsDigest,
+        context: payload.context
+          ? { locale: payload.context.locale, apiFetch: buildApiFetch({ apiBaseUrl: payload.context.apiBaseUrl, authToken: payload.context.authToken, traceId: payload.traceId }) }
+          : undefined,
       });
 
       (process as any).send?.({

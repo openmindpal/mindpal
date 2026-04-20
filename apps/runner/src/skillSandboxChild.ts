@@ -55,6 +55,17 @@ async function main() {
         return null;
       }
 
+      function buildApiFetch(apiBaseUrl, authToken, traceId) {
+        const baseUrl = apiBaseUrl || process.env.API_BASE_URL || "http://localhost:4000";
+        return async function apiFetch(path, init) {
+          const url = path.startsWith("http") ? path : baseUrl + path;
+          const headers = new Headers(init?.headers);
+          if (authToken) headers.set("authorization", "Bearer " + authToken);
+          if (traceId) headers.set("x-trace-id", traceId);
+          return fetch(url, Object.assign({}, init, { headers }));
+        };
+      }
+
       function sandboxMode() {
         const raw = String(process.env.SKILL_SANDBOX_MODE ?? "").trim().toLowerCase();
         if (raw === "strict") return "strict";
@@ -173,6 +184,9 @@ async function main() {
             networkPolicy: payload.networkPolicy,
             artifactRef: payload.artifactRef,
             depsDigest: payload.depsDigest,
+            context: payload.context
+              ? { locale: payload.context.locale, apiFetch: buildApiFetch(payload.context.apiBaseUrl, payload.context.authToken, payload.traceId) }
+              : undefined,
           });
 
           parentPort.postMessage({ type: "result", ok: true, output, depsDigest: payload.depsDigest, egress });

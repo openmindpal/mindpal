@@ -649,7 +649,7 @@ async function resolveClientRefLabels(
       if (typeof val === "string" && val) ids.add(val);
     }
     if (ids.size > 0) {
-      groups[fieldName] = { entity: def.referenceEntity, displayField: def.displayField ?? "name", ids };
+      groups[fieldName] = { entity: def.referenceEntity, displayField: (def.extensions?.["io.openslin.ui"] as any)?.reference?.displayField ?? "name", ids };
     }
   }
 

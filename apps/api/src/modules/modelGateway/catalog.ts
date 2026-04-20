@@ -55,7 +55,7 @@ export type ModelCatalogEntry = {
 
 export const modelCatalog: ModelCatalogEntry[] = [];
 
-export const openaiCompatibleProviders = ["openai_compatible", "deepseek", "hunyuan", "qianwen", "zhipu", "doubao", "kimi", "kimimax", "custom_openai"] as const;
+export const openaiCompatibleProviders = ["openai_compatible", "deepseek", "hunyuan", "qianwen", "zhipu", "doubao", "kimi", "custom_openai"] as const;
 export type OpenAiCompatibleProvider = (typeof openaiCompatibleProviders)[number];
 
 function isOpenAiCompatibleProvider(v: string): v is OpenAiCompatibleProvider {

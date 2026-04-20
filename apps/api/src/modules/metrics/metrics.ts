@@ -237,13 +237,6 @@ export function createMetricsRegistry() {
     setGauge("openslin_db_pool_waiting", {}, params.waiting);
   }
 
-  /* ─── P3-1: Intent Analyzer Metrics ─── */
-
-  function observeIntentAnalysis(params: { result: "ok" | "denied" | "error" | "llm_fallback"; latencyMs: number; usedLLM: boolean }) {
-    incCounter("openslin_intent_analysis_total", { result: params.result, used_llm: String(params.usedLLM) }, 1);
-    observeHistogram("openslin_intent_analysis_duration_ms", { result: params.result, used_llm: String(params.usedLLM) }, params.latencyMs, durationBucketsMs);
-  }
-
   function incIntentRuleMatch(params: { ruleId: string; confidence: "high" | "medium" | "low" }) {
     incCounter("openslin_intent_rule_matches_total", { rule_id: params.ruleId, confidence: params.confidence }, 1);
   }
@@ -251,7 +244,7 @@ export function createMetricsRegistry() {
   /* ─── P0-1: Unified Intent Route Metrics (orchestrator 主入口统一口径) ─── */
 
   function observeIntentRoute(params: {
-    source: "dispatch" | "dispatch.stream" | "dispatch.classify" | "dispatch_shadow";
+    source: "dispatch" | "dispatch.stream" | "dispatch.classify" | "dispatch_shadow" | "fast_rule" | "standard_rule" | "llm" | "analyzer_context";
     classifier: "fast" | "llm" | "two_level" | "parallel_fast" | "reviewer";
     mode: string;
     confidence: number;
@@ -596,12 +589,6 @@ export function createMetricsRegistry() {
     lines.push("# TYPE openslin_db_pool_waiting gauge");
 
     // P3-1: Intent Analyzer Metrics HELP
-    lines.push("# HELP openslin_intent_analysis_total Total intent analysis operations.");
-    lines.push("# TYPE openslin_intent_analysis_total counter");
-
-    lines.push("# HELP openslin_intent_analysis_duration_ms Intent analysis duration in milliseconds.");
-    lines.push("# TYPE openslin_intent_analysis_duration_ms histogram");
-
     lines.push("# HELP openslin_intent_rule_matches_total Total intent rule matches by confidence.");
     lines.push("# TYPE openslin_intent_rule_matches_total counter");
 
@@ -772,7 +759,6 @@ export function createMetricsRegistry() {
     setHealthStatus,
     setDatabasePoolStats,
     // P3-1: Intent Analyzer Metrics
-    observeIntentAnalysis,
     incIntentRuleMatch,
     // P0-1: Unified Intent Route Metrics
     observeIntentRoute,

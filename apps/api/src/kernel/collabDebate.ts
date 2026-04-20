@@ -17,6 +17,7 @@ import type { WorkflowQueue } from "../modules/workflow/queue";
 import {
   createDebateSessionV2, isDebateConvergedV2,
   type DebateSession, type DebatePosition, type DebateRound, type DebateVerdict,
+  collabConfig,
 } from "@openslin/shared";
 import type { DebatePhaseParams } from "./collabTypes";
 
@@ -281,7 +282,7 @@ function parseDebatePosition(params: {
 /** 检测双方立场的分歧度 */
 function detectDivergence(posA: DebatePosition, posB: DebatePosition): boolean {
   const confGap = Math.abs(posA.confidence - posB.confidence);
-  if (posA.confidence >= 0.8 && posB.confidence >= 0.8 && confGap <= 0.15) {
+  if (posA.confidence >= collabConfig("COLLAB_DIVERGENCE_MIN_CONF") && posB.confidence >= collabConfig("COLLAB_DIVERGENCE_MIN_CONF") && confGap <= collabConfig("COLLAB_DIVERGENCE_CONF_DIFF")) {
     return false;
   }
   return true;

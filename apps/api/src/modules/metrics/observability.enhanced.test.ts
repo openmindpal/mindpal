@@ -22,80 +22,6 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
 
   describe("Intent Analyzer Metrics", () => {
     
-    it("应该记录意图分析成功指标", () => {
-      metrics.observeIntentAnalysis({
-        result: "ok",
-        latencyMs: 45,
-        usedLLM: false,
-      });
-
-      const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_intent_analysis_total");
-      expect(output).toContain('result="ok"');
-      expect(output).toContain('used_llm="false"');
-    });
-
-    it("应该区分使用LLM和不使用LLM的指标", () => {
-      metrics.observeIntentAnalysis({
-        result: "ok",
-        latencyMs: 50,
-        usedLLM: true,
-      });
-
-      metrics.observeIntentAnalysis({
-        result: "ok",
-        latencyMs: 10,
-        usedLLM: false,
-      });
-
-      const output = metrics.renderPrometheus();
-      expect(output).toContain('used_llm="true"');
-      expect(output).toContain('used_llm="false"');
-    });
-
-    it("应该记录 LLM fallback 结果", () => {
-      metrics.observeIntentAnalysis({
-        result: "llm_fallback",
-        latencyMs: 150,
-        usedLLM: true,
-      });
-
-      const output = metrics.renderPrometheus();
-      expect(output).toContain('result="llm_fallback"');
-    });
-
-    it("应该记录意图分析错误指标", () => {
-      metrics.observeIntentAnalysis({
-        result: "error",
-        latencyMs: 5,
-        usedLLM: false,
-      });
-
-      const output = metrics.renderPrometheus();
-      expect(output).toContain('result="error"');
-    });
-
-    it("应该生成正确的直方图数据", () => {
-      // 添加多个不同延迟的请求
-      [5, 15, 30, 60, 120, 300, 800].forEach((latency) => {
-        metrics.observeIntentAnalysis({
-          result: "ok",
-          latencyMs: latency,
-          usedLLM: false,
-        });
-      });
-
-      const output = metrics.renderPrometheus();
-      
-      // 检查直方图的 bucket、count、sum
-      expect(output).toContain("openslin_intent_analysis_duration_ms_bucket");
-      expect(output).toContain("openslin_intent_analysis_duration_ms_count");
-      expect(output).toContain("openslin_intent_analysis_duration_ms_sum");
-      
-      // count 应该是 7
-      expect(output).toMatch(/openslin_intent_analysis_duration_ms_count.*\{[^}]*\}\s+7/);
-    });
-
     it("应该记录规则匹配指标", () => {
       metrics.incIntentRuleMatch({
         ruleId: "nl2ui_display",
@@ -320,48 +246,63 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
   describe("Metric Aggregation", () => {
     
     it("相同标签的计数器应该累加", () => {
-      metrics.observeIntentAnalysis({
+      metrics.observeIntentRoute({
+        source: "dispatch",
+        classifier: "fast",
+        mode: "chat",
+        confidence: 0.9,
         result: "ok",
         latencyMs: 10,
-        usedLLM: false,
       });
 
-      metrics.observeIntentAnalysis({
+      metrics.observeIntentRoute({
+        source: "dispatch",
+        classifier: "fast",
+        mode: "chat",
+        confidence: 0.8,
         result: "ok",
         latencyMs: 20,
-        usedLLM: false,
       });
 
-      metrics.observeIntentAnalysis({
+      metrics.observeIntentRoute({
+        source: "dispatch",
+        classifier: "fast",
+        mode: "chat",
+        confidence: 0.7,
         result: "ok",
         latencyMs: 30,
-        usedLLM: false,
       });
 
       const output = metrics.renderPrometheus();
       
       // counter 应该是 3
-      expect(output).toMatch(/openslin_intent_analysis_total.*result="ok".*used_llm="false".*\s+3/);
+      expect(output).toMatch(/openslin_orchestrator_intent_route_total.*result="ok".*source="dispatch".*\s+3/);
     });
 
     it("不同标签的计数器应该分开计数", () => {
-      metrics.observeIntentAnalysis({
+      metrics.observeIntentRoute({
+        source: "dispatch",
+        classifier: "fast",
+        mode: "chat",
+        confidence: 0.9,
         result: "ok",
         latencyMs: 10,
-        usedLLM: false,
       });
 
-      metrics.observeIntentAnalysis({
+      metrics.observeIntentRoute({
+        source: "dispatch",
+        classifier: "llm",
+        mode: "task",
+        confidence: 0.8,
         result: "ok",
         latencyMs: 100,
-        usedLLM: true,
       });
 
       const output = metrics.renderPrometheus();
       
       // 应该有两条不同的记录
-      expect(output).toMatch(/openslin_intent_analysis_total.*used_llm="false".*\s+1/);
-      expect(output).toMatch(/openslin_intent_analysis_total.*used_llm="true".*\s+1/);
+      expect(output).toMatch(/openslin_orchestrator_intent_route_total.*classifier="fast".*\s+1/);
+      expect(output).toMatch(/openslin_orchestrator_intent_route_total.*classifier="llm".*\s+1/);
     });
 
     it("Gauge 应该更新为最新值", () => {
@@ -397,18 +338,21 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
   describe("Prometheus Format Compliance", () => {
     
     it("应该包含所有必需的 HELP 注释", () => {
-      metrics.observeIntentAnalysis({
+      metrics.observeIntentRoute({
+        source: "dispatch",
+        classifier: "fast",
+        mode: "chat",
+        confidence: 0.9,
         result: "ok",
         latencyMs: 50,
-        usedLLM: false,
       });
 
       const output = metrics.renderPrometheus();
       
-      expect(output).toContain("# HELP openslin_intent_analysis_total");
-      expect(output).toContain("# TYPE openslin_intent_analysis_total counter");
-      expect(output).toContain("# HELP openslin_intent_analysis_duration_ms");
-      expect(output).toContain("# TYPE openslin_intent_analysis_duration_ms histogram");
+      expect(output).toContain("# HELP openslin_orchestrator_intent_route_total");
+      expect(output).toContain("# TYPE openslin_orchestrator_intent_route_total counter");
+      expect(output).toContain("# HELP openslin_orchestrator_intent_route_duration_ms");
+      expect(output).toContain("# TYPE openslin_orchestrator_intent_route_duration_ms histogram");
     });
 
     it("应该包含所有新指标的 HELP 注释", () => {
@@ -452,10 +396,13 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
     });
 
     it("每行应该以换行符结尾", () => {
-      metrics.observeIntentAnalysis({
+      metrics.observeIntentRoute({
+        source: "dispatch",
+        classifier: "fast",
+        mode: "chat",
+        confidence: 0.9,
         result: "ok",
         latencyMs: 50,
-        usedLLM: false,
       });
 
       const output = metrics.renderPrometheus();
@@ -471,10 +418,13 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       const start = Date.now();
 
       for (let i = 0; i < iterations; i++) {
-        metrics.observeIntentAnalysis({
+        metrics.observeIntentRoute({
+          source: "dispatch",
+          classifier: i % 2 === 0 ? "fast" : "llm",
+          mode: "chat",
+          confidence: Math.random(),
           result: "ok",
           latencyMs: Math.random() * 100,
-          usedLLM: i % 2 === 0,
         });
       }
 
@@ -508,14 +458,17 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
   describe("Edge Cases", () => {
     
     it("应该处理零延迟", () => {
-      metrics.observeIntentAnalysis({
+      metrics.observeIntentRoute({
+        source: "dispatch",
+        classifier: "fast",
+        mode: "chat",
+        confidence: 0.9,
         result: "ok",
         latencyMs: 0,
-        usedLLM: false,
       });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_intent_analysis_total");
+      expect(output).toContain("openslin_orchestrator_intent_route_total");
     });
 
     it("应该处理极大延迟", () => {

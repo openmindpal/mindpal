@@ -70,7 +70,7 @@ export async function checkAndEnforceIntentBoundary(params: {
   if (keywordResult) return keywordResult;
 
   // 3. P0-7: LLM 语义冲突检测（关键词未命中时）
-  const useLlmCheck = (process.env.INTENT_ANCHOR_LLM_CHECK ?? "0") === "1" && app && subject;
+  const useLlmCheck = (process.env.INTENT_ANCHOR_LLM_CHECK ?? "1") === "1" && app && subject;
   if (useLlmCheck) {
     const llmResult = await _llmBasedDetection({
       pool, tenantId, spaceId, runId, stepId, proposedAction, currentContext,

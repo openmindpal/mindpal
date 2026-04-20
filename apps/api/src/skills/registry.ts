@@ -40,6 +40,7 @@ import { isBuiltinSkillRegistrySealed, registerBuiltinSkill, sealBuiltinSkillReg
 import type { BuiltinSkillPlugin } from "../lib/skillPlugin";
 import type { FastifyPluginAsync } from "fastify";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // ── Manifest-driven skill loading ─────────────────────────────────
 import manifestEntries from "./builtin-skills-manifest.json";
@@ -64,7 +65,7 @@ const INLINE_PLUGINS: Record<string, () => BuiltinSkillPlugin> = {
 let _allAvailablePlugins: ReadonlyMap<string, BuiltinSkillPlugin> | null = null;
 
 /** 获取所有可用插件的统一目录（延迟初始化，manifest 驱动） */
-function getAllAvailablePlugins(): ReadonlyMap<string, BuiltinSkillPlugin> {
+async function getAllAvailablePlugins(): Promise<ReadonlyMap<string, BuiltinSkillPlugin>> {
   if (_allAvailablePlugins) return _allAvailablePlugins;
 
   const map = new Map<string, BuiltinSkillPlugin>();
@@ -80,7 +81,7 @@ function getAllAvailablePlugins(): ReadonlyMap<string, BuiltinSkillPlugin> {
         continue;
       }
       const resolved = path.resolve(__dirname, entry.module);
-      const mod = require(resolved);
+      const mod = await import(pathToFileURL(resolved).href);
       const plugin: BuiltinSkillPlugin = mod.default ?? mod;
       map.set(entry.key, plugin);
     } catch (err) {
@@ -117,8 +118,8 @@ export interface SkillLayerCheckResult {
  *
  * 启动时调用，产出 warn 日志，不阻断启动。
  */
-export function checkSkillLayerConsistency(): SkillLayerCheckResult {
-  const plugins = getAllAvailablePlugins();
+export async function checkSkillLayerConsistency(): Promise<SkillLayerCheckResult> {
+  const plugins = await getAllAvailablePlugins();
   const layerMismatches: SkillLayerCheckResult["layerMismatches"] = [];
   const orphanedDirs: string[] = [];
 
@@ -201,9 +202,9 @@ const _manifestTierLookup = new Map(
 );
 
 /** 从 manifest 构建内置 Skill manifests。 */
-function buildBuiltinManifests(): SkillManifestRow[] {
+async function buildBuiltinManifests(): Promise<SkillManifestRow[]> {
   const rows: SkillManifestRow[] = [];
-  for (const [key] of getAllAvailablePlugins()) {
+  for (const [key] of await getAllAvailablePlugins()) {
     const tier = _manifestTierLookup.get(key) ?? "optional";
     rows.push({ skillKey: key, tier, status: "enabled" });
   }
@@ -305,7 +306,7 @@ function parseEnvEnabledExtensions(manifests: SkillManifestRow[]): Set<string> {
 export async function initBuiltinSkills(): Promise<void> {
   if (isBuiltinSkillRegistrySealed()) return;
 
-  const manifests = buildBuiltinManifests();
+  const manifests = await buildBuiltinManifests();
   _cachedManifests = manifests;
 
   // ── 环境变量覆盖层 ──
@@ -314,7 +315,7 @@ export async function initBuiltinSkills(): Promise<void> {
 
   // ── 按元数据注册 ──
   for (const m of manifests) {
-    const plugin = getAllAvailablePlugins().get(m.skillKey);
+    const plugin = (await getAllAvailablePlugins()).get(m.skillKey);
     if (!plugin) {
       _logger.warn("unknown builtin skill_key, skipping", { skillKey: m.skillKey });
       continue;
