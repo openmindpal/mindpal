@@ -1,18 +1,5 @@
 import type { Pool } from "pg";
-
-function canonicalize(value: any): any {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== "object") return value;
-  const out: any = {};
-  const keys = Object.keys(value).sort();
-  for (const k of keys) out[k] = canonicalize(value[k]);
-  return out;
-}
-
-function stableStringify(value: any) {
-  return JSON.stringify(canonicalize(value));
-}
+import { stableStringify } from "@openslin/shared";
 
 async function chooseArtifactSpaceId(pool: Pool, tenantId: string, preferredSpaceId: string | null) {
   if (preferredSpaceId) return preferredSpaceId;

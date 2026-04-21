@@ -3,6 +3,7 @@
  */
 import type { CapabilityDescriptor } from "../kernel";
 import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "../pluginRegistry";
+import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 import {
   captureScreen,
   cleanupCapture,
@@ -92,7 +93,7 @@ async function execBrowserOpen(ctx: ToolExecutionContext): Promise<ToolExecution
   }
   const launched = tryLaunch(url);
   if (!launched) {
-    const launchMode = String(process.env.DEVICE_AGENT_LAUNCH_MODE ?? "spawn").toLowerCase();
+    const launchMode = resolveDeviceAgentEnv().launchMode;
     return { status: "failed", errorCategory: "device_not_ready", outputDigest: { reason: "browser_launch_failed", host, url, launchMode, domError: domResult?.error } };
   }
   touchBrowserSession();

@@ -100,17 +100,19 @@ function hasError(r: { x: number; y: number } | { error: string }): r is { error
   return "error" in r;
 }
 
+import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── GUI 步骤间延迟（毫秒），给 UI 渲染留出时间 ───────────────────
-const INTER_STEP_DELAY_MS = Number(process.env.DEVICE_AGENT_GUI_STEP_DELAY_MS ?? "200");
+const INTER_STEP_DELAY_MS = resolveDeviceAgentEnv().guiStepDelayMs;
 
 // ── OCR 坐标缓存（高频低风险任务快速通道）─────────────
 
-/** OCR 坐标缓存 TTL（毫秒，环境变量可覆盖） */
-const OCR_CACHE_TTL_MS = Math.max(500, Number(process.env.DEVICE_AGENT_OCR_CACHE_TTL_MS ?? "2000"));
+/** OCR 坐标缓存 TTL（毫秒） */
+const OCR_CACHE_TTL_MS = resolveDeviceAgentEnv().ocrCacheTtlMs;
 /** OCR 坐标缓存最大条目数 */
-const OCR_CACHE_MAX_ENTRIES = Math.max(10, Number(process.env.DEVICE_AGENT_OCR_CACHE_MAX ?? "100"));
+const OCR_CACHE_MAX_ENTRIES = resolveDeviceAgentEnv().ocrCacheMax;
 
 interface CachedCoordinate {
   x: number;

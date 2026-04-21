@@ -41,3 +41,49 @@ export function stableStringifyValue(v: any): any {
 export function stableStringify(v: any): string {
   return JSON.stringify(stableStringifyValue(v));
 }
+
+/* ------------------------------------------------------------------ */
+/*  确定性规范化 — 支持 Date/Buffer 等扩展类型                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 递归规范化值，支持 Date→ISO / Buffer→base64 / object key 排序。
+ * 用于审计哈希链等需要确定性序列化的场景。
+ */
+export function canonicalize(value: any): any {
+  if (value === null || value === undefined) return value;
+  if (value instanceof Date) return value.toISOString();
+  if (Buffer.isBuffer(value)) return value.toString("base64");
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  const keys = Object.keys(value).sort();
+  for (const k of keys) out[k] = canonicalize((value as any)[k]);
+  return out;
+}
+
+/** 基于 canonicalize 的确定性 JSON.stringify */
+export function canonicalStringify(value: any): string {
+  return JSON.stringify(canonicalize(value));
+}
+
+/* ------------------------------------------------------------------ */
+/*  审计哈希链核心函数                                                   */
+/* ------------------------------------------------------------------ */
+
+/** 计算审计事件哈希 — 保证 prevHash→normalized 链式完整性 */
+export function computeEventHash(params: { prevHash: string | null; normalized: any }): string {
+  const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
+  return sha256Hex(input);
+}
+
+/* ------------------------------------------------------------------ */
+/*  通用摘要函数                                                         */
+/* ------------------------------------------------------------------ */
+
+/** 将 object 压缩为键名摘要（审计/日志场景，防止 payload 过大） */
+export function digestObject(body: unknown): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  const keys = Object.keys(body as any);
+  return { keys: keys.slice(0, 50), keyCount: keys.length };
+}

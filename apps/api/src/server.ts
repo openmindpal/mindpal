@@ -218,6 +218,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
   // ── P2: 内部通信端点（Worker→API，不走标准认证链路）──
   app.register(internalRoutes);
 
+  // ── 全局 /v1 版本化路由（开发阶段零兼容，所有业务路由统一挂 /v1 前缀） ──
   app.register(async (scoped) => {
     await requestContextPlugin(scoped, { platformLocale: cfg.platformLocale });
     await authenticationPlugin(scoped, {});
@@ -235,26 +236,27 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     scoped.register(metricsRoutes);
     scoped.register(meRoutes);
     scoped.register(authTokenRoutes);
-    // ── Core Kernel Routes (primitives that remain in kernel) ────────
+    // ── Core Kernel Routes ────────
     scoped.register(auditRoutes);
     scoped.register(skillLifecycleRoutes);
     scoped.register(scimRoutes);
     scoped.register(notificationPreferenceRoutes); // P3-06b: 通知偏好 + 收件箱
-
-    // ── P2-3: /v1 版本化路由 ──
-    // 业务路由同时保留 root 兼容入口，并注册 /v1 前缀。
-    const v1Routes = [
-      entityRoutes, effectiveSchemaRoutes, jobRoutes, schemaRoutes, toolRoutes,
-      secretRoutes, governanceRoutes, runRoutes, policySnapshotRoutes,
-      rbacRoutes, approvalRoutes, settingsRoutes, keyringRoutes, spacesRoutes,
-      toolCategoryRoutes,  // P2: 工具分类管理路由
-    ];
-
-    for (const route of v1Routes) scoped.register(route);
-
-    scoped.register(async (v1) => {
-      for (const route of v1Routes) v1.register(route);
-    }, { prefix: "/v1" });
+    // ── Business Routes ────────
+    scoped.register(entityRoutes);
+    scoped.register(effectiveSchemaRoutes);
+    scoped.register(jobRoutes);
+    scoped.register(schemaRoutes);
+    scoped.register(toolRoutes);
+    scoped.register(secretRoutes);
+    scoped.register(governanceRoutes);
+    scoped.register(runRoutes);
+    scoped.register(policySnapshotRoutes);
+    scoped.register(rbacRoutes);
+    scoped.register(approvalRoutes);
+    scoped.register(settingsRoutes);
+    scoped.register(keyringRoutes);
+    scoped.register(spacesRoutes);
+    scoped.register(toolCategoryRoutes);
 
     // ── Built-in Skill Routes (auto-discovered) ────────────────────
     const skillLoadResult = await initBuiltinSkills();
@@ -295,6 +297,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
       app.log.warn({ err: e?.message }, "[startup] Module boundary scan skipped (non-fatal)");
     }
 
+    // ── Built-in Skill Routes（统一注册在 /v1 作用域下） ────────
     const registeredSkills: string[] = [];
     for (const [name, skill] of getBuiltinSkills()) {
       scoped.register(skill.routes);
@@ -327,7 +330,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     } catch (e: any) {
       app.log.warn({ err: e?.message }, "[startup] Model bindings check skipped (table may not exist)");
     }
-  });
+  }, { prefix: "/v1" });
 
   return app;
 }

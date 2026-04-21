@@ -191,7 +191,7 @@ function buildNl2UiSystemPrompt(params: {
 
   return `你是 UI 生成引擎。根据用户描述生成 JSON 配置。
 意图: intent="ui"(生成界面) 或 "chat"(闲聊)。始终返回 intent + confidence(0-1)。
-页面类型: pageType="local"(笔记/待办/日程等本地可交互页面) 或 "business"(销售订单/ERP/CRM等业务系统页面，仅展示)。
+页面类型: pageType="local"(笔记/待办/日程等本地可交互页面) 或 "business"(业务数据展示页面，仅展示)。
 组件: ${components}
 布局: ${layouts.join(", ")}${entitySection}${styleSection}
 输出纯 JSON:
@@ -209,15 +209,8 @@ function inferFallbackEntities(userInput: string, availableEntities: string[]): 
     return Array.from(new Set(matchedFromAvailable)).slice(0, 3);
   }
 
-  const aliasMap: Array<{ entityName: string; aliases: string[] }> = [
-    { entityName: "notes", aliases: ["笔记", "note", "notes"] },
-    { entityName: "tasks", aliases: ["任务", "待办", "task", "tasks", "工单"] },
-    { entityName: "orders", aliases: ["订单", "order", "orders"] },
-    { entityName: "customers", aliases: ["客户", "crm", "customer", "customers"] },
-    { entityName: "products", aliases: ["产品", "库存", "product", "products"] },
-    { entityName: "employees", aliases: ["员工", "入职", "employee", "employees"] },
-    { entityName: "approvals", aliases: ["审批", "报销", "采购", "approval", "approvals"] },
-  ];
+  // 实体别名映射已外置，通过 Schema 元数据或租户配置动态加载
+  const aliasMap: Array<{ entityName: string; aliases: string[] }> = [];
   return aliasMap
     .filter((item) => item.aliases.some((alias) => lower.includes(alias)))
     .map((item) => item.entityName)
@@ -233,7 +226,7 @@ function inferFallbackLayout(userInput: string): "single-column" | "split-horizo
 
 function inferFallbackComponents(userInput: string, layout: "single-column" | "split-horizontal" | "split-vertical" | "grid") {
   const lower = userInput.toLowerCase();
-  if (/表单|姓名|邮箱|录入|入职/i.test(lower)) {
+  if (/表单|姓名|邮箱|录入/i.test(lower)) {
     return layout === "grid" ? ["EntityForm.Single", "EntityList.Table"] : ["EntityForm.Single"];
   }
   if (/趋势|图表|折线|柱状|饼图|仪表盘|dashboard|kpi/i.test(lower)) {
@@ -283,7 +276,7 @@ function buildHeuristicUiFallback(params: {
   }));
 
   return {
-    pageType: entities.some((entity) => ["orders", "customers", "products", "employees", "approvals"].includes(entity)) ? "business" : "local",
+    pageType: "local",
     ui: {
       layout: {
         variant: layout,

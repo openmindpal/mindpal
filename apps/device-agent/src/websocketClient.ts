@@ -12,6 +12,7 @@
 import { WebSocket } from 'ws';
 import type { DeviceAgentConfig } from './config';
 import { safeLog, safeError } from './log';
+import { resolveDeviceAgentEnv } from './deviceAgentEnv';
 import { handleTaskPending, handleDeviceMessage, sendTaskResult, type WsTaskContext } from './wsMessageHandlers';
 import {
   handleStreamingStart, handleStreamingStep, handleStreamingStop,
@@ -291,7 +292,7 @@ export class WebSocketDeviceAgent {
     const handshake: ProtocolHandshake = {
       type: "protocol.handshake",
       protocolVersion: DEVICE_PROTOCOL_VERSION,
-      agentVersion: process.env.AGENT_VERSION || "1.0.0",
+      agentVersion: resolveDeviceAgentEnv().agentVersion,
       capabilities: ["desktop.control", "browser.automation", "file.ops"],
     };
     try {

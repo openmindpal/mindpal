@@ -7,6 +7,7 @@
  *
  * desktopPlugin 调用 perceive() / locateAndAct() 即可。
  */
+import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 // ── 核心类型（原 perceptionProvider.ts，已内联）─────────────────────
 
 /** 屏幕上识别到的元素 */
@@ -339,7 +340,7 @@ class PlaywrightProvider {
   }
 
   private getCdpUrl(): string {
-    return String(process.env.DEVICE_AGENT_BROWSER_CDP_URL ?? "http://localhost:9222").trim() || "http://localhost:9222";
+    return resolveDeviceAgentEnv().browserCdpUrl;
   }
 
   private registerExitHooks() {
@@ -382,8 +383,8 @@ class PlaywrightProvider {
 
   private async ensureBrowserRuntime(): Promise<BrowserRuntimeState | null> {
     this.registerExitHooks();
-    const externalCdpUrl = String(process.env.DEVICE_AGENT_BROWSER_CDP_URL ?? "").trim();
-    if (externalCdpUrl) {
+    const externalCdpUrl = resolveDeviceAgentEnv().browserCdpUrl;
+    if (externalCdpUrl && externalCdpUrl !== "http://localhost:9222") {
       console.log("[PlaywrightProvider] checking external CDP URL:", externalCdpUrl);
       const reachable = await waitForCdpEndpoint(externalCdpUrl, 1500);
       if (reachable) {

@@ -198,6 +198,8 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 cp .env.example .env    # 按需修改
 ```
 
+注意：本项目对外业务 API 统一挂在 `/v1` 前缀下；Web 前端通过 `NEXT_PUBLIC_API_BASE` 访问 API，请配置为类似 `http://localhost:3001/v1`（包含 `/v1`）。
+
 ### 4. 安装依赖 & 初始化数据库
 
 ```bash
@@ -226,6 +228,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 | 设置页 | http://localhost:4000/settings |
 | UI 配置管理 | http://localhost:4000/admin/ui |
 | RBAC 管理 | http://localhost:4000/admin/rbac |
+| API Base（/v1） | http://localhost:3001/v1 |
 | API 健康检查 | http://localhost:3001/health |
 
 **基础设施**（端口取决于 `.env` 配置）
@@ -245,9 +248,9 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 npm run dev -w @openslin/admin-cli
 
 # 示例
-openslin-admin audit verify --apiBase http://localhost:3001 --token <token> --tenantId tenant_dev
-openslin-admin models usage --apiBase http://localhost:3001 --token <token> --range 24h
-openslin-admin queue status --apiBase http://localhost:3001 --token <token>
+openslin-admin audit verify --apiBase http://localhost:3001/v1 --token <token> --tenantId tenant_dev
+openslin-admin models usage --apiBase http://localhost:3001/v1 --token <token> --range 24h
+openslin-admin queue status --apiBase http://localhost:3001/v1 --token <token>
 ```
 
 ## 📁 项目结构

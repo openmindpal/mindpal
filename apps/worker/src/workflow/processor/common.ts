@@ -1,11 +1,5 @@
-export { isPlainObject, sha256Hex, stableStringify, stableStringifyValue } from "@openslin/shared";
+export { isPlainObject, sha256Hex, stableStringify, stableStringifyValue, digestObject } from "@openslin/shared";
 import { isPlainObject } from "@openslin/shared";
-
-export function digestObject(body: unknown) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
-  const keys = Object.keys(body as any);
-  return { keys: keys.slice(0, 50), keyCount: keys.length };
-}
 
 export function jsonByteLength(v: unknown) {
   try {

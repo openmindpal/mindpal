@@ -13,7 +13,7 @@ import { getSecretRecordEncryptedPayload } from "../../../modules/secrets/secret
 import { getCollabRun } from "./collabRepo";
 import { appendCollabEnvelope } from "./collabEnvelopeRepo";
 import { appendCollabRunEvent } from "./collabEventRepo";
-import { getOrCreateBreaker, StructuredLogger } from "@openslin/shared";
+import { getOrCreateBreaker, StructuredLogger, canonicalize, canonicalStringify } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "api:federationGateway" });
 import { safeCompare, verifyWebhookSignature } from "../../../lib/webhookVerification";
@@ -101,20 +101,6 @@ function masterKey(explicit?: string | null) {
   return String(explicit ?? process.env.API_MASTER_KEY ?? "dev-master-key-change-me");
 }
 
-function canonicalize(value: any): any {
-  if (value === null || value === undefined) return value;
-  if (value instanceof Date) return value.toISOString();
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== "object") return value;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value).sort()) out[key] = canonicalize((value as any)[key]);
-  return out;
-}
-
-function stableStringify(value: any) {
-  return JSON.stringify(canonicalize(value));
-}
-
 function firstHeaderValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return String(value[0] ?? "");
   return String(value ?? "");
@@ -134,7 +120,7 @@ function getHmacTimestampSec() {
 }
 
 function buildFederationEnvelopeAuthBody(envelope: FederationEnvelopeV1): string {
-  return stableStringify(envelope);
+  return canonicalStringify(envelope);
 }
 
 export function buildFederationHmacSignature(secret: string, envelope: FederationEnvelopeV1, timestampSec: string): string {

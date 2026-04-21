@@ -4,6 +4,7 @@
  */
 import type { CapabilityDescriptor } from "../kernel";
 import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "../pluginRegistry";
+import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 import {
   clickMouse,
   typeText as localTypeText,
@@ -75,7 +76,7 @@ async function execDesktopLaunch(ctx: ToolExecutionContext): Promise<ToolExecuti
   if (!appAllowed) return { status: "failed", errorCategory: "policy_violation", outputDigest: { reason: "app_not_allowed", app } };
   const launched = tryLaunch(app);
   touchDesktopSession();
-  return { status: "succeeded", outputDigest: { ok: true, success: true, app, launched, pid: null, windowId: null, launchMode: String(process.env.DEVICE_AGENT_LAUNCH_MODE ?? "spawn").toLowerCase() } };
+  return { status: "succeeded", outputDigest: { ok: true, success: true, app, launched, pid: null, windowId: null, launchMode: resolveDeviceAgentEnv().launchMode } };
 }
 
 // ── 截图 / OCR ────────────────────────────────────────────────────

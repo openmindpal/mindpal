@@ -1,11 +1,5 @@
 import type { Pool } from "pg";
-import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget } from "@openslin/shared";
-import { sha256Hex, stableStringify } from "./common";
-
-function computeEventHash(params: { prevHash: string | null; normalized: any }) {
-  const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
-  return sha256Hex(input);
-}
+import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget, computeEventHash } from "@openslin/shared";
 
 const policyCache = new Map<string, { at: number; policyJson: any | null; policyDigest: string | null }>();
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 import crypto from "node:crypto";
 import { Errors } from "../lib/errors";
 import { normalizeAuditErrorCategory } from "../modules/audit/auditRepo";
+import { canonicalize, sha256Hex, computeEventHash } from "@openslin/shared";
 import { dispatchAuditOutboxBatch } from "../modules/audit/outboxRepo";
 import { requirePermission } from "../modules/auth/guard";
 import { PERM } from "@openslin/shared";
@@ -32,31 +33,6 @@ function getAllowedDomains(params: { connectorEgressPolicy: any; typeDefaultEgre
   const p = params.connectorEgressPolicy ?? params.typeDefaultEgressPolicy ?? {};
   const a = Array.isArray(p.allowedDomains) ? p.allowedDomains.filter((x: any) => typeof x === "string" && x.length) : [];
   return a as string[];
-}
-
-function canonicalize(value: any): any {
-  if (value === null || value === undefined) return value;
-  if (value instanceof Date) return value.toISOString();
-  if (Buffer.isBuffer(value)) return value.toString("base64");
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== "object") return value;
-  const out: any = {};
-  const keys = Object.keys(value).sort();
-  for (const k of keys) out[k] = canonicalize(value[k]);
-  return out;
-}
-
-function stableStringify(value: any) {
-  return JSON.stringify(canonicalize(value));
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
-
-function computeEventHash(params: { prevHash: string | null; normalized: any }) {
-  const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
-  return sha256Hex(input);
 }
 
 function resolveHighRiskContext(req: any, payload?: any) {

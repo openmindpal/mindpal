@@ -201,6 +201,8 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 cp .env.example .env    # Modify as needed
 ```
 
+Note: all public business APIs are mounted under the `/v1` prefix. The Web frontend uses `NEXT_PUBLIC_API_BASE` to call the API; set it to something like `http://localhost:3001/v1` (include `/v1`).
+
 ### 4. Install Dependencies & Initialize Database
 
 ```bash
@@ -227,6 +229,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 | Settings | http://localhost:4000/settings |
 | UI Config | http://localhost:4000/admin/ui |
 | RBAC Admin | http://localhost:4000/admin/rbac |
+| API Base (/v1) | http://localhost:3001/v1 |
 | API Health | http://localhost:3001/health |
 
 ### Admin CLI
@@ -237,9 +240,9 @@ Read-only / idempotent operations CLI for troubleshooting and ops:
 npm run dev -w @openslin/admin-cli
 
 # Examples
-openslin-admin audit verify --apiBase http://localhost:3001 --token <token> --tenantId tenant_dev
-openslin-admin models usage --apiBase http://localhost:3001 --token <token> --range 24h
-openslin-admin queue status --apiBase http://localhost:3001 --token <token>
+openslin-admin audit verify --apiBase http://localhost:3001/v1 --token <token> --tenantId tenant_dev
+openslin-admin models usage --apiBase http://localhost:3001/v1 --token <token> --range 24h
+openslin-admin queue status --apiBase http://localhost:3001/v1 --token <token>
 ```
 
 ## 📁 Project Structure

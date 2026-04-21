@@ -8,6 +8,7 @@ import { runLoop } from "./agent";
 import { createWebSocketDeviceAgent } from "./websocketClient";
 import { confirmPrompt } from "./prompt";
 import { safeError, safeLog, sha256_8 } from "./log";
+import { resolveDeviceAgentEnv } from "./deviceAgentEnv";
 import { listPlugins } from "./kernel/capabilityRegistry";
 import { loadPluginsFromDir } from "./pluginRegistry";
 import { startTray } from "./tray";
@@ -18,7 +19,7 @@ import { initPolicyCache } from "./kernel/auth";
 import { assertKernelManifest, assertPluginBoundary } from "./kernel";
 
 function resolveApiBase(opts: Record<string, string | boolean>) {
-  return getStringOpt(opts, "apiBase") || process.env.API_BASE || "http://localhost:3001";
+  return getStringOpt(opts, "apiBase") || resolveDeviceAgentEnv().apiBase;
 }
 
 /**
@@ -28,16 +29,17 @@ function resolveApiBase(opts: Record<string, string | boolean>) {
 async function initDeviceRuntime(cfg: { deviceId: string; deviceToken: string; apiBase?: string; os?: string; agentVersion?: string }, apiBase: string) {
   assertKernelManifest();
   assertPluginBoundary();
+  const daCfg = resolveDeviceAgentEnv();
 
   // 初始化审计日志
-  initAudit({ deviceId: cfg.deviceId, enabled: process.env.AUDIT_ENABLED !== "false" });
+  initAudit({ deviceId: cfg.deviceId, enabled: daCfg.auditEnabled });
   cleanupOldAuditLogs(30).catch(() => {});
 
   // 访问控制与任务队列：按需加载（轻量模式可跳过）
-  if (process.env.DEVICE_AGENT_LIGHTWEIGHT !== "true") {
+  if (!daCfg.lightweight) {
     const { initAccessControl, cleanupExpiredContexts } = await import("./kernel/auth");
     initAccessControl({
-      secretKey: process.env.DEVICE_AGENT_SECRET_KEY,
+      secretKey: daCfg.secretKey,
       policy: { maxContextAge: 3600_000 },
     });
     cleanupExpiredContexts();
@@ -52,7 +54,7 @@ async function initDeviceRuntime(cfg: { deviceId: string; deviceToken: string; a
     deviceToken: cfg.deviceToken,
     deviceId: cfg.deviceId,
     intervalMs: 60_000,
-    enabled: process.env.SESSION_HEARTBEAT_ENABLED !== "false",
+    enabled: daCfg.sessionHeartbeatEnabled,
     os: cfg.os,
     agentVersion: cfg.agentVersion,
   }, async (body) => {
@@ -64,16 +66,16 @@ async function initDeviceRuntime(cfg: { deviceId: string; deviceToken: string; a
   await initPolicyCache({
     deviceId: cfg.deviceId,
     maxAgeMs: 24 * 60 * 60 * 1000,
-    enabled: process.env.POLICY_CACHE_ENABLED !== "false",
+    enabled: daCfg.policyCacheEnabled,
   });
 }
 
 function agentVersion() {
-  return process.env.AGENT_VERSION || "1.0.0";
+  return resolveDeviceAgentEnv().agentVersion;
 }
 
 function detectOs() {
-  return process.env.AGENT_OS || `${os.platform()}-${os.release()}`;
+  return resolveDeviceAgentEnv().agentOs;
 }
 
 function detectDeviceType(opts: Record<string, string | boolean>) {
@@ -238,7 +240,8 @@ async function cmdRun(opts: Record<string, string | boolean>) {
   process.on("SIGTERM", cleanupSessionManager);
 
   // ── 传输模式选择：优先 WebSocket，失败降级 HTTP 轮询 ──────────
-  const transportMode = (process.env.DEVICE_AGENT_TRANSPORT ?? "auto").toLowerCase();
+  const daCfg = resolveDeviceAgentEnv();
+  const transportMode = daCfg.transport;
   const useWs = transportMode === "ws" || transportMode === "auto";
   const useHttpFallback = transportMode !== "ws"; // ws-only 模式不降级
 
@@ -248,7 +251,7 @@ async function cmdRun(opts: Record<string, string | boolean>) {
       const wsAgent = await createWebSocketDeviceAgent(
         { ...cfg, apiBase: cfg.apiBase ?? resolveApiBase(opts) },
         async (q) => {
-          if (process.env.DEVICE_AGENT_AUTO_CONFIRM === "true" || process.env.AUTO_CONFIRM === "true") return true;
+          if (daCfg.autoConfirm) return true;
           return confirmPrompt({ question: q, defaultNo: true });
         },
       );
@@ -293,7 +296,7 @@ async function cmdRun(opts: Record<string, string | boolean>) {
     cfg,
     confirmFn: async (q) => {
       // 环境变量 DEVICE_AGENT_AUTO_CONFIRM=true 时自动确认
-      if (process.env.DEVICE_AGENT_AUTO_CONFIRM === "true" || process.env.AUTO_CONFIRM === "true") {
+      if (daCfg.autoConfirm) {
         return true;
       }
       return confirmPrompt({ question: q, defaultNo: true });
@@ -316,7 +319,7 @@ async function cmdTray() {
     }
   } catch {
     // 配置不存在时使用默认值
-    initAudit({ deviceId: "unknown", enabled: process.env.AUDIT_ENABLED !== "false" });
+    initAudit({ deviceId: "unknown", enabled: resolveDeviceAgentEnv().auditEnabled });
   }
   await startTray();
   // 托盘模式下保持进程运行

@@ -1,6 +1,5 @@
 import type { Pool } from "pg";
-import crypto from "node:crypto";
-import { AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory } from "@openslin/shared";
+import { AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory, computeEventHash } from "@openslin/shared";
 
 export { AUDIT_ERROR_CATEGORIES };
 export { normalizeAuditErrorCategory };
@@ -34,30 +33,7 @@ export class AuditContractError extends Error {
   }
 }
 
-function canonicalize(value: any): any {
-  if (value === null || value === undefined) return value;
-  if (value instanceof Date) return value.toISOString();
-  if (Buffer.isBuffer(value)) return value.toString("base64");
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== "object") return value;
-  const out: any = {};
-  const keys = Object.keys(value).sort();
-  for (const k of keys) out[k] = canonicalize(value[k]);
-  return out;
-}
-
-function stableStringify(value: any) {
-  return JSON.stringify(canonicalize(value));
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
-
-export function computeEventHash(params: { prevHash: string | null; normalized: any }) {
-  const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
-  return sha256Hex(input);
-}
+export { computeEventHash };
 
 export type AuditEventInput = {
   subjectId?: string;

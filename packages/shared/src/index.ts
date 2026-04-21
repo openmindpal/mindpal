@@ -564,11 +564,20 @@ export {
   isDeviceToolName,
 } from "./toolAliasResolver";
 
-// ── 统一密码学工具 & 稳定序列化 ──
+// ── 统一密码学工具 & 稳定序列化 & 审计哈希链 ──
 export {
   sha256Hex, sha256HexBytes, sha256_8,
   stableStringifyValue, stableStringify,
+  canonicalize, canonicalStringify,
+  computeEventHash,
+  digestObject,
 } from "./cryptoUtils";
+
+// ── 工作流写租约（分布式写锁） ──
+export {
+  acquireWriteLease, renewWriteLease, releaseWriteLease,
+} from "./writeLease";
+export type { WriteLeaseOwner } from "./writeLease";
 
 // ── 统一文档解析引擎 ──
 export {

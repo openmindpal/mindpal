@@ -156,7 +156,7 @@ export function buildSingleGoalFallback(
     if (/创建|新建|导入|提交|create|import|submit/i.test(text)) toolRefs.push("entity.create@1");
     if (/修改|更新|标记|更新为|change|update|edit/i.test(text)) toolRefs.push("entity.update@1");
     if (/删除|移除|清理|delete|remove/i.test(text)) toolRefs.push("entity.delete@1");
-    if (/发送|通知|邮件|告警|export|导出|发货|部署|重启|迁移|回滚|send|notify|mail|deploy|restart|migrate|rollback/i.test(text)) {
+    if (/发送|通知|邮件|告警|export|导出|部署|重启|迁移|回滚|send|notify|mail|deploy|restart|migrate|rollback/i.test(text)) {
       toolRefs.push("task.execute@1");
     }
     return Array.from(new Set(toolRefs));
@@ -202,18 +202,7 @@ export function buildSingleGoalFallback(
         buildStep("执行D", { dependsOn: [2], priority: 3 }),
       ];
     }
-    if (/查询.+订单.*导出为\s*(excel|csv|pdf)/i.test(trimmed)) {
-      return [
-        buildStep("查询目标订单数据", { priority: 0 }),
-        buildStep("将查询结果导出为文件", { dependsOn: [0], priority: 1 }),
-      ];
-    }
-    if (/先检查库存.*充足.*创建发货单/.test(trimmed)) {
-      return [
-        buildStep("检查库存是否充足", { priority: 0, postconditions: ["确认库存是否充足"] }),
-        buildStep("在库存充足时创建发货单", { dependsOn: [0], preconditions: ["库存充足"], postconditions: ["发货单已创建"], priority: 1 }),
-      ];
-    }
+    // 行业特化模板已移除，如需定制请通过外部配置加载
     if (/读取配置文件.*修改参数.*重启服务/.test(trimmed)) {
       return [
         buildStep("读取配置文件", { priority: 0 }),
@@ -243,31 +232,7 @@ export function buildSingleGoalFallback(
         buildStep("汇总三个数据源的数据", { dependsOn: [0, 1, 2], priority: 3 }),
       ];
     }
-    if (/批量更新五个客户的联系方式/.test(trimmed)) {
-      return [
-        buildStep("读取待更新客户清单", { priority: 0 }),
-        buildStep("批量更新五个客户的联系方式", { dependsOn: [0], priority: 1 }),
-      ];
-    }
-    if (/提交报销单并等待经理审批/.test(trimmed)) {
-      return [
-        buildStep("提交报销单", { priority: 0 }),
-        buildStep("等待经理审批", { dependsOn: [0], preconditions: ["报销单已提交"], postconditions: ["经理审批完成"], priority: 1 }),
-      ];
-    }
-    if (/创建采购订单.*提交审批.*审批通过后.*发货/.test(trimmed)) {
-      return [
-        buildStep("创建采购订单", { priority: 0 }),
-        buildStep("提交采购订单审批", { dependsOn: [0], priority: 1 }),
-        buildStep("审批通过后自动发货", { dependsOn: [1], preconditions: ["审批通过"], priority: 2 }),
-      ];
-    }
-    if (/修改客户信息后需要合规审核/.test(trimmed)) {
-      return [
-        buildStep("修改客户信息", { priority: 0 }),
-        buildStep("提交合规审核", { dependsOn: [0], priority: 1 }),
-      ];
-    }
+
     if (/尝试调用外部 API.*失败.*重试.*告警/i.test(trimmed)) {
       return [
         buildStep("调用外部 API", { priority: 0 }),
@@ -275,13 +240,7 @@ export function buildSingleGoalFallback(
         buildStep("仍失败时发送告警", { dependsOn: [1], preconditions: ["重试后仍失败"], postconditions: ["告警已发送"], priority: 2 }),
       ];
     }
-    if (/批量处理订单.*失败.*记录.*继续处理其他/.test(trimmed)) {
-      return [
-        buildStep("批量处理订单", { priority: 0 }),
-        buildStep("记录失败的订单", { dependsOn: [0], preconditions: ["存在失败订单"], priority: 1 }),
-        buildStep("继续处理其他订单", { dependsOn: [1], priority: 2 }),
-      ];
-    }
+
     if (/迁移数据到新系统.*失败.*回滚/.test(trimmed)) {
       return [
         buildStep("迁移数据到新系统", { priority: 0 }),
@@ -296,18 +255,7 @@ export function buildSingleGoalFallback(
         buildStep("生成合规检查清单", { dependsOn: [1], priority: 2 }),
       ];
     }
-    if (/查阅历史工单处理方法.*处理当前工单/.test(trimmed)) {
-      return [
-        buildStep("查阅历史工单处理方法", { priority: 0 }),
-        buildStep("使用相同方案处理当前工单", { dependsOn: [0], priority: 1 }),
-      ];
-    }
-    if (/把所有.+订单改为.+/i.test(trimmed)) {
-      return [
-        buildStep("查询目标订单", { priority: 0 }),
-        buildStep("批量更新订单状态", { dependsOn: [0], priority: 1 }),
-      ];
-    }
+
     if (/删除一年前的日志数据/.test(trimmed)) {
       return [
         buildStep("查询一年前的日志数据", { priority: 0 }),
@@ -320,12 +268,7 @@ export function buildSingleGoalFallback(
         buildStep("写入目标配置", { dependsOn: [0], priority: 1 }),
       ];
     }
-    if (/批量导入.+客户数据/.test(trimmed)) {
-      return [
-        buildStep("校验客户数据", { priority: 0 }),
-        buildStep("批量导入客户数据", { dependsOn: [0], priority: 1 }),
-      ];
-    }
+
     // 通用拆分：按连接词拆分
     const normalized = trimmed
       .replace(/->|→/g, "，")

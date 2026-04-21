@@ -93,8 +93,8 @@ const _DEFAULT_FOLLOW_UP_CONFIRMS: readonly string[] = [
 const _DEFAULT_QUERY_KEYWORDS: readonly string[] = [
   "查询", "查找", "搜索", "查看", "列出", "统计", "汇总",
   "找下", "找找", "拉一下", "找出来",
-  "翻翻", "有哪些", "历史订单", "数据不对劲",
-  "给我拉", "报表", "联系方式", "再多看几条",
+  "翻翻", "有哪些",
+  "给我拉", "报表", "再多看几条",
   "筛选", "导出",
 ] as const;
 

@@ -24,26 +24,19 @@ type Pipeline = {
 type PipelinePreflightEval = { suiteId?: string; name?: string; passed?: boolean; latestRunId?: string | null };
 type PipelinePreflight = { evalGate?: { suites?: PipelinePreflightEval[] } } | null;
 
-type ItemKind =
-  | "tool.enable"
-  | "tool.disable"
-  | "tool.set_active"
-  | "model_routing.upsert"
-  | "model_routing.disable"
-  | "artifact_policy.upsert";
+type ItemKind = string;
+
+const KNOWN_ITEM_KINDS = [
+  "tool.enable",
+  "tool.disable",
+  "tool.set_active",
+  "model_routing.upsert",
+  "model_routing.disable",
+  "artifact_policy.upsert",
+] as const;
 
 function parseItemKind(v: string): ItemKind {
-  switch (v) {
-    case "tool.enable":
-    case "tool.disable":
-    case "tool.set_active":
-    case "model_routing.upsert":
-    case "model_routing.disable":
-    case "artifact_policy.upsert":
-      return v;
-    default:
-      return "tool.enable";
-  }
+  return v || "tool.enable";
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -435,12 +428,9 @@ export default function ChangeSetDetailClient(props: { locale: string; changeset
                 onChange={(e) => setItemKind(parseItemKind(e.target.value))}
                 disabled={busy}
               >
-                <option value="tool.enable">tool.enable</option>
-                <option value="tool.disable">tool.disable</option>
-                <option value="tool.set_active">tool.set_active</option>
-                <option value="model_routing.upsert">model_routing.upsert</option>
-                <option value="model_routing.disable">model_routing.disable</option>
-                <option value="artifact_policy.upsert">artifact_policy.upsert</option>
+                {KNOWN_ITEM_KINDS.map((k) => (
+                  <option key={k} value={k}>{k}</option>
+                ))}
               </select>
             </label>
             {itemKind === "tool.set_active" ? (

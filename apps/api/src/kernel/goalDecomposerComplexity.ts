@@ -46,7 +46,7 @@ const _DEFAULT_COMPLEX_INDICATOR_SOURCES = [
   "(?:多个|多步|多阶段)",
   "(?:DAG|pipeline|流水线|工作流)",
   "(?:A.*B.*C|第一步.*第二步.*第三步)",
-  "(?:然后|之后|最后|并行|同时|等待审批|审批通过后|失败时|失败则|重试|回滚|导出|汇总|创建.+订单|读取.+修改.+重启|生成.+清单|分析.+报告)",
+  "(?:然后|之后|最后|并行|同时|等待审批|审批通过后|失败时|失败则|重试|回滚|导出|汇总|读取.+修改.+重启)",
 ];
 
 const _DEFAULT_TEMPLATE_PATTERN_SOURCES = [
@@ -55,8 +55,8 @@ const _DEFAULT_TEMPLATE_PATTERN_SOURCES = [
   "读取.+修改.+重启",
   "创建.+然后.+创建",
   "修改.+合规审核",
-  "采集.+分析.+生成.+创建",
-  "查阅.+处理方法.+处理当前",
+  "采集.+分析.+生成",
+  // 行业特化模式已外置，通过 reloadComplexityConfig 加载
 ];
 
 const _DEFAULT_SINGLE_TOOL_PATTERN_SOURCES = [
