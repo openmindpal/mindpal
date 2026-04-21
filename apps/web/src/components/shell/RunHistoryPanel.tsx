@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { IconPlay, IconCheck, IconX, IconClock, IconChevronDown14, IconChevronUp14, IconRefresh } from "./ShellIcons";
-import { formatToolRef, formatDuration, formatTime } from "./shellUtils";
+import { formatToolRefLocalized, formatDuration, formatTime, formatErrorCategory, shortId, preloadToolNames } from "./shellUtils";
+import { useBottomPanel } from "./useBottomPanel";
+import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
+import shared from "./bottomTray.shared.module.css";
 import styles from "./RunHistoryPanel.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
@@ -13,7 +16,11 @@ import styles from "./RunHistoryPanel.module.css";
 interface RunItem {
   runId: string;
   status: string;
-  toolRef: string;
+  toolRef?: string;
+  jobType?: string;
+  trigger?: string;
+  currentStep?: { toolRef?: string; name?: string };
+  errorDigest?: { errorCategory?: string; message?: string };
   createdAt: string;
   finishedAt?: string;
 }
@@ -33,63 +40,66 @@ interface StepItem {
 /* ─── Component ─────────────────────────────────────────────────────────────── */
 
 export default function RunHistoryPanel({ locale }: { locale: string }) {
-  const [runs, setRuns] = useState<RunItem[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [steps, setSteps] = useState<StepItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [expandedSteps, setExpandedSteps] = useState<Record<string, StepItem[]>>({});
   const [stepsLoading, setStepsLoading] = useState(false);
+  const [stepsError, setStepsError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  // Fetch recent runs
-  const fetchRuns = useCallback(async () => {
-    setLoading(true);
-    try {
-      const statusParam = statusFilter !== "all" ? `&status=${encodeURIComponent(statusFilter)}` : "";
-      const res = await apiFetch(`/runs?limit=20${statusParam}`, { method: "GET", locale });
-      if (res.ok) {
-        const data = await res.json() as { runs?: RunItem[] };
-        setRuns(data.runs || []);
-      }
-    } catch {
-      // Ignore
+  const stepCache = useRef<Record<string, StepItem[]>>({});
+
+  const fetchRuns = useCallback(async (): Promise<RunItem[]> => {
+    const statusParam = statusFilter !== "all" ? `&status=${encodeURIComponent(statusFilter)}` : "";
+    const res = await apiFetch(`/runs?limit=20${statusParam}`, { method: "GET", locale });
+    if (res.ok) {
+      const data = await res.json() as { runs?: RunItem[] };
+      return data.runs || [];
     }
-    setLoading(false);
+    throw new Error("fetch_error");
   }, [locale, statusFilter]);
 
-  // Fetch steps for selected run
-  const fetchSteps = useCallback(async (runId: string) => {
+  const { items: runs, loading, error, reload } = useBottomPanel<RunItem>({
+    fetchFn: fetchRuns,
+    refreshInterval: 30_000,
+  });
+
+  // Preload tool display names from backend metadata
+  useEffect(() => { preloadToolNames(); }, []);
+
+  // Load steps with cache — avoids redundant API calls on re-expand
+  const loadSteps = useCallback(async (runId: string) => {
+    if (stepCache.current[runId]) {
+      setExpandedSteps(prev => ({ ...prev, [runId]: stepCache.current[runId] }));
+      setStepsError(null);
+      return;
+    }
     setStepsLoading(true);
+    setStepsError(null);
     try {
       const res = await apiFetch(`/runs/${encodeURIComponent(runId)}`, { method: "GET", locale });
       if (res.ok) {
         const data = await res.json() as { steps?: StepItem[] };
-        setSteps(data.steps || []);
+        const steps = data.steps || [];
+        stepCache.current[runId] = steps;
+        setExpandedSteps(prev => ({ ...prev, [runId]: steps }));
+      } else {
+        throw new Error("fetch_error");
       }
     } catch {
-      setSteps([]);
+      setStepsError(runId);
     }
     setStepsLoading(false);
   }, [locale]);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initial data load
-    fetchRuns();
-  }, [fetchRuns]);
-
-  // Auto-refresh every 30 seconds
-  useEffect(() => {
-    const timer = setInterval(fetchRuns, 30_000);
-    return () => clearInterval(timer);
-  }, [fetchRuns]);
-
-  useEffect(() => {
-    if (selectedRunId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Load steps when run selected
-      fetchSteps(selectedRunId);
+  const toggleRun = useCallback((runId: string) => {
+    if (selectedRunId === runId) {
+      setSelectedRunId(null);
+      setStepsError(null);
     } else {
-      setSteps([]);
+      setSelectedRunId(runId);
+      loadSteps(runId);
     }
-  }, [selectedRunId, fetchSteps]);
+  }, [selectedRunId, loadSteps]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -116,6 +126,17 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
 
   const fmtTime = (ts: string) => formatTime(ts, locale);
 
+  function getRunLabel(run: RunItem): string {
+    if (run.jobType) return run.jobType;
+    if (run.currentStep?.toolRef) return formatToolRefLocalized(run.currentStep.toolRef, locale);
+    if (run.currentStep?.name) return run.currentStep.name;
+    if (run.trigger) return run.trigger.length > 30 ? run.trigger.slice(0, 30) + "…" : run.trigger;
+    if (run.toolRef) return formatToolRefLocalized(run.toolRef, locale);
+    return `#${shortId(run.runId)}`;
+  }
+
+  const currentSteps = selectedRunId ? expandedSteps[selectedRunId] : undefined;
+
   return (
     <div className={styles.runHistoryPanel}>
       {/* Header */}
@@ -132,7 +153,7 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
             <option value="failed">{t(locale, "runHistory.filter.failed")}</option>
             <option value="running">{t(locale, "runHistory.filter.running")}</option>
           </select>
-          <button className={styles.refreshBtn} onClick={fetchRuns} disabled={loading}>
+          <button className={styles.refreshBtn} onClick={reload} disabled={loading}>
             <IconRefresh /> {t(locale, "runHistory.refresh")}
           </button>
         </div>
@@ -140,25 +161,31 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
 
       {/* Content */}
       <div className={styles.content}>
-        {/* Run list */}
-        <div className={styles.runList}>
-          {loading && runs.length === 0 ? (
-            <div className={styles.loading}>{t(locale, "common.loading")}</div>
-          ) : runs.length === 0 ? (
-            <div className={styles.empty}>{t(locale, "runHistory.empty")}</div>
-          ) : (
-            runs.map((run) => (
+        {loading && runs.length === 0 ? (
+          <PanelLoading message={t(locale, "common.loading")} />
+        ) : error ? (
+          <PanelError message={error} onRetry={reload} />
+        ) : runs.length === 0 ? (
+          <PanelEmpty message={t(locale, "runHistory.empty")} />
+        ) : (
+          <div className={styles.runList}>
+            {runs.map((run) => (
               <div
                 key={run.runId}
                 className={`${styles.runItem} ${selectedRunId === run.runId ? styles.runItemSelected : ""}`}
-                onClick={() => setSelectedRunId(selectedRunId === run.runId ? null : run.runId)}
+                onClick={() => toggleRun(run.runId)}
               >
-                <div className={styles.runItemMain}>
+                <div className={`${styles.runItemMain} ${shared.itemRow}`}>
                   <span className={`${styles.runItemStatus} ${getStatusClass(run.status)}`}>
                     {getStatusIcon(run.status)}
                   </span>
-                  <span className={styles.runItemTool}>{formatToolRef(run.toolRef)}</span>
-                  <span className={styles.runItemTime}>{fmtTime(run.createdAt)}</span>
+                  <span className={`${styles.runItemTool} ${shared.truncate}`}>{getRunLabel(run)}</span>
+                  {run.status === "failed" && run.errorDigest?.message && (
+                    <span className={styles.errorHint} title={run.errorDigest.message}>
+                      {formatErrorCategory(run.errorDigest.errorCategory, locale) || run.errorDigest.message.slice(0, 20)}
+                    </span>
+                  )}
+                  <span className={`${styles.runItemTime} ${shared.monoText}`}>{fmtTime(run.createdAt)}</span>
                   <span className={styles.runItemExpand}>
                     {selectedRunId === run.runId ? <IconChevronUp14 /> : <IconChevronDown14 />}
                   </span>
@@ -168,32 +195,42 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
                 {selectedRunId === run.runId && (
                   <div className={styles.stepTimeline}>
                     {stepsLoading ? (
-                      <div className={styles.stepsLoading}>{t(locale, "common.loading")}</div>
-                    ) : steps.length === 0 ? (
-                      <div className={styles.stepsEmpty}>{t(locale, "runHistory.noSteps")}</div>
+                      <PanelLoading message={t(locale, "common.loading")} />
+                    ) : stepsError === run.runId ? (
+                      <div className={styles.stepsEmpty}>
+                        <span>{t(locale, "runHistory.stepsLoadFailed")}</span>
+                        <button
+                          className={shared.retryBtn}
+                          onClick={(e) => { e.stopPropagation(); loadSteps(run.runId); }}
+                        >
+                          {t(locale, "common.retry")}
+                        </button>
+                      </div>
+                    ) : !currentSteps || currentSteps.length === 0 ? (
+                      <PanelEmpty message={t(locale, "runHistory.noSteps")} />
                     ) : (
                       <div className={styles.steps}>
-                        {steps.map((step, idx) => (
+                        {currentSteps.map((step, idx) => (
                           <div key={step.stepId} className={styles.stepItem}>
                             <div className={styles.stepTimestamp}>
                               {step.startedAt ? fmtTime(step.startedAt) : "-"}
                             </div>
                             <div className={styles.stepConnector}>
                               <div className={`${styles.stepDot} ${getStatusClass(step.status)}`} />
-                              {idx < steps.length - 1 && <div className={styles.stepLine} />}
+                              {idx < currentSteps.length - 1 && <div className={styles.stepLine} />}
                             </div>
                             <div className={styles.stepContent}>
                               <div className={styles.stepHeader}>
                                 <span className={`${styles.stepStatus} ${getStatusClass(step.status)}`}>
                                   {getStatusIcon(step.status)}
                                 </span>
-                                <span className={styles.stepTool}>{formatToolRef(step.toolRef)}</span>
+                                <span className={`${styles.stepTool} ${shared.truncate}`}>{formatToolRefLocalized(step.toolRef, locale)}</span>
                                 {step.latencyMs != null && (
-                                  <span className={styles.stepLatency}>{formatDuration(step.latencyMs)}</span>
+                                  <span className={`${styles.stepLatency} ${shared.monoText}`}>{formatDuration(step.latencyMs)}</span>
                                 )}
                               </div>
                               {step.errorCategory && (
-                                <div className={styles.stepError}>{step.errorCategory}</div>
+                                <div className={styles.stepError}>{formatErrorCategory(step.errorCategory, locale)}</div>
                               )}
                             </div>
                           </div>
@@ -204,6 +241,7 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
                       <Link
                         href={`/runs/${encodeURIComponent(run.runId)}?lang=${encodeURIComponent(locale)}`}
                         className={styles.viewDetailsLink}
+                        onClick={(e) => e.stopPropagation()}
                       >
                         {t(locale, "runHistory.viewDetails")}
                       </Link>
@@ -211,9 +249,9 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
                   </div>
                 )}
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

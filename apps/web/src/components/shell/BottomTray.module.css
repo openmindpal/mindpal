@@ -215,25 +215,6 @@
   background: var(--sl-muted);
 }
 
-.placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 100%;
-  color: var(--sl-muted);
-  font-size: 14px;
-}
-
-.comingSoon {
-  font-size: 11px;
-  color: var(--sl-accent);
-  padding: 2px 8px;
-  border-radius: var(--sl-radius-full);
-  background: var(--sl-accent-bg);
-}
-
 /* ─── Collapsed Summary (shown next to expand button when collapsed) ────── */
 
 .collapsedSummary {
@@ -266,10 +247,6 @@
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
-}
-
-.summaryText {
-  white-space: nowrap;
 }
 
 /* ─── Small Screen Enhancements ──────────────────────────────────────── */

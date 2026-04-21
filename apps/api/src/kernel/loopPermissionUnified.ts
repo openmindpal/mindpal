@@ -120,6 +120,20 @@ export async function authorizeToolExecution(params: AuthorizeToolParams): Promi
     traceId, runId, jobId,
   });
   if (genericDecision.decision !== "allow") {
+    // ── 审计日志：记录权限拒绝决策 ──
+    insertAuditEvent(pool, {
+      subjectId, tenantId, spaceId,
+      resourceType: "tool", action: "execute",
+      toolRef,
+      result: "denied",
+      traceId: traceId ?? "",
+      runId, inputDigest: {
+        reason: "rbac_denied:tool/execute",
+        matchedPolicy: genericDecision.snapshotRef ?? null,
+        subject: subjectId, resource: toolRef, requestedAction: "execute",
+      },
+      policySnapshotRef: genericDecision.snapshotRef,
+    }).catch(() => { /* 审计写入失败不影响主流程 */ });
     return {
       authorized: false,
       errorCategory: ErrorCategory.GOVERNANCE_DENIED,
@@ -134,6 +148,20 @@ export async function authorizeToolExecution(params: AuthorizeToolParams): Promi
     traceId, runId, jobId,
   });
   if (specificDecision.decision !== "allow") {
+    // ── 审计日志：记录权限拒绝决策 ──
+    insertAuditEvent(pool, {
+      subjectId, tenantId, spaceId,
+      resourceType, action,
+      toolRef,
+      result: "denied",
+      traceId: traceId ?? "",
+      runId, inputDigest: {
+        reason: `rbac_denied:${resourceType}/${action}`,
+        matchedPolicy: specificDecision.snapshotRef ?? null,
+        subject: subjectId, resource: toolRef, requestedAction: action,
+      },
+      policySnapshotRef: specificDecision.snapshotRef,
+    }).catch(() => { /* 审计写入失败不影响主流程 */ });
     return {
       authorized: false,
       errorCategory: ErrorCategory.GOVERNANCE_DENIED,
@@ -162,6 +190,19 @@ export async function authorizeToolExecution(params: AuthorizeToolParams): Promi
           // 策略要求审批 —— 不阻止，交由后续 approval 流程处理
           governanceResult = { passed: true, requiresApproval: true };
         } else {
+          // ── 审计日志：记录治理检查拒绝决策 ──
+          insertAuditEvent(pool, {
+            subjectId, tenantId, spaceId,
+            resourceType: "governance", action: "pre_check.denied",
+            toolRef,
+            result: "denied",
+            traceId: traceId ?? "",
+            runId, inputDigest: {
+              reason: firstBlocking?.message ?? "治理检查未通过",
+              checkType: firstBlocking?.checkType ?? "unknown",
+              subject: subjectId, resource: toolRef, requestedAction: action,
+            },
+          }).catch(() => { /* 审计写入失败不影响主流程 */ });
           return {
             authorized: false,
             errorCategory: ErrorCategory.GOVERNANCE_DENIED,

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { t } from "@/lib/i18n";
 import type { WorkspaceTab, RecentEntry } from "./homeHelpers";
@@ -53,6 +53,10 @@ export default function LeftPanel(props: LeftPanelProps) {
 
   const router = useRouter();
 
+  // SSR hydration guard: ensure first client render matches server output
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => { setHydrated(true); }, []);
+
   return (
     <div
       className={`${styles.panelSide} ${leftCollapsed ? styles.panelCollapsed : ""}`}
@@ -70,7 +74,7 @@ export default function LeftPanel(props: LeftPanelProps) {
       )}
 
       {/* Tab bar */}
-      {(pinnedTabs.length > 0 || previewTab) && (
+      {hydrated && (pinnedTabs.length > 0 || previewTab) && (
         <div className={styles.wsTabs}>
           <div className={styles.wsTabList}>
             {pinnedTabs.map((tab) => (
@@ -112,7 +116,7 @@ export default function LeftPanel(props: LeftPanelProps) {
       )}
 
       {/* Content area */}
-      {visibleTab ? (
+      {hydrated && visibleTab ? (
         <>
           <div className={styles.panelHeader}>
             <span className={styles.panelTitle}>{visibleTab.name}</span>

@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { compilePolicyExprWhere } from "@openslin/shared";
+import { compilePolicyExprWhere, compileRowFiltersWhere } from "@openslin/shared";
 import { checkType, digestObject, isPlainObject } from "./common";
 import { callDataPlaneJson } from "./dataPlaneGateway";
 
@@ -7,73 +7,6 @@ function isSafeFieldName(name: string) {
   if (!name) return false;
   if (name.length > 100) return false;
   return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
-}
-
-export function compileRowFiltersWhere(
-  params: { rowFilters: any; subject: { subjectId: string | null; tenantId: string | null; spaceId: string | null }; context?: any },
-  args: any[],
-  idxStart: number,
-) {
-  let idx = idxStart;
-  const fieldExpr = (field: string) => {
-    args.push(field);
-    return `(payload->>$${++idx})`;
-  };
-  const pushValue = (value: any) => {
-    args.push(value);
-    return `$${++idx}`;
-  };
-
-  const compileOne = (rf: any): string => {
-    if (!rf) return "TRUE";
-    if (typeof rf !== "object" || Array.isArray(rf)) throw new Error("policy_violation:unsupported_row_filters");
-    const kind = String((rf as any).kind ?? "");
-    if (kind === "owner_only") {
-      if (!params.subject.subjectId) throw new Error("policy_violation:missing_subject_id");
-      const right = pushValue(params.subject.subjectId);
-      return `owner_subject_id = ${right}`;
-    }
-    if (kind === "payload_field_eq_subject") {
-      if (!params.subject.subjectId) throw new Error("policy_violation:missing_subject_id");
-      const field = String((rf as any).field ?? "");
-      if (!isSafeFieldName(field)) throw new Error("policy_violation:row_filter_field_invalid");
-      const left = fieldExpr(field);
-      const right = pushValue(params.subject.subjectId);
-      return `${left} = ${right}::text`;
-    }
-    if (kind === "payload_field_eq_literal") {
-      const field = String((rf as any).field ?? "");
-      if (!isSafeFieldName(field)) throw new Error("policy_violation:row_filter_field_invalid");
-      const value = (rf as any).value;
-      const t = typeof value;
-      if (t !== "string" && t !== "number" && t !== "boolean") throw new Error("policy_violation:row_filter_value_invalid");
-      const left = fieldExpr(field);
-      const right = pushValue(String(value));
-      return `${left} = ${right}::text`;
-    }
-    if (kind === "or") {
-      const rules = (rf as any).rules;
-      if (!Array.isArray(rules) || rules.length === 0) return "TRUE";
-      return `(${rules.map((x: any) => `(${compileOne(x)})`).join(" OR ")})`;
-    }
-    if (kind === "expr") {
-      const compiled = compilePolicyExprWhere({
-        expr: (rf as any).expr,
-        subject: params.subject,
-        context: params.context,
-        args,
-        idxStart: idx,
-        ownerColumn: "owner_subject_id",
-        payloadColumn: "payload",
-      });
-      idx = compiled.idx;
-      return compiled.sql;
-    }
-    throw new Error("policy_violation:unsupported_row_filters");
-  };
-
-  const sql = compileOne(params.rowFilters);
-  return { sql, idx };
 }
 
 export async function loadLatestSchema(pool: Pool, schemaName: string) {

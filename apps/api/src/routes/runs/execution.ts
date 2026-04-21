@@ -10,6 +10,7 @@ import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { insertAuditEvent } from "../../modules/audit/auditRepo";
 import { requirePermission } from "../../modules/auth/guard";
+import { authorizeToolExecution } from "../../kernel/loopPermissionUnified";
 import { getToolDefinition } from "../../modules/tools/toolRepo";
 import { getEffectiveToolNetworkPolicy } from "../../modules/governance/toolNetworkPolicyRepo";
 import { createApproval } from "../../modules/workflow/approvalRepo";
@@ -75,7 +76,24 @@ export const runsExecutionRoutes: FastifyPluginAsync = async (app) => {
       throw Errors.badRequest("工具契约缺失");
     }
 
-    const decision = await requirePermission({ req, resourceType, action });
+    // 使用统一权限入口替代单独的 requirePermission 调用
+    const authResult = await authorizeToolExecution({
+      pool: app.db,
+      subjectId: subject.subjectId,
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId!,
+      traceId: req.ctx.traceId ?? null,
+      runId: params.runId,
+      jobId: "",
+      resourceType,
+      action,
+      toolRef,
+    });
+    if (!authResult.authorized) {
+      req.ctx.audit!.errorCategory = "policy_violation";
+      throw Errors.forbidden(authResult.errorMessage);
+    }
+    const decision = authResult.opDecision ?? { decision: "allow" };
     req.ctx.audit!.policyDecision = decision;
 
     const effPol = await getEffectiveToolNetworkPolicy({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? undefined, toolRef });

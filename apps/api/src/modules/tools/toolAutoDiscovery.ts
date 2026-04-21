@@ -1,21 +1,29 @@
 /**
- * Tool Auto-Discovery.
+ * Tool Auto-Discovery — 控制面与数据面之间的「同步桥梁」。
  *
- * Automatically discovers and registers tools from THREE sources:
- * 1. Built-in skill plugins (manifest.tools declarations) — e.g. memory.read, nl2ui.generate
- * 2. External skill packages (skills/ directory manifest.json) — e.g. collab.guard, sleep
- * 3. Built-in skill identity (any plugin without explicit tools) — registered as builtin_skill
+ * ═══════════════════════════════════════════════════════════════════
+ * 架构定位：
+ *   - 控制面（skill_manifests / builtin-skills-manifest.json + 环境变量）
+ *     决定"哪些 Skill 被启用"——由 registry.ts initBuiltinSkills() 消费。
+ *   - 数据面（tool_definitions 表）
+ *     决定"哪些工具可被 LLM 调用"——由 agentContext.discoverEnabledTools() 消费。
+ *   - 本模块（toolAutoDiscovery）= 两者之间的同步桥梁：
+ *     将控制面已启用的 Skill 插件 → 投射写入数据面 tool_definitions 表。
+ * ═══════════════════════════════════════════════════════════════════
  *
- * For each discovered tool, ensures:
- * - tool_definitions row exists
- * - tool_versions row (v1, released) exists
- * - tool_active_versions row exists (pointing to @1)
- * - tool_rollouts row exists (enabled at tenant level)
+ * 自动发现并注册来自三个来源的工具：
+ * 1. 内置 Skill 插件（manifest.tools 声明）— 如 memory.read, nl2ui.generate
+ * 2. 外部 Skill 包（skills/ 目录 manifest.json）— 如 collab.guard, sleep
+ * 3. 内置 Skill 身份（无显式 tools 的插件）— 注册为 builtin_skill
  *
- * 职责边界说明：
- *   本模块负责将“内置插件 + skills/ 目录外部包”→ 写入 tool_definitions 表。
- *   tool_definitions 是 Agent Loop (discoverEnabledTools) 的唯一工具注册表。
- *   内置 Skill 的启停由 registry.ts 的代码清单与环境变量控制，与本模块无直接关系。
+ * 对每个发现的工具，确保：
+ * - tool_definitions 行存在
+ * - tool_versions 行（v1, released）存在
+ * - tool_active_versions 行存在（指向 @1）
+ * - tool_rollouts 行存在（在 tenant 级别启用）
+ *
+ * 注意：本模块不判断"工具是否可被 LLM 调用"——该判断由
+ * agentContext.discoverEnabledTools() 基于 tool_definitions + tool_rollouts 执行。
  */
 import fs from "node:fs/promises";
 import path from "node:path";

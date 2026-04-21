@@ -23,7 +23,7 @@ export type ChatAttachment = {
   duration?: number;
 };
 
-export type FlowMessage = { id: string; role: "user" | "assistant"; text: string; attachments?: ChatAttachment[]; createdAt?: number; /** 后端实时处理阶段（如 started/classified/thinking/planning/executing/reviewing） */ phase?: string };
+export type FlowMessage = { id: string; role: "user" | "assistant"; text: string; attachments?: ChatAttachment[]; createdAt?: number; /** 后端实时处理阶段（如 started/classified/thinking/planning/executing/reviewing） */ phase?: string; /** 模型自动切换通知文本（当后端 fallback 到备用模型时显示） */ modelSwitchNote?: string };
 export type FlowError = { id: string; role: "assistant"; errorCode: string; message: string; traceId: string; retryMessage?: string; createdAt?: number };
 export type UiDirectiveTarget = { kind: "page"; name: string } | { kind: "workbench"; key: string };
 export type FlowDirective = { id: string; role: "assistant"; kind: "uiDirective"; directive: unknown; target: UiDirectiveTarget | null; createdAt?: number };

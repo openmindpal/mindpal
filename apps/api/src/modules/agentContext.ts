@@ -36,8 +36,8 @@ function clampInt(n: number, min: number, max: number) {
 }
 
 function memoryRecallLimit() {
-  const raw = Number(process.env.ORCHESTRATOR_MEMORY_RECALL_LIMIT ?? "10");
-  return clampInt(Number.isFinite(raw) ? Math.floor(raw) : 10, 0, 30);
+  const raw = Number(process.env.ORCHESTRATOR_MEMORY_RECALL_LIMIT ?? "20");
+  return clampInt(Number.isFinite(raw) ? Math.floor(raw) : 20, 0, 50);
 }
 
 const MEMORY_RECALL_MAX_CHARS = Math.max(500, Number(process.env.ORCHESTRATOR_MEMORY_RECALL_MAX_CHARS) || 3000);

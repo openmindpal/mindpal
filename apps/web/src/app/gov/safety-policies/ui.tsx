@@ -116,7 +116,8 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
 
-  const [filterType, setFilterType] = useState<SafetyPolicyType | "">( "");
+  const [searchText, setSearchText] = useState<string>("");
+  const [filterType, setFilterType] = useState<SafetyPolicyType | "">(  "");
   const [newType, setNewType] = useState<SafetyPolicyType>("content");
   const [newName, setNewName] = useState<string>("content-default");
   const [newJson, setNewJson] = useState<string>(JSON.stringify({ version: "v1", mode: "audit_only", denyTargets: ["model:invoke", "tool:execute"], denyHitTypes: ["token"] }, null, 2));
@@ -130,11 +131,20 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
   const [overrideSpaceId, setOverrideSpaceId] = useState<string>("");
   const [overrideTarget, setOverrideTarget] = useState<{ policyId: string; version: number } | null>(null);
 
+  const [activeChangesetId, setActiveChangesetId] = useState<string>("");
+  const [changesetStatus, setChangesetStatus] = useState<string>("");
+  const [changesetError, setChangesetError] = useState<string>("");
+
   const items = useMemo(() => (Array.isArray(data?.items) ? data.items : []), [data]);
   const filtered = useMemo(() => {
-    if (!filterType) return items;
-    return items.filter((x) => String(x?.policy?.policyType ?? "") === filterType);
-  }, [filterType, items]);
+    let result = items;
+    if (filterType) result = result.filter((x) => String(x?.policy?.policyType ?? "") === filterType);
+    if (searchText.trim()) {
+      const needle = searchText.trim().toLowerCase();
+      result = result.filter((x) => (x?.policy?.name ?? "").toLowerCase().includes(needle));
+    }
+    return result;
+  }, [filterType, searchText, items]);
 
   const pageSize = 20;
   const [page, setPage] = useState(0);
@@ -270,22 +280,121 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
         { kind: "policy.publish", policyId, version },
         { kind: "policy.set_active", policyId, version },
       ]);
-      window.location.href = `/gov/changesets/${encodeURIComponent(id)}?lang=${encodeURIComponent(props.locale)}`;
+      setActiveChangesetId(id);
+      setChangesetStatus("draft");
+      setChangesetError("");
     });
   }
 
   async function rollbackActive(policyId: string) {
     await runAction(async () => {
       const id = await createChangeSetWithItems(`policy rollback ${policyId}`, [{ kind: "policy.rollback", policyId }]);
-      window.location.href = `/gov/changesets/${encodeURIComponent(id)}?lang=${encodeURIComponent(props.locale)}`;
+      setActiveChangesetId(id);
+      setChangesetStatus("draft");
+      setChangesetError("");
     });
   }
 
   async function setOverride(policyId: string, version: number, spaceId: string) {
     await runAction(async () => {
       const id = await createChangeSetWithItems(`policy override ${policyId}@${version} space=${spaceId}`, [{ kind: "policy.set_override", policyId, version, spaceId }], [spaceId]);
-      window.location.href = `/gov/changesets/${encodeURIComponent(id)}?lang=${encodeURIComponent(props.locale)}`;
+      setActiveChangesetId(id);
+      setChangesetStatus("draft");
+      setChangesetError("");
     });
+  }
+
+  async function submitChangeset() {
+    setChangesetError("");
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/governance/changesets/${encodeURIComponent(activeChangesetId)}/submit`, {
+        method: "POST",
+        locale: props.locale,
+      });
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) throw toApiError(json);
+      setChangesetStatus("submitted");
+    } catch (e: unknown) {
+      setChangesetError(errText(props.locale, toApiError(e)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveChangeset() {
+    setChangesetError("");
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/governance/changesets/${encodeURIComponent(activeChangesetId)}/approve`, {
+        method: "POST",
+        locale: props.locale,
+      });
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) throw toApiError(json);
+      setChangesetStatus("approved");
+    } catch (e: unknown) {
+      setChangesetError(errText(props.locale, toApiError(e)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function releaseChangeset() {
+    setChangesetError("");
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/governance/changesets/${encodeURIComponent(activeChangesetId)}/release?mode=full`, {
+        method: "POST",
+        locale: props.locale,
+      });
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) throw toApiError(json);
+      setChangesetStatus("released");
+      setActiveChangesetId("");
+      await refresh();
+    } catch (e: unknown) {
+      setChangesetError(errText(props.locale, toApiError(e)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelChangeset() {
+    setActiveChangesetId("");
+    setChangesetStatus("");
+    setChangesetError("");
+  }
+
+  function ChangesetPanel() {
+    if (!activeChangesetId) return null;
+    return (
+      <div style={{ padding: 16, marginBottom: 12, border: "1px solid var(--sl-border, #e2e8f0)", borderRadius: 8, background: "var(--sl-surface-alt, #f8fafc)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+          <strong>变更集操作</strong>
+          <Badge>{changesetStatus || "draft"}</Badge>
+          <span style={{ fontSize: 12, color: "var(--sl-muted, #64748b)", fontFamily: "monospace" }}>{activeChangesetId.slice(0, 8)}</span>
+        </div>
+        {changesetError && <pre style={{ color: "crimson", whiteSpace: "pre-wrap", marginBottom: 8 }}>{changesetError}</pre>}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "var(--sl-muted, #64748b)" }}>draft → submitted → approved → released</span>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button onClick={submitChangeset} disabled={busy || changesetStatus !== "draft"}>
+            提交审批
+          </button>
+          <button onClick={approveChangeset} disabled={busy || changesetStatus !== "submitted"}>
+            审批通过
+          </button>
+          <button onClick={releaseChangeset} disabled={busy || changesetStatus !== "approved"}>
+            发布生效
+          </button>
+          <button onClick={cancelChangeset} disabled={busy}>
+            取消
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const initialError = useMemo(() => (status >= 400 ? errText(props.locale, data) : ""), [data, props.locale, status]);
@@ -341,6 +450,13 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
               <option value="injection">{t(props.locale, "gov.safetyPolicies.type.injection")}</option>
               <option value="risk">{t(props.locale, "gov.safetyPolicies.type.risk")}</option>
             </select>
+            <input
+              value={searchText}
+              onChange={(e) => { setSearchText(e.target.value); setPage(0); }}
+              placeholder="搜索策略名称..."
+              disabled={busy}
+              style={{ width: 200 }}
+            />
           </div>
           <Table header={<span>{t(props.locale, "gov.safetyPolicies.items")}</span>}>
             <thead>
@@ -401,6 +517,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
         <div style={{ marginTop: 16 }}>
           <Card title={`${t(props.locale, "gov.safetyPolicies.policyTitle")} ${selectedPolicyId}`}>
             <div style={{ display: "grid", gap: 12 }}>
+              <ChangesetPanel />
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <button onClick={() => loadVersions(selectedPolicyId)} disabled={busy}>
                   {t(props.locale, "gov.safetyPolicies.reloadVersions")}
@@ -495,12 +612,67 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
                 </button>
               </div>
 
-              {diff ? <StructuredData data={diff} /> : null}
+              {diff ? (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>版本对比结果</div>
+                  {(() => {
+                    const summary = (diff as any)?.summary;
+                    const fields = Array.isArray(summary?.fields) ? summary.fields : [];
+                    if (!summary?.changed) {
+                      return <div style={{ color: "var(--sl-muted, #64748b)", fontStyle: "italic" }}>两个版本内容完全相同</div>;
+                    }
+                    if (fields.length === 0) {
+                      return <div style={{ color: "var(--sl-muted, #64748b)" }}>内容有变化（大小: {summary.aSize} → {summary.bSize} 字节），但无法解析字段级差异</div>;
+                    }
+                    return (
+                      <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
+                        {fields.map((f: any, i: number) => (
+                          <div
+                            key={i}
+                            style={{
+                              padding: "6px 10px",
+                              borderRadius: 4,
+                              background: f.type === "added" ? "rgba(34,197,94,0.08)" : f.type === "removed" ? "rgba(239,68,68,0.08)" : "rgba(234,179,8,0.08)",
+                              borderLeft: `3px solid ${f.type === "added" ? "#22c55e" : f.type === "removed" ? "#ef4444" : "#eab308"}`,
+                            }}
+                          >
+                            <span style={{ fontWeight: 600, fontFamily: "monospace" }}>{f.key}</span>
+                            <span style={{ marginLeft: 8, fontSize: 11, color: f.type === "added" ? "#16a34a" : f.type === "removed" ? "#dc2626" : "#ca8a04" }}>
+                              {f.type === "added" ? "[新增]" : f.type === "removed" ? "[删除]" : "[修改]"}
+                            </span>
+                            {f.type === "changed" && (
+                              <div style={{ marginTop: 4, fontSize: 12, fontFamily: "monospace" }}>
+                                <span style={{ color: "#dc2626", textDecoration: "line-through" }}>{JSON.stringify(f.from)}</span>
+                                <span style={{ margin: "0 6px" }}>→</span>
+                                <span style={{ color: "#16a34a" }}>{JSON.stringify(f.to)}</span>
+                              </div>
+                            )}
+                            {f.type === "added" && (
+                              <div style={{ marginTop: 4, fontSize: 12, fontFamily: "monospace", color: "#16a34a" }}>{JSON.stringify(f.to)}</div>
+                            )}
+                            {f.type === "removed" && (
+                              <div style={{ marginTop: 4, fontSize: 12, fontFamily: "monospace", color: "#dc2626", textDecoration: "line-through" }}>{JSON.stringify(f.from)}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : null}
               {versionDetail ? <StructuredData data={versionDetail} /> : null}
             </div>
           </Card>
         </div>
       ) : null}
+
+      {activeChangesetId && !selectedPolicyId && (
+        <div style={{ marginTop: 16 }}>
+          <Card title="变更集操作">
+            <ChangesetPanel />
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

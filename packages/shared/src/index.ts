@@ -191,24 +191,32 @@ export type { RunSummaryDTO, RunDetailDTO, RunStepDTO } from "./runDto.js";
 
 export type { EvidenceSourceRef, EvidenceRef, EvidencePolicy, AnswerEnvelope } from "./evidence";
 
-export type { VectorStoreModeV1, VectorStoreRefV1, VectorStoreCapabilitiesV1, VectorStoreChunkEmbeddingV1, VectorStoreQueryResultItemV1, VectorStoreQueryResponseV1 } from "./knowledgeVectorStore";
-
-// ── V2 向量存储类型 (专业向量数据库集成) ──
 export type {
   VectorStoreProvider,
-  VectorStoreRefV2,
-  VectorStoreCapabilitiesV2,
-  VectorStoreV2,
-  VectorStoreConfigV2,
-  VectorStoreEmbeddingV2,
+  VectorStoreRef,
+  VectorStoreRef as VectorStoreRefV2,
+  VectorStoreCapabilities,
+  VectorStoreCapabilities as VectorStoreCapabilitiesV2,
+  VectorStoreInterface,
+  VectorStoreInterface as VectorStoreV2,
+  VectorStoreConfig,
+  VectorStoreConfig as VectorStoreConfigV2,
+  VectorStoreEmbedding,
+  VectorStoreEmbedding as VectorStoreEmbeddingV2,
   VectorMetadataPayload,
-  VectorStoreQueryV2,
-  VectorStoreQueryResponseV2,
+  VectorStoreQuery,
+  VectorStoreQuery as VectorStoreQueryV2,
+  VectorStoreQueryResponse,
+  VectorStoreQueryResponse as VectorStoreQueryResponseV2,
   VectorStoreBatchResult,
   VectorStoreCollectionInfo,
   VectorStoreFilter,
   VectorStoreFilterCondition,
-  VectorStoreQueryResultV2,
+  EqFilter,
+  RangeFilter,
+  InFilter,
+  TextMatchFilter,
+  VectorStoreQueryResult,
   VectorStoreDegradeEvent,
   PgVectorConfig,
 } from "./knowledgeVectorStore";
@@ -223,6 +231,7 @@ export {
   tokenize, hash32, computeMinhash, minhashOverlapScore,
   // 风险分级
   MEMORY_TYPE_RISK_LEVELS, DEFAULT_RISK_LEVEL, APPROVAL_REQUIRED_RISK_LEVELS,
+  registerMemoryTypeRisk, getMemoryTypeRisk,
   evaluateMemoryRisk,
   // SHA-256
   sha256 as memorySha256,
@@ -251,6 +260,10 @@ export type {
 
 export type { PolicyExpr, PolicyLiteral, PolicyOperand, PolicyExprValidationResult, CompiledWhere } from "./policyExpr";
 export { POLICY_EXPR_JSON_SCHEMA_V1, validatePolicyExpr, compilePolicyExprWhere } from "./policyExpr";
+
+// ── 统一行过滤编译器（消除 dataRepo / worker entity 重复逻辑） ──
+export { compileRowFiltersWhere, clearPolicyExprCache } from "./policyFilterCache";
+export type { RowFilterSubject, CompileRowFiltersParams, CompileRowFiltersResult } from "./policyFilterCache";
 
 // ── ABAC 策略引擎 ──────────────────────────────────────────
 export {
@@ -408,14 +421,16 @@ export type { DagNode, DagValidationResult } from "./dagUtils";
 export {
   createGoalGraph, getExecutableSubGoals, computeGoalProgress,
   isGoalGraphComplete, validateGoalGraphDAG, topologicalSort,
+  getParallelSubGoalGroups,
 } from "./goalGraph";
 export type {
-  GoalCondition, SuccessCriterion, CompletionEvidence,
+  GoalEdgeType, GoalCondition, SuccessCriterion, CompletionEvidence,
   SubGoalStatus, SubGoal, GoalGraphStatus, GoalGraph,
 } from "./goalGraph";
 
 export {
   createWorldState, upsertEntity, addRelation, upsertFact,
+  batchUpsertEntities, batchAddRelations,
   getValidFacts, getEntityRelations, getEntitiesByCategory,
   worldStateToPromptText,
 } from "./worldState";
@@ -474,9 +489,9 @@ export {
   validateCollabMessage,
   validateConsensusProposal,
   createDebateSession,
+  createDebateSession as createDebateSessionV2,
   isDebateConverged,
-  createDebateSessionV2,
-  isDebateConvergedV2,
+  isDebateConverged as isDebateConvergedV2,
   computeDebateConsensusScore,
   COLLAB_CONFIG_DEFAULTS,
   collabConfig,

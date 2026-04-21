@@ -284,8 +284,10 @@ describe("createDebateSession", () => {
       debateId: "d-1",
       collabRunId: "cr-1",
       topic: "应该用 React 还是 Vue",
-      sideA: "architect",
-      sideB: "frontend_lead",
+      parties: [
+        { partyId: "side_a", role: "architect", stance: "pro" },
+        { partyId: "side_b", role: "frontend_lead", stance: "con" },
+      ],
       arbiter: "tech_director",
     });
     expect(session.debateId).toBe("d-1");
@@ -302,8 +304,10 @@ describe("createDebateSession", () => {
       debateId: "d-2",
       collabRunId: "cr-2",
       topic: "test",
-      sideA: "a",
-      sideB: "b",
+      parties: [
+        { partyId: "side_a", role: "a", stance: "pro" },
+        { partyId: "side_b", role: "b", stance: "con" },
+      ],
       arbiter: "c",
       maxRounds: 5,
     });
@@ -411,8 +415,10 @@ describe("Debate Round Progression（辩论轮次推进）", () => {
       debateId: "d-multi-diverge",
       collabRunId: "cr-1",
       topic: "React vs Vue",
-      sideA: "architect",
-      sideB: "frontend_lead",
+      parties: [
+        { partyId: "side_a", role: "architect", stance: "pro" },
+        { partyId: "side_b", role: "frontend_lead", stance: "con" },
+      ],
       arbiter: "tech_director",
       maxRounds: 3,
     });
@@ -430,8 +436,10 @@ describe("Debate Round Progression（辩论轮次推进）", () => {
       debateId: "d-converge-r2",
       collabRunId: "cr-2",
       topic: "技术选型",
-      sideA: "a",
-      sideB: "b",
+      parties: [
+        { partyId: "side_a", role: "a", stance: "pro" },
+        { partyId: "side_b", role: "b", stance: "con" },
+      ],
       arbiter: "c",
       maxRounds: 5,
     });
@@ -454,8 +462,7 @@ describe("Debate Round Progression（辩论轮次推进）", () => {
       debateId: "d-one-side",
       collabRunId: "cr-3",
       topic: "test",
-      sideA: "a",
-      sideB: "b",
+      parties: [{ partyId: "side_a", role: "a", stance: "pro" }, { partyId: "side_b", role: "b", stance: "con" }],
       arbiter: "c",
     });
     session.rounds.push(makeRound(0, 0.95, 0.95, true));
@@ -467,8 +474,7 @@ describe("Debate Round Progression（辩论轮次推进）", () => {
       debateId: "d-latest-only",
       collabRunId: "cr-4",
       topic: "test",
-      sideA: "a",
-      sideB: "b",
+      parties: [{ partyId: "side_a", role: "a", stance: "pro" }, { partyId: "side_b", role: "b", stance: "con" }],
       arbiter: "c",
     });
     // Round 0: 强分歧
@@ -484,8 +490,7 @@ describe("Debate Round Progression（辩论轮次推进）", () => {
       debateId: "d-boundary",
       collabRunId: "cr-5",
       topic: "test",
-      sideA: "a",
-      sideB: "b",
+      parties: [{ partyId: "side_a", role: "a", stance: "pro" }, { partyId: "side_b", role: "b", stance: "con" }],
       arbiter: "c",
     });
     // 默认阈值 0.7，两方恰好 0.7
@@ -502,8 +507,7 @@ describe("Debate Round Progression（辩论轮次推进）", () => {
       debateId: "d-flow",
       collabRunId: "cr-flow",
       topic: "状态流转测试",
-      sideA: "a",
-      sideB: "b",
+      parties: [{ partyId: "side_a", role: "a", stance: "pro" }, { partyId: "side_b", role: "b", stance: "con" }],
       arbiter: "c",
       maxRounds: 3,
     });
@@ -540,8 +544,7 @@ describe("Debate Round Progression（辩论轮次推进）", () => {
       debateId: "d-abort",
       collabRunId: "cr-abort",
       topic: "abort test",
-      sideA: "a",
-      sideB: "b",
+      parties: [{ partyId: "side_a", role: "a", stance: "pro" }, { partyId: "side_b", role: "b", stance: "con" }],
       arbiter: "c",
     });
 

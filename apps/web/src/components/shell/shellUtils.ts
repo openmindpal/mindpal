@@ -7,6 +7,16 @@
 
 import { dateValueToMs, fmtDate, fmtShortDateTime } from "@/lib/fmtDateTime";
 import { t } from "@/lib/i18n";
+import { getToolDisplayName } from "@/lib/toolMetadataCache";
+export { preloadToolNames } from "@/lib/toolMetadataCache";
+
+/**
+ * Truncate an ID string to the first `len` characters.
+ * e.g. shortId("abcdef1234", 8) → "abcdef12"
+ */
+export function shortId(id: string, len: number = 8): string {
+  return id.length > len ? id.slice(0, len) : id;
+}
 
 /**
  * Extract the tool name from a toolRef string (strip version suffix after '@').
@@ -16,6 +26,39 @@ export function formatToolRef(toolRef: string | null): string {
   if (!toolRef) return "-";
   const at = toolRef.lastIndexOf("@");
   return at > 0 ? toolRef.slice(0, at) : toolRef;
+}
+
+/**
+ * Localized version of formatToolRef — resolves tool display name from backend metadata.
+ * Priority: 1) API metadata cache  2) i18n fallback  3) raw tool name.
+ */
+export function formatToolRefLocalized(toolRef: string | null, locale: string = "zh-CN"): string {
+  if (!toolRef) return "-";
+  const at = toolRef.lastIndexOf("@");
+  const name = at > 0 ? toolRef.slice(0, at) : toolRef;
+
+  // 优先级1：从工具元数据缓存获取 displayName
+  const metaName = getToolDisplayName(name, locale);
+  if (metaName) return metaName;
+
+  // 优先级2：从 i18n 获取（降级方案）
+  const key = `bottomTray.tool.${name}`;
+  const translated = t(locale, key);
+  if (translated !== key) return translated;
+
+  // 优先级3：返回工具名原文
+  return name;
+}
+
+/**
+ * Translate an error category string via `error.category.{category}` i18n key.
+ * Falls back to raw category when no translation exists.
+ */
+export function formatErrorCategory(category: string | null | undefined, locale: string = "zh-CN"): string {
+  if (!category) return "";
+  const key = `error.category.${category}`;
+  const translated = t(locale, key);
+  return translated !== key ? translated : category;
 }
 
 /**
@@ -70,4 +113,12 @@ export function formatDuration(ms: number): string {
  */
 export function formatTime(ts: string, locale: string): string {
   return fmtShortDateTime(ts, locale);
+}
+
+/**
+ * Alias for timeAgo — returns relative time from an ISO date string.
+ * Convenience export for panels using the shared useBottomPanel hook.
+ */
+export function relativeTime(dateStr: string, locale: string, prefix: string = "common"): string {
+  return timeAgo(dateStr, locale, prefix);
 }

@@ -5,6 +5,7 @@ import { validatePolicyExpr, evaluateAbacPolicySet, buildPolicySetIndex, Structu
 const _logger = new StructuredLogger({ module: "authz" });
 import { createPolicySnapshot } from "./policySnapshotRepo";
 import { getPolicyCacheEpoch } from "./policyCacheEpochRepo";
+import { insertAuditEvent } from "../audit/auditRepo";
 
 // ─── RBAC 缓存失效 Pub/Sub ────────────────────────────────────────
 const RBAC_CACHE_INVALIDATE_CHANNEL = "rbac:cache:invalidate";
@@ -523,8 +524,47 @@ export async function authorize(params: {
       policyCacheEpoch,
       explainV1,
     });
+    // 无角色绑定拒绝审计日志
+    insertAuditEvent(params.pool, {
+      subjectId: params.subjectId,
+      tenantId: params.tenantId,
+      spaceId: params.spaceId,
+      resourceType: params.resourceType,
+      action: params.action,
+      result: "denied",
+      traceId: "",
+      inputDigest: {
+        subject: params.subjectId,
+        resource: params.resourceType,
+        requestedAction: params.action,
+        reason: "no_role_binding",
+        matchedPolicy: { roleIds: [], snapshotRef: `policy_snapshot:${snap.snapshotId}` },
+      },
+      outputDigest: { decision: "deny", reason: "no_role_binding" },
+    }).catch(() => { /* 审计写入失败不影响主流程 */ });
     return { decision: "deny", reason: "no_role_binding", snapshotRef: `policy_snapshot:${snap.snapshotId}`, policyRef, policyCacheEpoch, explainV1 };
   }
+
+  /* ─── 权限拒绝审计辅助函数 ─── */
+  const emitDenyAudit = (reason: string, matchedPolicy: any) => {
+    insertAuditEvent(params.pool, {
+      subjectId: params.subjectId,
+      tenantId: params.tenantId,
+      spaceId: params.spaceId,
+      resourceType: params.resourceType,
+      action: params.action,
+      result: "denied",
+      traceId: "",
+      inputDigest: {
+        subject: params.subjectId,
+        resource: params.resourceType,
+        requestedAction: params.action,
+        reason,
+        matchedPolicy,
+      },
+      outputDigest: { decision: "deny", reason },
+    }).catch(() => { /* 审计写入失败不影响主流程 */ });
+  };
 
   const allowed = perms.some((p) => {
     const resourceOk = p.resource_type === "*" || p.resource_type === params.resourceType;
@@ -592,6 +632,8 @@ export async function authorize(params: {
       policyCacheEpoch,
       explainV1,
     });
+    // 权限拒绝审计日志
+    emitDenyAudit("permission_denied", { roleIds, snapshotRef: `policy_snapshot:${snap.snapshotId}` });
     return {
       decision: "deny",
       reason: "permission_denied",
@@ -652,6 +694,8 @@ export async function authorize(params: {
             policyCacheEpoch,
             explainV1: { ...explainV1, abac: abacResult },
           });
+          // ABAC 权限拒绝审计日志
+          emitDenyAudit(reason, { roleIds, abacResult, snapshotRef: `policy_snapshot:${snap.snapshotId}` });
           return {
             decision: "deny",
             reason,

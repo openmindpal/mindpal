@@ -25,6 +25,13 @@ import {
 async function main() {
   process.on("message", async (m: any) => {
     if (!m || typeof m !== "object") return;
+
+    /* ── 心跳响应：Runner 发送 heartbeat，子进程立即回复确认 ── */
+    if (m.type === "heartbeat") {
+      (process as any).send?.({ type: "heartbeat_ack", ts: Date.now() });
+      return;
+    }
+
     if (m.type !== "execute") return;
     const payload = m.payload ?? {};
 

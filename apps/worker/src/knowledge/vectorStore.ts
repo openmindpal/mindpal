@@ -1,6 +1,45 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import type { VectorStoreCapabilitiesV1, VectorStoreChunkEmbeddingV1, VectorStoreQueryResponseV1, VectorStoreRefV1 } from "@openslin/shared";
+
+// ── 本地 VectorStore 类型定义（轻量级 legacy 接口） ──
+
+export type VectorStoreMode = "external" | "fallback";
+
+export type VectorStoreRef = {
+  mode: VectorStoreMode;
+  impl: string;
+  endpointDigest8?: string;
+};
+
+export type VectorStoreCapabilities = {
+  kind: "vectorStore.capabilities.v1";
+  supportsUpsert: boolean;
+  supportsDelete: boolean;
+  supportsQuery: boolean;
+  vectorType: "int32" | "float32";
+  distance: "overlap" | "cosine" | "dot";
+  maxK: number;
+};
+
+export type VectorStoreChunkEmbedding = {
+  chunkId: string;
+  documentId: string;
+  documentVersion: number;
+  embeddingModelRef: string;
+  vector: number[];
+  updatedAt: string;
+};
+
+export type VectorStoreQueryResultItem = {
+  chunkId: string;
+  score: number;
+};
+
+export type VectorStoreQueryResponse = {
+  results: VectorStoreQueryResultItem[];
+  degraded: boolean;
+  degradeReason: string | null;
+};
 
 export type VectorStoreConfigV1 =
   | { mode: "fallback" }
@@ -17,11 +56,11 @@ export type VectorStoreQueryV1 = {
 };
 
 export type VectorStore = {
-  ref: VectorStoreRefV1;
-  capabilities(): VectorStoreCapabilitiesV1;
-  upsertEmbeddings(params: { pool: Pool; embeddings: VectorStoreChunkEmbeddingV1[] }): Promise<{ ok: true } | { ok: false; degraded: boolean; reason: string }>;
+  ref: VectorStoreRef;
+  capabilities(): VectorStoreCapabilities;
+  upsertEmbeddings(params: { pool: Pool; embeddings: VectorStoreChunkEmbedding[] }): Promise<{ ok: true } | { ok: false; degraded: boolean; reason: string }>;
   deleteEmbeddings(params: { pool: Pool; chunkIds: string[] }): Promise<{ ok: true } | { ok: false; degraded: boolean; reason: string }>;
-  query(params: { pool: Pool; q: VectorStoreQueryV1 }): Promise<VectorStoreQueryResponseV1>;
+  query(params: { pool: Pool; q: VectorStoreQueryV1 }): Promise<VectorStoreQueryResponse>;
 };
 
 function stableStringifyValue(v: any): any {
@@ -55,7 +94,7 @@ export function resolveVectorStoreConfigFromEnv(): VectorStoreConfigV1 {
   return { mode: "fallback" };
 }
 
-export function vectorStoreRefFromConfig(cfg: VectorStoreConfigV1): VectorStoreRefV1 {
+export function vectorStoreRefFromConfig(cfg: VectorStoreConfigV1): VectorStoreRef {
   if (cfg.mode === "external") {
     const digest8 = sha256Hex(stableStringify({ endpoint: cfg.endpoint })).slice(0, 8);
     return { mode: "external", impl: "external.http.v1", endpointDigest8: digest8 };
@@ -69,14 +108,14 @@ export function createVectorStore(cfg: VectorStoreConfigV1): VectorStore {
 }
 
 class ExternalVectorStore implements VectorStore {
-  readonly ref: VectorStoreRefV1;
+  readonly ref: VectorStoreRef;
   constructor(private readonly cfg: Extract<VectorStoreConfigV1, { mode: "external" }>) {
     this.ref = vectorStoreRefFromConfig(cfg);
   }
-  capabilities(): VectorStoreCapabilitiesV1 {
+  capabilities(): VectorStoreCapabilities {
     return { kind: "vectorStore.capabilities.v1", supportsUpsert: true, supportsDelete: true, supportsQuery: true, vectorType: "int32", distance: "overlap", maxK: 200 };
   }
-  async upsertEmbeddings(params: { pool: Pool; embeddings: VectorStoreChunkEmbeddingV1[] }) {
+  async upsertEmbeddings(params: { pool: Pool; embeddings: VectorStoreChunkEmbedding[] }) {
     const url = new URL(this.cfg.endpoint);
     url.pathname = url.pathname.replace(/\/$/, "") + "/v1/upsert";
     const headers: Record<string, string> = { "content-type": "application/json" };
@@ -110,7 +149,7 @@ class ExternalVectorStore implements VectorStore {
       clearTimeout(t);
     }
   }
-  async query(params: { pool: Pool; q: VectorStoreQueryV1 }): Promise<VectorStoreQueryResponseV1> {
+  async query(params: { pool: Pool; q: VectorStoreQueryV1 }): Promise<VectorStoreQueryResponse> {
     const url = new URL(this.cfg.endpoint);
     url.pathname = url.pathname.replace(/\/$/, "") + "/v1/query";
     const headers: Record<string, string> = { "content-type": "application/json" };
@@ -160,8 +199,8 @@ class ExternalVectorStore implements VectorStore {
 }
 
 class FallbackVectorStore implements VectorStore {
-  readonly ref: VectorStoreRefV1 = vectorStoreRefFromConfig({ mode: "fallback" });
-  capabilities(): VectorStoreCapabilitiesV1 {
+  readonly ref: VectorStoreRef = vectorStoreRefFromConfig({ mode: "fallback" });
+  capabilities(): VectorStoreCapabilities {
     return { kind: "vectorStore.capabilities.v1", supportsUpsert: false, supportsDelete: false, supportsQuery: true, vectorType: "int32", distance: "overlap", maxK: 200 };
   }
   async upsertEmbeddings() {
@@ -170,7 +209,7 @@ class FallbackVectorStore implements VectorStore {
   async deleteEmbeddings() {
     return { ok: true as const };
   }
-  async query(params: { pool: Pool; q: VectorStoreQueryV1 }): Promise<VectorStoreQueryResponseV1> {
+  async query(params: { pool: Pool; q: VectorStoreQueryV1 }): Promise<VectorStoreQueryResponse> {
     const topK = Math.max(1, Math.min(200, Math.round(params.q.topK)));
     const res = await params.pool.query(
       `

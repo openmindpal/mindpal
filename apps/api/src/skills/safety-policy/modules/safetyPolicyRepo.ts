@@ -213,50 +213,6 @@ export async function getSafetyPolicyVersion(params: { pool: Pool; tenantId: str
   } satisfies SafetyPolicyVersionRow;
 }
 
-export async function setSafetyPolicyVersionReleased(params: { pool: Pool; tenantId: string; policyId: string; version: number }) {
-  const res = await params.pool.query(
-    `
-      UPDATE safety_policy_versions v
-      SET status = 'released', published_at = COALESCE(published_at, now())
-      WHERE v.policy_id = $1
-        AND v.version = $2
-        AND v.status IN ('draft','submitted','approved')
-        AND EXISTS (SELECT 1 FROM safety_policies p WHERE p.policy_id = v.policy_id AND p.tenant_id = $3)
-      RETURNING policy_id
-    `,
-    [params.policyId, params.version, params.tenantId],
-  );
-  return Boolean(res.rowCount);
-}
-
-export async function setActiveSafetyPolicyVersion(params: { pool: Pool; tenantId: string; policyId: string; version: number }) {
-  await params.pool.query(
-    `
-      INSERT INTO safety_policy_active_versions (tenant_id, policy_id, active_version)
-      VALUES ($1,$2,$3)
-      ON CONFLICT (tenant_id, policy_id)
-      DO UPDATE SET active_version = EXCLUDED.active_version, updated_at = now()
-    `,
-    [params.tenantId, params.policyId, params.version],
-  );
-}
-
-export async function setActiveSafetyPolicyOverride(params: { pool: Pool; tenantId: string; spaceId: string; policyId: string; version: number }) {
-  await params.pool.query(
-    `
-      INSERT INTO safety_policy_active_overrides (tenant_id, space_id, policy_id, active_version)
-      VALUES ($1,$2,$3,$4)
-      ON CONFLICT (tenant_id, space_id, policy_id)
-      DO UPDATE SET active_version = EXCLUDED.active_version, updated_at = now()
-    `,
-    [params.tenantId, params.spaceId, params.policyId, params.version],
-  );
-}
-
-export async function clearActiveSafetyPolicyOverride(params: { pool: Pool; tenantId: string; spaceId: string; policyId: string }) {
-  await params.pool.query(`DELETE FROM safety_policy_active_overrides WHERE tenant_id = $1 AND space_id = $2 AND policy_id = $3`, [params.tenantId, params.spaceId, params.policyId]);
-}
-
 export async function getEffectiveSafetyPolicyVersion(params: { pool: Pool; tenantId: string; spaceId: string | null; policyType: SafetyPolicyType }) {
   const res = await params.pool.query(
     `
@@ -292,19 +248,5 @@ export async function getEffectiveSafetyPolicyVersion(params: { pool: Pool; tena
     policyJson: row.policy_json ?? null,
     policyDigest: String(row.policy_digest),
   };
-}
-
-export async function rollbackActiveSafetyPolicyVersion(params: { pool: Pool; tenantId: string; policyId: string }) {
-  const curRes = await params.pool.query(`SELECT active_version FROM safety_policy_active_versions WHERE tenant_id = $1 AND policy_id = $2 LIMIT 1`, [params.tenantId, params.policyId]);
-  if (!curRes.rowCount) return null;
-  const cur = Number(curRes.rows[0]!.active_version);
-  const prevRes = await params.pool.query(
-    `SELECT version FROM safety_policy_versions WHERE policy_id = $1 AND status = 'released' AND version < $2 ORDER BY version DESC LIMIT 1`,
-    [params.policyId, cur],
-  );
-  if (!prevRes.rowCount) return null;
-  const prev = Number(prevRes.rows[0]!.version);
-  await setActiveSafetyPolicyVersion({ pool: params.pool, tenantId: params.tenantId, policyId: params.policyId, version: prev });
-  return { from: cur, to: prev };
 }
 

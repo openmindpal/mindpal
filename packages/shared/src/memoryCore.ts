@@ -79,19 +79,40 @@ export function minhashOverlapScore(a: number[], b: number[]): number {
  * ══════════════════════════════════════════════════════════════════ */
 
 /**
- * 记忆类型风险等级映射
+ * 记忆类型风险等级注册表（动态可扩展）
  * - low: 用户偏好、设置、备忘
  * - medium: 事实、身份、个人信息
  * - high: 关系、凭证、敏感信息
  */
-export const MEMORY_TYPE_RISK_LEVELS: Record<string, "low" | "medium" | "high"> = {
+const memoryTypeRiskRegistry = new Map<string, "low" | "medium" | "high">([
   // 低风险
-  preference: "low", setting: "low", note: "low", reminder: "low",
+  ["preference", "low"], ["setting", "low"], ["note", "low"], ["reminder", "low"],
   // 中风险
-  fact: "medium", identity: "medium", profile: "medium", user_profile: "medium", contact: "medium", address: "medium", interest: "medium",
+  ["fact", "medium"], ["identity", "medium"], ["profile", "medium"], ["user_profile", "medium"], ["contact", "medium"], ["address", "medium"], ["interest", "medium"],
   // 高风险
-  relationship: "high", credential: "high", secret: "high", financial: "high", medical: "high", biometric: "high",
-};
+  ["relationship", "high"], ["credential", "high"], ["secret", "high"], ["financial", "high"], ["medical", "high"], ["biometric", "high"],
+]);
+
+/** 只读快照，用于兼容已有代码的直接读取场景 */
+export const MEMORY_TYPE_RISK_LEVELS: Record<string, "low" | "medium" | "high"> = new Proxy({} as Record<string, "low" | "medium" | "high">, {
+  get(_target, prop: string) { return memoryTypeRiskRegistry.get(prop); },
+  has(_target, prop: string) { return memoryTypeRiskRegistry.has(prop); },
+  ownKeys() { return [...memoryTypeRiskRegistry.keys()]; },
+  getOwnPropertyDescriptor(_target, prop: string) {
+    if (memoryTypeRiskRegistry.has(prop)) return { configurable: true, enumerable: true, value: memoryTypeRiskRegistry.get(prop) };
+    return undefined;
+  },
+});
+
+/** 注册新的记忆类型风险等级 */
+export function registerMemoryTypeRisk(type: string, level: "low" | "medium" | "high"): void {
+  memoryTypeRiskRegistry.set(type.toLowerCase(), level);
+}
+
+/** 获取记忆类型风险等级（未注册类型返回 undefined） */
+export function getMemoryTypeRisk(type: string): "low" | "medium" | "high" | undefined {
+  return memoryTypeRiskRegistry.get(type.toLowerCase());
+}
 
 /** 默认风险等级（未知类型按 medium 处理） */
 export const DEFAULT_RISK_LEVEL: "low" | "medium" | "high" = "medium";
@@ -267,11 +288,11 @@ export interface MemoryRerankInput {
   sourcePriority: number;
 }
 
-/** 记忆分类加权因子 */
+/** 记忆分类加权因子（均衡化：避免特定类型记忆因权重偏低被系统性排挤） */
 const MEMORY_CLASS_WEIGHT: Record<string, number> = {
-  procedural: 0.20,
-  semantic: 0.10,
-  episodic: 0.0,
+  procedural: 0.15,
+  semantic: 0.15,
+  episodic: 0.10,
 };
 
 /**

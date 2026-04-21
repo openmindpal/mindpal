@@ -35,6 +35,7 @@ import { resolveConfig } from "../modules/governance/configGovernanceRepo";
 import { runPreExecutionChecks, type CheckpointContext, type GovernanceCheckpoint } from "./governanceCheckpoint";
 import { assessToolExecutionRisk } from "./approvalRuleEngine";
 import { markStepNeedsApproval, updateInputDigest } from "./stepRepo";
+import { authorizeToolExecution, type AuthorizationResult } from "./loopPermissionUnified";
 
 /* ================================================================== */
 /*  Phase 1 — Resolve & Validate Tool                                  */
@@ -555,7 +556,7 @@ export interface PrepareToolStepParams {
   rawToolRef: string;
   inputDraft: any;
   /** Wraps the caller's permission check — returns opDecision-like object. */
-  checkPermission: (p: { resourceType: string; action: string }) => Promise<{
+  checkPermission?: (p: { resourceType: string; action: string }) => Promise<{
     snapshotRef?: string;
     fieldRules?: any;
     rowFilters?: any;
@@ -569,6 +570,8 @@ export interface PrepareToolStepParams {
   seq?: number;
   limits?: any;
   preAuthorized?: boolean;
+  /** 若提供 runId + jobId，可直接使用统一权限入口 authorizeToolExecution */
+  jobId?: string;
 }
 
 export interface PreparedToolStep {
@@ -593,8 +596,9 @@ export async function prepareToolStep(params: PrepareToolStepParams): Promise<Pr
     rawToolRef, inputDraft, checkPermission,
     kind, traceId, extra,
     idempotencyKeyPrefix, runId, seq,
-    limits, preAuthorized,
+    limits,
   } = params;
+  let preAuthorized = params.preAuthorized;
 
   // Phase 1: resolve tool ref (name → version → enabled → contract)
   const resolved = await resolveAndValidateTool({ pool, tenantId, spaceId, rawToolRef });
@@ -602,8 +606,26 @@ export async function prepareToolStep(params: PrepareToolStepParams): Promise<Pr
   // Validate input against schema
   validateToolInput(resolved.version.inputSchema, inputDraft);
 
-  // Permission check
-  const opDecision = await checkPermission({ resourceType: resolved.resourceType, action: resolved.action });
+  // Permission check — 优先使用统一权限入口 authorizeToolExecution
+  let opDecision: { snapshotRef?: string; fieldRules?: any; rowFilters?: any; [k: string]: any };
+  if (checkPermission) {
+    opDecision = await checkPermission({ resourceType: resolved.resourceType, action: resolved.action });
+  } else if (subjectId) {
+    const authResult = await authorizeToolExecution({
+      pool, subjectId, tenantId, spaceId,
+      traceId, runId: runId ?? "", jobId: params.jobId ?? "",
+      resourceType: resolved.resourceType, action: resolved.action,
+      toolRef: resolved.toolRef, limits: limits ?? {},
+    });
+    if (!authResult.authorized) {
+      throw Errors.forbidden(authResult.errorMessage);
+    }
+    opDecision = authResult.opDecision ?? { decision: "allow" };
+    // 治理检查已在 authorizeToolExecution 内完成，标记 preAuthorized
+    preAuthorized = true;
+  } else {
+    throw Errors.unauthorized("zh-CN");
+  }
 
   // Phase 2: admit & build envelope
   const admitted = await admitAndBuildStepEnvelope({
@@ -630,6 +652,164 @@ export async function prepareToolStep(params: PrepareToolStepParams): Promise<Pr
   });
 
   return { resolved, opDecision, admitted, stepInput, idempotencyKey };
+}
+
+/* ================================================================== */
+/*  Lightweight Inline Admission                                       */
+/* ================================================================== */
+
+export interface InlineAdmissionParams {
+  pool: Pool;
+  tenantId: string;
+  spaceId: string;
+  subjectId: string;
+  /** Raw tool reference (may include @version). */
+  toolRef: string;
+}
+
+export interface InlineAdmissionResult {
+  /** Whether the inline execution is admitted. */
+  admitted: boolean;
+  /** Human-readable reason when admission is denied. */
+  reason?: string;
+  /** Resolved tool metadata (available when admitted). */
+  resolvedMeta?: {
+    toolName: string;
+    scope: string;
+    resourceType: string;
+    action: string;
+    riskLevel: string;
+  };
+}
+
+/**
+ * Lightweight admission check for the **inline execution path**.
+ *
+ * Inline tools (scope=read, riskLevel=low, or safe-write whitelist) run
+ * synchronously inside the answer-mode request cycle. They intentionally
+ * skip the heavy Phase-3 pipeline (BullMQ enqueue / async approval / full
+ * 7×3 governance checkpoint matrix) to preserve sub-second response
+ * latency.
+ *
+ * However, they **must** pass through the following minimal governance
+ * gates to prevent a "privilege bypass" dual-track:
+ *
+ *   1. **Tool existence & enabled status** — `isToolEnabled` from
+ *      toolGovernanceRepo (same check as Phase-1 of the full kernel).
+ *   2. **Basic RBAC permission** — generic `tool/execute` + specific
+ *      `resourceType/action` via `authorize()` (ABAC policy cache).
+ *
+ * What is intentionally **omitted** (compared to
+ * `admitAndBuildStepEnvelope` / `submitNewToolRun`):
+ *   - Capability envelope construction (inline tools don't need an
+ *     envelope because they never leave the API process boundary).
+ *   - BullMQ job/step creation & enqueue.
+ *   - Asynchronous approval flow.
+ *   - Full `runPreExecutionChecks` 7-category governance checkpoint
+ *     (inline tools are limited to read / low-risk by design).
+ *
+ * @returns `{ admitted: true }` when all checks pass, otherwise
+ *          `{ admitted: false, reason }` with a denial reason.
+ */
+export async function admitInlineExecution(
+  params: InlineAdmissionParams,
+): Promise<InlineAdmissionResult> {
+  const { pool, tenantId, spaceId, subjectId, toolRef } = params;
+
+  // ── 1. Parse tool name from ref ──
+  const idx = toolRef.lastIndexOf("@");
+  const toolName = idx > 0 ? toolRef.slice(0, idx) : toolRef;
+
+  // ── 2. Tool enabled check (same as Phase-1 resolveAndValidateTool) ──
+  const enabled = await isToolEnabled({ pool, tenantId, spaceId, toolRef });
+  if (!enabled) {
+    // ── 审计日志：记录工具禁用拒绝 ──
+    insertAuditEvent(pool, {
+      subjectId, tenantId, spaceId,
+      resourceType: "tool", action: "inline_execute",
+      toolRef,
+      result: "denied",
+      traceId: "",
+      inputDigest: { reason: `tool_disabled:${toolRef}`, subject: subjectId, resource: toolRef },
+    }).catch(() => {});
+    return { admitted: false, reason: `tool_disabled:${toolRef}` };
+  }
+
+  // ── 3. Load tool definition for resourceType/action ──
+  const definition = await getToolDefinition(pool, tenantId, toolName);
+  if (!definition) {
+    return { admitted: false, reason: `tool_definition_not_found:${toolName}` };
+  }
+  const { scope, resourceType, action, riskLevel } = definition;
+  if (!scope || !resourceType || !action) {
+    return { admitted: false, reason: `tool_contract_incomplete:${toolName}` };
+  }
+
+  // ── 4. Basic RBAC: generic tool/execute permission ──
+  const { authorize } = await import("../modules/auth/authz");
+  const { buildAbacEvaluationRequestFromContext } = await import("../modules/auth/guard");
+
+  const buildAbac = (rt: string, act: string) =>
+    buildAbacEvaluationRequestFromContext({
+      subject: { subjectId, tenantId, spaceId },
+      resourceType: rt,
+      action: act,
+      environment: {
+        userAgent: "inline-tool/dispatch",
+        deviceType: "server",
+        attributes: { runtime: "inline_tool" },
+      },
+    });
+
+  const genericDecision = await authorize({
+    pool, subjectId, tenantId, spaceId,
+    resourceType: "tool", action: "execute",
+    abacRequest: buildAbac("tool", "execute"),
+  });
+  if (genericDecision.decision !== "allow") {
+    // ── 审计日志：记录 RBAC 拒绝 ──
+    insertAuditEvent(pool, {
+      subjectId, tenantId, spaceId,
+      resourceType: "tool", action: "execute",
+      toolRef,
+      result: "denied",
+      traceId: "",
+      inputDigest: { reason: "rbac_denied:tool/execute", subject: subjectId, resource: toolRef, requestedAction: "execute", matchedPolicy: (genericDecision as any).snapshotRef ?? null },
+      policySnapshotRef: (genericDecision as any).snapshotRef,
+    }).catch(() => {});
+    return { admitted: false, reason: "rbac_denied:tool/execute" };
+  }
+
+  // ── 5. Basic RBAC: specific resourceType/action permission ──
+  const specificDecision = await authorize({
+    pool, subjectId, tenantId, spaceId,
+    resourceType, action,
+    abacRequest: buildAbac(resourceType, action),
+  });
+  if (specificDecision.decision !== "allow") {
+    // ── 审计日志：记录 RBAC 拒绝 ──
+    insertAuditEvent(pool, {
+      subjectId, tenantId, spaceId,
+      resourceType, action,
+      toolRef,
+      result: "denied",
+      traceId: "",
+      inputDigest: { reason: `rbac_denied:${resourceType}/${action}`, subject: subjectId, resource: toolRef, requestedAction: action, matchedPolicy: (specificDecision as any).snapshotRef ?? null },
+      policySnapshotRef: (specificDecision as any).snapshotRef,
+    }).catch(() => {});
+    return { admitted: false, reason: `rbac_denied:${resourceType}/${action}` };
+  }
+
+  return {
+    admitted: true,
+    resolvedMeta: {
+      toolName,
+      scope: scope ?? "unknown",
+      resourceType,
+      action,
+      riskLevel: riskLevel ?? "low",
+    },
+  };
 }
 
 /* ================================================================== */

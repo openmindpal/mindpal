@@ -29,7 +29,7 @@ vi.mock("../modules/agentContext", () => ({
   discoverEnabledTools: vi.fn(),
 }));
 
-vi.mock("../modules/semanticRouting/skillIntentRouter", () => ({
+vi.mock("../modules/skills/skillRouter", () => ({
   routeByIntent: vi.fn(),
 }));
 

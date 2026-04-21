@@ -18,6 +18,8 @@ import { searchMemory, listMemoryEntries, createMemoryEntry, updateMemoryEntry, 
 import { searchChunksHybrid } from "../../knowledge-rag/modules/repo";
 import type { EnabledTool } from "../../../modules/agentContext";
 import { evaluateMemoryRisk, resolveNumber } from "@openslin/shared";
+import { admitInlineExecution } from "../../../kernel/executionKernel";
+import { insertAuditEvent } from "../../../modules/audit/auditRepo";
 
 // ─── 类型定义 ────────────────────────────────────────────────────
 
@@ -204,7 +206,12 @@ export function classifyToolCalls(
 
 /**
  * 执行一组内联工具调用并返回结果。
- * 对每个工具调用有超时保护。
+ *
+ * 每个工具在执行前必须通过 `admitInlineExecution` 轻量化准入检查
+ * （工具启用状态 + RBAC 权限），确保 inline 快路径与 executionKernel
+ * 的治理一致性。准入被拒的工具不会执行，直接返回错误结果。
+ *
+ * 每次执行（无论成功/失败/拒绝）均写入审计事件，保证可追溯性。
  */
 export async function executeInlineTools(
   toolCalls: InlineToolCall[],
@@ -216,6 +223,63 @@ export async function executeInlineTools(
 
   for (const tc of toolCalls) {
     const startMs = Date.now();
+
+    // ── 轻量化准入检查：工具启用状态 + RBAC 权限 ──
+    try {
+      const admission = await admitInlineExecution({
+        pool: ctx.pool,
+        tenantId: ctx.tenantId,
+        spaceId: ctx.spaceId,
+        subjectId: ctx.subjectId,
+        toolRef: tc.toolRef,
+      });
+      if (!admission.admitted) {
+        const durationMs = Date.now() - startMs;
+        ctx.app?.log.warn(
+          { traceId: ctx.traceId, toolRef: tc.toolRef, reason: admission.reason },
+          "[InlineToolExecutor] 准入检查拒绝，跳过执行",
+        );
+        // 审计：准入被拒
+        insertAuditEvent(ctx.pool, {
+          subjectId: ctx.subjectId,
+          tenantId: ctx.tenantId,
+          spaceId: ctx.spaceId,
+          resourceType: "inline_tool",
+          action: "execute.denied",
+          toolRef: tc.toolRef,
+          inputDigest: { toolRef: tc.toolRef, reason: admission.reason },
+          outputDigest: { admitted: false },
+          result: "denied",
+          traceId: ctx.traceId ?? "",
+          latencyMs: durationMs,
+        }).catch(() => { /* 审计写入失败不影响主流程 */ });
+        results.push({
+          toolRef: tc.toolRef,
+          ok: false,
+          output: null,
+          error: `inline_admission_denied:${admission.reason ?? "unknown"}`,
+          durationMs,
+        });
+        continue;
+      }
+    } catch (admitErr: any) {
+      // 准入检查自身异常 → fail-closed，拒绝执行
+      const durationMs = Date.now() - startMs;
+      ctx.app?.log.error(
+        { traceId: ctx.traceId, toolRef: tc.toolRef, error: admitErr?.message },
+        "[InlineToolExecutor] 准入检查异常，fail-closed 拒绝执行",
+      );
+      results.push({
+        toolRef: tc.toolRef,
+        ok: false,
+        output: null,
+        error: `inline_admission_error:${admitErr?.message ?? "unknown"}`,
+        durationMs,
+      });
+      continue;
+    }
+
+    // ── 准入通过，执行工具 ──
     try {
       const output = await Promise.race([
         executeOneTool(tc, ctx),
@@ -223,24 +287,54 @@ export async function executeInlineTools(
           setTimeout(() => reject(new Error("inline_tool_timeout")), INLINE_EXEC_TIMEOUT_MS),
         ),
       ]);
+      const durationMs = Date.now() - startMs;
+      // 审计：执行成功
+      insertAuditEvent(ctx.pool, {
+        subjectId: ctx.subjectId,
+        tenantId: ctx.tenantId,
+        spaceId: ctx.spaceId,
+        resourceType: "inline_tool",
+        action: "execute.completed",
+        toolRef: tc.toolRef,
+        inputDigest: { toolRef: tc.toolRef },
+        outputDigest: { ok: true },
+        result: "success",
+        traceId: ctx.traceId ?? "",
+        latencyMs: durationMs,
+      }).catch(() => { /* 审计写入失败不影响主流程 */ });
       results.push({
         toolRef: tc.toolRef,
         ok: true,
         output,
-        durationMs: Date.now() - startMs,
+        durationMs,
       });
     } catch (err: any) {
       const errMsg = String(err?.message ?? err);
+      const durationMs = Date.now() - startMs;
       ctx.app?.log.warn(
         { traceId: ctx.traceId, toolRef: tc.toolRef, error: errMsg },
         "[InlineToolExecutor] 内联工具执行失败",
       );
+      // 审计：执行失败
+      insertAuditEvent(ctx.pool, {
+        subjectId: ctx.subjectId,
+        tenantId: ctx.tenantId,
+        spaceId: ctx.spaceId,
+        resourceType: "inline_tool",
+        action: "execute.failed",
+        toolRef: tc.toolRef,
+        inputDigest: { toolRef: tc.toolRef },
+        outputDigest: { ok: false, error: errMsg },
+        result: "error",
+        traceId: ctx.traceId ?? "",
+        latencyMs: durationMs,
+      }).catch(() => { /* 审计写入失败不影响主流程 */ });
       results.push({
         toolRef: tc.toolRef,
         ok: false,
         output: null,
         error: errMsg,
-        durationMs: Date.now() - startMs,
+        durationMs,
       });
     }
   }

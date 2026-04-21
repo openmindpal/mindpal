@@ -32,6 +32,8 @@ export interface SSEEventContext {
   pollTaskState: (runId: string) => Promise<void>;
   retryCountRef: React.MutableRefObject<Map<string, number>>;
   lastRetryMsgRef: React.MutableRefObject<string | null>;
+  /** 用户选定的模型（用于检测是否发生了自动切换） */
+  selectedModelRef?: string;
 }
 
 /**
@@ -141,6 +143,15 @@ export function handleSSEEvent(evtName: string, data: any, ctx: SSEEventContext)
     case "done": {
       const doneConvId = data.conversationId;
       if (doneConvId) ctx.setConversationId(doneConvId);
+      // 模型自动切换检测：当后端实际使用的模型与用户选定的不同时，在助手消息上添加轻量通知
+      const actualModelRef = data.actualModelRef ? String(data.actualModelRef) : null;
+      if (actualModelRef && ctx.selectedModelRef && actualModelRef !== ctx.selectedModelRef) {
+        const displayName = actualModelRef.replace(/@.*$/, "");
+        const note = `⚡ 已自动切换至 ${displayName}`;
+        ctx.setFlow((prev) => prev.map((it) =>
+          it.id === replyId && it.kind === "message" ? { ...it, modelSwitchNote: note } : it
+        ));
+      }
       if (ctx.pendingToolSuggestions.length > 0) {
         const tsId = nextId("ts");
         ctx.setFlow((prev) => [...prev, {

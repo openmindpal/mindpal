@@ -21,6 +21,7 @@ const plugin: BuiltinSkillPlugin = {
         resourceType: "nl2ui",
         action: "generate",
         riskLevel: "low",
+        tags: ["execution:separate-pipeline"],
         inputSchema: { fields: { userInput: { type: "string", required: true }, stylePrefs: { type: "json" } } },
         outputSchema: { fields: { success: { type: "boolean" }, config: { type: "json" } } },
       },

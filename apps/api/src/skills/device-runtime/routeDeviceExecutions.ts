@@ -54,12 +54,16 @@ function digestPolicy(policy: any) {
 }
 
 function toPublicExecution(e: any) {
+  const deviceName = e.deviceType && e.deviceOs
+    ? `${e.deviceType} (${e.deviceOs})`
+    : e.deviceType ?? null;
   return {
     deviceExecutionId: e.deviceExecutionId,
     tenantId: e.tenantId,
     spaceId: e.spaceId ?? null,
     createdBySubjectId: e.createdBySubjectId ?? null,
     deviceId: e.deviceId,
+    deviceName,
     toolRef: e.toolRef,
     policySnapshotRef: e.policySnapshotRef ?? null,
     idempotencyKey: e.idempotencyKey ?? null,

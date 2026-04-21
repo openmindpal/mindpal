@@ -75,7 +75,7 @@ import {
 import {
   checkBeforeCreate,
   formatDuplicatePrompt,
-} from "../../modules/semanticRouting/skillIntentRouter";
+} from "../../modules/skills/skillRouter";
 
 // ─── Scope Helper ─────────────────────────────────────────────────────
 function resolveScope(subject: { tenantId: string; spaceId?: string | null; subjectId: string }, requestedScope?: string): { scopeType: SkillScopeType; scopeId: string } {

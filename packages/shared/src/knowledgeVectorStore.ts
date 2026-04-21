@@ -1,44 +1,4 @@
-// ─── V1 类型（兼容现有代码） ─────────────────────────────────────
-
-export type VectorStoreModeV1 = "external" | "fallback";
-
-export type VectorStoreRefV1 = {
-  mode: VectorStoreModeV1;
-  impl: string;
-  endpointDigest8?: string;
-};
-
-export type VectorStoreCapabilitiesV1 = {
-  kind: "vectorStore.capabilities.v1";
-  supportsUpsert: boolean;
-  supportsDelete: boolean;
-  supportsQuery: boolean;
-  vectorType: "int32" | "float32";
-  distance: "overlap" | "cosine" | "dot";
-  maxK: number;
-};
-
-export type VectorStoreChunkEmbeddingV1 = {
-  chunkId: string;
-  documentId: string;
-  documentVersion: number;
-  embeddingModelRef: string;
-  vector: number[];
-  updatedAt: string;
-};
-
-export type VectorStoreQueryResultItemV1 = {
-  chunkId: string;
-  score: number;
-};
-
-export type VectorStoreQueryResponseV1 = {
-  results: VectorStoreQueryResultItemV1[];
-  degraded: boolean;
-  degradeReason: string | null;
-};
-
-// ─── V2 类型（专业向量数据库集成） ────────────────────────────────
+// ─── 向量存储类型（专业向量数据库集成） ────────────────────────────────
 
 /** 向量存储提供者类型 */
 export type VectorStoreProvider = "qdrant" | "milvus" | "external" | "pgvector" | "fallback";
@@ -59,16 +19,16 @@ export interface PgVectorConfig {
   lists?: number;
 }
 
-/** V2 向量存储引用 */
-export type VectorStoreRefV2 = {
+/** 向量存储引用 */
+export type VectorStoreRef = {
   provider: VectorStoreProvider;
   impl: string;
   endpointDigest8?: string;
   collectionName?: string;
 };
 
-/** V2 向量存储能力声明 */
-export type VectorStoreCapabilitiesV2 = {
+/** 向量存储能力声明 */
+export type VectorStoreCapabilities = {
   kind: "vectorStore.capabilities.v2";
   provider: VectorStoreProvider;
   supportsBatchUpsert: boolean;
@@ -96,16 +56,16 @@ export type VectorMetadataPayload = {
   tags?: Record<string, string | number | boolean>;
 };
 
-/** V2 单条嵌入记录 (支持元数据) */
-export type VectorStoreEmbeddingV2 = {
+/** 单条嵌入记录 (支持元数据) */
+export type VectorStoreEmbedding = {
   id: string;
   vector: number[];
   metadata: VectorMetadataPayload;
   updatedAt: string;
 };
 
-/** V2 查询请求 */
-export type VectorStoreQueryV2 = {
+/** 查询请求 */
+export type VectorStoreQuery = {
   tenantId: string;
   spaceId: string;
   vector: number[];
@@ -128,22 +88,35 @@ export type VectorStoreFilter = {
   should?: VectorStoreFilterCondition[];
 };
 
-/** 单个过滤条件 */
+/** 单个过滤条件（强类型联合） */
 export type VectorStoreFilterCondition =
-  | { field: string; match: { value: string | number | boolean } }
-  | { field: string; range: { gt?: number; gte?: number; lt?: number; lte?: number } }
-  | { field: string; matchAny: { values: (string | number)[] } };
+  | EqFilter
+  | RangeFilter
+  | InFilter
+  | TextMatchFilter;
 
-/** V2 查询结果项 */
-export type VectorStoreQueryResultV2 = {
+/** 精确匹配过滤 */
+export type EqFilter = { field: string; match: { value: string | number | boolean } };
+
+/** 范围过滤 */
+export type RangeFilter = { field: string; range: { gt?: number; gte?: number; lt?: number; lte?: number } };
+
+/** 多值匹配过滤 */
+export type InFilter = { field: string; matchAny: { values: (string | number)[] } };
+
+/** 文本模糊匹配过滤 */
+export type TextMatchFilter = { field: string; textMatch: { query: string; mode?: "contains" | "prefix" | "exact" } };
+
+/** 查询结果项 */
+export type VectorStoreQueryResult = {
   id: string;
   score: number;
   metadata?: Partial<VectorMetadataPayload>;
 };
 
-/** V2 查询响应 */
-export type VectorStoreQueryResponseV2 = {
-  results: VectorStoreQueryResultV2[];
+/** 查询响应 */
+export type VectorStoreQueryResponse = {
+  results: VectorStoreQueryResult[];
   degraded: boolean;
   degradeReason: string | null;
   /** 查询耗时(ms) */
@@ -171,13 +144,13 @@ export type VectorStoreCollectionInfo = {
   status: "ready" | "creating" | "error";
 };
 
-/** V2 向量存储接口 — 统一抽象层 */
-export interface VectorStoreV2 {
+/** 向量存储接口 — 统一抽象层 */
+export interface VectorStoreInterface {
   /** 提供者引用 */
-  readonly ref: VectorStoreRefV2;
+  readonly ref: VectorStoreRef;
 
   /** 能力声明 */
-  capabilities(): VectorStoreCapabilitiesV2;
+  capabilities(): VectorStoreCapabilities;
 
   // ── Collection 管理 ──
   ensureCollection(params: {
@@ -193,7 +166,7 @@ export interface VectorStoreV2 {
   // ── 写入操作 ──
   batchUpsert(params: {
     collection: string;
-    embeddings: VectorStoreEmbeddingV2[];
+    embeddings: VectorStoreEmbedding[];
   }): Promise<VectorStoreBatchResult>;
 
   batchDelete(params: {
@@ -204,15 +177,15 @@ export interface VectorStoreV2 {
   // ── 查询操作 ──
   query(params: {
     collection: string;
-    query: VectorStoreQueryV2;
-  }): Promise<VectorStoreQueryResponseV2>;
+    query: VectorStoreQuery;
+  }): Promise<VectorStoreQueryResponse>;
 
   // ── 健康检查 ──
   healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }>;
 }
 
-/** V2 向量存储配置 */
-export type VectorStoreConfigV2 =
+/** 向量存储配置 */
+export type VectorStoreConfig =
   | { provider: "qdrant"; endpoint: string; apiKey: string | null; timeoutMs: number; collectionPrefix?: string }
   | { provider: "milvus"; endpoint: string; token: string | null; timeoutMs: number; dbName?: string }
   | { provider: "external"; endpoint: string; bearerToken: string | null; timeoutMs: number }
@@ -227,4 +200,3 @@ export type VectorStoreDegradeEvent = {
   reason: string;
   latencyMs: number;
 };
-

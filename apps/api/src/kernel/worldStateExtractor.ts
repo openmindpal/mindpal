@@ -19,6 +19,7 @@ import type {
 } from "@openslin/shared";
 import {
   createWorldState, upsertEntity, addRelation, upsertFact,
+  batchUpsertEntities, batchAddRelations,
 } from "@openslin/shared";
 import type { StepObservation } from "./agentLoop";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
@@ -546,4 +547,113 @@ export function buildWorldStateFromObservations(
     state = extractFromObservation(obs, state);
   }
   return state;
+}
+
+/* ================================================================== */
+/*  extractWorldState — 观察阶段全量上下文提取                              */
+/* ================================================================== */
+
+/**
+ * 观察阶段全量提取：从当前会话上下文（消息历史、工具执行结果、记忆查询结果）中
+ * 提取实体和关系，构建 WorldState 快照。
+ *
+ * 与 buildWorldStateFromObservations 的区别：
+ * - 额外解析 memoryContext、knowledgeContext、userGoal
+ * - 批量提取而非逐条
+ * - 为后续 Think/Decide/Verify 阶段提供更完整的环境快照
+ */
+export function extractWorldState(params: {
+  runId: string;
+  observations: StepObservation[];
+  userGoal: string;
+  memoryContext?: string;
+  knowledgeContext?: string;
+  existingState?: WorldState;
+}): WorldState {
+  const { runId, observations, userGoal, memoryContext, knowledgeContext, existingState } = params;
+  const now = new Date().toISOString();
+
+  // 基于已有状态增量构建，或全新创建
+  let state = existingState ?? createWorldState(runId);
+
+  // 1. 从 observations 中提取（复用现有规则提取器）
+  for (const obs of observations) {
+    if (obs.seq > state.afterStepSeq) {
+      state = extractFromObservation(obs, state);
+    }
+  }
+
+  // 2. 从用户目标中提取主体实体（actor）
+  state = upsertEntity(state, {
+    entityId: "actor:user",
+    name: "User",
+    category: "actor",
+    properties: { goalSummary: userGoal.slice(0, 300) },
+    state: "active",
+    confidence: 1.0,
+    discoveredAt: now,
+    updatedAt: now,
+  });
+  state = upsertEntity(state, {
+    entityId: "actor:agent",
+    name: "Agent",
+    category: "actor",
+    properties: { stepsExecuted: observations.length },
+    state: "active",
+    confidence: 1.0,
+    discoveredAt: now,
+    updatedAt: now,
+  });
+  state = addRelation(state, {
+    relationId: "rel:user-goal-agent",
+    fromEntityId: "actor:user",
+    toEntityId: "actor:agent",
+    type: "communicates_with",
+    description: "User delegates goal to Agent",
+    confidence: 1.0,
+    establishedAt: now,
+  });
+
+  // 3. 从 memoryContext 提取已知事实
+  if (memoryContext) {
+    const memoryFacts = extractFactsFromText(memoryContext, "user_stated", now);
+    for (const fact of memoryFacts) {
+      state = upsertFact(state, fact);
+    }
+  }
+
+  // 4. 从 knowledgeContext 提取参考事实
+  if (knowledgeContext) {
+    const kFacts = extractFactsFromText(knowledgeContext, "observation", now);
+    for (const fact of kFacts) {
+      state = upsertFact(state, fact);
+    }
+  }
+
+  state = { ...state, updatedAt: now };
+  return state;
+}
+
+/**
+ * 从文本中提取结构化事实（按行拆分，每行作为独立事实）
+ */
+function extractFactsFromText(
+  text: string,
+  category: WorldFact["category"],
+  now: string,
+): WorldFact[] {
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 10 && l.length < 500);
+  const facts: WorldFact[] = [];
+  for (const line of lines.slice(0, 10)) {
+    facts.push({
+      factId: crypto.randomUUID(),
+      category,
+      key: `ctx:${crypto.randomUUID().slice(0, 8)}`,
+      statement: line,
+      confidence: 0.7,
+      valid: true,
+      recordedAt: now,
+    });
+  }
+  return facts;
 }

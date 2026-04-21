@@ -6,6 +6,27 @@ import type { EgressEvent, NetworkPolicy } from "./runtime";
 import { stableStringify } from "./common";
 import { getProcessPool } from "./skillProcessPool";
 
+/**
+ * 文件路径越界防护：校验请求路径是否在沙箱根目录内。
+ * 拒绝包含 `..` 组件的路径（额外防护层），并使用 path.resolve + path.normalize 做绝对路径对比。
+ */
+function assertSafePath(requestedPath: string, sandboxRoot: string): string {
+  const normalized = path.normalize(requestedPath);
+  const segments = normalized.split(path.sep);
+  if (segments.includes("..")) {
+    throw Object.assign(new Error("SecurityError: path_traversal_detected"), { code: "PATH_TRAVERSAL" });
+  }
+  const resolved = path.resolve(sandboxRoot, requestedPath);
+  const normalizedResolved = path.normalize(resolved);
+  const normalizedRoot = path.normalize(sandboxRoot);
+  const sep = path.sep;
+  const rootPrefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
+  if (normalizedResolved !== normalizedRoot && !normalizedResolved.startsWith(rootPrefix)) {
+    throw Object.assign(new Error("SecurityError: path_traversal_detected"), { code: "PATH_TRAVERSAL" });
+  }
+  return normalizedResolved;
+}
+
 function getSkillRoots() {
   const raw = String(process.env.SKILL_PACKAGE_ROOTS ?? "");
   const parts = raw
@@ -34,7 +55,8 @@ function resolveArtifactDir(artifactRef: string) {
     if (!artifactId) throw new Error("policy_violation:artifact_ref_invalid");
     const reg = String(process.env.SKILL_REGISTRY_DIR ?? "").trim();
     const registryRoot = path.resolve(reg || path.resolve(process.cwd(), ".data", "skill-registry"));
-    return path.resolve(registryRoot, artifactId);
+    // 路径越界防护：确保 artifactId 不能通过 ../ 逃逸 registry 根目录
+    return assertSafePath(artifactId, registryRoot);
   }
   if (trimmed.startsWith("file://")) return fileURLToPath(trimmed);
   if (path.isAbsolute(trimmed)) return trimmed;
@@ -115,6 +137,8 @@ export async function executeSkillInSandbox(params: {
   const entryRel = String(loaded.manifest?.entry ?? "");
   if (!entryRel) throw new Error("policy_violation:skill_manifest_missing_entry");
   const entryPath = path.resolve(artifactDir, entryRel);
+  // 路径越界防护：确保 entry 文件不会超出 artifact 目录
+  assertSafePath(entryRel, artifactDir);
   if (!isWithinRoot(artifactDir, entryPath)) throw new Error("policy_violation:skill_entry_outside_artifact");
 
   // 从进程池获取子进程（冷启动时自动 fork）
@@ -122,11 +146,17 @@ export async function executeSkillInSandbox(params: {
   const { child, _poolEntry } = await pool.acquire(params.limits);
 
   let executionFailed = false;
+  let heartbeatKilled = false;
   const kill = () => {
     pool.discard(child);
   };
   if (params.signal.aborted) kill();
   params.signal.addEventListener("abort", kill, { once: true });
+
+  // 启动心跳监控：检测卡死进程
+  pool.startHeartbeat(child, () => {
+    heartbeatKilled = true;
+  });
 
   const cpuTimeLimitMs =
     typeof params.limits?.cpuTimeLimitMs === "number" && Number.isFinite(params.limits.cpuTimeLimitMs) && params.limits.cpuTimeLimitMs > 0
@@ -136,7 +166,11 @@ export async function executeSkillInSandbox(params: {
   const result = await new Promise<any>((resolve, reject) => {
     const onExit = (code: number | null) => {
       executionFailed = true;
-      reject(new Error(`skill_sandbox_exited:${code ?? "null"}`));
+      if (heartbeatKilled) {
+        reject(new Error("skill_sandbox_heartbeat_timeout"));
+      } else {
+        reject(new Error(`skill_sandbox_exited:${code ?? "null"}`));
+      }
     };
     const onMessage = (m: any) => {
       if (!m || typeof m !== "object") return;
@@ -168,6 +202,8 @@ export async function executeSkillInSandbox(params: {
     });
   }).finally(() => {
     params.signal.removeEventListener("abort", kill);
+    // 正常退出时停止心跳
+    if (child.pid != null) pool.stopHeartbeat(child.pid);
   });
 
   // 执行成功：归还进程到池；失败：kill 进程

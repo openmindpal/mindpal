@@ -1165,7 +1165,7 @@ export async function searchMemory(params: {
           } catch (err) { _logger.warn("embedding_vector JSON.parse failed", { err: (err as Error)?.message }); vec = []; }
           const cosine = cosineSimilarity(queryEmbeddingVec!, vec);
           return { ...r, _dense_score: cosine };
-        }).filter((r) => r._dense_score > (Number(process.env.MEMORY_DENSE_COSINE_THRESHOLD) || 0.3)); // 过滤低相似度
+        }).filter((r) => r._dense_score > (Number(process.env.MEMORY_DENSE_COSINE_THRESHOLD) || 0.25)); // 过滤低相似度
       }
     }
   } catch (err) {

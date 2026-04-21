@@ -629,6 +629,8 @@ export async function listRuns(pool: Queryable, tenantId: string, params: { limi
           s.status AS step_status,
           s.tool_ref,
           s.attempt,
+          s.error_category,
+          s.last_error_digest,
           s.updated_at AS step_updated_at
         FROM steps s
         WHERE EXISTS (SELECT 1 FROM matched_runs mr WHERE mr.run_id = s.run_id)
@@ -663,6 +665,8 @@ export async function listRuns(pool: Queryable, tenantId: string, params: { limi
         cs.step_status AS current_step_status,
         cs.tool_ref AS current_tool_ref,
         cs.attempt AS current_attempt,
+        cs.error_category AS current_error_category,
+        cs.last_error_digest AS current_last_error_digest,
         ts.phase,
         ts.plan,
         ts.artifacts_digest,

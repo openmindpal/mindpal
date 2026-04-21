@@ -8,6 +8,7 @@ import type { OrchestratorTurnRequest, OrchestratorTurnResponse } from "./model"
 import { getSessionContext, upsertSessionContext, type SessionMessage, type SessionState } from "../../../modules/memory/sessionContextRepo";
 import { getToolVersionByRef, type ToolDefinition } from "../../../modules/tools/toolRepo";
 import { insertAuditEvent } from "../../../modules/audit/auditRepo";
+import { getEffectiveRoutingPolicy } from "../../../modules/modelGateway/routingPolicyRepo";
 
 // Re-export from agentContext (canonical location) for convenience
 export { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, type EnabledTool } from "../../../modules/agentContext";
@@ -725,6 +726,36 @@ export async function orchestrateChatTurn(params: {
     modelMessages.push({ role: "user", content: augmentedUserContent });
   }
 
+  // ── 构建模型候选列表：defaultModelRef + DB路由策略fallback ──
+  let fallbackCandidates: string[] = params.defaultModelRef ? [params.defaultModelRef] : [];
+  if (params.defaultModelRef) {
+    try {
+      const routingPolicy = await getEffectiveRoutingPolicy({
+        pool: params.pool,
+        tenantId: params.subject.tenantId,
+        purpose: "orchestrator.turn",
+        spaceId: params.subject.spaceId ?? null,
+      });
+      if (routingPolicy?.enabled && Array.isArray(routingPolicy.fallbackModelRefs) && routingPolicy.fallbackModelRefs.length > 0) {
+        // 去重：避免fallback列表中包含与defaultModelRef相同的模型
+        const extras = routingPolicy.fallbackModelRefs.filter((ref: string) => ref !== params.defaultModelRef);
+        fallbackCandidates = [params.defaultModelRef, ...extras];
+        params.app.log.info({
+          traceId: params.traceId,
+          defaultModelRef: params.defaultModelRef,
+          fallbackCount: extras.length,
+          candidates: fallbackCandidates,
+        }, "[orchestrator] 已合并DB路由策略fallback模型到候选列表");
+      }
+    } catch (fbErr: any) {
+      // fallback查询失败不阻塞主流程，静默降级为单模型
+      params.app.log.warn(
+        { traceId: params.traceId, error: fbErr?.message },
+        "[orchestrator] 查询路由策略fallback失败，降级为单模型候选",
+      );
+    }
+  }
+
   let outputText = "";
   let modelError = false;
   let modelErrorDetail = "";
@@ -737,8 +768,8 @@ export async function orchestrateChatTurn(params: {
       traceId: params.traceId,
       purpose: "orchestrator.turn",
       messages: modelMessages,
-      // 传递用户选择的默认模型
-      ...(params.defaultModelRef ? { constraints: { candidates: [params.defaultModelRef] } } : {}),
+      // 传递用户选择的默认模型 + DB路由策略中的fallback候选模型
+      ...(params.defaultModelRef ? { constraints: { candidates: fallbackCandidates } } : {}),
     });
     outputText = typeof modelOut?.outputText === "string" ? modelOut.outputText : "";
   } catch (err: any) {

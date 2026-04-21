@@ -13,11 +13,12 @@
  */
 import type { FastifyInstance } from "fastify";
 import type {
-  GoalGraph, WorldState, SuccessCriterion, CompletionEvidence,
+  GoalGraph, WorldState, SuccessCriterion,
 } from "@openslin/shared";
 import {
   worldStateToPromptText, getValidFacts, computeGoalProgress,
 } from "@openslin/shared";
+import type { SubGoal, CompletionEvidence } from "@openslin/shared";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
 import type { StepObservation } from "./agentLoop";
 
@@ -447,4 +448,135 @@ ${goal}
       criteriaResults: [],
     };
   }
+}
+
+/* ================================================================== */
+/*  verifyStepResult — 单步验证代理                                     */
+/* ================================================================== */
+
+/** 单步验证结果 */
+export interface StepVerificationResult {
+  /** 是否通过 */
+  passed: boolean;
+  /** 支撑证据 */
+  evidence: string[];
+  /** 未满足的标准 */
+  failedCriteria: string[];
+  /** 对应的目标节点 ID（如果匹配到） */
+  matchedGoalId?: string;
+}
+
+/**
+ * 单步验证：对比步骤执行结果与 GoalGraph 中当前目标节点的 successCriteria
+ *
+ * 在 Agent Loop 的 Act 阶段完成后自动调用：
+ * - 验证通过 → 标记目标节点完成
+ * - 验证失败 → 由主循环决定是否重试或上报
+ */
+export function verifyStepResult(params: {
+  observation: StepObservation;
+  goalGraph: GoalGraph;
+  worldState: WorldState;
+}): StepVerificationResult {
+  const { observation, goalGraph, worldState } = params;
+  const now = new Date().toISOString();
+
+  // 1. 查找与当前步骤匹配的 in_progress 目标节点
+  //    匹配策略：正在执行的目标节点 + 工具引用匹配
+  const matchedGoal = goalGraph.subGoals.find((g) => {
+    if (g.status !== "in_progress") return false;
+    // 工具引用匹配
+    if (g.suggestedToolRefs?.some(t => observation.toolRef.startsWith(t.split("@")[0]))) return true;
+    // 已执行步骤匹配
+    if (g.executedStepSeqs?.includes(observation.seq)) return true;
+    return false;
+  }) ?? goalGraph.subGoals.find(g => g.status === "in_progress");
+
+  if (!matchedGoal) {
+    // 无匹配目标节点 → 步骤成功即通过
+    return {
+      passed: observation.status === "succeeded",
+      evidence: [observation.status === "succeeded" ? "Step succeeded (no goal binding)" : `Step failed: ${observation.errorCategory ?? "unknown"}`],
+      failedCriteria: observation.status !== "succeeded" ? ["step_execution_failed"] : [],
+    };
+  }
+
+  // 2. 对比 successCriteria
+  const evidence: string[] = [];
+  const failedCriteria: string[] = [];
+
+  if (observation.status !== "succeeded") {
+    failedCriteria.push("step_execution_failed");
+    evidence.push(`Step ${observation.seq} (${observation.toolRef}) failed: ${observation.errorCategory ?? "unknown"}`);
+    return { passed: false, evidence, failedCriteria, matchedGoalId: matchedGoal.goalId };
+  }
+
+  evidence.push(`Step ${observation.seq} (${observation.toolRef}) succeeded`);
+
+  for (const criterion of matchedGoal.successCriteria) {
+    if (criterion.met) {
+      evidence.push(`Criterion "${criterion.description}" already met`);
+      continue;
+    }
+
+    // 检查 WorldState 中是否有支撑证据
+    const validFacts = getValidFacts(worldState);
+    const keywords = criterion.description.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+    const hasEvidence = validFacts.some(f => {
+      const fl = f.statement.toLowerCase();
+      return keywords.some((kw: string) => fl.includes(kw)) && fl.includes("succeeded");
+    });
+
+    if (hasEvidence || (criterion.evidenceRef && validFacts.some(f => f.factId === criterion.evidenceRef))) {
+      evidence.push(`Criterion "${criterion.description}" satisfied by WorldState evidence`);
+    } else if (criterion.required) {
+      failedCriteria.push(criterion.description);
+    }
+  }
+
+  const passed = failedCriteria.length === 0;
+  return { passed, evidence, failedCriteria, matchedGoalId: matchedGoal.goalId };
+}
+
+/**
+ * 将步骤验证结果应用到 GoalGraph：通过时标记节点完成，失败时标记 failed
+ */
+export function applyStepVerification(
+  goalGraph: GoalGraph,
+  verification: StepVerificationResult,
+  observation: StepObservation,
+): GoalGraph {
+  if (!verification.matchedGoalId) return goalGraph;
+
+  const now = new Date().toISOString();
+  const updatedGoals = goalGraph.subGoals.map((g) => {
+    if (g.goalId !== verification.matchedGoalId) return g;
+
+    if (verification.passed) {
+      // 标记完成 + 收集证据
+      const newEvidence: CompletionEvidence = {
+        evidenceId: `ev:${observation.stepId ?? observation.seq}`,
+        type: "tool_output",
+        sourceRef: observation.stepId ?? String(observation.seq),
+        summary: verification.evidence.join("; "),
+        collectedAt: now,
+      };
+      return {
+        ...g,
+        status: "completed" as const,
+        completionEvidence: [...g.completionEvidence, newEvidence],
+        executedStepSeqs: [...(g.executedStepSeqs ?? []), observation.seq],
+        updatedAt: now,
+      };
+    } else {
+      // 累计失败信息，不立即标记 failed（留给主循环决定是否重试）
+      return {
+        ...g,
+        executedStepSeqs: [...(g.executedStepSeqs ?? []), observation.seq],
+        updatedAt: now,
+      };
+    }
+  });
+
+  return { ...goalGraph, subGoals: updatedGoals, updatedAt: now };
 }

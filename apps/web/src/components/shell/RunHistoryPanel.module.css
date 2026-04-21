@@ -75,16 +75,6 @@
   min-height: 0;
 }
 
-.loading,
-.empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
-  color: var(--sl-muted);
-  font-size: 13px;
-}
-
 /* ─── Run List ────────────────────────────────────────────────────────────── */
 
 .runList {
@@ -207,7 +197,7 @@
 
 .stepTimestamp {
   width: 70px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--sl-muted);
   text-align: right;
   flex-shrink: 0;
@@ -269,7 +259,7 @@
 }
 
 .stepLatency {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--sl-muted);
   flex-shrink: 0;
 }

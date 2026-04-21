@@ -17,6 +17,7 @@ import { getEnvironmentSummary } from "./environmentState";
 import type { StepObservation, ExecutionConstraints } from "./loopTypes";
 import { buildThinkPrompt } from "./loopThinkDecide";
 import { selectPurposeTier, tryDynamicModelRoute } from "./loopModelRouter";
+import { detectIntentBoundary, type IntentDriftResult } from "./intentAnchoringService";
 
 /* ================================================================== */
 /*  迭代上下文构建                                                       */
@@ -40,6 +41,8 @@ export async function buildIterationContext(params: {
   environmentContext: string | undefined;
   dynamicStrategyContext: string | undefined;
   updatedWorldState: WorldState | null;
+  /** Think 阶段意图漂移检测结果 */
+  intentDrift: IntentDriftResult | null;
 }> {
   const { pool, subject, runId, goal, iterations, observations, goalGraph, strategyContext, auditCtx, log } = params;
   let worldState = params.worldState;
@@ -112,7 +115,32 @@ export async function buildIterationContext(params: {
     }
   }
 
-  return { goalGraphContext, worldStateContext, environmentContext, dynamicStrategyContext, updatedWorldState: worldState };
+  // Think 阶段：意图漂移检测
+  let intentDrift: IntentDriftResult | null = null;
+  if (iterations > 1) {
+    try {
+      const lastObs = observations[observations.length - 1];
+      const currentSignal = lastObs
+        ? `Tool: ${lastObs.toolRef}, Status: ${lastObs.status}, Output: ${JSON.stringify(lastObs.outputDigest ?? {}).slice(0, 200)}`
+        : goal;
+      intentDrift = await detectIntentBoundary({
+        pool,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId,
+        subjectId: subject.subjectId,
+        runId,
+        currentMessage: currentSignal,
+        originalGoal: goal,
+      });
+      if (intentDrift.drifted) {
+        log.warn({ runId, iteration: iterations, driftScore: intentDrift.driftScore, reason: intentDrift.reason }, "[AgentLoop] Think 阶段检测到意图漂移");
+      }
+    } catch (err: any) {
+      log.warn({ err: err?.message, runId, iteration: iterations }, "[AgentLoop] 意图漂移检测失败（不影响执行）");
+    }
+  }
+
+  return { goalGraphContext, worldStateContext, environmentContext, dynamicStrategyContext, updatedWorldState: worldState, intentDrift };
 }
 
 /* ================================================================== */

@@ -7,6 +7,7 @@ import { t } from "@/lib/i18n";
 import { Card, PageHeader, Table, StatusBadge, getHelpHref, AlertBanner, friendlyError } from "@/components/ui";
 import { type ApiError, toApiError, errText } from "@/lib/apiError";
 import { numberField, stringField, toDisplayText, toRecord } from "@/lib/viewData";
+import { useFormState } from "@/hooks/useFormState";
 
 type SchemaRow = { name: string; version: string; publishedAt: string };
 type SchemasResp = { schemas?: SchemaRow[] } & ApiError;
@@ -42,16 +43,19 @@ function normalizeSchemasResp(value: unknown): SchemasResp | null {
 export default function SchemasClient(props: { locale: string; initial: unknown; initialStatus: number }) {
   const [data, setData] = useState<SchemasResp | null>(normalizeSchemasResp(props.initial));
   const [status, setStatus] = useState<number>(props.initialStatus);
-  const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [q, setQ] = useState<string>("");
 
   const [showCreate, setShowCreate] = useState(false);
-  const [cName, setCName] = useState("");
-  const [cDisplayName, setCDisplayName] = useState("");
-  const [cEntityName, setCEntityName] = useState("");
-  const [cEntityDisplayName, setCEntityDisplayName] = useState("");
-  const [cError, setCError] = useState("");
+  const createForm = useFormState({
+    initial: { cName: "", cDisplayName: "", cEntityName: "", cEntityDisplayName: "" },
+  });
+  const busy = createForm.busy;
+  const cName = createForm.fields.cName;
+  const cDisplayName = createForm.fields.cDisplayName;
+  const cEntityName = createForm.fields.cEntityName;
+  const cEntityDisplayName = createForm.fields.cEntityDisplayName;
+  const cError = createForm.errors._form ?? "";
 
   /** Build minimal schema definition object without forcing any built-in entity/field preset */
   const buildSchemaDef = useCallback(() => {
@@ -96,30 +100,26 @@ export default function SchemasClient(props: { locale: string; initial: unknown;
 
   async function refresh() {
     setError("");
-    setBusy(true);
-    try {
+    await createForm.runAction(async () => {
       const res = await apiFetch(`/schemas`, { locale: props.locale, cache: "no-store" });
       setStatus(res.status);
       const json: unknown = await res.json().catch(() => null);
       setData(normalizeSchemasResp(json));
       if (!res.ok) setError(errText(props.locale, (json as any) ?? { errorCode: String(res.status) }));
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   const handleCreate = useCallback(async () => {
-    setCError("");
+    createForm.clearErrors();
     const name = cName.trim();
     const entityName = cEntityName.trim();
-    if (!name) { setCError(t(props.locale, "gov.schemas.createNameRequired")); return; }
-    if (!SCHEMA_NAME_RE.test(name)) { setCError(t(props.locale, "gov.schemas.createNameInvalid")); return; }
-    if (entityName && !ENTITY_NAME_RE.test(entityName)) { setCError(t(props.locale, "gov.schemas.createEntityInvalid")); return; }
+    if (!name) { createForm.setError("_form", t(props.locale, "gov.schemas.createNameRequired")); return; }
+    if (!SCHEMA_NAME_RE.test(name)) { createForm.setError("_form", t(props.locale, "gov.schemas.createNameInvalid")); return; }
+    if (entityName && !ENTITY_NAME_RE.test(entityName)) { createForm.setError("_form", t(props.locale, "gov.schemas.createEntityInvalid")); return; }
 
     const schemaDef = buildSchemaDef();
 
-    setBusy(true);
-    try {
+    await createForm.runAction(async () => {
       const csRes = await apiFetch(`/governance/changesets`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -140,12 +140,8 @@ export default function SchemasClient(props: { locale: string; initial: unknown;
       if (!itemRes.ok) throw toApiError(itemJson);
 
       window.location.href = `/gov/changesets/${encodeURIComponent(csId)}?lang=${encodeURIComponent(props.locale)}`;
-    } catch (e: unknown) {
-      setCError(errText(props.locale, toApiError(e)));
-    } finally {
-      setBusy(false);
-    }
-  }, [buildSchemaDef, cName, cEntityName, props.locale]);
+    });
+  }, [buildSchemaDef, cName, cEntityName, props.locale, createForm]);
 
   const initialError = useMemo(() => (status >= 400 ? errText(props.locale, data) : ""), [data, props.locale, status]);
 
@@ -158,7 +154,7 @@ export default function SchemasClient(props: { locale: string; initial: unknown;
         actions={
           <>
             <button
-              onClick={() => { setShowCreate(true); setCError(""); setCName(""); setCDisplayName(""); setCEntityName(""); setCEntityDisplayName(""); }}
+              onClick={() => { setShowCreate(true); createForm.clearErrors(); createForm.reset(); }}
               disabled={busy}
               style={{ fontWeight: 600 }}
             >
@@ -185,7 +181,7 @@ export default function SchemasClient(props: { locale: string; initial: unknown;
                 <span style={{ fontWeight: 600 }}>{t(props.locale, "gov.schemas.createNameLabel")}</span>
                 <input
                   value={cName}
-                  onChange={(e) => setCName(e.target.value)}
+                  onChange={(e) => createForm.setField("cName", e.target.value)}
                   placeholder={t(props.locale, "gov.schemas.createNamePlaceholder")}
                   disabled={busy}
                 />
@@ -196,7 +192,7 @@ export default function SchemasClient(props: { locale: string; initial: unknown;
                 <span style={{ fontWeight: 600 }}>{t(props.locale, "gov.schemas.createDisplayNameLabel")}</span>
                 <input
                   value={cDisplayName}
-                  onChange={(e) => setCDisplayName(e.target.value)}
+                  onChange={(e) => createForm.setField("cDisplayName", e.target.value)}
                   placeholder={t(props.locale, "gov.schemas.createDisplayNamePlaceholder")}
                   disabled={busy}
                 />
@@ -206,7 +202,7 @@ export default function SchemasClient(props: { locale: string; initial: unknown;
                 <span style={{ fontWeight: 600 }}>{t(props.locale, "gov.schemas.createEntityLabel")}</span>
                 <input
                   value={cEntityName}
-                  onChange={(e) => setCEntityName(e.target.value)}
+                  onChange={(e) => createForm.setField("cEntityName", e.target.value)}
                   placeholder={t(props.locale, "gov.schemas.createEntityPlaceholder")}
                   disabled={busy}
                 />
@@ -218,7 +214,7 @@ export default function SchemasClient(props: { locale: string; initial: unknown;
                   <span style={{ fontWeight: 600 }}>{t(props.locale, "gov.schemas.createEntityDisplayNameLabel")}</span>
                   <input
                     value={cEntityDisplayName}
-                    onChange={(e) => setCEntityDisplayName(e.target.value)}
+                    onChange={(e) => createForm.setField("cEntityDisplayName", e.target.value)}
                     placeholder={t(props.locale, "gov.schemas.createEntityDisplayNamePlaceholder")}
                     disabled={busy}
                   />

@@ -1,65 +1,5 @@
-/* ─── Container ─── */
-
-.container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-}
-
-/* ─── Scrollable content ─── */
-
-.content {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 4px 8px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--sl-border) transparent;
-}
-
-.content::-webkit-scrollbar { width: 4px; }
-.content::-webkit-scrollbar-thumb { background: var(--sl-border); border-radius: 2px; }
-
-/* ─── States ─── */
-
-.loadingState,
-.errorState,
-.emptyState {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 24px 16px;
-  color: var(--sl-muted);
-  font-size: 12px;
-}
-
-.spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--sl-border);
-  border-top-color: var(--sl-accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.retryBtn {
-  padding: 3px 10px;
-  border: 1px solid var(--sl-border);
-  border-radius: 4px;
-  background: var(--sl-surface);
-  color: var(--sl-text);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.retryBtn:hover {
-  background: var(--sl-hover);
-}
+/* ─── Container/State styles now from bottomTray.shared.module.css ─── */
+/* panelWrap, panelLoading, panelError, panelEmpty, spinner, retryBtn → shared */
 
 /* ─── Run List ─── */
 
@@ -76,7 +16,7 @@
   grid-template-columns: auto 1fr auto;
   align-items: start;
   gap: 8px;
-  padding: 7px 8px;
+  padding: 8px 10px;
   border-radius: 4px;
   text-decoration: none;
   color: var(--sl-text);
@@ -87,23 +27,9 @@
   background: var(--sl-hover);
 }
 
-/* ─── Left: status dot ─── */
-
-.statusDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+/* statusDot base + colors now from shared; keep alignment tweak */
+.statusDotAlign {
   margin-top: 5px;
-  flex-shrink: 0;
-  background: var(--sl-muted);
-}
-
-.statusDotRunning {
-  background: var(--sl-success, #22c55e);
-}
-
-.statusDotBlocked {
-  background: var(--sl-warning, #f59e0b);
 }
 
 /* ─── Middle: all text info ─── */
@@ -111,7 +37,7 @@
 .runInfo {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
   text-decoration: none;
   color: inherit;
@@ -121,16 +47,11 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
-.runId {
-  color: var(--sl-muted);
-  font-family: var(--sl-font-mono, monospace);
-  font-size: 11px;
-  flex-shrink: 0;
-}
+/* runId mono style now from shared.monoText */
 
 .runPhase {
   font-weight: 500;
@@ -153,17 +74,11 @@
   line-height: 14px;
 }
 
-.toolName {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  flex: 1;
-}
+/* toolName truncation now from shared.truncate */
 
 .stepAttempt {
   color: var(--sl-warning, #f59e0b);
-  font-size: 10px;
+  font-size: 11px;
   flex-shrink: 0;
 }
 
@@ -190,7 +105,7 @@
 }
 
 .progressText {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--sl-muted);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -207,39 +122,20 @@
 }
 
 .runTime {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--sl-muted);
   white-space: nowrap;
   margin-top: 1px;
 }
 
-.cancelBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--sl-muted);
-  cursor: pointer;
-  transition: all 0.15s;
-  padding: 0;
-}
-
-.cancelBtn:hover:not(:disabled) {
+/* cancelBtn base now from shared.actionBtn; keep danger hover override */
+.cancelBtnDanger:hover:not(:disabled) {
   background: var(--sl-danger-bg, #fee2e2);
   color: var(--sl-danger, #dc2626);
 }
 
-.cancelBtn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 .cancelDone {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--sl-muted);
   white-space: nowrap;
 }

@@ -80,6 +80,9 @@ export interface CompletionEvidence {
 /*  子目标节点                                                          */
 /* ================================================================== */
 
+/** 子目标与上级之间的边类型 */
+export type GoalEdgeType = "sequential" | "conditional" | "parallel";
+
 /** 子目标状态 */
 export type SubGoalStatus =
   | "pending"       // 未开始
@@ -97,6 +100,10 @@ export interface SubGoal {
   parentGoalId: string | null;
   /** 依赖的其他子目标 ID（完成后本目标才可开始） */
   dependsOn: string[];
+  /** 边类型：顺序执行 / 条件分支 / 并行执行（默认 sequential） */
+  edgeType: GoalEdgeType;
+  /** 当 edgeType='conditional' 时的条件表达式（自然语言 + 可选结构化断言） */
+  condition?: string;
   /** 子目标描述 */
   description: string;
   /** 预期使用的工具（可选 hint，规划器可覆盖） */
@@ -190,7 +197,11 @@ export function createGoalGraph(runId: string, mainGoal: string, graphId?: strin
 }
 
 /**
- * 获取当前可执行的子目标（前置条件满足 + 依赖完成 + 未开始）
+ * 获取当前可执行的子目标（支持 sequential/conditional/parallel 边类型）
+ *
+ * - sequential: 所有 dependsOn 子目标完成后才可执行
+ * - parallel: 不等待兄弟节点，只等待显式 dependsOn 完成即可激活
+ * - conditional: 依赖完成且条件已满足时才可执行
  */
 export function getExecutableSubGoals(graph: GoalGraph): SubGoal[] {
   const completedIds = new Set(
@@ -198,10 +209,15 @@ export function getExecutableSubGoals(graph: GoalGraph): SubGoal[] {
   );
   return graph.subGoals.filter((g) => {
     if (g.status !== "pending") return false;
-    // 所有依赖已完成
+    // 所有显式依赖已完成
     if (!g.dependsOn.every((dep) => completedIds.has(dep))) return false;
     // 所有前置条件已满足（或无前置条件）
     if (g.preconditions.length > 0 && !g.preconditions.every((pc) => pc.satisfied)) return false;
+    // conditional 边：需要条件表达式已满足（通过前置条件绑定判定）
+    if (g.edgeType === "conditional" && g.condition) {
+      // condition 表达式存在且前置条件为空时视为未满足（待 WorldState Evaluator 填充）
+      if (g.preconditions.length === 0) return false;
+    }
     return true;
   });
 }
@@ -254,12 +270,35 @@ export function validateGoalGraphDAG(graph: GoalGraph): {
 /**
  * 获取按拓扑序排列的子目标 ID 列表
  * 委托 dagUtils.topologicalSortGeneric 实现，使用子目标优先级作为排序权重。
+ *
+ * parallel 边类型的节点优先级获得增强（权重降低）以尽早激活，
+ * conditional 边类型的节点优先级降低（权重增加）以推迟执行。
  */
 export function topologicalSort(graph: GoalGraph): string[] {
   const dagNodes: DagNode[] = graph.subGoals.map((g) => ({
     id: g.goalId,
     dependsOn: g.dependsOn,
   }));
-  const priorityMap = new Map(graph.subGoals.map((g) => [g.goalId, g.priority]));
+  const priorityMap = new Map(graph.subGoals.map((g) => {
+    let weight = g.priority;
+    if (g.edgeType === "parallel") weight = Math.max(0, weight - 1);      // 并行节点提前激活
+    if (g.edgeType === "conditional") weight = weight + 1;                 // 条件节点推迟
+    return [g.goalId, weight];
+  }));
   return topologicalSortGeneric(dagNodes, (id) => priorityMap.get(id) ?? 0);
+}
+
+/**
+ * 获取同一父节点下的并行子目标组（edgeType=parallel）
+ * 功能目标：Agent Loop 可一次性并行激活同组 parallel 子目标
+ */
+export function getParallelSubGoalGroups(graph: GoalGraph): Map<string | null, SubGoal[]> {
+  const groups = new Map<string | null, SubGoal[]>();
+  for (const g of graph.subGoals) {
+    if (g.edgeType !== "parallel" || g.status !== "pending") continue;
+    const key = g.parentGoalId;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(g);
+  }
+  return groups;
 }

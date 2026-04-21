@@ -7,6 +7,34 @@ import type { Pool } from "pg";
 import { resolveSupplyChainPolicy, resolveString } from "@openslin/shared";
 import { stableStringify } from "./common";
 
+/**
+ * 文件路径越界防护：校验请求路径是否在沙箱根目录内。
+ * 拒绝包含 `..` 组件的路径（额外防护层），并使用 path.resolve + path.normalize 做绝对路径对比。
+ * @returns 规范化后的绝对路径
+ * @throws SecurityError: path_traversal_detected
+ */
+export function assertSafePath(requestedPath: string, sandboxRoot: string): string {
+  // 额外防护层：明确禁止路径中包含 .. 组件
+  const normalized = path.normalize(requestedPath);
+  const segments = normalized.split(path.sep);
+  if (segments.includes("..")) {
+    throw Object.assign(new Error("SecurityError: path_traversal_detected"), { code: "PATH_TRAVERSAL" });
+  }
+
+  const resolved = path.resolve(sandboxRoot, requestedPath);
+  const normalizedResolved = path.normalize(resolved);
+  const normalizedRoot = path.normalize(sandboxRoot);
+
+  // 确保解析后的绝对路径以 sandboxRoot 开头
+  const sep = path.sep;
+  const rootPrefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
+  if (normalizedResolved !== normalizedRoot && !normalizedResolved.startsWith(rootPrefix)) {
+    throw Object.assign(new Error("SecurityError: path_traversal_detected"), { code: "PATH_TRAVERSAL" });
+  }
+
+  return normalizedResolved;
+}
+
 export function getSkillRoots() {
   const raw = resolveString("SKILL_PACKAGE_ROOTS").value;
   const parts = raw
@@ -38,7 +66,8 @@ export function resolveArtifactDir(artifactRef: string) {
     if (!artifactId) throw new Error("policy_violation:artifact_ref_invalid");
     const reg = resolveString("SKILL_REGISTRY_DIR").value;
     const registryRoot = path.resolve(reg || path.resolve(process.cwd(), ".data", "skill-registry"));
-    return path.resolve(registryRoot, artifactId);
+    // 路径越界防护：确保 artifactId 不能通过 ../ 逃逸 registry 根目录
+    return assertSafePath(artifactId, registryRoot);
   }
   if (trimmed.startsWith("file://")) return fileURLToPath(trimmed);
   if (path.isAbsolute(trimmed)) return trimmed;
@@ -50,7 +79,8 @@ export function resolveArtifactDir(artifactRef: string) {
 }
 
 export async function loadManifest(artifactDir: string) {
-  const p = path.join(artifactDir, "manifest.json");
+  // 路径越界防护：确保 manifest.json 不会超出 artifact 目录
+  const p = assertSafePath("manifest.json", artifactDir);
   const raw = await fs.readFile(p, "utf8");
   const manifest = JSON.parse(raw);
   return { manifest, raw };
@@ -59,7 +89,8 @@ export async function loadManifest(artifactDir: string) {
 export async function computeDepsDigest(params: { artifactDir: string; manifest: any }) {
   const manifestStable = stableStringify(params.manifest);
   const entryRel = String(params.manifest?.entry ?? "");
-  const entryPath = entryRel ? path.resolve(params.artifactDir, entryRel) : "";
+  // 路径越界防护：确保 entry 文件不会超出 artifact 目录
+  const entryPath = entryRel ? assertSafePath(entryRel, params.artifactDir) : "";
   const entryBytes = entryPath ? await fs.readFile(entryPath) : Buffer.from("");
   const h = crypto.createHash("sha256");
   h.update(Buffer.from(manifestStable, "utf8"));

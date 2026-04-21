@@ -1,0 +1,193 @@
+/* ─── Bottom Tray Shared Styles ─── */
+
+/* Panel wrapper: base container for sub-panels */
+.panelWrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sl-border) transparent;
+}
+
+.panelWrap::-webkit-scrollbar { width: 4px; }
+.panelWrap::-webkit-scrollbar-thumb { background: var(--sl-border); border-radius: 2px; }
+
+/* ─── State displays ─── */
+
+.panelLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+  color: var(--sl-muted);
+  font-size: 12px;
+}
+
+.panelError {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+  color: var(--sl-muted);
+  font-size: 12px;
+}
+
+.panelEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  color: var(--sl-muted);
+  font-size: 12px;
+}
+
+/* ─── Spinner ─── */
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--sl-border);
+  border-top-color: var(--sl-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── Status dot ─── */
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--sl-muted);
+}
+
+.statusDotGreen {
+  background: var(--sl-success, #22c55e);
+}
+
+.statusDotOrange {
+  background: var(--sl-warning, #f59e0b);
+}
+
+.statusDotRed {
+  background: var(--sl-error, #dc2626);
+}
+
+.statusDotGray {
+  background: var(--sl-muted);
+}
+
+.statusDotPulse {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ─── Action button ─── */
+
+.actionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sl-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s;
+}
+
+.actionBtn:hover:not(:disabled) {
+  background: var(--sl-hover);
+  color: var(--sl-text);
+}
+
+.actionBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Action badge ─── */
+
+.actionBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.actionBadgeSuccess {
+  background: var(--sl-success-bg, #dcfce7);
+  color: var(--sl-success, #22c55e);
+}
+
+.actionBadgeError {
+  background: var(--sl-danger-bg, #fee2e2);
+  color: var(--sl-error, #dc2626);
+}
+
+/* ─── Item row ─── */
+
+.itemRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.itemRow:hover {
+  background: var(--sl-hover);
+}
+
+/* ─── Text utilities ─── */
+
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.monoText {
+  font-family: var(--sl-font-mono, monospace);
+  font-size: 11px;
+  color: var(--sl-muted);
+}
+
+/* ─── Retry button ─── */
+
+.retryBtn {
+  padding: 3px 10px;
+  border: 1px solid var(--sl-border);
+  border-radius: 4px;
+  background: var(--sl-surface);
+  color: var(--sl-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.retryBtn:hover {
+  background: var(--sl-hover);
+}

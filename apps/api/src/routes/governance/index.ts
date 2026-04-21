@@ -11,7 +11,7 @@ import { governanceKnowledgeRoutes } from "./knowledge";
 import { governanceIntegrationsRoutes } from "./integrations";
 import { governanceCollabRoutes } from "./collab";
 import { governanceConfigRoutes } from "./config";
-// federation routes moved to skills/federation-gateway (optional-builtin Skill)
+import { governanceFederationRoutes } from "./federation";
 
 export const governanceIndexRoutes: FastifyPluginAsync = async (app) => {
   await app.register(governanceUiRoutes);
@@ -26,6 +26,6 @@ export const governanceIndexRoutes: FastifyPluginAsync = async (app) => {
   await app.register(governanceIntegrationsRoutes);
   await app.register(governanceCollabRoutes);
   await app.register(governanceConfigRoutes);
-  // governanceFederationRoutes → now registered via skills/federation-gateway
+  await app.register(governanceFederationRoutes);
 };
 

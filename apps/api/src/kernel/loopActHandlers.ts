@@ -10,7 +10,7 @@ import type { GoalGraph, WorldState } from "@openslin/shared";
 import { ErrorCategory } from "@openslin/shared";
 import type { AgentDecision, StepObservation, ExecutionConstraints } from "./loopTypes";
 import type { VerificationResult } from "./verifierAgent";
-import { verifyGoalCompletion, verifySimple } from "./verifierAgent";
+import { verifyGoalCompletion, verifySimple, verifyStepResult, applyStepVerification } from "./verifierAgent";
 import { safeTransitionRun } from "./loopStateHelpers";
 import { upsertTaskState } from "../modules/memory/repo";
 import { finalizeCheckpoint } from "./loopCheckpoint";
@@ -136,7 +136,7 @@ export async function handleDoneAction(params: {
 export type ToolCallActionResult =
   | { outcome: "boundary_paused"; reason: string }
   | { outcome: "validation_failed"; failObs: StepObservation }
-  | { outcome: "executed"; obs: StepObservation; succeeded: boolean; worldState: WorldState | null; goalGraph: GoalGraph | null };
+  | { outcome: "executed"; obs: StepObservation; succeeded: boolean; worldState: WorldState | null; goalGraph: GoalGraph | null; stepVerification?: import("./verifierAgent").StepVerificationResult };
 
 export async function handleToolCallAction(params: {
   app: FastifyInstance;
@@ -237,5 +237,23 @@ export async function handleToolCallAction(params: {
     if (updatedGoalGraph) updatedGoalGraph = evaluateGoalConditions(updatedGoalGraph, worldState);
   }
 
-  return { outcome: "executed", obs, succeeded: stepResult.status === "succeeded", worldState, goalGraph: updatedGoalGraph };
+  // 行动验证：单步执行结果校验
+  let stepVerification: import("./verifierAgent").StepVerificationResult | undefined;
+  if (updatedGoalGraph && worldState) {
+    stepVerification = verifyStepResult({ observation: obs, goalGraph: updatedGoalGraph, worldState });
+    if (stepVerification.passed && stepVerification.matchedGoalId) {
+      updatedGoalGraph = applyStepVerification(updatedGoalGraph, stepVerification, obs);
+      app.log.info({
+        runId, stepId: execResult.stepId, goalId: stepVerification.matchedGoalId,
+        passed: true, evidence: stepVerification.evidence.length,
+      }, "[AgentLoop] 步骤验证通过，目标节点标记完成");
+    } else if (!stepVerification.passed && stepVerification.matchedGoalId) {
+      app.log.info({
+        runId, stepId: execResult.stepId, goalId: stepVerification.matchedGoalId,
+        passed: false, failedCriteria: stepVerification.failedCriteria,
+      }, "[AgentLoop] 步骤验证未通过（留待主循环决策是否重试）");
+    }
+  }
+
+  return { outcome: "executed", obs, succeeded: stepResult.status === "succeeded", worldState, goalGraph: updatedGoalGraph, stepVerification };
 }

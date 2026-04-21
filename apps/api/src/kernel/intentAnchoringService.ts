@@ -23,7 +23,8 @@ export {
   deactivateIntentAnchor,
   recordBoundaryViolation,
 } from "./intentAnchorRepo";
-export { checkAndEnforceIntentBoundary, extractKeywords, isConstraintSatisfied, isConflictingAction, getViolationTypeLabel } from "./intentBoundaryDetection";
+export { checkAndEnforceIntentBoundary, detectIntentBoundary, extractKeywords, isConstraintSatisfied, isConflictingAction, getViolationTypeLabel } from "./intentBoundaryDetection";
+export type { IntentDriftResult } from "./intentBoundaryDetection";
 
 import { getAnchorRules } from "./intentAnchorRules";
 import { createIntentAnchorsBatch } from "./intentAnchorRepo";

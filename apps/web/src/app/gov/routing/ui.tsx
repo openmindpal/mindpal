@@ -110,6 +110,39 @@ export default function RoutingClient(props: { locale: string; initial: unknown;
     }
   }
 
+  function editPolicy(p: RoutingPolicyRow) {
+    const purp = p.purpose ?? "";
+    if (PRESET_PURPOSES.includes(purp as typeof PRESET_PURPOSES[number])) {
+      setPurposeSelect(purp);
+      setCustomPurpose("");
+    } else {
+      setPurposeSelect("__custom__");
+      setCustomPurpose(purp);
+    }
+    setPrimaryModelRef(p.primaryModelRef ?? "");
+    setFallbackText(Array.isArray(p.fallbackModelRefs) ? p.fallbackModelRefs.join(", ") : "");
+    setEnabled(Boolean(p.enabled));
+  }
+
+  async function deletePol(p: string) {
+    if (!confirm(t(props.locale, "gov.routing.confirmDelete") !== "gov.routing.confirmDelete" ? t(props.locale, "gov.routing.confirmDelete") : `确认删除路由策略 "${p}"？`)) return;
+    setError("");
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/governance/model-gateway/routing/${encodeURIComponent(p)}`, {
+        method: "DELETE",
+        headers: apiHeaders(props.locale),
+      });
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) throw toApiError(json);
+      await refresh();
+    } catch (e: unknown) {
+      setError(errText(props.locale, toApiError(e)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function disable(p: string) {
     setError("");
     setBusy(true);
@@ -274,9 +307,17 @@ export default function RoutingClient(props: { locale: string; initial: unknown;
                 <td>{p.updatedAt ?? "-"}</td>
                 <td>
                   {p.purpose ? (
-                    <button onClick={() => disable(p.purpose!)} disabled={busy}>
-                      {t(props.locale, "action.disable")}
-                    </button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => editPolicy(p)} disabled={busy}>
+                        {t(props.locale, "action.edit")}
+                      </button>
+                      <button onClick={() => disable(p.purpose!)} disabled={busy}>
+                        {t(props.locale, "action.disable")}
+                      </button>
+                      <button onClick={() => deletePol(p.purpose!)} disabled={busy} style={{ color: "#c00" }}>
+                        {t(props.locale, "action.delete")}
+                      </button>
+                    </div>
                   ) : (
                     "-"
                   )}

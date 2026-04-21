@@ -56,7 +56,12 @@ function mapRowToSummary(r: any): RunSummaryDTO {
       : null,
     durationMs,
     outputDigest: null,
-    errorDigest: null,
+    errorDigest: r.current_error_category || r.current_last_error_digest
+      ? {
+          errorCategory: r.current_error_category ?? null,
+          message: r.current_last_error_digest ?? null,
+        }
+      : null,
   };
 }
 
@@ -143,6 +148,8 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
           s.status AS step_status,
           s.tool_ref,
           s.attempt,
+          s.error_category,
+          s.last_error_digest,
           s.updated_at AS step_updated_at
         FROM steps s
         WHERE EXISTS (SELECT 1 FROM active_runs ar WHERE ar.run_id = s.run_id)
@@ -182,6 +189,8 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
         cs.step_status AS current_step_status,
         cs.tool_ref AS current_tool_ref,
         cs.attempt AS current_attempt,
+        cs.error_category AS current_error_category,
+        cs.last_error_digest AS current_last_error_digest,
         sc.total_steps,
         sc.succeeded_steps,
         ji.job_type,
@@ -280,6 +289,12 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
     // 查找当前步骤（最后一个非终态步骤，或最后一个步骤）
     const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
 
+    // 构建错误摘要（从最后一个失败步骤提取）
+    const failedStep = steps.find((s: any) => s.errorCategory || s.lastErrorDigest) ?? null;
+    const errorDigest = failedStep
+      ? { errorCategory: failedStep.errorCategory ?? null, message: failedStep.lastErrorDigest ?? null }
+      : null;
+
     const stepsDTO: RunStepDTO[] = steps.map(mapStepToDTO);
 
     // 构建 RunDetailDTO
@@ -309,7 +324,7 @@ export const runsQueryRoutes: FastifyPluginAsync = async (app) => {
         : null,
       durationMs,
       outputDigest: null,
-      errorDigest: null,
+      errorDigest,
       steps: stepsDTO,
       blockReason,
       nextAction,

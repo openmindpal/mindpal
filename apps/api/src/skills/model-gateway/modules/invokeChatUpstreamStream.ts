@@ -163,7 +163,8 @@ export async function invokeModelChatUpstreamStream(params: {
   // ═══ 性能优化: 并行化安全策略 + 路由解析 DB 查询 ═══
   // 原流程: injection(~30ms) → content(~30ms) → routing(~30ms) = ~90ms 串行
   // 新流程: Promise.all([injection, content, routing]) = ~30ms 并行
-  const needsRoutingQuery = !body.constraints?.candidates?.length && !body.modelRef;
+  // 只要没有显式 modelRef，就查询路由策略（含 fallback），即使 constraints.candidates 已有值
+  const needsRoutingQuery = !body.modelRef;
   const [injEff, contentEff, routingQueryResult] = await Promise.all([
     getEffectiveSafetyPolicyVersion({ pool: params.app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, policyType: "injection" }),
     getEffectiveSafetyPolicyVersion({ pool: params.app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, policyType: "content" }),
@@ -244,6 +245,12 @@ export async function invokeModelChatUpstreamStream(params: {
   if (body.constraints?.candidates?.length) {
     routeReason = "constraints_candidates";
     candidates.push(...body.constraints.candidates);
+    // 追加 DB 路由策略中的 fallback 模型（用户选定模型保持首位优先）
+    if (routingQueryResult) {
+      for (const fb of routingQueryResult.candidates) {
+        if (fb && !candidates.includes(fb)) candidates.push(fb);
+      }
+    }
   } else if (body.modelRef) {
     routeReason = "explicit_modelRef";
     candidates.push(body.modelRef);

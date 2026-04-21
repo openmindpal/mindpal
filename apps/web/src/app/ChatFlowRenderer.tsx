@@ -317,6 +317,12 @@ const MemoizedFlowBubble = memo(function FlowBubble({
           )}
           {/* Timestamp */}
           {ts && !isStreaming && <RelativeTime ts={it.createdAt ?? ts} locale={locale} />}
+          {/* 模型自动切换通知（轻量化提示） */}
+          {it.kind === "message" && it.role === "assistant" && it.modelSwitchNote && !isStreaming && (
+            <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4, lineHeight: 1.4 }}>
+              {it.modelSwitchNote}
+            </div>
+          )}
         </div>
       )}
 

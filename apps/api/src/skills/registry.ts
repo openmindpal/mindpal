@@ -17,23 +17,28 @@ const _logger = new StructuredLogger({ module: "api:skillRegistry" });
  *   extension     — 扩展层能力，按需加载
  *
  * ═══════════════════════════════════════════════════════════════════
- * 职责边界：builtin manifests vs tool_definitions
+ * ## 表职责边界说明
  * ═══════════════════════════════════════════════════════════════════
  *
- *  builtin manifests（本模块读取）:
- *    - 控制"平台内置插件"的分层（kernel/core/optional/extension）
- *    - 仅在启动时由 initBuiltinSkills() 读取一次
- *    - 决定哪些 BuiltinSkillPlugin 被注册到内存中的 Skill Registry
- *    - 不直接影响 Agent Loop 的工具可见性
+ * - `skill_manifests`（本项目已演进为代码清单 builtin-skills-manifest.json）
+ *    = 控制平台内置插件的**启停状态**
+ *    类比：Linux 中的 systemd service unit（决定服务是否 enabled/disabled）
+ *    职责：记录每个 Skill 的 enabled/disabled 状态、分层（kernel/core/optional/extension）
+ *    消费者：registry 初始化（initBuiltinSkills）、治理面状态查询
  *
- *  tool_definitions 表（toolAutoDiscovery 模块写入，agentContext 模块读取）:
- *    - Agent Loop (discoverEnabledTools) 的唯一工具注册表
- *    - 由 autoDiscoverAndRegisterTools() 从已注册的 Skill 插件 → 写入
- *    - LLM 能"看到"并调用的工具列表完全由此表决定
+ * - `tool_definitions` = Agent Loop 实际读取的**工具注册权威表**
+ *    类比：Linux 中 PATH 里的可执行文件（决定哪些命令可用）
+ *    职责：存储工具的完整 Schema、描述、版本、contract
+ *    消费者：Agent Loop 的 discoverEnabledTools()、planningKernel
  *
- *  数据流：builtin manifests → initBuiltinSkills → Skill Registry (内存)
- *          → autoDiscoverAndRegisterTools → DB tool_definitions
- *          → discoverEnabledTools → Agent Loop
+ * 规则：任何需要判断"某个工具当前是否可被 LLM 调用"的逻辑，
+ * 必须且只能查询 `tool_definitions`（结合 tool_active_versions + tool_rollouts），
+ * 不应直接查询 `skill_manifests` 或代码清单。
+ *
+ * 数据流：
+ *   builtin manifests → initBuiltinSkills → Skill Registry (内存)
+ *   → autoDiscoverAndRegisterTools → DB tool_definitions
+ *   → discoverEnabledTools → Agent Loop
  * ═══════════════════════════════════════════════════════════════════
  */
 import { isBuiltinSkillRegistrySealed, registerBuiltinSkill, sealBuiltinSkillRegistry } from "../lib/skillPlugin";
@@ -62,13 +67,28 @@ const INLINE_PLUGINS: Record<string, () => BuiltinSkillPlugin> = {
   "system.tool.governance": () => toolGovernanceKernel,
 };
 
-let _allAvailablePlugins: ReadonlyMap<string, BuiltinSkillPlugin> | null = null;
+/** 插件加载过程中记录的错误 */
+interface PluginLoadError {
+  key: string;
+  module: string;
+  reason: string;
+}
 
-/** 获取所有可用插件的统一目录（延迟初始化，manifest 驱动） */
+let _allAvailablePlugins: ReadonlyMap<string, BuiltinSkillPlugin> | null = null;
+/** 上一次插件加载过程中产生的错误列表 */
+let _pluginLoadErrors: readonly PluginLoadError[] = [];
+
+/**
+ * 获取所有可用插件的统一目录（延迟初始化，manifest 驱动）。
+ *
+ * 当个别插件加载失败时，会将失败记录写入 `_pluginLoadErrors`，
+ * 上层通过 {@link loadSkillManifests} 可感知降级状态。
+ */
 async function getAllAvailablePlugins(): Promise<ReadonlyMap<string, BuiltinSkillPlugin>> {
   if (_allAvailablePlugins) return _allAvailablePlugins;
 
   const map = new Map<string, BuiltinSkillPlugin>();
+  const errors: PluginLoadError[] = [];
   for (const entry of manifestEntries) {
     try {
       if (entry.module === "__inline__") {
@@ -76,7 +96,13 @@ async function getAllAvailablePlugins(): Promise<ReadonlyMap<string, BuiltinSkil
         if (factory) {
           map.set(entry.key, factory());
         } else {
-          _logger.warn("[SkillRegistry] No inline plugin for manifest key", { key: entry.key });
+          const reason = `No inline plugin factory registered for key "${entry.key}"`;
+          errors.push({ key: entry.key, module: entry.module, reason });
+          _logger.error("[SkillRegistry] No inline plugin for manifest key", {
+            event: "skill_plugin_load_failed",
+            key: entry.key,
+            reason,
+          });
         }
         continue;
       }
@@ -85,13 +111,17 @@ async function getAllAvailablePlugins(): Promise<ReadonlyMap<string, BuiltinSkil
       const plugin: BuiltinSkillPlugin = mod.default ?? mod;
       map.set(entry.key, plugin);
     } catch (err) {
-      _logger.warn("[SkillRegistry] Failed to load skill from manifest", {
+      const reason = String(err);
+      errors.push({ key: entry.key, module: entry.module, reason });
+      _logger.error("[SkillRegistry] Failed to load skill from manifest", {
+        event: "skill_plugin_load_failed",
         key: entry.key,
         module: entry.module,
-        error: String(err),
+        reason,
       });
     }
   }
+  _pluginLoadErrors = Object.freeze(errors);
   _allAvailablePlugins = map;
   return _allAvailablePlugins;
 }
@@ -196,19 +226,63 @@ export type SkillManifestRow = {
   status: "enabled" | "disabled";
 };
 
+/**
+ * `loadSkillManifests` 的返回结果。
+ *
+ * 当 `degraded === true` 时，`manifests` 仅包含成功加载的插件子集，
+ * 调用方应据此决定是否告警或限制功能。
+ */
+export interface SkillManifestLoadResult {
+  /** 成功加载的 manifest 列表（降级时为部分子集） */
+  manifests: SkillManifestRow[];
+  /**
+   * 是否处于降级状态。
+   * `true` 表示有一个或多个插件加载失败，当前数据源不完整。
+   */
+  degraded: boolean;
+  /** 降级时的错误摘要列表；非降级时为空数组 */
+  errors: string[];
+}
+
 /** Manifest 驱动的 tier 映射 */
 const _manifestTierLookup = new Map(
   manifestEntries.map(e => [e.key, e.tier as "kernel" | "core" | "optional" | "extension"]),
 );
 
-/** 从 manifest 构建内置 Skill manifests。 */
-async function buildBuiltinManifests(): Promise<SkillManifestRow[]> {
+/**
+ * 加载内置 Skill manifests 并返回带降级标记的结果。
+ *
+ * **降级行为**：当部分插件加载失败时，函数不会抛出异常，
+ * 而是返回 `{ degraded: true, errors: [...] }` 以允许系统继续启动，
+ * 同时确保调用方可以感知数据来源不完整。
+ *
+ * @returns {SkillManifestLoadResult} 包含 manifests 列表、降级标记和错误摘要
+ */
+export async function loadSkillManifests(): Promise<SkillManifestLoadResult> {
+  const plugins = await getAllAvailablePlugins();
   const rows: SkillManifestRow[] = [];
-  for (const [key] of await getAllAvailablePlugins()) {
+  for (const [key] of plugins) {
     const tier = _manifestTierLookup.get(key) ?? "optional";
     rows.push({ skillKey: key, tier, status: "enabled" });
   }
-  return rows;
+
+  const degraded = _pluginLoadErrors.length > 0;
+  const errors = _pluginLoadErrors.map(
+    e => `[${e.key}] ${e.reason}`,
+  );
+
+  if (degraded) {
+    _logger.error("[SkillRegistry] Skill manifest load completed in DEGRADED mode", {
+      event: "skill_manifest_load_degraded",
+      source: "fallback",
+      totalDeclared: manifestEntries.length,
+      totalLoaded: rows.length,
+      failedCount: _pluginLoadErrors.length,
+      failedKeys: _pluginLoadErrors.map(e => e.key),
+    });
+  }
+
+  return { manifests: rows, degraded, errors };
 }
 
 /* ------------------------------------------------------------------ */
@@ -222,6 +296,20 @@ function keysForTier(manifests: SkillManifestRow[], tier: string): string[] {
 
 /** 缓存的 manifest 列表，启动后可查询 */
 let _cachedManifests: SkillManifestRow[] = [];
+
+/** 全局降级状态标记，启动后可通过 isSkillRegistryDegraded() 查询 */
+let _registryDegraded = false;
+let _registryDegradedErrors: readonly string[] = [];
+
+/** 查询当前 Skill Registry 是否处于降级状态 */
+export function isSkillRegistryDegraded(): boolean {
+  return _registryDegraded;
+}
+
+/** 获取降级状态的错误摘要列表 */
+export function getSkillRegistryDegradedErrors(): readonly string[] {
+  return _registryDegradedErrors;
+}
 
 let _crossLayerContractsLoaded = false;
 
@@ -303,11 +391,16 @@ function parseEnvEnabledExtensions(manifests: SkillManifestRow[]): Set<string> {
  *
  * 环境变量 DISABLED_BUILTIN_SKILLS / ENABLED_EXTENSIONS 作为额外覆盖层。
  */
-export async function initBuiltinSkills(): Promise<void> {
-  if (isBuiltinSkillRegistrySealed()) return;
+export async function initBuiltinSkills(): Promise<SkillManifestLoadResult> {
+  if (isBuiltinSkillRegistrySealed()) {
+    return { manifests: _cachedManifests, degraded: _registryDegraded, errors: [..._registryDegradedErrors] };
+  }
 
-  const manifests = await buildBuiltinManifests();
+  const result = await loadSkillManifests();
+  const manifests = result.manifests;
   _cachedManifests = manifests;
+  _registryDegraded = result.degraded;
+  _registryDegradedErrors = Object.freeze(result.errors);
 
   // ── 环境变量覆盖层 ──
   const envDisabled = parseEnvDisabledBuiltins();
@@ -355,6 +448,8 @@ export async function initBuiltinSkills(): Promise<void> {
 
   // Seal the registry to prevent further registrations
   sealBuiltinSkillRegistry();
+
+  return result;
 }
 
 /**

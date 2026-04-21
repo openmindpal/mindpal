@@ -71,6 +71,7 @@ export const NAV_CONFIG: NavGroupConfig[] = [
           { id: "gov-ui-pages", path: "/gov/ui-pages", labelKey: "gov.nav.uiPages", descKey: "gov.desc.uiPages", keywordsKey: "shell.keywords.gov.uiPages" },
           { id: "gov-skill-packages", path: "/gov/skill-packages", labelKey: "gov.nav.skillPackages", descKey: "gov.desc.skillPackages", keywordsKey: "shell.keywords.gov.skillPackages" },
           { id: "gov-skill-runtime", path: "/gov/skill-runtime", labelKey: "gov.nav.skillRuntime", descKey: "gov.desc.skillRuntime", keywordsKey: "shell.keywords.gov.skillRuntime" },
+          { id: "gov-collab-runs", path: "/gov/collab-runs", labelKey: "gov.nav.collabRuns", descKey: "gov.desc.collabRuns", keywordsKey: "shell.keywords.gov.collabRuns" },
         ],
       },
       {

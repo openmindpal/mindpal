@@ -239,6 +239,50 @@ export function upsertFact(state: WorldState, fact: WorldFact): WorldState {
 }
 
 /**
+ * 批量添加/更新多个实体（按 entityId 去重）
+ * 功能目标：观察阶段一次性注入从会话上下文提取的多个实体，减少逐条 upsert 开销
+ */
+export function batchUpsertEntities(state: WorldState, entities: WorldEntity[]): WorldState {
+  if (entities.length === 0) return state;
+  const merged = { ...state.entities };
+  for (const entity of entities) {
+    merged[entity.entityId] = entity;
+  }
+  return {
+    ...state,
+    entities: merged,
+    version: state.version + 1,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * 批量添加多个关系（自动去重：相同 from+to+type 不重复插入）
+ * 功能目标：观察阶段一次性注入从会话上下文提取的多条关系
+ */
+export function batchAddRelations(state: WorldState, relations: WorldRelation[]): WorldState {
+  if (relations.length === 0) return state;
+  const existingSet = new Set(
+    state.relations.map((r) => `${r.fromEntityId}|${r.toEntityId}|${r.type}`),
+  );
+  const newRelations: WorldRelation[] = [];
+  for (const rel of relations) {
+    const key = `${rel.fromEntityId}|${rel.toEntityId}|${rel.type}`;
+    if (!existingSet.has(key)) {
+      existingSet.add(key);
+      newRelations.push(rel);
+    }
+  }
+  if (newRelations.length === 0) return state;
+  return {
+    ...state,
+    relations: [...state.relations, ...newRelations],
+    version: state.version + 1,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
  * 获取所有仍然有效的事实
  */
 export function getValidFacts(state: WorldState): WorldFact[] {

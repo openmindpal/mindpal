@@ -6,6 +6,7 @@ import { t } from "@/lib/i18n";
 import { Badge, Card, Table, FormHint } from "@/components/ui";
 import { toApiError } from "@/lib/apiError";
 import type { ToolsTabContext } from "./types";
+import { useFormState } from "@/hooks/useFormState";
 
 const PAGE_SIZE = 20;
 
@@ -38,13 +39,16 @@ export default function ToolManageTab({ ctx }: { ctx: ToolsTabContext }) {
     else setSelectedToolNames(new Set(allToolNames));
   }
 
-  // ── Rollout action state ──
-  const [toolRef, setToolRef] = useState("");
-  const [manualToolRefMode, setManualToolRefMode] = useState(false);
-  const [rolloutScope, setRolloutScope] = useState<"space" | "tenant">("space");
-  const [disableMode, setDisableMode] = useState<"immediate" | "graceful">("immediate");
-  const [graceMinutes, setGraceMinutes] = useState("5");
-  const [scope, setScope] = useState<"" | "space" | "tenant">("");
+  // ── Rollout action state (useFormState) ──
+  const rolloutForm = useFormState({
+    initial: { toolRef: "", manualToolRefMode: false, rolloutScope: "space" as "space" | "tenant", disableMode: "immediate" as "immediate" | "graceful", graceMinutes: "5", scope: "" as "" | "space" | "tenant" },
+  });
+  const toolRef = rolloutForm.fields.toolRef;
+  const manualToolRefMode = rolloutForm.fields.manualToolRefMode;
+  const rolloutScope = rolloutForm.fields.rolloutScope;
+  const disableMode = rolloutForm.fields.disableMode;
+  const graceMinutes = rolloutForm.fields.graceMinutes;
+  const scope = rolloutForm.fields.scope;
 
   // ── Set active state ──
   const [toolName, setToolName] = useState("");
@@ -215,7 +219,7 @@ export default function ToolManageTab({ ctx }: { ctx: ToolsTabContext }) {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <span>{t(locale, "gov.tools.scope")}</span>
-              <select value={scope} onChange={(e) => setScope(e.target.value === "tenant" ? "tenant" : e.target.value === "space" ? "space" : "")} disabled={busy}>
+              <select value={scope} onChange={(e) => rolloutForm.setField("scope", e.target.value === "tenant" ? "tenant" : e.target.value === "space" ? "space" : "")} disabled={busy}>
                 <option value="">{t(locale, "gov.tools.scopeAll")}</option>
                 <option value="space">{t(locale, "scope.space")}</option>
                 <option value="tenant">{t(locale, "scope.tenant")}</option>
@@ -236,7 +240,7 @@ export default function ToolManageTab({ ctx }: { ctx: ToolsTabContext }) {
               <div>{t(locale, "gov.tools.toolRef")}<FormHint text={t(locale, "gov.tools.hint.toolRef")} /></div>
               {!manualToolRefMode ? (
                 <>
-                  <select value={toolRef} onChange={(e) => setToolRef(e.target.value)} disabled={busy} style={{ minWidth: 260 }}>
+                  <select value={toolRef} onChange={(e) => rolloutForm.setField("toolRef", e.target.value)} disabled={busy} style={{ minWidth: 260 }}>
                     <option value="" disabled>
                       {tools.length === 0 ? t(locale, "gov.tools.emptyTools") : t(locale, "gov.tools.selectToolPlaceholder")}
                     </option>
@@ -251,14 +255,14 @@ export default function ToolManageTab({ ctx }: { ctx: ToolsTabContext }) {
                       );
                     })}
                   </select>
-                  <button type="button" onClick={() => setManualToolRefMode(true)} style={{ fontSize: 11, color: "var(--sl-muted)", background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left", textDecoration: "underline" }}>
+                  <button type="button" onClick={() => rolloutForm.setField("manualToolRefMode", true)} style={{ fontSize: 11, color: "var(--sl-muted)", background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left", textDecoration: "underline" }}>
                     {t(locale, "gov.tools.manualInput")}
                   </button>
                 </>
               ) : (
                 <>
-                  <input value={toolRef} onChange={(e) => setToolRef(e.target.value)} disabled={busy} placeholder="builtin:http_request" />
-                  <button type="button" onClick={() => setManualToolRefMode(false)} style={{ fontSize: 11, color: "var(--sl-muted)", background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left", textDecoration: "underline" }}>
+                  <input value={toolRef} onChange={(e) => rolloutForm.setField("toolRef", e.target.value)} disabled={busy} placeholder="builtin:http_request" />
+                  <button type="button" onClick={() => rolloutForm.setField("manualToolRefMode", false)} style={{ fontSize: 11, color: "var(--sl-muted)", background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left", textDecoration: "underline" }}>
                     {t(locale, "gov.tools.selectFromList")}
                   </button>
                 </>
@@ -267,7 +271,7 @@ export default function ToolManageTab({ ctx }: { ctx: ToolsTabContext }) {
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <div>{t(locale, "gov.tools.scope")}<FormHint text={t(locale, "gov.tools.hint.scope")} /></div>
-              <select value={rolloutScope} onChange={(e) => setRolloutScope(e.target.value === "tenant" ? "tenant" : "space")} disabled={busy}>
+              <select value={rolloutScope} onChange={(e) => rolloutForm.setField("rolloutScope", e.target.value === "tenant" ? "tenant" : "space")} disabled={busy}>
                 <option value="space">{t(locale, "scope.space")}</option>
                 <option value="tenant">{t(locale, "scope.tenant")}</option>
               </select>
@@ -290,18 +294,18 @@ export default function ToolManageTab({ ctx }: { ctx: ToolsTabContext }) {
               <div>{t(locale, "gov.tools.disableMode")}</div>
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <label style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}>
-                  <input type="radio" name="disableMode" value="immediate" checked={disableMode === "immediate"} onChange={() => setDisableMode("immediate")} disabled={busy} />
+                  <input type="radio" name="disableMode" value="immediate" checked={disableMode === "immediate"} onChange={() => rolloutForm.setField("disableMode", "immediate")} disabled={busy} />
                   <span>{t(locale, "gov.tools.disableImmediate")}</span>
                 </label>
                 <label style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}>
-                  <input type="radio" name="disableMode" value="graceful" checked={disableMode === "graceful"} onChange={() => setDisableMode("graceful")} disabled={busy} />
+                  <input type="radio" name="disableMode" value="graceful" checked={disableMode === "graceful"} onChange={() => rolloutForm.setField("disableMode", "graceful")} disabled={busy} />
                   <span>{t(locale, "gov.tools.disableGraceful")}</span>
                 </label>
               </div>
               {disableMode === "graceful" && (
                 <div style={{ display: "flex", gap: 6, alignItems: "center", paddingLeft: 4 }}>
                   <span style={{ fontSize: 12 }}>{t(locale, "gov.tools.gracePeriod")}</span>
-                  <input type="number" min={1} max={1440} value={graceMinutes} onChange={(e) => setGraceMinutes(e.target.value)} disabled={busy} style={{ width: 70 }} />
+                  <input type="number" min={1} max={1440} value={graceMinutes} onChange={(e) => rolloutForm.setField("graceMinutes", e.target.value)} disabled={busy} style={{ width: 70 }} />
                   <span style={{ fontSize: 12 }}>{t(locale, "gov.tools.minutes")}</span>
                   <span style={{ fontSize: 11, color: "var(--sl-muted)" }}>{t(locale, "gov.tools.graceHint")}</span>
                 </div>

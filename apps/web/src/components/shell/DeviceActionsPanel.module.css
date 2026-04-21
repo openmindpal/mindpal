@@ -58,18 +58,6 @@
   min-height: 0;
 }
 
-.loading,
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 40px 20px;
-  color: var(--sl-muted);
-  font-size: 13px;
-}
-
 /* ─── Action List ─────────────────────────────────────────────────────────── */
 
 .actionList {
@@ -166,7 +154,7 @@
   align-items: center;
   height: 18px;
   padding: 0 6px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   border-radius: var(--sl-radius-full);
 }

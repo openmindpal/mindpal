@@ -241,6 +241,7 @@ export default function useSendMessage(params: UseSendMessageParams) {
               setNl2uiLoading, setFlow, setConversationId,
               setActiveTask, setTaskProgress, pollTaskState,
               retryCountRef, lastRetryMsgRef,
+              selectedModelRef,
             };
             handleSSEEvent(evtName, data, sseCtx);
           } catch (parseErr) {

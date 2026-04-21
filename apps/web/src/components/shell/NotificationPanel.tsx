@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { IconBell, IconShield, IconAlert, IconCheckLg, IconInfo, IconRefresh, IconCheckAll } from "./ShellIcons";
+import { formatErrorCategory } from "./shellUtils";
+import { useBottomPanel } from "./useBottomPanel";
+import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
+import shared from "./bottomTray.shared.module.css";
 import styles from "./NotificationPanel.module.css";
 
-/* ─── Types ─────────────────────────────────────────────────────────────────── */
+/* ─── Types ─────────────────────────────────────────────────────────────────────────── */
 
 interface NotificationItem {
   id: string;
@@ -46,7 +50,7 @@ function mapOutboxToNotification(rec: OutboxRecord): NotificationItem {
     id: rec.outboxId,
     type,
     title: `${rec.channel} - ${rec.recipientRef}`,
-    message: `Status: ${rec.deliveryStatus}`,
+    message: rec.deliveryStatus,
     createdAt: rec.createdAt,
     read: rec.deliveryStatus === "sent" || rec.deliveryStatus === "canceled",
     url: "/gov/notifications",
@@ -56,64 +60,62 @@ function mapOutboxToNotification(rec: OutboxRecord): NotificationItem {
 /* ─── Component ─────────────────────────────────────────────────────────────── */
 
 export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: string; onBadgeUpdate?: (count: number) => void }) {
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [localItems, setLocalItems] = useState<NotificationItem[] | null>(null);
   const [filter, setFilter] = useState<"all" | "unread">("all");
+  const badgeRef = useRef(onBadgeUpdate);
+  badgeRef.current = onBadgeUpdate;
 
-  const loadNotifications = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await apiFetch(`/notifications/outbox?limit=50`, { method: "GET", locale });
-      if (res.ok) {
-        const data = await res.json() as { outbox?: OutboxRecord[] };
-        const mapped = (data.outbox || []).map(mapOutboxToNotification);
-        setNotifications(mapped);
-        const unread = mapped.filter((n) => !n.read).length;
-        onBadgeUpdate?.(unread);
-      } else {
-        setNotifications([]);
-      }
-    } catch (err) {
-      // Network error — show empty list
-      console.error("Failed to load notifications:", err);
-      setNotifications([]);
+  const fetchNotifications = useCallback(async (): Promise<NotificationItem[]> => {
+    const res = await apiFetch(`/notifications/outbox?limit=50`, { method: "GET", locale });
+    if (res.ok) {
+      const data = await res.json() as { outbox?: OutboxRecord[] };
+      const mapped = (data.outbox || []).map(mapOutboxToNotification);
+      const unread = mapped.filter((n) => !n.read).length;
+      badgeRef.current?.(unread);
+      return mapped;
     }
-    setLoading(false);
-  }, [locale, onBadgeUpdate]);
+    throw new Error("fetch_error");
+  }, [locale]);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initial data load
-    loadNotifications();
-  }, [loadNotifications]);
+  const { items: fetchedItems, loading, error, reload } = useBottomPanel<NotificationItem>({
+    fetchFn: fetchNotifications,
+    refreshInterval: 30_000,
+  });
 
-  // Auto-refresh every 30 seconds
-  useEffect(() => {
-    const timer = setInterval(loadNotifications, 30_000);
-    return () => clearInterval(timer);
-  }, [loadNotifications]);
+  // Use localItems override when available (for optimistic updates), else use fetched items
+  const notifications = localItems ?? fetchedItems;
 
+  // Sync localItems back to null when fetchedItems changes (after reload)
+  // so that fresh data from server takes precedence
+  const prevFetchedRef = useRef(fetchedItems);
+  if (prevFetchedRef.current !== fetchedItems) {
+    prevFetchedRef.current = fetchedItems;
+    if (localItems !== null) setLocalItems(null);
+  }
+
+  // Mark all as read with optimistic update + rollback on failure
   const markAllRead = useCallback(async () => {
-    // Optimistic UI update
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    onBadgeUpdate?.(0);
-    // Sync to backend (fire-and-forget)
+    const previousItems = [...notifications];
+    setLocalItems(notifications.map(n => ({ ...n, read: true })));
+    badgeRef.current?.(0);
     try {
       await apiFetch("/notifications/inbox/read-all", { method: "POST", locale });
     } catch (err) {
+      // Rollback on failure
       console.error("[NotificationPanel] markAllRead API error:", err);
+      setLocalItems(previousItems);
+      const unread = previousItems.filter(n => !n.read).length;
+      badgeRef.current?.(unread);
     }
-  }, [locale, onBadgeUpdate]);
+  }, [notifications, locale]);
 
   const markRead = useCallback((id: string) => {
-    setNotifications((prev) => {
-      const updated = prev.map((n) => (n.id === id ? { ...n, read: true } : n));
-      const unread = updated.filter((n) => !n.read).length;
-      onBadgeUpdate?.(unread);
-      return updated;
-    });
-    // Sync single read to backend (fire-and-forget)
+    const updated = notifications.map((n) => (n.id === id ? { ...n, read: true } : n));
+    setLocalItems(updated);
+    const unread = updated.filter((n) => !n.read).length;
+    badgeRef.current?.(unread);
     apiFetch(`/notifications/inbox/${encodeURIComponent(id)}/read`, { method: "POST", locale }).catch(() => {});
-  }, [locale, onBadgeUpdate]);
+  }, [notifications, locale]);
 
   const getTypeIcon = (type: NotificationItem["type"]) => {
     switch (type) {
@@ -135,7 +137,7 @@ export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: s
     }
   };
 
-  const formatTime = (ts: string) => {
+  const formatTimeAgo = (ts: string) => {
     const d = new Date(ts);
     const now = new Date();
     const diffMs = now.getTime() - d.getTime();
@@ -178,7 +180,7 @@ export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: s
               <IconCheckAll /> {t(locale, "notification.markAllRead")}
             </button>
           )}
-          <button className={styles.refreshBtn} onClick={loadNotifications} disabled={loading}>
+          <button className={styles.refreshBtn} onClick={reload} disabled={loading}>
             <IconRefresh />
           </button>
         </div>
@@ -187,12 +189,11 @@ export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: s
       {/* Content */}
       <div className={styles.content}>
         {loading && notifications.length === 0 ? (
-          <div className={styles.loading}>{t(locale, "common.loading")}</div>
+          <PanelLoading message={t(locale, "common.loading")} />
+        ) : error ? (
+          <PanelError message={error} onRetry={reload} />
         ) : filteredNotifications.length === 0 ? (
-          <div className={styles.empty}>
-            <IconBell />
-            <span>{t(locale, filter === "unread" ? "notification.noUnread" : "notification.empty")}</span>
-          </div>
+          <PanelEmpty message={t(locale, filter === "unread" ? "notification.noUnread" : "notification.empty")} />
         ) : (
           <div className={styles.notificationList}>
             {filteredNotifications.map((notification) => (
@@ -206,8 +207,8 @@ export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: s
                 </div>
                 <div className={styles.notificationContent}>
                   <div className={styles.notificationHeader}>
-                    <span className={styles.notificationTitle}>{notification.title}</span>
-                    <span className={styles.notificationTime}>{formatTime(notification.createdAt)}</span>
+                    <span className={`${styles.notificationTitle} ${shared.truncate}`}>{notification.title}</span>
+                    <span className={`${styles.notificationTime} ${shared.monoText}`}>{formatTimeAgo(notification.createdAt)}</span>
                   </div>
                   <div className={styles.notificationMessage}>{notification.message}</div>
                   {notification.url && (

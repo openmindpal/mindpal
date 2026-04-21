@@ -6,6 +6,8 @@ import { t, statusLabel } from "@/lib/i18n";
 import { fmtDateTime } from "@/lib/fmtDateTime";
 import { Badge, Card, PageHeader, StructuredData, JsonFormEditor, StatusBadge } from "@/components/ui";
 import { toApiError, errText } from "@/lib/apiError";
+import ConflictResolver from "./ConflictResolver";
+import ChangeLog from "./ChangeLog";
 
 
 export default function GovSyncConflictsClient(props: { locale: string; initial: unknown; initialStatus: number }) {
@@ -19,6 +21,7 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
   const [detailBusy, setDetailBusy] = useState<boolean>(false);
   const [detailError, setDetailError] = useState<string>("");
   const [resolutionJson, setResolutionJson] = useState<string>('{"decisions":[]}');
+  const [activeResolverIdx, setActiveResolverIdx] = useState<number | null>(null);
   const [actionBusy, setActionBusy] = useState<boolean>(false);
 
   const initialError = useMemo(() => {
@@ -258,6 +261,12 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
                                     >
                                       {t(props.locale, "syncConflict.acceptRemote")}
                                     </button>
+                                    <button
+                                      style={{ fontSize: 11, padding: "2px 6px" }}
+                                      onClick={() => setActiveResolverIdx(ci)}
+                                    >
+                                      {t(props.locale, "gov.syncConflicts.strategy.manual")}
+                                    </button>
                                   </div>
                                 )}
                               </td>
@@ -293,12 +302,45 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
                 <label style={{ display: "block", marginBottom: 4 }}>{t(props.locale, "gov.syncConflicts.resolutionJson")}</label>
                 <JsonFormEditor value={resolutionJson} onChange={setResolutionJson} locale={props.locale} disabled={actionBusy} rows={6} />
               </div>
+              {/* Three-way merge resolver for individual conflicts */}
+              {activeResolverIdx !== null && (() => {
+                const conflicts = Array.isArray(ticketDetail.conflictsJson) ? ticketDetail.conflictsJson : [];
+                const c = conflicts[activeResolverIdx];
+                if (!c) return null;
+                return (
+                  <ConflictResolver
+                    locale={props.locale}
+                    conflict={{
+                      field: String(c?.field ?? c?.path ?? `conflict_${activeResolverIdx}`),
+                      localValue: c?.localValue ?? c?.client ?? c?.ours ?? "",
+                      remoteValue: c?.remoteValue ?? c?.server ?? c?.theirs ?? "",
+                    }}
+                    disabled={actionBusy}
+                    onResolve={(field, pick, mergedValue) => {
+                      try {
+                        const res = JSON.parse(resolutionJson || "{}");
+                        if (!res.decisions) res.decisions = [];
+                        res.decisions.push({ field, pick, ...(mergedValue !== undefined ? { mergedValue } : {}) });
+                        setResolutionJson(JSON.stringify(res, null, 2));
+                      } catch { /* ignore */ }
+                      setActiveResolverIdx(null);
+                    }}
+                    onCancel={() => setActiveResolverIdx(null)}
+                  />
+                );
+              })()}
+
               <div style={{ marginTop: 12 }}>
                 <StructuredData data={ticketDetail} />
               </div>
             </div>
           ) : null}
         </Card>
+      </div>
+
+      {/* Change Log Section */}
+      <div style={{ marginTop: 16 }}>
+        <ChangeLog locale={props.locale} />
       </div>
     </div>
   );

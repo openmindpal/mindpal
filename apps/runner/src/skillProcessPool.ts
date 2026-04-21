@@ -13,6 +13,9 @@ import fs from "node:fs/promises";
 const DEFAULT_POOL_SIZE = 3;
 const DEFAULT_MAX_IDLE_MS = 5 * 60 * 1000; // 5 min
 const DEFAULT_MAX_USES = 50;
+const HEARTBEAT_INTERVAL_MS = 30_000;       // 心跳发送间隔 30 秒
+const HEARTBEAT_MAX_MISSES = 3;             // 连续 3 次无响应判定卡死
+const ZOMBIE_SCAN_INTERVAL_MS = 60_000;     // 僵尸进程扫描周期 60 秒
 
 interface PoolEntry {
   child: ChildProcess;
@@ -20,6 +23,14 @@ interface PoolEntry {
   createdAt: number;
   lastUsedAt: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
+}
+
+/** 活跃进程心跳追踪状态 */
+interface ActiveEntry {
+  child: ChildProcess;
+  missedHeartbeats: number;
+  heartbeatTimer: ReturnType<typeof setInterval>;
+  onFailure: (() => void) | null;
 }
 
 interface PoolOptions {
@@ -52,6 +63,8 @@ export class SkillProcessPool {
   private readonly maxIdleMs: number;
   private readonly maxUses: number;
   private readonly idle: PoolEntry[] = [];
+  private readonly active = new Map<number, ActiveEntry>(); // pid → 心跳状态
+  private zombieScanTimer: ReturnType<typeof setInterval> | null = null;
   private shuttingDown = false;
 
   constructor(opts?: PoolOptions) {
@@ -60,7 +73,7 @@ export class SkillProcessPool {
     this.maxUses = opts?.maxUses ?? DEFAULT_MAX_USES;
   }
 
-  /** 启动时预热进程池 */
+  /** 启动时预热进程池 + 启动僵尸进程扫描定时器 */
   async warmup(): Promise<void> {
     const count = Math.max(0, this.poolSize - this.idle.length);
     const tasks: Promise<void>[] = [];
@@ -68,6 +81,7 @@ export class SkillProcessPool {
       tasks.push(this.spawnToIdle());
     }
     await Promise.all(tasks);
+    this.startZombieScan();
     console.log(`[skillProcessPool] warmed up ${count} process(es), pool size=${this.idle.length}`);
   }
 
@@ -102,6 +116,57 @@ export class SkillProcessPool {
       stdio: ["ignore", "ignore", "ignore", "ipc"],
     });
     return { child, _poolEntry: null };
+  }
+
+  /**
+   * 为已获取的进程启动心跳监控。
+   * @param onStuck 进程卡死时的回调（触发任务失败）
+   */
+  startHeartbeat(child: ChildProcess, onStuck?: () => void): void {
+    const pid = child.pid;
+    if (pid == null) return;
+
+    const ackHandler = (m: any) => {
+      if (m?.type === "heartbeat_ack") {
+        const entry = this.active.get(pid);
+        if (entry) entry.missedHeartbeats = 0;
+      }
+    };
+    child.on("message", ackHandler);
+
+    const timer = setInterval(() => {
+      const entry = this.active.get(pid);
+      if (!entry) return;
+      // 发送心跳
+      try {
+        if (entry.child.connected) {
+          entry.child.send({ type: "heartbeat" });
+        }
+      } catch {}
+      entry.missedHeartbeats += 1;
+      if (entry.missedHeartbeats >= HEARTBEAT_MAX_MISSES) {
+        console.warn(`[skillProcessPool] heartbeat timeout: pid=${pid}, missed=${entry.missedHeartbeats}, force killing`);
+        this.stopHeartbeat(pid);
+        this.killChild(entry.child);
+        entry.onFailure?.();
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+    timer.unref?.();
+
+    this.active.set(pid, {
+      child,
+      missedHeartbeats: 0,
+      heartbeatTimer: timer,
+      onFailure: onStuck ?? null,
+    });
+  }
+
+  /** 停止指定进程的心跳监控（正常退出/归还时调用） */
+  stopHeartbeat(pid: number): void {
+    const entry = this.active.get(pid);
+    if (!entry) return;
+    clearInterval(entry.heartbeatTimer);
+    this.active.delete(pid);
   }
 
   /**
@@ -160,9 +225,24 @@ export class SkillProcessPool {
     this.killChild(child);
   }
 
-  /** 优雅关闭所有进程 */
+  /** 优雅关闭：先停定时器，再清理所有进程 */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+
+    // 停止僵尸扫描
+    if (this.zombieScanTimer) {
+      clearInterval(this.zombieScanTimer);
+      this.zombieScanTimer = null;
+    }
+
+    // 停止所有活跃进程心跳并 kill
+    for (const [pid, entry] of this.active) {
+      clearInterval(entry.heartbeatTimer);
+      this.killChild(entry.child);
+    }
+    this.active.clear();
+
+    // 清理空闲池
     for (const entry of this.idle) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       this.killChild(entry.child);
@@ -209,6 +289,47 @@ export class SkillProcessPool {
     try {
       child.kill("SIGKILL");
     } catch {}
+  }
+
+  /**
+   * 僵尸进程扫描：60 秒周期检查空闲池中已退出但未清理的进程，
+   * 将其移除、释放资源并记录告警日志。
+   */
+  private startZombieScan(): void {
+    if (this.zombieScanTimer) return;
+    this.zombieScanTimer = setInterval(() => {
+      let removed = 0;
+      for (let i = this.idle.length - 1; i >= 0; i--) {
+        const entry = this.idle[i];
+        const alive = this.isChildAlive(entry.child);
+        if (!alive) {
+          if (entry.idleTimer) clearTimeout(entry.idleTimer);
+          this.idle.splice(i, 1);
+          removed++;
+          console.warn(`[skillProcessPool] zombie cleanup: removed dead idle process pid=${entry.child.pid}`);
+        }
+      }
+      // 补充池
+      if (!this.shuttingDown && removed > 0) {
+        const deficit = Math.max(0, this.poolSize - this.idle.length);
+        for (let i = 0; i < deficit; i++) {
+          this.spawnToIdle().catch(() => {});
+        }
+      }
+    }, ZOMBIE_SCAN_INTERVAL_MS);
+    this.zombieScanTimer.unref?.();
+  }
+
+  /** 检测子进程是否仍然存活（signal 0 探测） */
+  private isChildAlive(child: ChildProcess): boolean {
+    if (child.killed || child.exitCode !== null) return false;
+    try {
+      // signal 0 不发送信号，仅检测进程是否存在
+      child.kill(0 as any);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 

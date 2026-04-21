@@ -114,10 +114,77 @@ export interface ExecutionConstraints {
   allowWrites?: boolean;
 }
 
+/* ================================================================== */
+/*  预算控制 (Budget)                                                    */
+/* ================================================================== */
+
+/** Token 预算追踪 */
+export interface TokenBudget {
+  maxTokens: number;
+  usedTokens: number;
+}
+
+/** 成本预算追踪 */
+export interface CostBudget {
+  maxCost: number;
+  usedCost: number;
+  currency: string;
+}
+
+/** Agent Loop 综合预算状态 */
+export interface LoopBudget {
+  /** Token 用量预算（可选，未配置时不限制） */
+  tokenBudget?: TokenBudget;
+  /** 费用预算（可选，未配置时不限制） */
+  costBudget?: CostBudget;
+  /** 最大工具执行次数预算（可选） */
+  maxToolExecutions?: number;
+  /** 已使用的工具执行次数 */
+  usedToolExecutions: number;
+}
+
+/** 检查预算是否耗尽 */
+export function isBudgetExhausted(budget: LoopBudget): { exhausted: boolean; reason?: string } {
+  if (budget.tokenBudget && budget.tokenBudget.usedTokens >= budget.tokenBudget.maxTokens) {
+    return { exhausted: true, reason: `token_budget_exhausted (${budget.tokenBudget.usedTokens}/${budget.tokenBudget.maxTokens})` };
+  }
+  if (budget.costBudget && budget.costBudget.usedCost >= budget.costBudget.maxCost) {
+    return { exhausted: true, reason: `cost_budget_exhausted (${budget.costBudget.usedCost}/${budget.costBudget.maxCost} ${budget.costBudget.currency})` };
+  }
+  if (budget.maxToolExecutions != null && budget.usedToolExecutions >= budget.maxToolExecutions) {
+    return { exhausted: true, reason: `tool_execution_budget_exhausted (${budget.usedToolExecutions}/${budget.maxToolExecutions})` };
+  }
+  return { exhausted: false };
+}
+
+/** 记录一次 LLM 调用的 Token 消耗 */
+export function recordTokenUsage(budget: LoopBudget, tokens: number): void {
+  if (budget.tokenBudget) budget.tokenBudget.usedTokens += tokens;
+}
+
+/** 记录一次工具执行的成本消耗 */
+export function recordCostUsage(budget: LoopBudget, cost: number): void {
+  if (budget.costBudget) budget.costBudget.usedCost += cost;
+  budget.usedToolExecutions++;
+}
+
+/** 创建默认预算状态（从环境变量或配置读取） */
+export function createDefaultBudget(): LoopBudget {
+  const maxTokens = Number(process.env.AGENT_LOOP_MAX_TOKENS ?? "0") || undefined;
+  const maxCost = Number(process.env.AGENT_LOOP_MAX_COST ?? "0") || undefined;
+  const maxToolExec = Number(process.env.AGENT_LOOP_MAX_TOOL_EXECUTIONS ?? "0") || undefined;
+  return {
+    tokenBudget: maxTokens ? { maxTokens, usedTokens: 0 } : undefined,
+    costBudget: maxCost ? { maxCost, usedCost: 0, currency: process.env.AGENT_LOOP_COST_CURRENCY ?? "USD" } : undefined,
+    maxToolExecutions: maxToolExec,
+    usedToolExecutions: 0,
+  };
+}
+
 export interface AgentLoopResult {
   ok: boolean;
   /** 循环终止原因 */
-  endReason: "done" | "aborted" | "interrupted" | "max_iterations" | "max_wall_time" | "error" | "ask_user";
+  endReason: "done" | "aborted" | "interrupted" | "max_iterations" | "max_wall_time" | "budget_exhausted" | "error" | "ask_user";
   /** 总迭代次数 */
   iterations: number;
   /** 成功完成的步骤数 */
@@ -136,4 +203,6 @@ export interface AgentLoopResult {
   verification?: VerificationResult;
   /** P0-2: 目标图（完整的分解+进度） */
   goalGraph?: GoalGraph;
+  /** P0-2: 预算使用情况快照 */
+  budgetSnapshot?: LoopBudget;
 }

@@ -463,8 +463,8 @@ export interface ConsensusEvolutionEntry {
   recordedAt: string;
 }
 
-/** v2: 创建 N 方辩论会话 */
-export function createDebateSessionV2(params: {
+/** 创建 N 方辩论会话 */
+export function createDebateSession(params: {
   debateId: string;
   collabRunId: string;
   topic: string;
@@ -531,8 +531,8 @@ export function computeDebateConsensusScore(session: DebateSession): number {
   return Math.max(0, Math.min(1, avgConfidence * divergenceFactor * alignmentFactor - correctionPenalty));
 }
 
-/** v2: 检查 N 方辩论是否已收敛 */
-export function isDebateConvergedV2(
+/** 检查 N 方辩论是否已收敛 */
+export function isDebateConverged(
   session: DebateSession,
   confidenceThreshold = collabConfig("COLLAB_CONFIDENCE_THRESHOLD"),
   consensusThreshold = collabConfig("COLLAB_CONSENSUS_THRESHOLD"),
@@ -548,44 +548,6 @@ export function isDebateConvergedV2(
   // 共识度达标
   const consensusScore = computeDebateConsensusScore(session);
   return consensusScore >= consensusThreshold;
-}
-
-/**
- * 创建辩论会话初始状态
- */
-/** @deprecated 使用 createDebateSessionV2 代替（v1 wrapper） */
-export function createDebateSession(params: {
-  debateId: string;
-  collabRunId: string;
-  topic: string;
-  sideA: string;
-  sideB: string;
-  arbiter: string;
-  maxRounds?: number;
-}): DebateSession {
-  return createDebateSessionV2({
-    debateId: params.debateId,
-    collabRunId: params.collabRunId,
-    topic: params.topic,
-    parties: [
-      { partyId: "side_a", role: params.sideA, stance: "pro" },
-      { partyId: "side_b", role: params.sideB, stance: "con" },
-    ],
-    arbiter: params.arbiter,
-    maxRounds: params.maxRounds,
-  });
-}
-
-/**
- * 检测辩论是否已收敛（双方立场趋同，无新分歧点）
- * 当最近一轮未检测到分歧，且双方置信度均 >= threshold 时视为收敛
- */
-/** @deprecated 使用 isDebateConvergedV2 代替（v1 wrapper） */
-export function isDebateConverged(
-  session: DebateSession,
-  confidenceThreshold = 0.7,
-): boolean {
-  return isDebateConvergedV2(session, confidenceThreshold);
 }
 
 /* ================================================================== */

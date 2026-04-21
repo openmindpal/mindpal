@@ -17,8 +17,22 @@ import {
 function diffSummary(a: unknown, b: unknown) {
   const aStr = JSON.stringify(a ?? null);
   const bStr = JSON.stringify(b ?? null);
-  if (aStr === bStr) return { changed: false, aSize: aStr.length, bSize: bStr.length };
-  return { changed: true, aSize: aStr.length, bSize: bStr.length };
+  if (aStr === bStr) return { changed: false, aSize: aStr.length, bSize: bStr.length, fields: [] };
+
+  // 字段级对比
+  const aObj = (a && typeof a === "object" && !Array.isArray(a)) ? a as Record<string, unknown> : {};
+  const bObj = (b && typeof b === "object" && !Array.isArray(b)) ? b as Record<string, unknown> : {};
+  const allKeys = [...new Set([...Object.keys(aObj), ...Object.keys(bObj)])];
+  const fields = allKeys.reduce<Array<{ key: string; type: "added" | "removed" | "changed"; from?: unknown; to?: unknown }>>((acc, key) => {
+    const aVal = (aObj as any)[key];
+    const bVal = (bObj as any)[key];
+    if (JSON.stringify(aVal) === JSON.stringify(bVal)) return acc;
+    if (aVal === undefined) acc.push({ key, type: "added", to: bVal });
+    else if (bVal === undefined) acc.push({ key, type: "removed", from: aVal });
+    else acc.push({ key, type: "changed", from: aVal, to: bVal });
+    return acc;
+  }, []);
+  return { changed: true, aSize: aStr.length, bSize: bStr.length, fields };
 }
 
 export const safetyPolicyRoutes: FastifyPluginAsync = async (app) => {
@@ -100,7 +114,7 @@ export const safetyPolicyRoutes: FastifyPluginAsync = async (app) => {
     if (!a || !b) throw Errors.badRequest("Policy 版本不存在");
     const summary = diffSummary(a.policyJson, b.policyJson);
     req.ctx.audit!.outputDigest = { policyId: params.policyId, from, to, changed: summary.changed };
-    return { from: { version: a.version, digest: a.policyDigest, status: a.status }, to: { version: b.version, digest: b.policyDigest, status: b.status }, summary };
+    return { from: { version: a.version, digest: a.policyDigest, status: a.status, policyJson: a.policyJson }, to: { version: b.version, digest: b.policyDigest, status: b.status, policyJson: b.policyJson }, summary };
   });
 
   app.get("/governance/safety-policies/active/effective", async (req) => {

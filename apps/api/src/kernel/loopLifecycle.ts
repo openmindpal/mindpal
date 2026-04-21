@@ -12,7 +12,7 @@ import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRe
 import { upsertTaskState } from "../modules/memory/repo";
 import { writeCheckpoint, registerProcess, startHeartbeat } from "./loopCheckpoint";
 import { decomposeGoal } from "./goalDecomposer";
-import { buildWorldStateFromObservations } from "./worldStateExtractor";
+import { buildWorldStateFromObservations, extractWorldState } from "./worldStateExtractor";
 import { prepareRunForExecution } from "./loopStateHelpers";
 import { normalizeExecutionConstraints, filterToolDiscoveryByConstraints } from "./loopThinkDecide";
 import { CACHE_CONFIG, cacheGet, cacheSet, prepareCacheKey } from "./loopCacheConfig";
@@ -167,7 +167,13 @@ export async function initializeLoopState(params: AgentLoopParams): Promise<Loop
     app.log.warn({ err: e?.message, runId }, "[AgentLoop] GoalGraph 分解失败（降级为纯文本目标）");
   }
 
-  worldState = buildWorldStateFromObservations(runId, observations);
+  worldState = extractWorldState({
+    runId,
+    observations,
+    userGoal: goal,
+    memoryContext,
+    knowledgeContext,
+  });
 
   // 进程注册 + 心跳
   let processId: string | null = null;

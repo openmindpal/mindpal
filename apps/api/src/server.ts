@@ -48,6 +48,7 @@ import { structuredLoggingPlugin } from "./plugins/structuredLogging";
 import { apiVersionPlugin } from "./plugins/apiVersioning";
 import { realtimeNotificationPlugin } from "./plugins/realtimeNotification";
 import { distributedTracingPlugin } from "./plugins/distributedTracing";
+import { tenantQuotaPlugin } from "./plugins/tenantQuota";
 import { autoDiscoverAndRegisterTools } from "./modules/tools/toolAutoDiscovery";
 import { runBoundaryScan, formatBoundaryScanReport } from "./lib/startupBoundaryScan";
 import { internalRoutes } from "./routes/internal";
@@ -227,6 +228,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     await auditPlugin(scoped, {});
     await metricsPlugin(scoped, {});
     await tenantIsolationPlugin(scoped, {}); // P1-03b: per-tenant concurrency tracking
+    await tenantQuotaPlugin(scoped, {}); // 多租户 API 请求速率限制
 
     scoped.register(healthRoutes);
     scoped.register(diagnosticsRoutes);
@@ -255,7 +257,11 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
     }, { prefix: "/v1" });
 
     // ── Built-in Skill Routes (auto-discovered) ────────────────────
-    await initBuiltinSkills();
+    const skillLoadResult = await initBuiltinSkills();
+    if (skillLoadResult.degraded) {
+      app.log.error(`[SkillRegistry] DEGRADED: ${skillLoadResult.errors.length} plugin(s) failed to load`);
+      for (const e of skillLoadResult.errors) app.log.error(`  - ${e}`);
+    }
 
     const startupCheck = runStartupConsistencyCheck();
     if (startupCheck.warnings.length > 0) {

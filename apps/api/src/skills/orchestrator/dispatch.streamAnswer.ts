@@ -56,9 +56,11 @@ export async function handleStreamAnswerMode(params: {
   const historyLimit = Math.max(4, Math.min(64, resolveNumber("ORCHESTRATOR_CONVERSATION_WINDOW").value));
 
   // --- Tier-1: 加载LLM必需的核心上下文（会话历史 + 记忆召回 + 工具发现）---
+  // P1-3: 从用户消息中提取多维度查询，激活 additionalQueries 并行检索
+  const additionalQueries = extractAdditionalQueries(message);
   const [prevSession, memoryRecall, toolDiscovery] = await Promise.all([
     getSessionContext({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, sessionId: conversationId }),
-    recallRelevantMemory({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, message, auditContext: auditCtx }),
+    recallRelevantMemory({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, message, auditContext: auditCtx, additionalQueries }),
     discoverEnabledTools({ pool: app.db, tenantId: subject.tenantId, spaceId, locale }),
   ]);
 
@@ -247,12 +249,13 @@ export async function handleStreamAnswerMode(params: {
   // 3. 真流式调用 (使用 tool_call 过滤器)
   let fullText = "";
   let streamError = false;
+  let actualModelRef: string | null = null;
   const filter = new ToolCallFilter((text) => sse.sendEvent("delta", { text }));
 
   sse.sendEvent("status", { phase: "model_calling" });
 
   try {
-    await invokeModelChatUpstreamStream({
+    const streamResult = await invokeModelChatUpstreamStream({
       app,
       subject: { tenantId: subject.tenantId, spaceId: subject.spaceId ?? undefined, subjectId: subject.subjectId },
       body: {
@@ -269,6 +272,7 @@ export async function handleStreamAnswerMode(params: {
       },
     });
     filter.flush();
+    actualModelRef = streamResult?.routingDecision?.modelRef ?? null;
   } catch (streamErr: any) {
     streamError = true;
     app.log.warn({ err: streamErr, traceId }, "[dispatch.stream] real streaming failed, falling back");
@@ -703,7 +707,7 @@ export async function handleStreamAnswerMode(params: {
     })) : null,
   });
 
-  sse.sendEvent("done", { turnId: turn.turnId, conversationId, executionClass: resolution.executionClass });
+  sse.sendEvent("done", { turnId: turn.turnId, conversationId, executionClass: resolution.executionClass, ...(actualModelRef ? { actualModelRef } : {}) });
 }
 
 function extractBase64Payload(dataUrl: string) {
@@ -721,4 +725,52 @@ function normalizeAudioAttachmentFormat(mimeType?: string, name?: string) {
   const ext = String(name ?? "").split(".").pop()?.toLowerCase();
   if (ext === "wav" || ext === "mp3" || ext === "ogg" || ext === "webm" || ext === "flac") return ext;
   return "wav";
+}
+
+/**
+ * P1-3: 从用户消息中提取多维度查询片段，用于激活 additionalQueries 并行记忆检索。
+ *
+ * 策略：
+ * 1. 按中文/英文问号分割，如果有多个问句则每个问句作为独立查询维度
+ * 2. 单个问句场景下，按逗号/顿号分割提取短语作为补充查询
+ * 3. 返回去重后的额外查询列表（不含主查询本身）
+ */
+function extractAdditionalQueries(message: string): string[] {
+  const trimmed = message.trim();
+  if (!trimmed || trimmed.length < 4) return [];
+
+  const queries: string[] = [];
+
+  // 策略 1：按问号分割（支持中英文问号）
+  const questionParts = trimmed.split(/[\?\uff1f]/).map(s => s.trim()).filter(s => s.length >= 2);
+  if (questionParts.length > 1) {
+    // 多问句场景：每个问句作为独立查询维度
+    for (const part of questionParts.slice(0, 5)) {
+      if (part.length >= 2 && part.length <= 300) {
+        queries.push(part);
+      }
+    }
+  } else {
+    // 单问句/陈述句场景：按分隔符切分短语
+    const segments = trimmed.split(/[,\uff0c\u3001;\uff1b]/).map(s => s.trim()).filter(s => s.length >= 2);
+    if (segments.length > 1) {
+      for (const seg of segments.slice(0, 5)) {
+        if (seg.length >= 2 && seg.length <= 300) {
+          queries.push(seg);
+        }
+      }
+    }
+  }
+
+  // 去重（不含主消息本身的精确匹配）
+  const seen = new Set<string>([trimmed.slice(0, 500)]);
+  const result: string[] = [];
+  for (const q of queries) {
+    if (!seen.has(q)) {
+      seen.add(q);
+      result.push(q);
+    }
+  }
+
+  return result;
 }

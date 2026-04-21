@@ -76,23 +76,27 @@ CREATE TABLE IF NOT EXISTS session_task_queue (
   PRIMARY KEY (entry_id, tenant_id)
 ) PARTITION BY HASH (tenant_id);
 
--- ── 创建 16 个 HASH 分区 ─────────────────────────────────────
-CREATE TABLE session_task_queue_p0  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 0);
-CREATE TABLE session_task_queue_p1  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 1);
-CREATE TABLE session_task_queue_p2  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 2);
-CREATE TABLE session_task_queue_p3  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 3);
-CREATE TABLE session_task_queue_p4  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 4);
-CREATE TABLE session_task_queue_p5  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 5);
-CREATE TABLE session_task_queue_p6  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 6);
-CREATE TABLE session_task_queue_p7  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 7);
-CREATE TABLE session_task_queue_p8  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 8);
-CREATE TABLE session_task_queue_p9  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 9);
-CREATE TABLE session_task_queue_p10 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 10);
-CREATE TABLE session_task_queue_p11 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 11);
-CREATE TABLE session_task_queue_p12 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 12);
-CREATE TABLE session_task_queue_p13 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 13);
-CREATE TABLE session_task_queue_p14 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 14);
-CREATE TABLE session_task_queue_p15 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 15);
+-- ── 创建 16 个 HASH 分区（幂等：检查首分区是否存在）─────────────────────────────────────
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'session_task_queue_p0') THEN
+    CREATE TABLE session_task_queue_p0  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 0);
+    CREATE TABLE session_task_queue_p1  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 1);
+    CREATE TABLE session_task_queue_p2  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 2);
+    CREATE TABLE session_task_queue_p3  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 3);
+    CREATE TABLE session_task_queue_p4  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 4);
+    CREATE TABLE session_task_queue_p5  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 5);
+    CREATE TABLE session_task_queue_p6  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 6);
+    CREATE TABLE session_task_queue_p7  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 7);
+    CREATE TABLE session_task_queue_p8  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 8);
+    CREATE TABLE session_task_queue_p9  PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 9);
+    CREATE TABLE session_task_queue_p10 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 10);
+    CREATE TABLE session_task_queue_p11 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 11);
+    CREATE TABLE session_task_queue_p12 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 12);
+    CREATE TABLE session_task_queue_p13 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 13);
+    CREATE TABLE session_task_queue_p14 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 14);
+    CREATE TABLE session_task_queue_p15 PARTITION OF session_task_queue FOR VALUES WITH (MODULUS 16, REMAINDER 15);
+  END IF;
+END $$;
 
 -- ── 索引（自动在每个分区上创建）──────────────────────────────
 

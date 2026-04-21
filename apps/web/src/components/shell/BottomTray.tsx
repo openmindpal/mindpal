@@ -27,32 +27,34 @@ interface TabBadgeCounts {
 async function fetchBadgeCounts(locale: string): Promise<TabBadgeCounts> {
   const counts: TabBadgeCounts = { activeRuns: 0, pendingActions: 0, notifications: 0, deviceActions: 0 };
   try {
+    // Use same limits as sub-panels (ActiveRunList=10, PendingActionsQueue=10 each)
+    // Backend APIs do NOT return a 'total' field — only arrays capped by limit.
     const [activeRes, approvalsRes, runsRes, deadlettersRes, notifRes, deviceRes] = await Promise.all([
-      apiFetch("/runs/active?limit=1", { locale, cache: "no-store" }).catch(() => null),
-      apiFetch("/approvals?status=pending&limit=1", { locale, cache: "no-store" }).catch(() => null),
-      apiFetch("/runs?status=failed&limit=1", { locale, cache: "no-store" }).catch(() => null),
-      apiFetch("/governance/workflow/deadletters?limit=1", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/runs/active?limit=10", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/approvals?status=pending&limit=10", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/runs?status=failed&limit=10", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/governance/workflow/deadletters?limit=10", { locale, cache: "no-store" }).catch(() => null),
       apiFetch("/notifications/outbox?limit=50", { locale, cache: "no-store" }).catch(() => null),
-      apiFetch("/device-executions?limit=1", { locale, cache: "no-store" }).catch(() => null),
+      apiFetch("/device-executions?limit=10", { locale, cache: "no-store" }).catch(() => null),
     ]);
 
     if (activeRes?.ok) {
       const d = await activeRes.json();
-      counts.activeRuns = (d.activeRuns as unknown[])?.length ?? d.total ?? 0;
+      counts.activeRuns = ((d.activeRuns as unknown[]) ?? []).length;
     }
 
     // Pending actions = approvals + failed runs + deadletters
     if (approvalsRes?.ok) {
       const d = await approvalsRes.json();
-      counts.pendingActions += (d.items as unknown[])?.length ?? d.total ?? 0;
+      counts.pendingActions += ((d.items as unknown[]) ?? []).length;
     }
     if (runsRes?.ok) {
       const d = await runsRes.json();
-      counts.pendingActions += (d.runs as unknown[])?.length ?? d.total ?? 0;
+      counts.pendingActions += ((d.runs as unknown[]) ?? []).length;
     }
     if (deadlettersRes?.ok) {
       const d = await deadlettersRes.json();
-      counts.pendingActions += (d.deadletters as unknown[])?.length ?? d.total ?? 0;
+      counts.pendingActions += ((d.deadletters as unknown[]) ?? []).length;
     }
 
     if (notifRes?.ok) {
@@ -253,23 +255,19 @@ export default function BottomTray({
           })}
         </div>
         <div className={styles.headerActions}>
-          {/* Collapsed summary: show quick status when tray is collapsed */}
+          {/* Collapsed summary: compact dot + count when tray is collapsed */}
           {!expanded && (badges.activeRuns > 0 || badges.pendingActions > 0) && (
             <span className={styles.collapsedSummary}>
               {badges.activeRuns > 0 && (
                 <>
                   <span className={`${styles.summaryDot} ${styles.summaryDotActive}`} />
-                  <span className={styles.summaryText}>
-                    {badges.activeRuns} {t(locale, "bottomTray.summaryRunning")}
-                  </span>
+                  <span>{badges.activeRuns}</span>
                 </>
               )}
               {badges.pendingActions > 0 && (
                 <>
                   <span className={`${styles.summaryDot} ${styles.summaryDotWarning}`} />
-                  <span className={styles.summaryText}>
-                    {badges.pendingActions} {t(locale, "bottomTray.summaryPending")}
-                  </span>
+                  <span>{badges.pendingActions}</span>
                 </>
               )}
             </span>

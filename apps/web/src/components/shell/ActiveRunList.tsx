@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { IconX } from "./ShellIcons";
-import { formatToolRef, timeAgo } from "./shellUtils";
+import { formatToolRefLocalized, shortId, timeAgo, preloadToolNames } from "./shellUtils";
+import { useBottomPanel, type ActionStatus } from "./useBottomPanel";
+import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
+import shared from "./bottomTray.shared.module.css";
 import styles from "./ActiveRunList.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
@@ -34,16 +37,12 @@ type ActiveRun = {
 
 /* ─── Helpers ───────────────────────────────────────────────────────────────── */
 
-function shortId(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) : id;
-}
-
 function dotClass(phase: string): string {
   switch (phase) {
     case "executing": case "running":
-      return styles.statusDotRunning;
+      return `${shared.statusDotGreen} ${shared.statusDotPulse}`;
     case "needs_approval": case "needs_device": case "needs_arbiter":
-      return styles.statusDotBlocked;
+      return shared.statusDotOrange;
     default:
       return "";
   }
@@ -51,23 +50,29 @@ function dotClass(phase: string): string {
 
 /* ─── Run Item Component ────────────────────────────────────────────────────── */
 
-function RunItem(props: { run: ActiveRun; locale: string; cancelState: string; onCancel: (runId: string) => void }) {
-  const { run, locale, cancelState, onCancel } = props;
+function RunItem(props: {
+  run: ActiveRun;
+  locale: string;
+  cancelState: ActionStatus;
+  cancelError?: string;
+  onCancel: (runId: string) => void;
+}) {
+  const { run, locale, cancelState, cancelError, onCancel } = props;
   const runHref = `/runs/${encodeURIComponent(run.runId)}?lang=${encodeURIComponent(locale)}`;
   const stepLabel = run.currentStep
-    ? `${run.currentStep.name ?? formatToolRef(run.currentStep.toolRef)}`
+    ? `${run.currentStep.name ?? formatToolRefLocalized(run.currentStep.toolRef, locale)}`
     : null;
 
   return (
     <div className={styles.runItem}>
       {/* Status dot */}
-      <span className={`${styles.statusDot} ${dotClass(run.phase)}`} />
+      <span className={`${shared.statusDot} ${styles.statusDotAlign} ${dotClass(run.phase)}`} />
 
       {/* Info block (clickable link) */}
       <Link href={runHref} className={styles.runInfo}>
         {/* Row 1: ID + phase + step count */}
         <div className={styles.runRow1}>
-          <span className={styles.runId}>{shortId(run.runId)}</span>
+          <span className={shared.monoText}>#{shortId(run.runId)}</span>
           <span className={styles.runPhase}>{t(locale, `activeRuns.phase.${run.phase}`)}</span>
           <span className={styles.runStepCount}>
             {t(locale, "activeRuns.step")} {run.progress.current}/{run.progress.total}
@@ -76,7 +81,7 @@ function RunItem(props: { run: ActiveRun; locale: string; cancelState: string; o
         {/* Row 2: tool/step name (if available) */}
         {stepLabel && (
           <div className={styles.runRow2}>
-            <span className={styles.toolName}>{stepLabel}</span>
+            <span className={shared.truncate}>{stepLabel}</span>
             {run.currentStep!.attempt > 1 && (
               <span className={styles.stepAttempt}>
                 {t(locale, "activeRuns.retry")} #{run.currentStep!.attempt}
@@ -98,9 +103,17 @@ function RunItem(props: { run: ActiveRun; locale: string; cancelState: string; o
         <span className={styles.runTime}>{timeAgo(run.updatedAt, locale, "activeRuns")}</span>
         {cancelState === "done" ? (
           <span className={styles.cancelDone}>{t(locale, "activeRuns.cancelled")}</span>
+        ) : cancelState === "error" ? (
+          <button
+            className={`${shared.actionBtn} ${styles.cancelBtnDanger}`}
+            onClick={(e) => { e.stopPropagation(); onCancel(run.runId); }}
+            title={cancelError || t(locale, "activeRuns.cancelFailed")}
+          >
+            <IconX />
+          </button>
         ) : (
           <button
-            className={styles.cancelBtn}
+            className={`${shared.actionBtn} ${styles.cancelBtnDanger}`}
             disabled={cancelState === "loading"}
             onClick={(e) => { e.stopPropagation(); onCancel(run.runId); }}
             title={t(locale, "activeRuns.cancel")}
@@ -120,90 +133,85 @@ export default function ActiveRunList(props: {
   onBadgeUpdate?: (count: number) => void;
 }) {
   const { locale, onBadgeUpdate } = props;
-  const [runs, setRuns] = useState<ActiveRun[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [cancelState, setCancelState] = useState<Record<string, "idle" | "loading" | "done" | "error">>({});
 
-  const fetchRuns = useCallback(async () => {
-    try {
-      const res = await apiFetch("/runs/active?limit=10", { locale, cache: "no-store" });
-      if (!res.ok) {
-        setError(`${res.status}`);
-        return;
-      }
-      const data = await res.json();
-      setRuns((data.activeRuns as ActiveRun[]) ?? []);
-      const count = ((data.activeRuns as unknown[]) ?? []).length;
-      onBadgeUpdate?.(count);
-      setError(null);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "fetch_error");
-    } finally {
-      setLoading(false);
-    }
+  const fetchFn = useCallback(async (): Promise<ActiveRun[]> => {
+    const res = await apiFetch("/runs/active?limit=10", { locale, cache: "no-store" });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const data = await res.json();
+    return (data.activeRuns as ActiveRun[]) ?? [];
   }, [locale]);
+
+  const {
+    items: runs,
+    loading,
+    error,
+    reload,
+    actionStates,
+    setActionState,
+    resetActionState,
+  } = useBottomPanel<ActiveRun>({
+    fetchFn,
+    refreshInterval: 10000,
+    enabled: true,
+  });
+
+  // Preload tool display names from backend metadata
+  useEffect(() => { preloadToolNames(); }, []);
+
+  // Sync badge count
+  useEffect(() => {
+    onBadgeUpdate?.(runs.length);
+  }, [runs.length, onBadgeUpdate]);
+
+  // Cancel error messages stored alongside state
+  const cancelErrors: Record<string, string> = {};
 
   const handleCancel = useCallback(async (runId: string) => {
-    setCancelState((s) => ({ ...s, [runId]: "loading" }));
+    setActionState(runId, "loading");
     try {
       const res = await apiFetch(`/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST", locale });
-      if (res.ok || res.status === 409) {
-        setCancelState((s) => ({ ...s, [runId]: "done" }));
-        setTimeout(() => setRuns((prev) => prev.filter((r) => r.runId !== runId)), 800);
+      if (res.ok) {
+        setActionState(runId, "done");
+      } else if (res.status === 409) {
+        // 409: run already terminated — mark as "done" (已终止)
+        setActionState(runId, "done");
       } else {
-        setCancelState((s) => ({ ...s, [runId]: "error" }));
+        setActionState(runId, "error");
+        resetActionState(runId, 3000);
       }
-    } catch {
-      setCancelState((s) => ({ ...s, [runId]: "error" }));
+    } catch (err) {
+      setActionState(runId, "error");
+      cancelErrors[runId] = err instanceof Error ? err.message : "network_error";
+      resetActionState(runId, 3000);
     }
-  }, [locale]);
-
-  // Initial fetch
-  useEffect(() => {
-    fetchRuns();
-  }, [fetchRuns]);
-
-  // Auto-refresh every 10 seconds
-  useEffect(() => {
-    const timer = setInterval(fetchRuns, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchRuns]);
+  }, [locale, setActionState, resetActionState]);
 
   return (
-    <div className={styles.container}>
-      {/* Content */}
-      <div className={styles.content}>
-        {loading && (
-          <div className={styles.loadingState}>
-            <span className={styles.spinner} />
-            <span>{t(locale, "activeRuns.loading")}</span>
-          </div>
-        )}
+    <div className={shared.panelWrap}>
+      {loading && <PanelLoading message={t(locale, "activeRuns.loading")} />}
 
-        {!loading && error && (
-          <div className={styles.errorState}>
-            <span>{t(locale, "activeRuns.error")}</span>
-            <button className={styles.retryBtn} onClick={fetchRuns}>
-              {t(locale, "activeRuns.retry")}
-            </button>
-          </div>
-        )}
+      {!loading && error && (
+        <PanelError message={t(locale, "activeRuns.error")} onRetry={reload} />
+      )}
 
-        {!loading && !error && runs.length === 0 && (
-          <div className={styles.emptyState}>
-            <span>{t(locale, "activeRuns.empty")}</span>
-          </div>
-        )}
+      {!loading && !error && runs.length === 0 && (
+        <PanelEmpty message={t(locale, "activeRuns.empty")} />
+      )}
 
-        {!loading && !error && runs.length > 0 && (
-          <div className={styles.runList}>
-            {runs.map((run) => (
-              <RunItem key={run.runId} run={run} locale={locale} cancelState={cancelState[run.runId] ?? "idle"} onCancel={handleCancel} />
-            ))}
-          </div>
-        )}
-      </div>
+      {!loading && !error && runs.length > 0 && (
+        <div className={styles.runList}>
+          {runs.map((run) => (
+            <RunItem
+              key={run.runId}
+              run={run}
+              locale={locale}
+              cancelState={(actionStates[run.runId] ?? "idle") as ActionStatus}
+              cancelError={cancelErrors[run.runId]}
+              onCancel={handleCancel}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

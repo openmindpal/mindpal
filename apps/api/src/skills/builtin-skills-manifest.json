@@ -156,12 +156,6 @@
     "description": "Role-based access control"
   },
   {
-    "key": "federation.gateway",
-    "module": "./federation-gateway",
-    "tier": "optional",
-    "description": "Federation gateway"
-  },
-  {
     "key": "observability.dashboard",
     "module": "./observability-dashboard",
     "tier": "optional",

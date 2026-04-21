@@ -7,6 +7,7 @@ import { type ApiError, toApiError, errText } from "@/lib/apiError";
 import { Card, PageHeader, Table, StatusBadge, getHelpHref, FormHint, AlertBanner, friendlyError } from "@/components/ui";
 import { useUndoToast, UndoToastContainer } from "@/components/ui/UndoToast";
 import { nextId } from "@/lib/apiError";
+import { useFormState } from "@/hooks/useFormState";
 
 type Binding = { id?: string; modelRef?: string; provider?: string; model?: string; baseUrl?: string | null; chatCompletionsPath?: string | null; connectorInstanceId?: string; secretId?: string; secretIds?: string[]; status?: string; updatedAt?: string };
 
@@ -71,7 +72,10 @@ const PROVIDER_PATHS: Record<ProviderKey, string> = {
 };
 
 export default function GovModelsClient(props: { locale: string; initial: any }) {
-  const [busy, setBusy] = useState(false);
+  const form = useFormState({
+    initial: { providerKey: "deepseek" as ProviderKey, baseUrl: PROVIDER_BASE_URLS.deepseek, chatCompletionsPath: PROVIDER_PATHS.deepseek, apiKey: "", modelName: "" },
+  });
+  const busy = form.busy;
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -85,11 +89,11 @@ export default function GovModelsClient(props: { locale: string; initial: any })
   const totalPages = Math.max(1, Math.ceil(bindingItems.length / pageSize));
   const paged = useMemo(() => bindingItems.slice(page * pageSize, (page + 1) * pageSize), [bindingItems, page]);
 
-  const [providerKey, setProviderKey] = useState<ProviderKey>("deepseek");
-  const [baseUrl, setBaseUrl] = useState(PROVIDER_BASE_URLS.deepseek);
-  const [chatCompletionsPath, setChatCompletionsPath] = useState(PROVIDER_PATHS.deepseek);
-  const [apiKey, setApiKey] = useState("");
-  const [modelName, setModelName] = useState("");
+  const providerKey = form.fields.providerKey;
+  const baseUrl = form.fields.baseUrl;
+  const chatCompletionsPath = form.fields.chatCompletionsPath;
+  const apiKey = form.fields.apiKey;
+  const modelName = form.fields.modelName;
   const [lastSaved, setLastSaved] = useState<OnboardResult | null>(null);
   const [testOutput, setTestOutput] = useState<{ outputText: string; traceId: string } | null>(null);
   const [testError, setTestError] = useState<string>("");
@@ -99,10 +103,10 @@ export default function GovModelsClient(props: { locale: string; initial: any })
   const providerPathPlaceholder = PROVIDER_PATHS[providerKey];
 
   const handleProviderChange = useCallback((nextProvider: ProviderKey) => {
-    setProviderKey(nextProvider);
-    setBaseUrl(PROVIDER_BASE_URLS[nextProvider]);
-    setChatCompletionsPath(PROVIDER_PATHS[nextProvider]);
-  }, []);
+    form.setField("providerKey", nextProvider);
+    form.setField("baseUrl", PROVIDER_BASE_URLS[nextProvider]);
+    form.setField("chatCompletionsPath", PROVIDER_PATHS[nextProvider]);
+  }, [form]);
 
   /* Undo toast for delete operations (§07§6 Delay Window) */
   const { toasts: undoToasts, enqueue: enqueueUndo, undo: undoAction } = useUndoToast();
@@ -126,14 +130,12 @@ export default function GovModelsClient(props: { locale: string; initial: any })
     setError("");
     setNotice("");
     setTestError("");
-    setBusy(true);
     try {
-      await fn();
+      await form.runAction(fn);
     } catch (e: any) {
       setError(errText(props.locale, toApiError(e)));
-    } finally {
-      setBusy(false);
     }
+    if (form.errors._form) setError(errText(props.locale, { errorCode: "UNKNOWN", message: form.errors._form }));
   }
 
   async function saveOnboard() {
@@ -157,7 +159,7 @@ export default function GovModelsClient(props: { locale: string; initial: any })
       const savedBaseUrl = (json as any)?.baseUrl != null ? String((json as any).baseUrl) : null;
       const testPassed = Boolean((json as any)?.connectionTestPassed);
       setLastSaved({ modelRef, provider, model, baseUrl: savedBaseUrl, binding: (json as any)?.binding ?? null });
-      setApiKey("");
+      form.setField("apiKey", "");
       await refreshBindings();
       await refreshCatalog();
       setNotice(testPassed ? t(props.locale, "gov.models.testAndSaveSuccess") : t(props.locale, "gov.models.saved"));
@@ -319,19 +321,19 @@ export default function GovModelsClient(props: { locale: string; initial: any })
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <div>{t(props.locale, "gov.models.baseUrl")}<FormHint text={t(props.locale, "gov.models.hint.baseUrl")} /></div>
-              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} disabled={busy} placeholder={providerBaseUrlPlaceholder} />
+              <input value={baseUrl} onChange={(e) => form.setField("baseUrl", e.target.value)} disabled={busy} placeholder={providerBaseUrlPlaceholder} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <div>{t(props.locale, "gov.models.chatPath")}<FormHint text={t(props.locale, "gov.models.hint.chatPath")} /></div>
-              <input value={chatCompletionsPath} onChange={(e) => setChatCompletionsPath(e.target.value)} disabled={busy} placeholder={providerPathPlaceholder} />
+              <input value={chatCompletionsPath} onChange={(e) => form.setField("chatCompletionsPath", e.target.value)} disabled={busy} placeholder={providerPathPlaceholder} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <div>{t(props.locale, "gov.models.apiKey")}<FormHint text={t(props.locale, "gov.models.hint.apiKey")} /></div>
-              <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} disabled={busy} type="password" />
+              <input value={apiKey} onChange={(e) => form.setField("apiKey", e.target.value)} disabled={busy} type="password" />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <div>{t(props.locale, "gov.models.modelName")}<FormHint text={t(props.locale, "gov.models.hint.modelName")} /></div>
-              <input value={modelName} onChange={(e) => setModelName(e.target.value)} disabled={busy} placeholder="deepseek-v3" />
+              <input value={modelName} onChange={(e) => form.setField("modelName", e.target.value)} disabled={busy} placeholder="deepseek-v3" />
             </label>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button onClick={saveOnboard} disabled={busy || !baseUrl.trim() || !apiKey || !modelName.trim()}>

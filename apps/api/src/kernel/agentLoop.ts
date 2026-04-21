@@ -21,15 +21,17 @@ import { insertAuditEvent } from "../modules/audit/auditRepo";
 import { writeCheckpoint, finalizeCheckpoint, startHeartbeat, registerProcess, updateProcessStatus } from "./loopCheckpoint";
 import { acquireLoopSlot } from "./priorityScheduler";
 import { decomposeGoal } from "./goalDecomposer";
-import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations } from "./worldStateExtractor";
+import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations, extractWorldState } from "./worldStateExtractor";
 import { verifyGoalCompletion, verifySimple, type VerificationResult } from "./verifierAgent";
-import { checkAndEnforceIntentBoundary } from "./intentAnchoringService";
+import { checkAndEnforceIntentBoundary, detectIntentBoundary, type IntentDriftResult } from "./intentAnchoringService";
 
 /* ── 从拆分模块 re-import ── */
 import type {
   AgentDecisionAction, AgentDecision, StepObservation,
   AgentLoopParams, ExecutionConstraints, AgentLoopResult,
+  LoopBudget,
 } from "./loopTypes";
+import { isBudgetExhausted, recordTokenUsage, recordCostUsage, createDefaultBudget } from "./loopTypes";
 import { prepareRunForExecution, safeTransitionRun } from "./loopStateHelpers";
 import { parseAgentDecision, normalizeExecutionConstraints, filterToolDiscoveryByConstraints } from "./loopThinkDecide";
 import { executeToolCall, waitForStepCompletion } from "./loopToolExecutor";
@@ -113,6 +115,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
   const { toolDiscovery, auditCtx, loopStartedAt } = s;
 
   let _loopFinalResult: AgentLoopResult | null = null;
+  const budget: LoopBudget = createDefaultBudget();
 
   function buildResult(endReason: AgentLoopResult["endReason"], message: string, verification?: VerificationResult): AgentLoopResult {
     const r: AgentLoopResult = {
@@ -120,6 +123,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       endReason, iterations, succeededSteps, failedSteps,
       message, observations, lastDecision, loopId,
       verification, goalGraph: goalGraph ?? undefined,
+      budgetSnapshot: { ...budget },
     };
     _loopFinalResult = r;
     return r;
@@ -148,6 +152,19 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       }
 
       iterations++;
+
+      // ── 预算检查 ──
+      const budgetCheck = isBudgetExhausted(budget);
+      if (budgetCheck.exhausted) {
+        app.log.warn({ runId, iteration: iterations, reason: budgetCheck.reason }, "[AgentLoop] 预算耗尽");
+        await safeTransitionRun(pool, runId, "stopped", { log: app.log });
+        await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
+          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(budget) failed");
+        });
+        const result = buildResult("budget_exhausted", `预算耗尽: ${budgetCheck.reason}`);
+        onLoopEnd?.(result);
+        return result;
+      }
 
       // ── Phase 1: Observe ──
       const lastObs = observations.length > 0 ? observations[observations.length - 1] : null;
@@ -182,6 +199,19 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         const result = buildResult("error", `LLM 调用失败：${llmErr?.message ?? "unknown"}`);
         onLoopEnd?.(result);
         return result;
+      }
+
+      // 记录 LLM Token 消耗（估算：输入+输出字符数/4）
+      const estimatedTokens = Math.ceil(modelOutputText.length / 4);
+      recordTokenUsage(budget, estimatedTokens);
+
+      // 处理 Think 阶段意图漂移检测结果
+      if (iterCtx.intentDrift?.drifted) {
+        app.log.warn({
+          runId, iteration: iterations,
+          driftScore: iterCtx.intentDrift.driftScore,
+          shouldReset: iterCtx.intentDrift.shouldResetAnchor,
+        }, "[AgentLoop] 意图漂移检测结果注入决策上下文");
       }
 
       // ── Phase 3: Decide ──
@@ -370,6 +400,11 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           }
           currentSeq += calls.length;
 
+          // 记录并行工具执行的预算消耗
+          for (let i = 0; i < calls.length; i++) {
+            recordCostUsage(budget, 0);
+          }
+
           // P0-2: 并行工具调用打点
           const parallelSuccessCount = stepResults.filter(s => s.status === "fulfilled" && s.value?.status === "succeeded").length;
           const parallelFailedCount = stepResults.length - parallelSuccessCount;
@@ -413,6 +448,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           observations.push(tcResult.obs);
           if (tcResult.succeeded) succeededSteps++; else failedSteps++;
           currentSeq++;
+          recordCostUsage(budget, 0); // 记录工具执行次数（实际成本由计费系统填充）
           if (onStepComplete) await onStepComplete(tcResult.obs, decision);
           worldState = tcResult.worldState;
           goalGraph = tcResult.goalGraph;

@@ -17,6 +17,7 @@ import { getEnabledSkillRuntimeRunner, listActiveSkillTrustedKeys } from "../mod
 import { extractTextForPromptInjectionScan, getPromptInjectionPolicyFromEnv, scanPromptInjection, shouldDenyPromptInjectionForTarget, summarizePromptInjection } from "../lib/promptInjection";
 import { getEffectiveSafetyPolicyVersion } from "../lib/safetyContract";
 import { resolveAndValidateTool, admitAndBuildStepEnvelope, buildStepInputPayload, submitNewToolRun } from "../kernel/executionKernel";
+import { authorizeToolExecution } from "../kernel/loopPermissionUnified";
 
 export const toolRoutes: FastifyPluginAsync = async (app) => {
   function isValidUrl(u: string) {
@@ -216,7 +217,26 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
       null;
 
     setAuditContext(req, { resourceType: "tool", action: "execute", toolRef, idempotencyKey: idempotencyKey ?? undefined });
-    const decision = await requirePermission({ req, ...PERM.TOOL_EXECUTE });
+
+    // ── 统一权限检查：合并通用 tool/execute + 特定 resourceType/action + 治理检查为单次调用 ──
+    const authResult = await authorizeToolExecution({
+      pool: app.db,
+      subjectId: subject.subjectId,
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      traceId: req.ctx.traceId,
+      runId: "",
+      jobId: "",
+      resourceType: resolved.resourceType,
+      action: resolved.action,
+      toolRef: resolved.toolRef,
+      limits: {},
+    });
+    if (!authResult.authorized) {
+      req.ctx.audit!.errorCategory = "policy_violation";
+      throw Errors.forbidden(authResult.errorMessage);
+    }
+    const decision = authResult.opDecision ?? { decision: "allow" };
     req.ctx.audit!.policyDecision = decision;
 
     // 基于 tool_definitions.source_layer 元数据动态判定，不再硬编码工具名称
@@ -226,13 +246,6 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
         req.ctx.audit!.errorCategory = "policy_violation";
         throw Errors.forbidden();
       }
-    }
-
-    if (toolName === "memory.read") {
-      await requirePermission({ req, ...PERM.MEMORY_READ });
-    }
-    if (toolName === "memory.write") {
-      await requirePermission({ req, ...PERM.MEMORY_WRITE });
     }
 
     let scGate: any = null;
@@ -315,8 +328,8 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
 
     validateToolInput(ver.inputSchema, input);
 
-    /* ── Phase 2: Admit via execution kernel ── */
-    const opDecision = await requirePermission({ req, resourceType: resolved.resourceType, action: resolved.action });
+    /* ── Phase 2: Admit via execution kernel（权限已由 authorizeToolExecution 统一完成） ── */
+    const opDecision = decision;
 
     if (resolved.scope === "write" && !idempotencyKey) {
       req.ctx.audit!.errorCategory = "policy_violation";
@@ -327,6 +340,7 @@ export const toolRoutes: FastifyPluginAsync = async (app) => {
       pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId,
       subjectId: subject.subjectId ?? null, resolved, opDecision,
       limits, requestedCapabilityEnvelope: capabilityEnvelope, requireRequestedEnvelope: false,
+      preAuthorized: true, // 权限已由 authorizeToolExecution 统一完成，跳过重复治理检查
     });
     const effNetDigest = admitted.networkPolicyDigest;
 

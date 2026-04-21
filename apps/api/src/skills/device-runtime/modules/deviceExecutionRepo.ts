@@ -23,6 +23,9 @@ export type DeviceExecutionRow = {
   canceledAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** JOIN device_records 补充的可选字段 */
+  deviceType: string | null;
+  deviceOs: string | null;
 };
 
 function toRow(r: any): DeviceExecutionRow {
@@ -49,6 +52,8 @@ function toRow(r: any): DeviceExecutionRow {
     canceledAt: r.canceled_at ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    deviceType: r.device_type ?? null,
+    deviceOs: r.device_os ?? r.os ?? null,
   };
 }
 
@@ -102,32 +107,33 @@ export async function getDeviceExecution(params: { pool: Pool; tenantId: string;
 }
 
 export async function listDeviceExecutions(params: { pool: Pool; tenantId: string; spaceId: string | null | undefined; deviceId?: string; status?: string; limit: number; offset: number }) {
-  const where: string[] = ["tenant_id = $1"];
+  const where: string[] = ["de.tenant_id = $1"];
   const args: any[] = [params.tenantId];
   let idx = 2;
 
   if (params.spaceId !== undefined) {
-    if (params.spaceId === null) where.push("space_id IS NULL");
+    if (params.spaceId === null) where.push("de.space_id IS NULL");
     else {
-      where.push(`space_id = $${idx++}`);
+      where.push(`de.space_id = $${idx++}`);
       args.push(params.spaceId);
     }
   }
   if (params.deviceId) {
-    where.push(`device_id = $${idx++}`);
+    where.push(`de.device_id = $${idx++}`);
     args.push(params.deviceId);
   }
   if (params.status) {
-    where.push(`status = $${idx++}`);
+    where.push(`de.status = $${idx++}`);
     args.push(params.status);
   }
   args.push(params.limit, params.offset);
   const res = await params.pool.query(
     `
-      SELECT *
-      FROM device_executions
+      SELECT de.*, d.device_type, d.os AS device_os
+      FROM device_executions de
+      LEFT JOIN device_records d ON d.device_id = de.device_id AND d.tenant_id = de.tenant_id
       WHERE ${where.join(" AND ")}
-      ORDER BY created_at DESC
+      ORDER BY de.created_at DESC
       LIMIT $${idx++} OFFSET $${idx++}
     `,
     args,

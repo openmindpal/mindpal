@@ -15,6 +15,7 @@ import { executeDynamicSkillSandboxed } from "./dynamicSkillSandbox";
 import { executeDynamicSkillContainered } from "./dynamicSkillContainer";
 import { executeDynamicSkillRemote } from "./dynamicSkillRemote";
 import { executePythonSkill } from "./pythonSkillRunner";
+import { executeNativeSkill } from "./nativeSkillRunner";
 
 export { executeDynamicSkillRemote } from "./dynamicSkillRemote";
 export type { DynamicSkillExecResult } from "./dynamicSkillTypes";
@@ -87,6 +88,34 @@ export async function executeDynamicSkill(params: {
       entryPath,
       artifactDir,
       signal: params.signal,
+    });
+    return { output: res.output, depsDigest: res.depsDigest, runtimeBackend: res.runtimeBackend, degraded: res.degraded, runnerSummary: res.runnerSummary };
+  }
+
+  // ── P2-02: Go/Rust/Native 编译型 Skill 路由 ──
+  const isNativeSkill = declaredRuntime === "go"
+    || declaredRuntime === "rust"
+    || declaredRuntime === "native"
+    || entryRel.endsWith(".exe")
+    || (!entryRel.includes(".") && declaredRuntime !== ""); // 无后缀+有runtime声明=编译产物
+
+  if (isNativeSkill) {
+    const res = await executeNativeSkill({
+      toolRef: params.toolRef,
+      tenantId: params.tenantId,
+      spaceId: params.spaceId,
+      subjectId: params.subjectId,
+      traceId: params.traceId,
+      idempotencyKey: params.idempotencyKey,
+      input: params.input,
+      limits: params.limits,
+      networkPolicy: params.networkPolicy,
+      artifactRef: params.artifactRef,
+      depsDigest: computed,
+      entryPath,
+      artifactDir,
+      signal: params.signal,
+      runtime: declaredRuntime as "go" | "rust" | "native",
     });
     return { output: res.output, depsDigest: res.depsDigest, runtimeBackend: res.runtimeBackend, degraded: res.degraded, runnerSummary: res.runnerSummary };
   }

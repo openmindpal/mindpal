@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { IconDevice, IconCheck, IconX, IconPlay, IconClock, IconRefresh } from "./ShellIcons";
-import { formatDuration, formatTime } from "./shellUtils";
+import { formatDuration, formatTime, formatErrorCategory, formatToolRefLocalized, shortId } from "./shellUtils";
+import { useBottomPanel } from "./useBottomPanel";
+import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
+import shared from "./bottomTray.shared.module.css";
 import styles from "./DeviceActionsPanel.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
@@ -25,6 +28,7 @@ interface DeviceAction {
 interface DeviceExecutionRecord {
   deviceExecutionId: string;
   deviceId: string;
+  deviceName?: string;
   toolRef: string;
   status: "pending" | "claimed" | "succeeded" | "failed" | "canceled";
   createdAt: string;
@@ -43,7 +47,7 @@ function mapExecutionToAction(rec: DeviceExecutionRecord): DeviceAction {
   return {
     executionId: rec.deviceExecutionId,
     deviceId: rec.deviceId,
-    deviceName: rec.deviceId.slice(0, 8),
+    deviceName: rec.deviceName || `#${rec.deviceId.slice(0, 8)}`,
     actionType: rec.toolRef,
     status,
     createdAt: rec.createdAt,
@@ -55,54 +59,50 @@ function mapExecutionToAction(rec: DeviceExecutionRecord): DeviceAction {
 /* ─── Component ─────────────────────────────────────────────────────────────── */
 
 export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: string; onBadgeUpdate?: (count: number) => void }) {
-  const [actions, setActions] = useState<DeviceAction[]>([]);
-  const [loading, setLoading] = useState(false);
   const [deviceNames, setDeviceNames] = useState<Record<string, string>>({});
+  const deviceNameCache = useRef<Record<string, string>>({});
+  const badgeRef = useRef(onBadgeUpdate);
+  badgeRef.current = onBadgeUpdate;
 
-  // Fetch device name map once for friendly display
-  useEffect(() => {
-    apiFetch("/devices?limit=100", { method: "GET", locale }).then(async (res) => {
-      if (res.ok) {
-        const data = await res.json() as { devices?: { deviceId: string; name?: string; label?: string }[] };
-        const map: Record<string, string> = {};
-        for (const d of data.devices ?? []) {
-          if (d.name || d.label) map[d.deviceId] = d.name || d.label || "";
-        }
-        setDeviceNames(map);
-      }
-    }).catch(() => {});
+  const fetchActions = useCallback(async (): Promise<DeviceAction[]> => {
+    const res = await apiFetch(`/device-executions?limit=30`, { method: "GET", locale });
+    if (res.ok) {
+      const data = await res.json() as { executions?: DeviceExecutionRecord[] };
+      const mapped = (data.executions || []).map(mapExecutionToAction);
+      const pendingCount = mapped.filter((a) => a.status === "pending" || a.status === "running").length;
+      badgeRef.current?.(pendingCount);
+      return mapped;
+    }
+    throw new Error("fetch_error");
   }, [locale]);
 
-  const fetchActions = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await apiFetch(`/device-executions?limit=30`, { method: "GET", locale });
-      if (res.ok) {
-        const data = await res.json() as { executions?: DeviceExecutionRecord[] };
-        const mapped = (data.executions || []).map(mapExecutionToAction);
-        setActions(mapped);
-        const pendingCount = mapped.filter((a) => a.status === "pending" || a.status === "running").length;
-        onBadgeUpdate?.(pendingCount);
-      } else {
-        setActions([]);
-      }
-    } catch (err) {
-      console.error("Failed to load device actions:", err);
-      setActions([]);
-    }
-    setLoading(false);
-  }, [locale, onBadgeUpdate]);
+  const { items: actions, loading, error, reload } = useBottomPanel<DeviceAction>({
+    fetchFn: fetchActions,
+    refreshInterval: 20_000,
+  });
 
+  // On-demand device name loading: extract unknown deviceIds from current items, batch-query only missing ones
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initial data load
-    fetchActions();
-  }, [fetchActions]);
+    const unknownIds = actions
+      .map(item => item.deviceId)
+      .filter(id => id && !deviceNameCache.current[id]);
 
-  // Auto-refresh every 20 seconds
-  useEffect(() => {
-    const timer = setInterval(fetchActions, 20_000);
-    return () => clearInterval(timer);
-  }, [fetchActions]);
+    if (unknownIds.length === 0) return;
+
+    const uniqueIds = [...new Set(unknownIds)];
+    apiFetch(`/devices?ids=${uniqueIds.join(",")}&fields=id,name`, { method: "GET", locale })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = await res.json() as { devices?: { deviceId: string; id?: string; name?: string; label?: string }[] };
+        const devices = data.devices || [];
+        for (const d of devices) {
+          const did = d.deviceId || d.id || "";
+          if (did) deviceNameCache.current[did] = d.name || d.label || did;
+        }
+        setDeviceNames({ ...deviceNameCache.current });
+      })
+      .catch(() => { /* Graceful degradation: display deviceId prefix */ });
+  }, [actions, locale]);
 
   const getStatusIcon = (status: DeviceAction["status"]) => {
     switch (status) {
@@ -130,11 +130,21 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
     return deviceNames[action.deviceId] || action.deviceName;
   };
 
-
   const getActionLabel = (actionType: string) => {
-    const key = `deviceAction.type.${actionType}`;
-    const label = t(locale, key);
-    return label !== key ? label : actionType;
+    const name = actionType.includes("@") ? actionType.slice(0, actionType.lastIndexOf("@")) : actionType;
+
+    // 优先查找设备操作专用翻译
+    const deviceKey = `deviceAction.tool.${name}`;
+    const deviceLabel = t(locale, deviceKey);
+    if (deviceLabel !== deviceKey) return deviceLabel;
+
+    // 次选旧的 type 翻译
+    const typeKey = `deviceAction.type.${name}`;
+    const typeLabel = t(locale, typeKey);
+    if (typeLabel !== typeKey) return typeLabel;
+
+    // 最终通用工具翻译
+    return formatToolRefLocalized(actionType, locale);
   };
 
   return (
@@ -142,7 +152,7 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
       {/* Header */}
       <div className={styles.header}>
         <span className={styles.title}>{t(locale, "deviceAction.title")}</span>
-        <button className={styles.refreshBtn} onClick={fetchActions} disabled={loading}>
+        <button className={styles.refreshBtn} onClick={reload} disabled={loading}>
           <IconRefresh /> {t(locale, "deviceAction.refresh")}
         </button>
       </div>
@@ -150,12 +160,11 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
       {/* Content */}
       <div className={styles.content}>
         {loading && actions.length === 0 ? (
-          <div className={styles.loading}>{t(locale, "common.loading")}</div>
+          <PanelLoading message={t(locale, "common.loading")} />
+        ) : error ? (
+          <PanelError message={error} onRetry={reload} />
         ) : actions.length === 0 ? (
-          <div className={styles.empty}>
-            <IconDevice />
-            <span>{t(locale, "deviceAction.empty")}</span>
-          </div>
+          <PanelEmpty message={t(locale, "deviceAction.empty")} />
         ) : (
           <div className={styles.actionList}>
             {actions.map((action) => (
@@ -165,10 +174,10 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
                 </div>
                 <div className={styles.actionContent}>
                   <div className={styles.actionHeader}>
-                    <span className={styles.actionDevice}>
+                    <span className={`${styles.actionDevice} ${shared.truncate}`}>
                       <IconDevice /> {resolveDeviceName(action)}
                     </span>
-                    <span className={styles.actionTime}>{fmtTime(action.createdAt)}</span>
+                    <span className={`${styles.actionTime} ${shared.monoText}`}>{fmtTime(action.createdAt)}</span>
                   </div>
                   <div className={styles.actionType}>{getActionLabel(action.actionType)}</div>
                   <div className={styles.actionMeta}>
@@ -176,11 +185,11 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
                       {t(locale, `deviceAction.status.${action.status}`)}
                     </span>
                     {action.latencyMs != null && (
-                      <span className={styles.actionLatency}>{formatDuration(action.latencyMs)}</span>
+                      <span className={`${styles.actionLatency} ${shared.monoText}`}>{formatDuration(action.latencyMs)}</span>
                     )}
                   </div>
                   {action.error && (
-                    <div className={styles.actionError}>{action.error}</div>
+                    <div className={styles.actionError}>{formatErrorCategory(action.error, locale)}</div>
                   )}
                 </div>
               </div>

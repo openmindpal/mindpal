@@ -24,7 +24,7 @@ import { discoverEnabledTools, type EnabledTool } from "../modules/agentContext"
 import { getToolDefinition, getToolVersionByRef, type ToolDefinition } from "../modules/tools/toolRepo";
 import { resolveEffectiveToolRef } from "../modules/tools/resolve";
 import { isToolEnabled } from "../modules/governance/toolGovernanceRepo";
-import { routeByIntent, type RouteResult } from "../modules/semanticRouting/skillIntentRouter";
+import { routeByIntent, type RouteResult } from "../modules/skills/skillRouter";
 
 /* Re-export for convenience so callers only need one import. */
 export { discoverEnabledTools, type EnabledTool };

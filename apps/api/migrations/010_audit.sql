@@ -76,10 +76,16 @@ CREATE TABLE IF NOT EXISTS audit_outbox (
 
 CREATE INDEX IF NOT EXISTS audit_outbox_ready_idx ON audit_outbox (status, next_attempt_at);
 
--- FK from audit_events.outbox_id → audit_outbox
-ALTER TABLE audit_events
-  ADD CONSTRAINT audit_events_outbox_id_fk
-  FOREIGN KEY (outbox_id) REFERENCES audit_outbox (outbox_id) DEFERRABLE INITIALLY DEFERRED;
+-- FK from audit_events.outbox_id → audit_outbox (idempotent)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'audit_events_outbox_id_fk'
+  ) THEN
+    ALTER TABLE audit_events
+      ADD CONSTRAINT audit_events_outbox_id_fk
+      FOREIGN KEY (outbox_id) REFERENCES audit_outbox (outbox_id) DEFERRABLE INITIALLY DEFERRED;
+  END IF;
+END $$;
 
 -- ── audit_legal_holds ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS audit_legal_holds (

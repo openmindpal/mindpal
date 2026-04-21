@@ -48,6 +48,8 @@ export function parseDecompositionOutput(
         goalId,
         parentGoalId: null,
         dependsOn: Array.isArray(raw.dependsOn) ? raw.dependsOn.map(String) : [],
+        edgeType: raw.edgeType === "conditional" ? "conditional" : raw.edgeType === "parallel" ? "parallel" : "sequential",
+        condition: typeof raw.condition === "string" ? raw.condition : undefined,
         description: String(raw.description ?? ""),
         suggestedToolRefs: Array.isArray(raw.suggestedToolRefs) ? raw.suggestedToolRefs.map(String) : undefined,
         preconditions: parseConditions(raw.preconditions),
@@ -379,6 +381,7 @@ export function buildSingleGoalFallback(
       goalId: crypto.randomUUID(),
       parentGoalId: null,
       dependsOn: (step.dependsOn ?? []).map((depIndex) => graph.subGoals[depIndex]?.goalId).filter(Boolean),
+      edgeType: "sequential",
       description: step.description,
       suggestedToolRefs: step.suggestedToolRefs,
       preconditions: (step.preconditions ?? []).map((description) => ({

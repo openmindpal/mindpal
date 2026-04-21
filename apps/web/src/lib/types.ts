@@ -217,3 +217,160 @@ export function isPhaseBlocking(phase: string): boolean {
 export function isPhaseActive(phase: string): boolean {
   return ["queued", "retrieving", "planning", "executing", "reviewing", "running", "compensating"].includes(phase);
 }
+
+/* ─── Multi-Agent Collaboration types (§18) ────────────────── */
+
+export interface CollabRun {
+  collabRunId: string;
+  taskId: string;
+  status: string;
+  roles: CollabRole[];
+  limits?: Record<string, unknown>;
+  primaryRunId?: string | null;
+  spaceId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CollabRole {
+  roleName: string;
+  agentType?: string;
+  mode?: string;
+  status?: string;
+  capabilities?: Record<string, unknown>;
+  constraints?: Record<string, unknown>;
+  toolPolicy?: { allowedTools?: string[] } | null;
+  budget?: Record<string, unknown> | null;
+}
+
+export interface CollabRunEvent {
+  eventId: string;
+  collabRunId: string;
+  type: string;
+  actorRole?: string | null;
+  correlationId?: string | null;
+  payloadDigest?: Record<string, unknown> | null;
+  runId?: string | null;
+  stepId?: string | null;
+  createdAt?: string;
+}
+
+export interface CollabEnvelope {
+  envelopeId: string;
+  collabRunId: string;
+  fromRole: string;
+  toRole?: string | null;
+  broadcast?: boolean;
+  kind: string;
+  correlationId: string;
+  payloadDigest?: Record<string, unknown> | null;
+  createdAt?: string;
+}
+
+export interface CollabState {
+  collabRunId: string;
+  phase?: string | null;
+  currentTurn?: number;
+  currentRole?: string | null;
+  roleStates?: Record<string, unknown>;
+  completedStepIds?: string[];
+  failedStepIds?: string[];
+  pendingStepIds?: string[];
+  replanCount?: number;
+  startedAt?: string | null;
+  lastUpdatedAt?: string | null;
+  version?: number | null;
+}
+
+export interface CollabStateUpdate {
+  updateId: string;
+  sourceRole: string;
+  updateType: string;
+  payload?: unknown;
+  version?: number;
+  createdAt?: string;
+}
+
+export interface CollabProtocol {
+  roles: CollabAgentRole[];
+  assignments: CollabTaskAssignment[];
+  permissionContexts: CollabPermissionContext[];
+}
+
+export interface CollabAgentRole {
+  roleId: string;
+  collabRunId: string;
+  roleName: string;
+  agentType: string;
+  status: string;
+  capabilities?: Record<string, unknown>;
+  constraints?: Record<string, unknown>;
+  policySnapshotRef?: string | null;
+  createdAt?: string;
+}
+
+export interface CollabTaskAssignment {
+  assignmentId: string;
+  collabRunId: string;
+  taskId: string;
+  assignedRole: string;
+  status: string;
+  priority?: number;
+  inputDigest?: Record<string, unknown>;
+  outputDigest?: Record<string, unknown>;
+  createdAt?: string;
+}
+
+export interface CollabPermissionContext {
+  contextId: string;
+  collabRunId: string;
+  roleName: string;
+  scope?: string;
+  grantedPermissions?: string[];
+  createdAt?: string;
+}
+
+export interface ConsensusVote {
+  topic: string;
+  votes: { agentId: string; decision: string; reason: string }[];
+  outcome: string;
+}
+
+export interface DebateRound {
+  round: number;
+  speaker: string;
+  argument: string;
+  stance: string;
+}
+
+export interface CollabDetailSnapshot {
+  collabRun: CollabRun;
+  runs: Record<string, unknown>[];
+  latestEvents: CollabRunEvent[];
+  collabState: CollabState | null;
+  recentStateUpdates: CollabStateUpdate[];
+  taskState: TaskState | null;
+  envelopes?: { items: CollabEnvelope[]; nextBefore: string | null };
+}
+
+/* ─── Offline Sync Conflict types (§15) ────────────────── */
+
+export interface SyncConflict {
+  id: string;
+  entityName: string;
+  fieldName: string;
+  localValue: unknown;
+  remoteValue: unknown;
+  conflictAt: string;
+  status: 'pending' | 'resolved';
+  resolution?: 'local' | 'remote' | 'manual';
+}
+
+export interface ChangeLogEntry {
+  id: string;
+  timestamp: string;
+  operation: 'create' | 'update' | 'delete';
+  entityName: string;
+  entityId: string;
+  changes: Record<string, { old: unknown; new: unknown }>;
+}

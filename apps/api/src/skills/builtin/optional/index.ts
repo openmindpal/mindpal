@@ -33,5 +33,4 @@ export { default as agentRuntime } from "../../agent-runtime";
 export { default as yjsCollab } from "../../yjs-collab";
 export { default as skillManager } from "../../skill-manager";
 export { default as rbacManager } from "../../rbac-manager";
-export { default as federationGateway } from "../../federation-gateway";
 export { default as observabilityDashboard } from "../../observability-dashboard";
