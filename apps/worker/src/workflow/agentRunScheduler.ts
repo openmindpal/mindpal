@@ -3,6 +3,7 @@ import type Redis from "ioredis";
 import type { Pool } from "pg";
 import crypto from "node:crypto";
 import { isToolAllowedForPolicy, tryTransitionRun, type RunStatus, StructuredLogger, resolveNumber } from "@openslin/shared";
+import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 
 const _logger = new StructuredLogger({ module: "worker:agentRunScheduler" });
 
@@ -35,6 +36,26 @@ type SchedulerDeps = {
 
 export function createAgentRunScheduler(deps: SchedulerDeps) {
   const { pool, queue, redis, syncWorkerCollabStateSafe } = deps;
+
+  /**
+   * ── 架构边界标注 ──
+   *
+   * 此函数当前包含两类逻辑，按编排内核收敛设计应逐步分离：
+   *
+   * [A] 编排决策逻辑（应归 API OrchestrationKernel）：
+   *   - 预算检查（maxSteps / maxWallTimeMs / maxTokens / maxCostUsd）
+   *   - 角色工具策略校验（roleAllowed / roleBudget）
+   *   - 审批流触发（approvalRequired 判断）
+   *   - 依赖解析（dependsOn 检查）
+   *
+   * [B] 执行调度逻辑（保留在 Worker）：
+   *   - 步骤入队（BullMQ enqueue）
+   *   - claim token 竞争与去重
+   *   - Collab 状态同步通知
+   *
+   * 迁移路径：API OrchestrationKernel.handleStepResult() 消费 StepExecutionResult 后，
+   * 直接完成 [A] 类决策，然后通过 BullMQ 消息将 [B] 类调度指令派发给 Worker。
+   */
 
   async function stopRunWithBudget(p: StopRunParams) {
     const runRes = await pool.query<{ status: string; tenant_id: string }>(
@@ -118,6 +139,19 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
     }
   }
 
+  /**
+   * [A] 编排决策：下一步要做什么。
+   *
+   * 此函数当前包含大量编排决策逻辑（预算检查、审批流、依赖解析），
+   * 这些逻辑应逐步迁移到 API 的 OrchestrationKernel。
+   *
+   * Worker 仅应保留：
+   * 1. 从队列获取待执行步骤
+   * 2. 执行步骤
+   * 3. 通过 StepExecutionResult 事件上报结果
+   *
+   * @see OrchestrationKernel.handleStepResult — 未来的编排决策入口
+   */
   async function scheduleNextAgentRunStep(params: { jobId: string; runId: string }) {
     const runRes = await pool.query(
       "SELECT tenant_id, status, input_digest, started_at, created_at FROM runs WHERE run_id = $1 LIMIT 1",
@@ -327,7 +361,12 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
     const firstActorRole = first.metaInput?.actorRole ? String(first.metaInput.actorRole) : null;
     const firstPlanStepId = first.metaInput?.planStepId ? String(first.metaInput.planStepId) : null;
     const tc = first.metaInput?.toolContract ?? null;
-    const approvalRequired = Boolean(tc?.approvalRequired) || tc?.riskLevel === "high";
+    const approvalRequired = shouldRequireApproval({
+      approvalRequired: tc?.approvalRequired,
+      riskLevel: tc?.riskLevel,
+      sourceLayer: tc?.sourceLayer,
+      scope: tc?.scope,
+    });
     if (approvalRequired) {
       const spaceId = first.metaInput?.spaceId ? String(first.metaInput.spaceId) : null;
       const subjectId = first.metaInput?.subjectId ? String(first.metaInput.subjectId) : null;

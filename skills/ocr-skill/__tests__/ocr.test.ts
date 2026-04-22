@@ -10,7 +10,7 @@ describe('ocr-skill', () => {
   describe('manifest.json', () => {
     it('identity.name 存在且非空', () => {
       expect(manifest.identity).toBeDefined();
-      expect(manifest.identity.name).toBe('knowledge.ocr.extract');
+      expect(manifest.identity.name).toBe('knowledge.extract.ocr');
     });
 
     it('identity.version 符合 semver', () => {

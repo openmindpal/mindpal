@@ -8,8 +8,7 @@ import { IconDevice, IconCheck, IconX, IconPlay, IconClock, IconRefresh } from "
 import { formatDuration, formatTime, formatErrorCategory, formatToolRefLocalized, shortId } from "./shellUtils";
 import { useBottomPanel } from "./useBottomPanel";
 import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
-import shared from "./bottomTray.shared.module.css";
-import styles from "./DeviceActionsPanel.module.css";
+import styles from "@/styles/shell.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
 
@@ -116,11 +115,11 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
 
   const getStatusClass = (status: DeviceAction["status"]) => {
     switch (status) {
-      case "succeeded": return styles.statusSucceeded;
+      case "succeeded": return styles.dapStatusSucceeded;
       case "failed":
-      case "timeout": return styles.statusFailed;
-      case "running": return styles.statusRunning;
-      default: return styles.statusPending;
+      case "timeout": return styles.dapStatusFailed;
+      case "running": return styles.dapStatusRunning;
+      default: return styles.dapStatusPending;
     }
   };
 
@@ -150,15 +149,15 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
   return (
     <div className={styles.deviceActionsPanel}>
       {/* Header */}
-      <div className={styles.header}>
-        <span className={styles.title}>{t(locale, "deviceAction.title")}</span>
-        <button className={styles.refreshBtn} onClick={reload} disabled={loading}>
+      <div className={styles.dapHeader}>
+        <span className={styles.dapTitle}>{t(locale, "deviceAction.title")}</span>
+        <button className={styles.dapRefreshBtn} onClick={reload} disabled={loading}>
           <IconRefresh /> {t(locale, "deviceAction.refresh")}
         </button>
       </div>
 
       {/* Content */}
-      <div className={styles.content}>
+      <div className={styles.dapContent}>
         {loading && actions.length === 0 ? (
           <PanelLoading message={t(locale, "common.loading")} />
         ) : error ? (
@@ -166,18 +165,18 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
         ) : actions.length === 0 ? (
           <PanelEmpty message={t(locale, "deviceAction.empty")} />
         ) : (
-          <div className={styles.actionList}>
+          <div className={styles.dapActionList}>
             {actions.map((action) => (
-              <div key={action.executionId} className={styles.actionItem}>
+              <div key={action.executionId} className={styles.dapActionItem}>
                 <div className={`${styles.actionStatus} ${getStatusClass(action.status)}`}>
                   {getStatusIcon(action.status)}
                 </div>
-                <div className={styles.actionContent}>
+                <div className={styles.dapActionContent}>
                   <div className={styles.actionHeader}>
-                    <span className={`${styles.actionDevice} ${shared.truncate}`}>
+                    <span className={`${styles.actionDevice} ${styles.truncate}`}>
                       <IconDevice /> {resolveDeviceName(action)}
                     </span>
-                    <span className={`${styles.actionTime} ${shared.monoText}`}>{fmtTime(action.createdAt)}</span>
+                    <span className={`${styles.dapActionTime} ${styles.monoText}`}>{fmtTime(action.createdAt)}</span>
                   </div>
                   <div className={styles.actionType}>{getActionLabel(action.actionType)}</div>
                   <div className={styles.actionMeta}>
@@ -185,7 +184,7 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
                       {t(locale, `deviceAction.status.${action.status}`)}
                     </span>
                     {action.latencyMs != null && (
-                      <span className={`${styles.actionLatency} ${shared.monoText}`}>{formatDuration(action.latencyMs)}</span>
+                      <span className={`${styles.actionLatency} ${styles.monoText}`}>{formatDuration(action.latencyMs)}</span>
                     )}
                   </div>
                   {action.error && (
@@ -199,7 +198,7 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
       </div>
 
       {/* Footer link */}
-      <div className={styles.footer}>
+      <div className={styles.dapFooter}>
         <Link href={`/devices?lang=${encodeURIComponent(locale)}`} className={styles.footerLink}>
           {t(locale, "deviceAction.viewAll")}
         </Link>

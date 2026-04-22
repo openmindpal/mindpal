@@ -14,6 +14,7 @@
   "category": "communication",
   "priority": 6,
   "tags": ["email", "imap", "poll", "inbound"],
+  "dependencies": ["secrets", "scheduler"],
   "contract": {
     "scope": "read",
     "resourceType": "channel",
@@ -40,5 +41,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

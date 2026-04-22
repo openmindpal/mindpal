@@ -1,5 +1,4 @@
-import styles from "./AppShell.module.css";
-import shellStyles from "./ConsoleShell.module.css";
+import styles from "@/styles/shell.module.css";
 
 /**
  * Skeleton that matches ConsoleShell layout.
@@ -10,11 +9,11 @@ export default function ConsoleLoading() {
   return (
     <div className={styles.root}>
       {/* Header */}
-      <header className={styles.header}>
+      <header className={styles.asHeader}>
         <div className={styles.headerInner}>
-          <div className={shellStyles.headerRow}>
-            <div className={shellStyles.headerLeft}>
-              <span className={shellStyles.appTitle} style={{ opacity: 0.5 }}>
+          <div className={styles.headerRow}>
+            <div className={styles.headerLeft}>
+              <span className={styles.appTitle} style={{ opacity: 0.5 }}>
                 {"\u7075\u667aMindpal"}
               </span>
             </div>
@@ -48,7 +47,7 @@ export default function ConsoleLoading() {
       </aside>
 
       {/* Content area – centered spinner */}
-      <main className={styles.content}>
+      <main className={styles.asContent}>
         <div
           className={styles.contentInner}
           style={{

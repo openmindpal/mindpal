@@ -14,6 +14,9 @@
   "category": "ai",
   "priority": 8,
   "tags": ["discovery", "recommendation", "planning", "ai"],
+  "dependencies": ["metadata"],
+  "deprecated": true,
+  "deprecatedReason": "工具发现/推荐功能已收敛到编排器内部(tool_discovery_cache)，独立 skill 不再需要",
   "contract": {
     "scope": "read",
     "resourceType": "tool",
@@ -37,5 +40,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

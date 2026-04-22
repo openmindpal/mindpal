@@ -7,7 +7,7 @@ import { t } from "@/lib/i18n";
 import { AppShell, AppShellContent, AppShellHeader, AppShellSideNav } from "./AppShell";
 import { CommandPalette, useCommandPaletteShortcut, type CommandItem } from "./CommandPalette";
 import { NAV_CONFIG, EXTRA_PALETTE_ITEMS, type NavSubGroupConfig } from "./navConfig";
-import styles from "./ConsoleShell.module.css";
+import styles from "@/styles/shell.module.css";
 
 const NAV_VISITS_KEY = "openslin_nav_visits";
 const MAX_RECENT_NAV = 5;

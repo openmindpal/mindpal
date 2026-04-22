@@ -1,0 +1,897 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Flow Domain Styles — merged from components/flow/
+ *   • FlowItemRenderer
+ *   • RunStatusIndicator
+ *   • TaskProgressBar
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── FlowItemRenderer ──────────────────────────────────────────────────── */
+
+.statusSucceeded { color: var(--sl-success, #22c55e); }
+.statusFailed { color: var(--sl-error, #ef4444); }
+.statusNeedsApproval { color: var(--sl-warning, #f59e0b); }
+
+.approvalNode {
+  padding: 12px;
+  background: var(--sl-warning-bg, rgba(245, 158, 11, 0.08));
+  border: 1px solid var(--sl-warning, #f59e0b);
+  border-radius: 8px;
+  margin: 8px 0;
+}
+
+.approvalNodeHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.approvalNodeIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--sl-warning, #f59e0b);
+  color: #fff;
+}
+
+.approvalNodeTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sl-text);
+}
+
+.approvalNodeContent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.approvalNodeTool,
+.approvalNodeTime {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.approvalNodeLabel {
+  color: var(--sl-muted);
+  min-width: 80px;
+}
+
+.approvalNodeActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.approvalBtnApprove,
+.approvalBtnReject {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--sl-transition-fast);
+}
+
+.approvalBtnApprove {
+  background: var(--sl-success, #22c55e);
+  color: #fff;
+}
+
+.approvalBtnApprove:hover {
+  filter: brightness(1.1);
+}
+
+.approvalBtnReject {
+  background: var(--sl-error, #ef4444);
+  color: #fff;
+}
+
+.approvalBtnReject:hover {
+  filter: brightness(1.1);
+}
+
+.approvalLinkDetail {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--sl-border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--sl-text);
+  text-decoration: none;
+  background: var(--sl-surface);
+  transition: all var(--sl-transition-fast);
+}
+
+.approvalLinkDetail:hover {
+  border-color: var(--sl-accent);
+  color: var(--sl-accent);
+}
+
+/* ─── Approval Risk Badge ──────────────────────────────────────────────── */
+
+.approvalRiskBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  line-height: 1.6;
+}
+
+.approvalRiskHigh {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.approvalRiskMedium {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.approvalRiskLow {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.approvalHumanSummary {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--sl-fg, #374151);
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+.approvalInputDigest {
+  font-size: 12px;
+  color: var(--sl-muted, #6b7280);
+  border: 1px solid var(--sl-border, #e5e7eb);
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+.approvalInputDigest summary {
+  cursor: pointer;
+  padding: 4px 8px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.approvalInputDigest summary:hover {
+  color: var(--sl-fg, #374151);
+}
+
+.approvalInputDigest pre {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  border-top: 1px solid var(--sl-border, #e5e7eb);
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 0 0 6px 6px;
+}
+
+/* ─── RunStatusIndicator ────────────────────────────────────────────────── */
+
+.phaseBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.phasePanel {
+  border-radius: 10px;
+  border: 1px solid transparent;
+  padding: 12px;
+}
+
+.phaseSuccess {
+  color: #15803d;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.phaseFailed {
+  color: #dc2626;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.phaseMuted {
+  color: #4b5563;
+  background: #f9fafb;
+  border-color: #e5e7eb;
+}
+
+.phaseBlocking {
+  color: #d97706;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.phaseRunning {
+  color: #2563eb;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+/* renamed from .pulseDot to avoid collision with TaskProgressBar */
+.rsiPulseDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: rsiPulse 1.2s ease-in-out infinite;
+}
+
+.statusIcon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.panelHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.panelMeta {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.blockReason {
+  margin-top: 8px;
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.progressWrap {
+  margin-top: 8px;
+}
+
+.progressMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.progressTrack {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+/* renamed from .progressBar to avoid collision with TaskProgressBar */
+.rsiProgressBar {
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+  transition: width 180ms ease;
+}
+
+.approvalCard {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #fde68a;
+  background: rgba(255, 251, 235, 0.7);
+}
+
+.approvalSummary {
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #b45309;
+}
+
+.approvalSummaryStrong {
+  font-weight: 600;
+}
+
+.approvalState {
+  font-size: 12px;
+}
+
+.approvalStateLoading {
+  color: #6b7280;
+  animation: rsiPulse 1.2s ease-in-out infinite;
+}
+
+.approvalStateEmpty {
+  color: #6b7280;
+}
+
+.approvalStateSuccess {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.approvalStateError {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.approvalMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.approvalMetaMuted {
+  color: #6b7280;
+}
+
+.approvalMetaMono {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.approvalReasonInput {
+  width: 100%;
+  margin-bottom: 8px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--sl-fg);
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.approvalReasonInput:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.approvalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approvalAction {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  text-decoration: none;
+}
+
+.approveBtn {
+  color: #fff;
+  background: #22c55e;
+}
+
+.approveBtn:hover:not(:disabled) {
+  background: #16a34a;
+  color: #fff;
+}
+
+.rejectBtn {
+  color: #fff;
+  background: #ef4444;
+}
+
+.rejectBtn:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+
+.detailLink {
+  color: #4b5563;
+  background: #fff;
+  border-color: #d1d5db;
+}
+
+.detailLink:hover {
+  color: #111827;
+  border-color: #9ca3af;
+  background: #fff;
+}
+
+.modeSelector {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--sl-bg);
+  border: 1px solid var(--sl-border);
+}
+
+.modeButton {
+  min-height: 0;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sl-muted);
+  box-shadow: none;
+}
+
+.modeButton:hover:not(:disabled) {
+  color: var(--sl-fg);
+  background: rgba(255, 255, 255, 0.65);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.modeButtonActive {
+  color: #2563eb;
+  background: #fff;
+  border-color: rgba(37, 99, 235, 0.12);
+  box-shadow: var(--sl-shadow-xs);
+}
+
+.modeButtonActive:hover:not(:disabled) {
+  color: #2563eb;
+  background: #fff;
+  border-color: rgba(37, 99, 235, 0.12);
+}
+
+.modeButtonDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modeIcon {
+  margin-right: 4px;
+}
+
+/* ── Inline Action Buttons (integrated into panel header) ── */
+
+.inlineActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.inlineActionBtn {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.inlineActionBtn:active {
+  transform: scale(0.97);
+}
+
+.inlineActionStop {
+  color: #991b1b;
+  background: rgba(254, 202, 202, 0.5);
+  border-color: #fecaca;
+}
+
+.inlineActionStop:hover {
+  background: #fecaca;
+  border-color: #f87171;
+}
+
+.inlineActionContinue {
+  color: #166534;
+  background: rgba(187, 247, 208, 0.4);
+  border-color: #bbf7d0;
+}
+
+.inlineActionContinue:hover {
+  background: #bbf7d0;
+  border-color: #4ade80;
+}
+
+.inlineActionRetry {
+  color: #92400e;
+  background: rgba(253, 230, 138, 0.4);
+  border-color: #fde68a;
+}
+
+.inlineActionRetry:hover {
+  background: #fde68a;
+  border-color: #fbbf24;
+}
+
+@keyframes rsiPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* ─── TaskProgressBar ───────────────────────────────────────────────────── */
+
+/* renamed from .progressBar to avoid collision with RunStatusIndicator */
+.tpbProgressBar {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--sl-border, #e5e7eb);
+  background: var(--sl-surface, #fff);
+  overflow: hidden;
+  transition: box-shadow 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.tpbProgressBar:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  user-select: none;
+  min-height: 38px;
+}
+
+.header:hover {
+  background: color-mix(in srgb, var(--sl-surface, #fff) 92%, var(--sl-accent, #3b82f6));
+}
+
+/* renamed from .pulseDot to avoid collision with RunStatusIndicator */
+.tpbPulseDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sl-accent, #3b82f6);
+  flex-shrink: 0;
+  animation: tpbPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes tpbPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+.pulseDotSuccess {
+  background: #22c55e;
+  animation: dotFlash 0.5s ease;
+}
+
+@keyframes dotFlash {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34,197,94,0.5); }
+  50% { transform: scale(1.3); box-shadow: 0 0 0 6px rgba(34,197,94,0); }
+  100% { transform: scale(1); box-shadow: none; }
+}
+
+.pulseDotFailed {
+  background: #f97316;
+  animation: dotFlash 0.5s ease;
+}
+
+.pulseDotMuted {
+  background: #9ca3af;
+  animation: none;
+}
+
+.taskLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sl-fg, #111);
+  white-space: nowrap;
+}
+
+.modeBadge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sl-accent, #3b82f6) 12%, transparent);
+  color: var(--sl-accent, #3b82f6);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.phaseText {
+  font-size: 12px;
+  color: var(--sl-muted, #6b7280);
+  white-space: nowrap;
+}
+
+.stepCounter {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sl-fg, #111);
+  margin-left: auto;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.miniProgress {
+  width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--sl-border, #e5e7eb) 60%, transparent);
+  overflow: hidden;
+}
+
+.miniProgressFill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--sl-accent, #3b82f6);
+  transition: width 0.5s cubic-bezier(0.4,0,0.2,1);
+}
+
+.miniProgressFillSuccess {
+  background: #22c55e;
+}
+
+.miniProgressFillFailed {
+  background: #ef4444;
+}
+
+.chevron {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--sl-muted, #9ca3af);
+  transition: transform 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.detail {
+  border-top: 1px solid var(--sl-border, #e5e7eb);
+  padding: 8px 14px 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; }
+  to { max-height: 240px; opacity: 1; }
+}
+
+.stepList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stepItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 4px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--sl-border, #e5e7eb) 40%, transparent);
+}
+
+.stepItem:last-child {
+  border-bottom: none;
+}
+
+.stepIcon {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+  font-size: 13px;
+  transition: transform 0.3s ease;
+}
+
+.stepIconDone {
+  animation: stepPop 0.4s ease;
+}
+
+@keyframes stepPop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+
+.stepSeq {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--sl-muted, #6b7280);
+  min-width: 16px;
+}
+
+.stepToolRef {
+  font-weight: 500;
+  color: var(--sl-fg, #111);
+}
+
+.stepStatus {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.stepStatusSucceeded {
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+  color: #16a34a;
+  animation: statusSlide 0.3s ease;
+}
+
+.stepStatusFailed {
+  background: color-mix(in srgb, #f97316 12%, transparent);
+  color: #ea580c;
+  animation: statusSlide 0.3s ease;
+}
+
+@keyframes statusSlide {
+  from { opacity: 0; transform: translateX(6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.stepStatusRunning {
+  background: color-mix(in srgb, var(--sl-accent, #3b82f6) 12%, transparent);
+  color: var(--sl-accent, #3b82f6);
+}
+
+.stepReasoning {
+  font-size: 11px;
+  color: var(--sl-muted, #9ca3af);
+  margin-top: 2px;
+  line-height: 1.4;
+  padding-left: 26px;
+}
+
+.emptyHint {
+  font-size: 12px;
+  color: var(--sl-muted, #9ca3af);
+  padding: 4px 0;
+  text-align: center;
+}
+
+.completionLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 0 2px;
+  color: var(--sl-muted, #6b7280);
+}
+
+.completionDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.completionDotOk { background: #22c55e; }
+.completionDotFail { background: #ef4444; }
+
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--sl-border, #e5e7eb);
+}
+
+.actionBtn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--sl-border, #e5e7eb);
+  background: var(--sl-surface, #fff);
+  color: var(--sl-fg, #111);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.actionBtn:hover {
+  background: color-mix(in srgb, var(--sl-surface, #fff) 90%, var(--sl-accent, #3b82f6));
+}
+
+.actionBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.actionBtnDanger {
+  color: #ef4444;
+  border-color: color-mix(in srgb, #ef4444 30%, var(--sl-border, #e5e7eb));
+}
+
+.actionBtnDanger:hover {
+  background: color-mix(in srgb, #ef4444 8%, var(--sl-surface, #fff));
+}
+
+.progressBarForeground {
+  border-color: var(--sl-accent, #3b82f6);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sl-accent, #3b82f6) 20%, transparent), 0 2px 8px rgba(59,130,246,0.1);
+}
+
+.multiWrapper {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--sl-border, #e5e7eb);
+  background: var(--sl-surface, #fff);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.multiHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  user-select: none;
+  min-height: 38px;
+  border-bottom: 1px solid var(--sl-border, #e5e7eb);
+}
+
+.multiHeader:hover {
+  background: color-mix(in srgb, var(--sl-surface, #fff) 92%, var(--sl-accent, #3b82f6));
+}
+
+.multiList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+}
+
+.multiList .tpbProgressBar {
+  border-radius: 8px;
+}
+
+.multiList .progressBarForeground {
+  border-width: 1.5px;
+}

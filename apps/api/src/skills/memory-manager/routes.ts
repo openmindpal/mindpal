@@ -4,7 +4,7 @@ import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
 import { clearMemory, createMemoryEntry, deleteMemoryEntry, exportAndClearMemory, exportMemoryEntries, getMemoryEntry, getTaskState, insertMemoryAttachments, listMemoryAttachments, listMemoryAttachmentsBatch, listMemoryEntries, searchMemory, updateMemoryEntry, upsertTaskState, detectMemoryConflicts, arbitrateMemoryConflict, pinMemoryEntry, unpinMemoryEntry } from "../../modules/memory/repo";
-import type { WriteIntent, MediaRefInput, MemoryClass } from "../../modules/memory/repo";
+import type { WriteIntent, MediaRefInput, MemoryClass, MemoryScope } from "../../modules/memory/repo";
 import { clearSessionContext, getSessionContext, listSessionContexts, toSessionContextListItem, upsertSessionContext } from "../../modules/memory/sessionContextRepo";
 
 /** 确认引用 schema */
@@ -45,7 +45,7 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
 
     const body = z
       .object({
-        scope: z.enum(["user", "space"]),
+        scope: z.enum(["user", "space", "global"]),
         type: z.string().min(1),
         title: z.string().min(1).optional(),
         contentText: z.string().min(1),
@@ -120,7 +120,7 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
 
     const q = z
       .object({
-        scope: z.enum(["user", "space"]).optional(),
+        scope: z.enum(["user", "space", "global"]).optional(),
         type: z.string().min(1).optional(),
         limit: z.coerce.number().int().positive().max(50).optional(),
         offset: z.coerce.number().int().min(0).optional(),
@@ -166,7 +166,7 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
     const body = z
       .object({
         query: z.string().min(1),
-        scope: z.enum(["user", "space"]).optional(),
+        scope: z.enum(["user", "space", "global"]).optional(),
         types: z.array(z.string().min(1)).optional(),
         limit: z.number().int().positive().max(20).optional(),
       })
@@ -290,7 +290,7 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
     const subject = requireSubject(req);
     if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
 
-    const body = z.object({ scope: z.enum(["user", "space"]) }).parse(req.body);
+    const body = z.object({ scope: z.enum(["user", "space", "global"]) }).parse(req.body);
     const count = await clearMemory({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, scope: body.scope });
 
     req.ctx.audit!.outputDigest = { scope: body.scope, deletedCount: count };
@@ -307,7 +307,7 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
 
     const body = z
       .object({
-        scope: z.enum(["user", "space"]).optional(),
+        scope: z.enum(["user", "space", "global"]).optional(),
         types: z.array(z.string().min(1)).max(50).optional(),
         limit: z.number().int().positive().max(5000).optional(),
       })
@@ -352,7 +352,7 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
 
     const body = z
       .object({
-        scope: z.enum(["user", "space"]),
+        scope: z.enum(["user", "space", "global"]),
         types: z.array(z.string().min(1)).max(50).optional(),
         limit: z.number().int().positive().max(5000).optional(),
       })

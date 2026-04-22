@@ -15,6 +15,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { CallerIdentity, CachedPolicy, PolicyCacheEntry } from "./types";
+import type { AuthProvider } from "@openslin/shared";
+import { createHmacAuthProvider } from "../hmacAuthProvider";
 
 // ══════════════════════════════════════════════════════════════
 // 第一部分：调用方鉴权与执行上下文
@@ -169,6 +171,11 @@ export function deleteContextState(callerId: string, key: string): boolean {
 }
 
 export function getAccessStats() { return { activeContexts: _contexts.size, cachedCallers: _callerCache.size }; }
+
+/** 获取基于当前 secretKey + policy 的统一 AuthProvider 实例 */
+export function getAuthProvider(): AuthProvider {
+  return createHmacAuthProvider(_secretKey, _policy);
+}
 
 // ══════════════════════════════════════════════════════════════
 // 第二部分：策略缓存

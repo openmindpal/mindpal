@@ -33,6 +33,18 @@ function log(level: "info" | "warn" | "error", msg: string, ctx?: Record<string,
 }
 
 /* ================================================================== */
+/*  全局优先级提升信号                                                  */
+/* ================================================================== */
+
+/** 全局优先级提升信号 — 由跨会话调度层注入，临时提升特定任务的有效优先级 */
+export interface GlobalPriorityBoost {
+  sessionId: string;
+  taskId: string;
+  boostAmount: number;  // 优先级提升量（降低数值 = 提高优先级）
+  reason: 'vip_user' | 'deadline_approaching' | 'starvation';
+}
+
+/* ================================================================== */
 /*  调度策略                                                            */
 /* ================================================================== */
 
@@ -128,9 +140,46 @@ export function updateSessionConfig(tenantId: string, partial: Partial<SessionCo
 
 export class SessionScheduler {
   private pool: Pool;
+  /** 全局优先级提升信号（内存临时数据，不持久化） */
+  private globalBoosts: GlobalPriorityBoost[] = [];
 
   constructor(pool: Pool) {
     this.pool = pool;
+  }
+
+  /* ── 全局优先级提升管理 ─────────────────────────────────── */
+
+  /**
+   * 注入全局优先级提升信号。
+   * 由跨会话调度层调用，临时提升特定任务的有效优先级。
+   * 提升是临时的，不改变任务的持久化优先级。
+   */
+  setGlobalBoosts(boosts: GlobalPriorityBoost[]): void {
+    this.globalBoosts = boosts;
+  }
+
+  /** 清空全局提升信号 */
+  clearGlobalBoosts(): void {
+    this.globalBoosts = [];
+  }
+
+  /** 获取当前全局提升信号（只读副本） */
+  getGlobalBoosts(): ReadonlyArray<GlobalPriorityBoost> {
+    return this.globalBoosts;
+  }
+
+  /**
+   * 应用全局优先级提升：计算任务的有效优先级。
+   * 返回临时调整后的有效优先级（数值越低优先级越高）。
+   */
+  getEffectivePriority(entry: TaskQueueEntry): number {
+    let effective = entry.priority;
+    for (const boost of this.globalBoosts) {
+      if (boost.sessionId === entry.sessionId && boost.taskId === entry.taskId) {
+        effective = Math.max(0, effective - boost.boostAmount);
+      }
+    }
+    return effective;
   }
 
   /**
@@ -170,9 +219,18 @@ export class SessionScheduler {
     // P3-02: 动态并发限制（null = 不限）
     const concurrencyOk = cfg.maxConcurrent === null || activeCount < cfg.maxConcurrent;
 
-    // 按策略排序
+    // 按策略排序，并应用全局优先级提升
     const sortFn = STRATEGY_SORT[cfg.strategy] ?? STRATEGY_SORT.fifo;
-    const sorted = [...schedulable].sort(sortFn);
+    const sorted = [...schedulable].sort((a, b) => {
+      // 先按全局提升后的有效优先级比较（仅在 priority / dependency_aware 策略时）
+      if (cfg.strategy === "priority" || cfg.strategy === "dependency_aware") {
+        const aPrio = this.getEffectivePriority(a);
+        const bPrio = this.getEffectivePriority(b);
+        if (aPrio !== bPrio) return aPrio - bPrio;
+        return sortFn(a, b);
+      }
+      return sortFn(a, b);
+    });
 
     // 逐个检查依赖就绪
     let bestCandidate: TaskQueueEntry | null = null;

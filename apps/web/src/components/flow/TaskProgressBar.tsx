@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { type TaskProgress, type FrontendTaskQueueEntry } from "@/app/homeHelpers";
 import { t } from "@/lib/i18n";
 import { getPhaseLabel, isPhaseTerminal } from "@/lib/types";
-import styles from "./TaskProgressBar.module.css";
+import styles from "@/styles/flow.module.css";
 
 /* ── Helpers ─── */
 
@@ -84,10 +84,10 @@ export function TaskProgressBar({ progress, locale, onStop, onContinue, onRetry,
   if (!progress) return null;
 
   return (
-    <div className={`${styles.progressBar} ${isForeground ? styles.progressBarForeground ?? "" : ""}`}>
+    <div className={`${styles.tpbProgressBar} ${isForeground ? styles.progressBarForeground ?? "" : ""}`}>
       {/* Collapsed header */}
       <div className={styles.header} onClick={() => setExpanded((p) => !p)}>
-        <span className={`${styles.pulseDot} ${dotClass}`} />
+        <span className={`${styles.tpbPulseDot} ${dotClass}`} />
         <span className={styles.taskLabel}>
           {t(locale, "taskProgress.task").replace("{id}", shortId)}
         </span>
@@ -236,7 +236,7 @@ export function MultiTaskProgressBar({ locale, entries, foregroundEntryId, onSto
     <div className={styles.multiWrapper}>
       {/* Header */}
       <div className={styles.multiHeader} onClick={() => setCollapsed((p) => !p)}>
-        <span className={`${styles.pulseDot} ${activeCount > 0 ? "" : styles.pulseDotMuted}`} />
+        <span className={`${styles.tpbPulseDot} ${activeCount > 0 ? "" : styles.pulseDotMuted}`} />
         <span className={styles.taskLabel}>
           {activeCount > 0
             ? `${activeCount} ${t(locale, "taskProgress.activeTasks")}` 

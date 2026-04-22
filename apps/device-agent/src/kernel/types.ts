@@ -210,6 +210,10 @@ export interface DeviceToolPlugin {
   messageTopics?: string[];
   /** 插件版本 */
   version?: string;
+  /** 插件来源：builtin=内置 / external=外部目录加载 */
+  source?: "builtin" | "external";
+  /** 外部插件清单（仅 source=external 时存在，用于签名校验） */
+  manifest?: import("./pluginSandbox").PluginManifest;
 
   // ── 生命周期方法 ────────────────────────────────────────
   /** 初始化（连接硬件、加载驱动等） */

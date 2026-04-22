@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { t } from "@/lib/i18n";
-import styles from "./ui.module.css";
+import styles from "@/styles/ui.module.css";
 
 /** Map of page path prefixes to documentation anchors */
 const HELP_LINKS: Record<string, string> = {

@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { t } from "@/lib/i18n";
 import { safeJsonString } from "@/lib/apiError";
-import styles from "./ArtifactPreview.module.css";
+import styles from "@/styles/artifact.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
 

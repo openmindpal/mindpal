@@ -9,7 +9,10 @@ export type CollabEnvelopeRow = {
   fromRole: string;
   toRole: string | null;
   broadcast: boolean;
+  /** @deprecated 使用 messageType。DB `kind` 列的原始值 */
   kind: string;
+  /** 消息类型，映射自 DB `kind` 列（= CollabMessageEnvelope.messageType） */
+  messageType: string;
   correlationId: string | null;
   policySnapshotRef: string | null;
   payloadDigest: any;
@@ -27,7 +30,9 @@ function toEnvelope(r: any): CollabEnvelopeRow {
     fromRole: String(r.from_role),
     toRole: r.to_role ? String(r.to_role) : null,
     broadcast: Boolean(r.broadcast),
+    // DB `kind` 列存储的是 CollabMessageEnvelope.messageType 值
     kind: String(r.kind),
+    messageType: String(r.kind),
     correlationId: r.correlation_id ? String(r.correlation_id) : null,
     policySnapshotRef: r.policy_snapshot_ref ? String(r.policy_snapshot_ref) : null,
     payloadDigest: r.payload_digest ?? null,
@@ -55,7 +60,9 @@ export async function appendCollabEnvelope(params: {
     `
       INSERT INTO collab_envelopes (
         tenant_id, space_id, collab_run_id, task_id,
-        from_role, to_role, broadcast, kind, correlation_id, policy_snapshot_ref,
+        from_role, to_role, broadcast,
+        kind, /* kind 列存储 CollabMessageEnvelope.messageType 值 */
+        correlation_id, policy_snapshot_ref,
         payload_digest, payload_redacted
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *

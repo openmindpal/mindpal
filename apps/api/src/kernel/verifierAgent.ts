@@ -18,6 +18,7 @@ import type {
 import {
   worldStateToPromptText, getValidFacts, computeGoalProgress,
 } from "@openslin/shared";
+import { resolveBoolean } from "@openslin/shared";
 import type { SubGoal, CompletionEvidence } from "@openslin/shared";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
 import type { StepObservation } from "./agentLoop";
@@ -88,7 +89,7 @@ export async function verifyGoalCompletion(params: VerifyParams): Promise<Verifi
   } = params;
 
   // 环境变量开关
-  if ((process.env.AGENT_LOOP_VERIFIER ?? "1") === "0") {
+  if (!resolveBoolean("AGENT_LOOP_VERIFIER").value) {
     return {
       verdict: "verified",
       confidence: 1.0,
@@ -374,7 +375,7 @@ export async function verifySimple(params: {
   } = params;
 
   // 环境变量开关
-  if ((process.env.AGENT_LOOP_VERIFIER ?? "1") === "0") {
+  if (!resolveBoolean("AGENT_LOOP_VERIFIER").value) {
     return {
       verdict: "verified",
       confidence: 1.0,

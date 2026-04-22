@@ -1,36 +1,46 @@
 {
-  "name": "streaming-device-control",
-  "version": "1.0.0",
-  "description": "实时设备控制 Skill - 支持高频传感器数据流与低延迟指令下发",
-  "author": "灵智智能体系统",
-  "license": "MIT",
-  "capabilities": [
-    {
-      "name": "streaming_sensor_data",
-      "description": "接收高频传感器数据流（支持 50-100Hz）"
-    },
-    {
-      "name": "low_latency_command",
-      "description": "下发低延迟控制指令（<10ms 响应）"
-    },
-    {
-      "name": "binary_protocol",
-      "description": "支持二进制协议减少序列化延迟"
-    },
-    {
-      "name": "backpressure_control",
-      "description": "背压控制和消息队列管理"
-    }
-  ],
-  "permissions": {
-    "websocket": true,
-    "binary_data": true,
-    "realtime_priority": true
+  "identity": {
+    "name": "device.streaming.control",
+    "version": "1.0.0"
   },
-  "config": {
-    "defaultFrequency": 100,
-    "maxBacklog": 1000,
-    "heartbeatIntervalMs": 1000,
-    "reconnectDelayMs": 100
-  }
+  "displayName": {
+    "zh-CN": "实时设备控制",
+    "en-US": "Streaming Device Control"
+  },
+  "description": {
+    "zh-CN": "实时设备控制技能，支持高频传感器数据流接收（50-100Hz）与低延迟指令下发（<10ms），支持二进制协议和背压控制",
+    "en-US": "Real-time device control skill supporting high-frequency sensor data streaming (50-100Hz) and low-latency command dispatch (<10ms), with binary protocol and backpressure control"
+  },
+  "category": "integration",
+  "priority": 8,
+  "tags": ["device", "streaming", "sensor", "realtime", "iot", "control"],
+  "dependencies": [],
+  "contract": {
+    "scope": "write",
+    "resourceType": "device",
+    "action": "streaming_control",
+    "idempotencyRequired": false,
+    "riskLevel": "medium",
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "command": { "type": "string", "required": true, "description": "控制指令类型: start_stream | stop_stream | send_command" },
+        "deviceId": { "type": "string", "required": true, "description": "目标设备 ID" },
+        "frequency": { "type": "number", "description": "传感器数据采样频率(Hz)，默认 100" },
+        "payload": { "type": "json", "description": "指令载荷数据" },
+        "binary": { "type": "boolean", "description": "是否使用二进制协议，默认 false" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "ok": { "type": "boolean", "required": true },
+        "streamId": { "type": "string", "description": "数据流 ID" },
+        "latencyMs": { "type": "number", "description": "指令响应延迟(ms)" }
+      }
+    }
+  },
+  "engines": { "node": ">=18.0.0" },
+  "entry": "dist/index.js"
 }

@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://openslin.dev/schemas/skill-manifest.json",
+  "title": "ExternalSkillManifest",
+  "description": "JSON Schema for external skill manifest.json files under skills/.",
+  "type": "object",
+  "required": ["identity", "entry"],
+  "properties": {
+    "identity": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$",
+          "description": "Dot-separated lowercase skill name with at least two segments."
+        },
+        "version": {
+          "type": "string",
+          "description": "Semver version string."
+        }
+      },
+      "additionalProperties": false
+    },
+    "displayName": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "description": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "category": {
+      "type": "string"
+    },
+    "priority": {
+      "type": "number"
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "contract": {
+      "type": "object",
+      "properties": {
+        "scope": { "type": "string" },
+        "resourceType": { "type": "string" },
+        "action": { "type": "string" },
+        "idempotencyRequired": { "type": "boolean" },
+        "riskLevel": { "type": "string" },
+        "approvalRequired": { "type": "boolean" }
+      }
+    },
+    "io": {
+      "type": "object",
+      "properties": {
+        "input": {},
+        "output": {},
+        "inputSchema": {},
+        "outputSchema": {}
+      }
+    },
+    "entry": {
+      "type": "string",
+      "description": "Relative path to the skill entry point."
+    },
+    "engines": {
+      "type": "object",
+      "properties": {
+        "node": { "type": "string" },
+        "runtime": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "executionTimeoutMs": {
+      "type": "number"
+    }
+  }
+}

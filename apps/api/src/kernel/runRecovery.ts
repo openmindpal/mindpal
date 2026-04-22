@@ -16,6 +16,7 @@
 import type { Pool } from "pg";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import { tryTransitionRun, type RunStatus, StructuredLogger } from "@openslin/shared";
+import { safeTransitionRun } from "./loopStateHelpers";
 
 const logger = new StructuredLogger({ module: "runRecovery" });
 
@@ -309,9 +310,13 @@ export async function retryFailedStep(ctx: RecoveryContext): Promise<RecoveryRes
     };
   }
   
-  // P1-1 FIX: 使用状态机校验 retry 转换合法性
-  const retryTransition = tryTransitionRun(currentStatus, "queued");
-  if (!retryTransition.ok) {
+  // P1-1 FIX: 使用 safeTransitionRun 统一状态转换 + SQL 持久化
+  const transitioned = await safeTransitionRun(pool, runId, "queued", {
+    tenantId,
+    fromStatus: currentStatus,
+    log: logger,
+  });
+  if (!transitioned) {
     return {
       ok: false, action: "retry",
       previousStatus: currentStatus, newStatus: currentStatus,
@@ -319,12 +324,6 @@ export async function retryFailedStep(ctx: RecoveryContext): Promise<RecoveryRes
       stepId,
     };
   }
-
-  // 更新状态
-  await pool.query(
-    "UPDATE runs SET status = 'queued', updated_at = now() WHERE tenant_id = $1 AND run_id = $2",
-    [tenantId, runId]
-  );
   
   // steps 主链路按 step_id / run_id 操作，不依赖 tenant_id 列
   await pool.query(
@@ -465,9 +464,14 @@ export async function cancelRun(ctx: RecoveryContext): Promise<RecoveryResult> {
   
   const currentStatus = runRes.rows[0].status as RunStatus;
   
-  // P1-1 FIX: 使用状态机校验替代硬编码终态列表
-  const cancelTransition = tryTransitionRun(currentStatus, "canceled");
-  if (!cancelTransition.ok) {
+  // P1-1 FIX: 使用 safeTransitionRun 统一状态转换 + SQL 持久化
+  const transitioned = await safeTransitionRun(pool, runId, "canceled", {
+    tenantId,
+    fromStatus: currentStatus,
+    finishedAt: true,
+    log: logger,
+  });
+  if (!transitioned) {
     return {
       ok: false,
       action: "cancel",
@@ -476,12 +480,6 @@ export async function cancelRun(ctx: RecoveryContext): Promise<RecoveryResult> {
       message: `状态机拒绝取消: ${currentStatus} → canceled`,
     };
   }
-  
-  // 更新状态
-  await pool.query(
-    "UPDATE runs SET status = 'canceled', updated_at = now(), finished_at = now() WHERE tenant_id = $1 AND run_id = $2",
-    [tenantId, runId]
-  );
   
   // 取消所有未完成的步骤，按 run_id 清理
   await pool.query(

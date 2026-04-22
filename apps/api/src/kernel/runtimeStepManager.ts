@@ -20,6 +20,7 @@ import crypto from "node:crypto";
 import { isToolEnabled } from "../modules/governance/toolGovernanceRepo";
 import { getToolVersionByRef, getToolDefinition } from "../modules/tools/toolRepo";
 import { resolveEffectiveToolRef } from "../modules/tools/resolve";
+import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 
 /* ================================================================== */
 /*  Types                                                               */
@@ -221,7 +222,7 @@ export async function insertStep(params: InsertStepParams): Promise<InsertStepRe
   
   // 5. 获取工具定义以确定 approvalRequired
   const def = await getToolDefinition(pool, tenantId, toolName);
-  const approvalRequired = step.approvalRequired || Boolean(def?.approvalRequired) || def?.riskLevel === "high";
+  const approvalRequired = step.approvalRequired || shouldRequireApproval(def ?? {});
   
   // 6. 生成步骤 ID 并插入
   const stepId = crypto.randomUUID();
@@ -373,7 +374,7 @@ export async function replanFromCurrent(ctx: ReplanContext): Promise<ReplanResul
       : await resolveEffectiveToolRef({ pool, tenantId, spaceId, name: toolName });
     
     const def = await getToolDefinition(pool, tenantId, toolName);
-    const approvalRequired = step.approvalRequired || Boolean(def?.approvalRequired) || def?.riskLevel === "high";
+    const approvalRequired = step.approvalRequired || shouldRequireApproval(def ?? {});
     
     await pool.query(
       `INSERT INTO steps (

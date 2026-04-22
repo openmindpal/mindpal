@@ -14,6 +14,7 @@
   "category": "knowledge",
   "priority": 6,
   "tags": ["bm25", "sparse", "search", "hybrid", "knowledge", "retrieval"],
+  "dependencies": ["knowledge"],
   "contract": {
     "scope": "read",
     "resourceType": "knowledge",
@@ -47,5 +48,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

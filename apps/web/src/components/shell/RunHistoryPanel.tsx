@@ -8,8 +8,7 @@ import { IconPlay, IconCheck, IconX, IconClock, IconChevronDown14, IconChevronUp
 import { formatToolRefLocalized, formatDuration, formatTime, formatErrorCategory, shortId, preloadToolNames } from "./shellUtils";
 import { useBottomPanel } from "./useBottomPanel";
 import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
-import shared from "./bottomTray.shared.module.css";
-import styles from "./RunHistoryPanel.module.css";
+import styles from "@/styles/shell.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
 
@@ -115,12 +114,12 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
 
   const getStatusClass = (status: string) => {
     switch (status) {
-      case "succeeded": return styles.statusSucceeded;
+      case "succeeded": return styles.rhpStatusSucceeded;
       case "failed":
-      case "deadletter": return styles.statusFailed;
+      case "deadletter": return styles.rhpStatusFailed;
       case "canceled": return styles.statusCanceled;
-      case "running": return styles.statusRunning;
-      default: return styles.statusPending;
+      case "running": return styles.rhpStatusRunning;
+      default: return styles.rhpStatusPending;
     }
   };
 
@@ -140,9 +139,9 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
   return (
     <div className={styles.runHistoryPanel}>
       {/* Header */}
-      <div className={styles.header}>
-        <span className={styles.title}>{t(locale, "runHistory.title")}</span>
-        <div className={styles.headerActions}>
+      <div className={styles.rhpHeader}>
+        <span className={styles.rhpTitle}>{t(locale, "runHistory.title")}</span>
+        <div className={styles.rhpHeaderActions}>
           <select
             className={styles.statusFilter}
             value={statusFilter}
@@ -153,14 +152,14 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
             <option value="failed">{t(locale, "runHistory.filter.failed")}</option>
             <option value="running">{t(locale, "runHistory.filter.running")}</option>
           </select>
-          <button className={styles.refreshBtn} onClick={reload} disabled={loading}>
+          <button className={styles.rhpRefreshBtn} onClick={reload} disabled={loading}>
             <IconRefresh /> {t(locale, "runHistory.refresh")}
           </button>
         </div>
       </div>
 
       {/* Content */}
-      <div className={styles.content}>
+      <div className={styles.rhpContent}>
         {loading && runs.length === 0 ? (
           <PanelLoading message={t(locale, "common.loading")} />
         ) : error ? (
@@ -168,24 +167,24 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
         ) : runs.length === 0 ? (
           <PanelEmpty message={t(locale, "runHistory.empty")} />
         ) : (
-          <div className={styles.runList}>
+          <div className={styles.rhpRunList}>
             {runs.map((run) => (
               <div
                 key={run.runId}
-                className={`${styles.runItem} ${selectedRunId === run.runId ? styles.runItemSelected : ""}`}
+                className={`${styles.rhpRunItem} ${selectedRunId === run.runId ? styles.runItemSelected : ""}`}
                 onClick={() => toggleRun(run.runId)}
               >
-                <div className={`${styles.runItemMain} ${shared.itemRow}`}>
+                <div className={`${styles.runItemMain} ${styles.itemRow}`}>
                   <span className={`${styles.runItemStatus} ${getStatusClass(run.status)}`}>
                     {getStatusIcon(run.status)}
                   </span>
-                  <span className={`${styles.runItemTool} ${shared.truncate}`}>{getRunLabel(run)}</span>
+                  <span className={`${styles.runItemTool} ${styles.truncate}`}>{getRunLabel(run)}</span>
                   {run.status === "failed" && run.errorDigest?.message && (
                     <span className={styles.errorHint} title={run.errorDigest.message}>
                       {formatErrorCategory(run.errorDigest.errorCategory, locale) || run.errorDigest.message.slice(0, 20)}
                     </span>
                   )}
-                  <span className={`${styles.runItemTime} ${shared.monoText}`}>{fmtTime(run.createdAt)}</span>
+                  <span className={`${styles.runItemTime} ${styles.monoText}`}>{fmtTime(run.createdAt)}</span>
                   <span className={styles.runItemExpand}>
                     {selectedRunId === run.runId ? <IconChevronUp14 /> : <IconChevronDown14 />}
                   </span>
@@ -200,7 +199,7 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
                       <div className={styles.stepsEmpty}>
                         <span>{t(locale, "runHistory.stepsLoadFailed")}</span>
                         <button
-                          className={shared.retryBtn}
+                          className={styles.retryBtn}
                           onClick={(e) => { e.stopPropagation(); loadSteps(run.runId); }}
                         >
                           {t(locale, "common.retry")}
@@ -211,7 +210,7 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
                     ) : (
                       <div className={styles.steps}>
                         {currentSteps.map((step, idx) => (
-                          <div key={step.stepId} className={styles.stepItem}>
+                          <div key={step.stepId} className={styles.rhpStepItem}>
                             <div className={styles.stepTimestamp}>
                               {step.startedAt ? fmtTime(step.startedAt) : "-"}
                             </div>
@@ -219,14 +218,14 @@ export default function RunHistoryPanel({ locale }: { locale: string }) {
                               <div className={`${styles.stepDot} ${getStatusClass(step.status)}`} />
                               {idx < currentSteps.length - 1 && <div className={styles.stepLine} />}
                             </div>
-                            <div className={styles.stepContent}>
+                            <div className={styles.rhpStepContent}>
                               <div className={styles.stepHeader}>
-                                <span className={`${styles.stepStatus} ${getStatusClass(step.status)}`}>
+                                <span className={`${styles.rhpStepStatus} ${getStatusClass(step.status)}`}>
                                   {getStatusIcon(step.status)}
                                 </span>
-                                <span className={`${styles.stepTool} ${shared.truncate}`}>{formatToolRefLocalized(step.toolRef, locale)}</span>
+                                <span className={`${styles.stepTool} ${styles.truncate}`}>{formatToolRefLocalized(step.toolRef, locale)}</span>
                                 {step.latencyMs != null && (
-                                  <span className={`${styles.stepLatency} ${shared.monoText}`}>{formatDuration(step.latencyMs)}</span>
+                                  <span className={`${styles.stepLatency} ${styles.monoText}`}>{formatDuration(step.latencyMs)}</span>
                                 )}
                               </div>
                               {step.errorCategory && (

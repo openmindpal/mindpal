@@ -8,6 +8,7 @@ import { getAuditDir } from "./kernel/audit";
 import { buildMenu, getToolRiskSummary, getPluginStatusSummary, type TrayState, type PendingConfirmation } from "./trayMenuBuilder";
 import { handleViewToolDetails, handleToggleHighRiskConfirm, handleDisableHighRiskTools, handleEnableAllTools, trayConfirmFn } from "./trayToolHandlers";
 import { isHighRiskConfirmEnabled } from "./tray/disableList";
+import { onTrayStateChange } from "./trayState";
 
 export { isToolLocallyDisabled };
 
@@ -203,10 +204,15 @@ export async function startTray() {
   safeLog(`[托盘] 高风险确认: ${isHighRiskConfirmEnabled() ? "开启" : "关闭"}`);
   safeLog("[托盘] 右键点击托盘图标查看菜单");
 
-  // 定期刷新托盘菜单（每60秒更新统计数据）
+  // 事件驱动更新：能力/插件状态变化时自动刷新托盘菜单
+  onTrayStateChange(() => {
+    if (ctx.state === "running") updateTray();
+  });
+
+  // 保底刷新：防止事件丢失导致菜单永不更新（5分钟）
   setInterval(() => {
     if (ctx.state === "running") updateTray();
-  }, 60_000);
+  }, 300_000);
 
   // 已配对时自动启动运行，无需用户手动点击
   if (ctx.state === "paired") {

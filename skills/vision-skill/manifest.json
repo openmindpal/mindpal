@@ -1,6 +1,6 @@
 {
   "identity": {
-    "name": "media.vision.analyze",
+    "name": "ai.multimodal.analyze",
     "version": "1.0.0"
   },
   "displayName": {
@@ -8,12 +8,13 @@
     "en-US": "Image Vision Analysis"
   },
   "description": {
-    "zh-CN": "使用多模态模型分析图像内容，支持图像描述、问答、标签检测等功能",
-    "en-US": "Analyzes image content using multimodal models, supports image description, Q&A, tag detection"
+    "zh-CN": "图像多模态分析（描述/问答/标签，非文字提取）",
+    "en-US": "Multimodal image analysis (description, Q&A, tagging — not text extraction). For OCR text extraction, use knowledge.extract.ocr"
   },
   "category": "ai",
   "priority": 8,
   "tags": ["vision", "image", "multimodal", "analysis"],
+  "dependencies": ["media"],
   "executionTimeoutMs": 300000,
   "contract": {
     "scope": "read",
@@ -42,5 +43,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

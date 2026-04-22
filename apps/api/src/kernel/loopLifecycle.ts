@@ -15,7 +15,7 @@ import { decomposeGoal } from "./goalDecomposer";
 import { buildWorldStateFromObservations, extractWorldState } from "./worldStateExtractor";
 import { prepareRunForExecution } from "./loopStateHelpers";
 import { normalizeExecutionConstraints, filterToolDiscoveryByConstraints } from "./loopThinkDecide";
-import { CACHE_CONFIG, cacheGet, cacheSet, prepareCacheKey } from "./loopCacheConfig";
+import { getCacheConfig, cacheGet, cacheSet, prepareCacheKey } from "./loopCacheConfig";
 import { getMaxStepSeq, upsertGoalGraph } from "./agentLoopRepo";
 import { updateProcessStatus } from "./loopCheckpoint";
 import { triggerAutoReflexion } from "./loopAutoReflexion";
@@ -91,8 +91,9 @@ export async function initializeLoopState(params: AgentLoopParams): Promise<Loop
   } else {
     const cacheKeyTool = prepareCacheKey("tool", subject.tenantId, subject.spaceId);
     const cacheKeyStrategy = prepareCacheKey("strategy", subject.tenantId, subject.spaceId);
-    const cachedTools = CACHE_CONFIG.ENABLED ? cacheGet<any>(cacheKeyTool) : undefined;
-    const cachedStrategy = CACHE_CONFIG.ENABLED ? cacheGet<string>(cacheKeyStrategy) : undefined;
+    const cc = getCacheConfig();
+    const cachedTools = cc.ENABLED ? cacheGet<any>(cacheKeyTool) : undefined;
+    const cachedStrategy = cc.ENABLED ? cacheGet<string>(cacheKeyStrategy) : undefined;
 
     const [td, memoryRecall, taskRecall, knowledgeRecall, strategyRecall] = await Promise.all([
       cachedTools ?? discoverEnabledTools({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, locale }),
@@ -104,8 +105,8 @@ export async function initializeLoopState(params: AgentLoopParams): Promise<Loop
         : recallProceduralStrategies({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, goal, auditContext: { ...auditCtx, subjectId: subject.subjectId } }),
     ]);
     toolDiscovery = cachedTools ?? td;
-    if (CACHE_CONFIG.ENABLED && !cachedTools) cacheSet(cacheKeyTool, td, CACHE_CONFIG.TOOL_DISCOVERY_TTL_MS);
-    if (CACHE_CONFIG.ENABLED && cachedStrategy === undefined && strategyRecall.text) cacheSet(cacheKeyStrategy, strategyRecall.text, CACHE_CONFIG.STRATEGY_RECALL_TTL_MS);
+    if (cc.ENABLED && !cachedTools) cacheSet(cacheKeyTool, td, cc.TOOL_DISCOVERY_TTL_MS);
+    if (cc.ENABLED && cachedStrategy === undefined && strategyRecall.text) cacheSet(cacheKeyStrategy, strategyRecall.text, cc.STRATEGY_RECALL_TTL_MS);
     memoryContext = memoryRecall.text || undefined;
     taskHistory = taskRecall.text || undefined;
     knowledgeContext = knowledgeRecall.text || undefined;

@@ -946,6 +946,11 @@ class PlaywrightProvider {
   }
 }
 
+// ── 感知策略类型（云端下发，定义在 guiTypes.ts，此处 re-export） ──
+
+export type { PerceptionStrategy } from "./guiTypes";
+import type { PerceptionStrategy } from "./guiTypes";
+
 // ── 简化感知路由：直接使用 PlaywrightProvider，无多Provider级联 ──
 
 let _playwrightProvider: PlaywrightProvider | null = null;
@@ -979,16 +984,9 @@ export function getActiveProviderName(): string {
 }
 
 /**
- * 感知当前屏幕 — 使用 Playwright DOM 感知，无 Playwright 时回退 OCR。
+ * OCR 感知（独立提取，供策略路由和回退使用）
  */
-export async function perceive(): Promise<PerceptionResult> {
-  if (_playwrightProvider) {
-    try {
-      const result = await _playwrightProvider.perceive();
-      if (result.elements.length > 0) return result;
-    } catch { /* fall through to OCR */ }
-  }
-  // OCR 回退：直接使用 localVision，不再经过 Provider 封装
+async function perceiveByOcr(): Promise<PerceptionResult> {
   const start = Date.now();
   const capture = await captureScreen();
   try {
@@ -1008,6 +1006,33 @@ export async function perceive(): Promise<PerceptionResult> {
   } finally {
     await cleanupCapture(capture).catch(() => {});
   }
+}
+
+/**
+ * 感知当前屏幕 — 支持云端下发感知策略。
+ *
+ * @param strategy 云端指定的感知方式：
+ *   - 'playwright' : 强制使用 Playwright DOM 感知
+ *   - 'ocr'        : 强制使用本地 OCR 感知
+ *   - 'auto'       : 保持原有 Playwright 优先→OCR 回退逻辑（默认，向后兼容）
+ */
+export async function perceive(strategy: PerceptionStrategy = 'auto'): Promise<PerceptionResult> {
+  // 云端指定 Playwright
+  if (strategy === 'playwright' && _playwrightProvider) {
+    return await _playwrightProvider.perceive();
+  }
+  // 云端指定 OCR
+  if (strategy === 'ocr') {
+    return await perceiveByOcr();
+  }
+  // auto = 保持原有的 Playwright 优先→OCR 回退逻辑
+  if (_playwrightProvider) {
+    try {
+      const result = await _playwrightProvider.perceive();
+      if (result.elements.length > 0) return result;
+    } catch { /* fall through to OCR */ }
+  }
+  return await perceiveByOcr();
 }
 
 /**

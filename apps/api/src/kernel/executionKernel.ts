@@ -19,6 +19,7 @@ import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type { CapabilityEnvelopeV1 } from "@openslin/shared";
 import { StructuredLogger } from "@openslin/shared";
+import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 import { Errors } from "../lib/errors";
 
 const _kernelLogger = new StructuredLogger({ module: "executionKernel" });
@@ -296,6 +297,7 @@ export function buildStepInputPayload(params: {
       idempotencyRequired: resolved.idempotencyRequired,
       riskLevel: resolved.definition.riskLevel,
       approvalRequired: resolved.definition.approvalRequired,
+      sourceLayer: resolved.definition.sourceLayer,
       fieldRules: admitted.envelope.dataDomain.toolContract.fieldRules ?? null,
       rowFilters: admitted.envelope.dataDomain.toolContract.rowFilters ?? null,
     },
@@ -365,7 +367,7 @@ export function buildApprovalInputDigest(params: {
   resolved: ResolvedTool;
   requireDualApprovalForHighRisk: boolean;
 }): Record<string, any> | null {
-  const approvalRequired = Boolean(params.resolved.definition.approvalRequired) || params.resolved.definition.riskLevel === "high";
+  const approvalRequired = shouldRequireApproval(params.resolved.definition ?? {});
   const baseInputDigest =
     params.inputDigest && typeof params.inputDigest === "object" && !Array.isArray(params.inputDigest)
       ? params.inputDigest
@@ -480,7 +482,7 @@ async function _handleApprovalOrEnqueue(params: {
   const jobId = job.jobId ?? job.job_id;
   const stepId = step.stepId ?? step.step_id;
 
-  const approvalRequired = Boolean(resolved.definition.approvalRequired) || resolved.definition.riskLevel === "high";
+  const approvalRequired = shouldRequireApproval(resolved.definition ?? {});
   const requireDualApprovalForHighRisk = approvalRequired
     ? await shouldRequireDualApprovalForHighRisk({ pool, tenantId })
     : false;
@@ -691,11 +693,10 @@ export interface InlineAdmissionResult {
  * 7×3 governance checkpoint matrix) to preserve sub-second response
  * latency.
  *
- * However, they **must** pass through the following minimal governance
- * gates to prevent a "privilege bypass" dual-track:
- *
- *   1. **Tool existence & enabled status** — `isToolEnabled` from
- *      toolGovernanceRepo (same check as Phase-1 of the full kernel).
+ * Governance gates applied:
+ *   1. **Phase-1 resolveAndValidateTool** — tool existence, version status,
+ *      enabled check, and contract completeness (single source of truth,
+ *      eliminates prior duplicated inline logic).
  *   2. **Basic RBAC permission** — generic `tool/execute` + specific
  *      `resourceType/action` via `authorize()` (ABAC policy cache).
  *
@@ -716,36 +717,29 @@ export async function admitInlineExecution(
 ): Promise<InlineAdmissionResult> {
   const { pool, tenantId, spaceId, subjectId, toolRef } = params;
 
-  // ── 1. Parse tool name from ref ──
-  const idx = toolRef.lastIndexOf("@");
-  const toolName = idx > 0 ? toolRef.slice(0, idx) : toolRef;
-
-  // ── 2. Tool enabled check (same as Phase-1 resolveAndValidateTool) ──
-  const enabled = await isToolEnabled({ pool, tenantId, spaceId, toolRef });
-  if (!enabled) {
-    // ── 审计日志：记录工具禁用拒绝 ──
+  // ── 1. Phase-1 复用：工具解析、版本校验、启用检查、契约完整性 ──
+  let resolved: ResolvedTool;
+  try {
+    resolved = await resolveAndValidateTool({ pool, tenantId, spaceId, rawToolRef: toolRef });
+  } catch (err: unknown) {
+    const appErr = err as { httpStatus?: number; message?: string };
+    const reason = appErr?.message ?? "resolve_failed";
+    // ── 审计日志：记录 Phase-1 拒绝 ──
     insertAuditEvent(pool, {
       subjectId, tenantId, spaceId,
       resourceType: "tool", action: "inline_execute",
       toolRef,
       result: "denied",
       traceId: "",
-      inputDigest: { reason: `tool_disabled:${toolRef}`, subject: subjectId, resource: toolRef },
+      inputDigest: { reason, subject: subjectId, resource: toolRef },
     }).catch(() => {});
-    return { admitted: false, reason: `tool_disabled:${toolRef}` };
+    return { admitted: false, reason };
   }
 
-  // ── 3. Load tool definition for resourceType/action ──
-  const definition = await getToolDefinition(pool, tenantId, toolName);
-  if (!definition) {
-    return { admitted: false, reason: `tool_definition_not_found:${toolName}` };
-  }
-  const { scope, resourceType, action, riskLevel } = definition;
-  if (!scope || !resourceType || !action) {
-    return { admitted: false, reason: `tool_contract_incomplete:${toolName}` };
-  }
+  const { toolName, scope, resourceType, action } = resolved;
+  const riskLevel = resolved.definition.riskLevel;
 
-  // ── 4. Basic RBAC: generic tool/execute permission ──
+  // ── 2. Basic RBAC: generic tool/execute permission ──
   const { authorize } = await import("../modules/auth/authz");
   const { buildAbacEvaluationRequestFromContext } = await import("../modules/auth/guard");
 
@@ -774,13 +768,13 @@ export async function admitInlineExecution(
       toolRef,
       result: "denied",
       traceId: "",
-      inputDigest: { reason: "rbac_denied:tool/execute", subject: subjectId, resource: toolRef, requestedAction: "execute", matchedPolicy: (genericDecision as any).snapshotRef ?? null },
-      policySnapshotRef: (genericDecision as any).snapshotRef,
+      inputDigest: { reason: "rbac_denied:tool/execute", subject: subjectId, resource: toolRef, requestedAction: "execute", matchedPolicy: (genericDecision as Record<string, unknown>).snapshotRef ?? null },
+      policySnapshotRef: (genericDecision as Record<string, unknown>).snapshotRef as string | undefined,
     }).catch(() => {});
     return { admitted: false, reason: "rbac_denied:tool/execute" };
   }
 
-  // ── 5. Basic RBAC: specific resourceType/action permission ──
+  // ── 3. Basic RBAC: specific resourceType/action permission ──
   const specificDecision = await authorize({
     pool, subjectId, tenantId, spaceId,
     resourceType, action,
@@ -794,8 +788,8 @@ export async function admitInlineExecution(
       toolRef,
       result: "denied",
       traceId: "",
-      inputDigest: { reason: `rbac_denied:${resourceType}/${action}`, subject: subjectId, resource: toolRef, requestedAction: action, matchedPolicy: (specificDecision as any).snapshotRef ?? null },
-      policySnapshotRef: (specificDecision as any).snapshotRef,
+      inputDigest: { reason: `rbac_denied:${resourceType}/${action}`, subject: subjectId, resource: toolRef, requestedAction: action, matchedPolicy: (specificDecision as Record<string, unknown>).snapshotRef ?? null },
+      policySnapshotRef: (specificDecision as Record<string, unknown>).snapshotRef as string | undefined,
     }).catch(() => {});
     return { admitted: false, reason: `rbac_denied:${resourceType}/${action}` };
   }
@@ -804,7 +798,7 @@ export async function admitInlineExecution(
     admitted: true,
     resolvedMeta: {
       toolName,
-      scope: scope ?? "unknown",
+      scope,
       resourceType,
       action,
       riskLevel: riskLevel ?? "low",

@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import { computeMinhash } from "@openslin/shared";
+import { computeMinhash, resolveBoolean } from "@openslin/shared";
 import type { AgentLoopResult } from "./loopTypes";
 import { encryptMemoryContent } from "../modules/memory/memoryEncryption";
 
@@ -45,7 +45,7 @@ export async function triggerAutoReflexion(params: {
   result: AgentLoopResult;
 }) {
   // 环境变量开关（默认启用）
-  if ((process.env.AGENT_LOOP_AUTO_REFLEXION ?? "1") === "0") return;
+  if (!resolveBoolean("AGENT_LOOP_AUTO_REFLEXION").value) return;
   // 无执行步骤则跳过
   if (params.result.iterations === 0 || params.result.observations.length === 0) return;
   // ask_user 是暂停状态，循环会恢复，不需要反思

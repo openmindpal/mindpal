@@ -1,14 +1,13 @@
-import crypto from "node:crypto";
+import { StructuredLogger, sha256_8 } from "@openslin/shared";
 
-export function sha256_8(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8);
-}
+export { sha256_8 };
+
+export const deviceLogger = new StructuredLogger({ module: "device-agent" });
 
 export function safeLog(message: string) {
-  process.stdout.write(message + "\n");
+  deviceLogger.info(message);
 }
 
 export function safeError(message: string) {
-  process.stderr.write(message + "\n");
+  deviceLogger.error(message);
 }
-

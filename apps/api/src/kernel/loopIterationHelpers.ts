@@ -10,7 +10,7 @@ import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { GoalGraph, WorldState } from "@openslin/shared";
-import { computeGoalProgress, getExecutableSubGoals, worldStateToPromptText } from "@openslin/shared";
+import { computeGoalProgress, getExecutableSubGoals, worldStateToPromptText, resolveBoolean } from "@openslin/shared";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
 import { recallProceduralStrategies } from "../modules/agentContext";
 import { getEnvironmentSummary } from "./environmentState";
@@ -171,7 +171,9 @@ export async function invokeLlmForDecision(params: {
   environmentContext: string | undefined;
   dynamicStrategyContext: string | undefined;
   defaultModelRef: string | undefined;
-}): Promise<string> {
+  /** 决策质量重试时，强制使用指定的 purpose tier（为升级模型） */
+  forcePurpose?: string;
+}): Promise<{ outputText: string; modelUsed: string }> {
   const {
     app, pool, subject, locale, authorization, traceId, runId, goal,
     iterations, observations, lastObs, userIntervention, resumeState,
@@ -180,7 +182,7 @@ export async function invokeLlmForDecision(params: {
     dynamicStrategyContext, defaultModelRef,
   } = params;
 
-  const primaryPurpose = selectPurposeTier(observations, iterations);
+  const primaryPurpose = params.forcePurpose ?? selectPurposeTier(observations, iterations);
 
   const { systemPrompt, userPrompt } = buildThinkPrompt({
     goal, toolCatalog: toolCatalog, executionConstraints,
@@ -204,7 +206,7 @@ export async function invokeLlmForDecision(params: {
     }
   }
 
-  const parallelLlmEnabled = (process.env.AGENT_LOOP_PARALLEL_LLM ?? "0") === "1";
+  const parallelLlmEnabled = resolveBoolean("AGENT_LOOP_PARALLEL_LLM").value;
   const isSimpleProgress = parallelLlmEnabled && lastObs && lastObs.status === "succeeded" && observations.length <= 5 && iterations > 1;
 
   if (isSimpleProgress) {
@@ -218,7 +220,7 @@ export async function invokeLlmForDecision(params: {
     const standardOutput = standardResult.status === "fulfilled" && standardResult.value ? standardResult.value.outputText : null;
     const fastOutput = fastResult.status === "fulfilled" && fastResult.value ? fastResult.value.outputText : null;
     app.log.info({ runId, iteration: iterations, standardOk: !!standardOutput, fastOk: !!fastOutput }, "[AgentLoop] 并行调用完成");
-    return (typeof standardOutput === "string" ? standardOutput : "") || (typeof fastOutput === "string" ? fastOutput : "");
+    return { outputText: (typeof standardOutput === "string" ? standardOutput : "") || (typeof fastOutput === "string" ? fastOutput : ""), modelUsed: primaryPurpose };
   }
 
   // 串行调用
@@ -227,5 +229,5 @@ export async function invokeLlmForDecision(params: {
     messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
     ...(defaultModelRef ? { constraints: { candidates: [defaultModelRef] } } : dynamicModelRef ? { constraints: { candidates: [dynamicModelRef] } } : {}),
   });
-  return llmResult?.outputText ?? "";
+  return { outputText: llmResult?.outputText ?? "", modelUsed: primaryPurpose };
 }

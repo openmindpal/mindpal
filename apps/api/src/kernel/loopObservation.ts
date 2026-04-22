@@ -3,7 +3,7 @@
  */
 import type { Pool } from "pg";
 import type { StepObservation } from "./loopTypes";
-import { errorActionHint } from "@openslin/shared";
+import { errorActionHint, resolveNumber, resolveBoolean } from "@openslin/shared";
 
 /* ================================================================== */
 /*  Observe — 收集上一步执行结果                                         */
@@ -62,11 +62,11 @@ export async function buildObservation(
  * - COMPRESSED_OUTPUT_LIMIT: 压缩步骤的输出截取上限（字符数）
  * - RECENT_OUTPUT_LIMIT: 近期步骤的输出截取上限（字符数）
  */
-const STEP_HISTORY_RECENT_WINDOW = Math.max(1, Number(process.env.AGENT_LOOP_RECENT_WINDOW ?? "3"));
-const STEP_HISTORY_COMPRESSED_OUTPUT_LIMIT = Math.max(0, Number(process.env.AGENT_LOOP_COMPRESSED_OUTPUT_LIMIT ?? "80"));
-const STEP_HISTORY_RECENT_OUTPUT_LIMIT = Math.max(50, Number(process.env.AGENT_LOOP_RECENT_OUTPUT_LIMIT ?? "400"));
-const STEP_HISTORY_FAILED_OUTPUT_LIMIT = Math.max(50, Number(process.env.AGENT_LOOP_FAILED_OUTPUT_LIMIT ?? "200"));
-const STEP_HISTORY_FAILED_PRESERVE = (process.env.AGENT_LOOP_FAILED_PRESERVE ?? "true") !== "false";
+const STEP_HISTORY_RECENT_WINDOW = resolveNumber("AGENT_LOOP_RECENT_WINDOW").value;
+const STEP_HISTORY_COMPRESSED_OUTPUT_LIMIT = resolveNumber("AGENT_LOOP_COMPRESSED_OUTPUT_LIMIT").value;
+const STEP_HISTORY_RECENT_OUTPUT_LIMIT = resolveNumber("AGENT_LOOP_RECENT_OUTPUT_LIMIT").value;
+const STEP_HISTORY_FAILED_OUTPUT_LIMIT = resolveNumber("AGENT_LOOP_FAILED_OUTPUT_LIMIT").value;
+const STEP_HISTORY_FAILED_PRESERVE = resolveBoolean("AGENT_LOOP_FAILED_PRESERVE").value;
 
 /**
  * 将步骤列表分为"压缩历史"和"近期步骤"两部分。

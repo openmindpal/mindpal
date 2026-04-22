@@ -14,7 +14,7 @@
  */
 import crypto from "node:crypto";
 import type { GoalGraph, WorldState } from "@openslin/shared";
-import { ErrorCategory } from "@openslin/shared";
+import { ErrorCategory, resolveNumber } from "@openslin/shared";
 import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, recallProceduralStrategies, type EnabledTool } from "../modules/agentContext";
 import { upsertTaskState } from "../modules/memory/repo";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
@@ -33,20 +33,21 @@ import type {
 } from "./loopTypes";
 import { isBudgetExhausted, recordTokenUsage, recordCostUsage, createDefaultBudget } from "./loopTypes";
 import { prepareRunForExecution, safeTransitionRun } from "./loopStateHelpers";
-import { parseAgentDecision, normalizeExecutionConstraints, filterToolDiscoveryByConstraints } from "./loopThinkDecide";
+import { parseAgentDecision, normalizeExecutionConstraints, filterToolDiscoveryByConstraints, extractConfidenceFromOutput, evaluateDecisionQuality, getDecisionQualityConfig } from "./loopThinkDecide";
+import type { DecisionQualityScore } from "./loopTypes";
 import { executeToolCall, waitForStepCompletion } from "./loopToolExecutor";
 import { triggerAutoReflexion } from "./loopAutoReflexion";
 import { buildIterationContext, invokeLlmForDecision } from "./loopIterationHelpers";
 import { handleDoneAction, handleToolCallAction } from "./loopActHandlers";
-import { CACHE_CONFIG, cacheGet, cacheSet, prepareCacheKey, LIGHT_ITERATION_CONFIG, isLightIteration } from "./loopCacheConfig";
+import { getCacheConfig, cacheGet, cacheSet, prepareCacheKey, getLightIterationConfig, isLightIteration } from "./loopCacheConfig";
 import { getMaxStepSeq, upsertGoalGraph, deletePendingSteps } from "./agentLoopRepo";
 import { initializeLoopState, finalizeLoopProcess, type LoopState } from "./loopLifecycle";
 
 /* ── re-export（外部文件 import from "./agentLoop"） ── */
 export type { AgentDecisionAction, AgentDecision, StepObservation, AgentLoopParams, ExecutionConstraints, AgentLoopResult } from "./loopTypes";
 export { buildObservation, compressStepHistory } from "./loopObservation";
-export { buildThinkPrompt, parseAgentDecision } from "./loopThinkDecide";
-export { CACHE_CONFIG, LIGHT_ITERATION_CONFIG, isLightIteration } from "./loopCacheConfig";
+export { buildThinkPrompt, parseAgentDecision, extractConfidenceFromOutput, evaluateDecisionQuality, getDecisionQualityConfig } from "./loopThinkDecide";
+export { getCacheConfig, getLightIterationConfig, isLightIteration } from "./loopCacheConfig";
 
 /* ── Redis/State/Types 已提取到独立模块 ── */
 
@@ -129,6 +130,49 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     return r;
   }
 
+  /**
+   * 优雅降级：在资源耗尽退出前，收集已完成的步骤和中间结果，
+   * 将其封装为 AgentLoopResult 返回，标记为 partialResult: true。
+   * 核心目标：不丢失中间结果。
+   */
+  function gracefulDegradation(endReason: AgentLoopResult["endReason"], message: string): AgentLoopResult {
+    // 收集已成功完成的步骤摘要
+    const completedStepsSummary = observations
+      .filter(o => o.status === "succeeded")
+      .map(o => `- [${o.toolRef}] seq=${o.seq}: ${JSON.stringify(o.outputDigest ?? {}).slice(0, 150)}`)
+      .join("\n");
+
+    // 构建进度摘要
+    const progressLines: string[] = [];
+    progressLines.push(`已完成 ${succeededSteps}/${succeededSteps + failedSteps} 个步骤 (迭代 ${iterations} 次)`);
+    if (lastDecision) {
+      progressLines.push(`最后决策: ${lastDecision.action} - ${lastDecision.reasoning.slice(0, 200)}`);
+    }
+    if (goalGraph && goalGraph.subGoals.length > 0) {
+      const completed = goalGraph.subGoals.filter(sg => sg.status === "completed").length;
+      progressLines.push(`目标进度: ${completed}/${goalGraph.subGoals.length} 子目标已完成`);
+    }
+    if (completedStepsSummary) {
+      progressLines.push(`\n已完成步骤摘要:\n${completedStepsSummary}`);
+    }
+
+    const progressSummary = progressLines.join("\n");
+    const degradedMessage = `${message}\n---\n优雅降级: 已保留中间结果\n${progressSummary}`;
+
+    const r: AgentLoopResult = {
+      ok: false,
+      endReason, iterations, succeededSteps, failedSteps,
+      message: degradedMessage,
+      observations, lastDecision, loopId,
+      goalGraph: goalGraph ?? undefined,
+      budgetSnapshot: { ...budget },
+      partialResult: true,
+      progressSummary,
+    };
+    _loopFinalResult = r;
+    return r;
+  }
+
   try {
     while (iterations < maxIterations) {
       // 检查中断信号
@@ -146,7 +190,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
           app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/timeout) failed");
         });
-        const result = buildResult("max_wall_time", `执行超时 (>${maxWallTimeMs}ms)`);
+        const result = gracefulDegradation("max_wall_time", `执行超时 (>${maxWallTimeMs}ms)`);
         onLoopEnd?.(result);
         return result;
       }
@@ -161,7 +205,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
           app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(budget) failed");
         });
-        const result = buildResult("budget_exhausted", `预算耗尽: ${budgetCheck.reason}`);
+        const result = gracefulDegradation("budget_exhausted", `预算耗尽: ${budgetCheck.reason}`);
         onLoopEnd?.(result);
         return result;
       }
@@ -178,10 +222,16 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       });
       worldState = iterCtx.updatedWorldState;
 
-      // LLM 调用（并行/串行）
+      // LLM 调用（并行/串行）+ 决策质量评估重试循环
       let modelOutputText = "";
+      let currentModelUsed = "";
+      let decisionRetryCount = 0;
+      let forcePurpose: string | undefined;
+      let upgradedFrom: string | undefined;
+      const qualityConfig = getDecisionQualityConfig();
+
       try {
-        modelOutputText = await invokeLlmForDecision({
+        const llmResult = await invokeLlmForDecision({
           app, pool, subject: subject as any, locale, authorization, traceId,
           runId, goal, iterations, observations, lastObs,
           userIntervention: (iterations === 1 && !resumeState) ? undefined : userIntervention,
@@ -193,7 +243,10 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           environmentContext: iterCtx.environmentContext,
           dynamicStrategyContext: iterCtx.dynamicStrategyContext,
           defaultModelRef,
+          forcePurpose,
         });
+        modelOutputText = llmResult.outputText;
+        currentModelUsed = llmResult.modelUsed;
       } catch (llmErr: any) {
         app.log.error({ err: llmErr, runId, iteration: iterations }, "[AgentLoop] LLM 调用失败");
         const result = buildResult("error", `LLM 调用失败：${llmErr?.message ?? "unknown"}`);
@@ -216,7 +269,73 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
 
       // ── Phase 3: Decide ──
       const decideStartMs = Date.now();
-      const decision = parseAgentDecision(modelOutputText);
+      let decision = parseAgentDecision(modelOutputText);
+
+      // ── 决策质量评估：低置信度重试/升级模型（可选增强，不阻塞主流程） ──
+      try {
+        const rawJsonMatch = modelOutputText.match(/\{[\s\S]*\}/);
+        const parsedRaw = rawJsonMatch ? JSON.parse(rawJsonMatch[0]) : {};
+        let confidence = extractConfidenceFromOutput(modelOutputText, parsedRaw);
+        let qualityAction = evaluateDecisionQuality({ confidence, retryCount: decisionRetryCount, config: qualityConfig });
+
+        while (qualityAction.action !== "accept") {
+          if (qualityAction.action === "retry") {
+            decisionRetryCount++;
+            app.log.info({ runId, iteration: iterations, retryCount: decisionRetryCount, confidence }, "[AgentLoop] 决策置信度过低，重试");
+          } else if (qualityAction.action === "upgrade") {
+            upgradedFrom = currentModelUsed;
+            forcePurpose = "agent.loop.think"; // 升级到标准模型
+            decisionRetryCount++;
+            app.log.info({ runId, iteration: iterations, upgradedFrom, forcePurpose }, "[AgentLoop] 决策置信度过低且重试耗尽，升级模型");
+          }
+
+          // 重新调用 LLM
+          try {
+            const retryResult = await invokeLlmForDecision({
+              app, pool, subject: subject as any, locale, authorization, traceId,
+              runId, goal, iterations, observations, lastObs,
+              userIntervention: (iterations === 1 && !resumeState) ? undefined : userIntervention,
+              resumeState, executionConstraints,
+              toolCatalog: toolDiscovery.catalog,
+              memoryContext, taskHistory, knowledgeContext,
+              goalGraphContext: iterCtx.goalGraphContext,
+              worldStateContext: iterCtx.worldStateContext,
+              environmentContext: iterCtx.environmentContext,
+              dynamicStrategyContext: iterCtx.dynamicStrategyContext,
+              defaultModelRef,
+              forcePurpose,
+            });
+            modelOutputText = retryResult.outputText;
+            currentModelUsed = retryResult.modelUsed;
+            recordTokenUsage(budget, Math.ceil(modelOutputText.length / 4));
+            decision = parseAgentDecision(modelOutputText);
+
+            const retryRawMatch = modelOutputText.match(/\{[\s\S]*\}/);
+            const retryParsedRaw = retryRawMatch ? JSON.parse(retryRawMatch[0]) : {};
+            confidence = extractConfidenceFromOutput(modelOutputText, retryParsedRaw);
+            qualityAction = evaluateDecisionQuality({ confidence, retryCount: decisionRetryCount, config: qualityConfig });
+          } catch (retryErr: unknown) {
+            app.log.warn({ err: (retryErr as Error)?.message, runId, iteration: iterations }, "[AgentLoop] 决策质量重试失败，使用原始决策");
+            break;
+          }
+
+          // 升级后无论结果如何都接受，防止无限循环
+          if (upgradedFrom) break;
+        }
+
+        // 附加质量评分到决策
+        const qualityScore: DecisionQualityScore = {
+          confidence,
+          retryCount: decisionRetryCount,
+          modelUsed: currentModelUsed,
+          ...(upgradedFrom ? { upgradedFrom } : {}),
+        };
+        decision.qualityScore = qualityScore;
+      } catch (qualityErr: unknown) {
+        // 决策质量评估为可选增强，失败不阻塞主流程
+        app.log.warn({ err: (qualityErr as Error)?.message, runId, iteration: iterations }, "[AgentLoop] 决策质量评估异常（不影响执行）");
+      }
+
       lastDecision = decision;
       const decideLatencyMs = Date.now() - decideStartMs;
 
@@ -322,7 +441,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             continue;
           }
 
-          const PARALLEL_TOTAL_TIMEOUT_MS = Number(process.env.AGENT_LOOP_PARALLEL_TOTAL_TIMEOUT_MS ?? "300000"); // 默认5分钟
+          const PARALLEL_TOTAL_TIMEOUT_MS = resolveNumber("AGENT_LOOP_PARALLEL_TOTAL_TIMEOUT_MS").value;
 
           app.log.info({ runId, iteration: iterations, callCount: calls.length }, "[AgentLoop] 并行执行");
 
@@ -493,7 +612,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
       app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/maxIter) failed");
     });
-    const result = buildResult("max_iterations", `达到最大迭代次数 (${maxIterations})`);
+    const result = gracefulDegradation("max_iterations", `达到最大迭代次数 (${maxIterations})`);
     onLoopEnd?.(result);
     return result;
   } catch (err: any) {

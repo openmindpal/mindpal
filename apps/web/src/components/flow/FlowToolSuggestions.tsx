@@ -10,7 +10,7 @@ import {
   friendlyToolName, riskBadgeKey, riskBadgeClass, friendlyOutputSummary,
 } from "../../app/homeHelpers";
 import { IconExternal } from "../../app/HomeIcons";
-import styles from "../../app/page.module.css";
+import styles from "@/styles/page.module.css";
 
 export function FlowToolSuggestions({ locale, it, toolExecStates, executeToolInline }: {
   locale: string;
@@ -37,6 +37,9 @@ export function FlowToolSuggestions({ locale, it, toolExecStates, executeToolInl
                 {t(locale, approval ? "chat.toolSuggestion.needsApproval" : "chat.toolSuggestion.noApproval")}
               </span>
             </div>
+            {approval && s.approvalReason && (
+              <div className={styles.toolSuggestionApprovalReason}>{s.approvalReason}</div>
+            )}
             {s.inputDraft != null && (
               <div className={styles.toolSuggestionInput}>
                 <div className={styles.toolSuggestionInputLabel}>{t(locale, "chat.toolSuggestion.inputLabel")}</div>
@@ -46,7 +49,7 @@ export function FlowToolSuggestions({ locale, it, toolExecStates, executeToolInl
             <div className={styles.toolSuggestionActions}>
               {execState.status === "idle" && toolRef && (
                 <button className={styles.toolExecBtn} onClick={() => void executeToolInline(it.id, idx, s)} aria-label={`执行工具: ${friendlyToolName(locale, toolRef)}`}>
-                  {t(locale, "chat.toolSuggestion.execute")}
+                  {approval ? t(locale, "chat.toolSuggestion.executeAndApprove") : t(locale, "chat.toolSuggestion.execute")}
                 </button>
               )}
               {execState.status === "executing" && (

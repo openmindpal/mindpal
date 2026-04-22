@@ -172,7 +172,7 @@ type CachedAbacPolicySets = {
   expiresAtMs: number;
 };
 const abacPolicySetCache = new Map<string, CachedAbacPolicySets>();
-const ABAC_CACHE_TTL_MS = 30_000; // 30秒 TTL
+const ABAC_CACHE_TTL_MS = 5_000; // 5秒本地热缓存 TTL（主缓存由 epoch 版本管理）
 const ABAC_CACHE_MAX_SIZE = 5000;
 
 function getAbacCacheKey(tenantId: string, resourceType: string, epoch: number): string {
@@ -505,7 +505,7 @@ export async function authorize(params: {
       );
       perms = permsRes.rows;
     }
-    cacheSet(authzCache, cacheKey, { roleIds, perms, expiresAtMs: Date.now() + 30000 } satisfies CachedAuthz, 50000);
+    cacheSet(authzCache, cacheKey, { roleIds, perms, expiresAtMs: Date.now() + 5_000 } satisfies CachedAuthz, 50000);
   }
 
   if (roleIds.length === 0) {

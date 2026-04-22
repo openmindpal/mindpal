@@ -9,7 +9,7 @@ import type { ModelBinding } from "./useChatSession";
 import { ModeSelector } from "@/components/flow/RunStatusIndicator";
 import { IconSliders } from "./HomeIcons";
 import { AUDIO_ACCEPT, DOC_ACCEPT, IMAGE_ACCEPT, VIDEO_ACCEPT } from "./useAttachments";
-import styles from "./page.module.css";
+import styles from "@/styles/page.module.css";
 
 export interface ChatInputAreaProps {
   locale: string;

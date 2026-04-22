@@ -210,6 +210,7 @@ export const runsGovernanceRoutes: FastifyPluginAsync = async (app) => {
           idempotencyRequired: def?.idempotencyRequired,
           riskLevel: def?.riskLevel,
           approvalRequired: def?.approvalRequired,
+          sourceLayer: def?.sourceLayer,
           fieldRules: env.dataDomain.toolContract.fieldRules ?? null,
           rowFilters: env.dataDomain.toolContract.rowFilters ?? null,
         },

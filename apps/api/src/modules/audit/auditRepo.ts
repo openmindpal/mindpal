@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory, computeEventHash } from "@openslin/shared";
+import type { AuditEventInput as SharedAuditEventInput } from "@openslin/shared";
 
 export { AUDIT_ERROR_CATEGORIES };
 export { normalizeAuditErrorCategory };
@@ -94,6 +95,29 @@ function withPolicySnapshotRef(policyDecision: unknown, policySnapshotRef: strin
     return { ...base, policySnapshotRef };
   }
   return { policySnapshotRef };
+}
+
+/**
+ * 将 shared 标准 AuditEventInput 转换为 API 内部 AuditEventInput 并写入。
+ * 功能目标：提供统一入口，使外部组件可通过 shared 接口格式写入审计。
+ */
+export async function insertAuditEventFromShared(pool: Pool, event: SharedAuditEventInput): Promise<void> {
+  const outcomeMap: Record<string, "success" | "denied" | "error"> = {
+    success: "success",
+    failure: "error",
+    denied: "denied",
+  };
+  await insertAuditEvent(pool, {
+    tenantId: event.tenantId,
+    subjectId: event.subject,
+    resourceType: event.resourceType,
+    action: event.action,
+    result: outcomeMap[event.outcome] ?? "error",
+    traceId: event.traceId ?? "",
+    timestamp: event.timestamp,
+    inputDigest: event.details ?? null,
+    outputDigest: event.resourceId ? { resourceId: event.resourceId } : null,
+  });
 }
 
 export async function insertAuditEvent(pool: Pool, e: AuditEventInput) {

@@ -37,6 +37,34 @@
     "./structuredLogger": {
       "types": "./dist/structuredLogger.d.ts",
       "default": "./dist/structuredLogger.js"
+    },
+    "./agent-loop": {
+      "types": "./dist/agentLoopTypes.d.ts",
+      "default": "./dist/agentLoopTypes.js"
+    },
+    "./runner": {
+      "types": "./dist/runnerProtocol.d.ts",
+      "default": "./dist/runnerProtocol.js"
+    },
+    "./error": {
+      "types": "./dist/serviceError.d.ts",
+      "default": "./dist/serviceError.js"
+    },
+    "./auth": {
+      "types": "./dist/authContext.d.ts",
+      "default": "./dist/authContext.js"
+    },
+    "./tracing": {
+      "types": "./dist/traceContext.d.ts",
+      "default": "./dist/traceContext.js"
+    },
+    "./skill-executor": {
+      "types": "./dist/skillExecutor.d.ts",
+      "default": "./dist/skillExecutor.js"
+    },
+    "./approvalDecision": {
+      "types": "./dist/approvalDecision.d.ts",
+      "default": "./dist/approvalDecision.js"
     }
   },
   "scripts": {
@@ -48,7 +76,8 @@
   "typesVersions": {
     "*": {
       "document": ["dist/documentParser.d.ts"],
-      "policyExpr": ["dist/policyExpr.d.ts"]
+      "policyExpr": ["dist/policyExpr.d.ts"],
+      "approvalDecision": ["dist/approvalDecision.d.ts"]
     }
   },
   "dependencies": {

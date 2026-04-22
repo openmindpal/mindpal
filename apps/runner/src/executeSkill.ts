@@ -1,3 +1,12 @@
+/**
+ * executeSkill.ts — Runner 侧 Skill 沙箱执行（薄包装）
+ *
+ * 核心进程池 + IPC 协议已迁移至 @openslin/shared/skillExecutor，
+ * 本文件保留 Runner 专属的：
+ * - artifact 路径解析（含环境变量、协议前缀、路径越界防护）
+ * - manifest 加载 + deps digest 计算
+ * - Runner HTTP API 所需参数适配
+ */
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -5,10 +14,10 @@ import { fileURLToPath } from "node:url";
 import type { EgressEvent, NetworkPolicy } from "./runtime";
 import { stableStringify } from "./common";
 import { getProcessPool } from "./skillProcessPool";
+import type { SkillExecuteResponse } from "@openslin/shared";
 
 /**
  * 文件路径越界防护：校验请求路径是否在沙箱根目录内。
- * 拒绝包含 `..` 组件的路径（额外防护层），并使用 path.resolve + path.normalize 做绝对路径对比。
  */
 function assertSafePath(requestedPath: string, sandboxRoot: string): string {
   const normalized = path.normalize(requestedPath);
@@ -55,7 +64,6 @@ function resolveArtifactDir(artifactRef: string) {
     if (!artifactId) throw new Error("policy_violation:artifact_ref_invalid");
     const reg = String(process.env.SKILL_REGISTRY_DIR ?? "").trim();
     const registryRoot = path.resolve(reg || path.resolve(process.cwd(), ".data", "skill-registry"));
-    // 路径越界防护：确保 artifactId 不能通过 ../ 逃逸 registry 根目录
     return assertSafePath(artifactId, registryRoot);
   }
   if (trimmed.startsWith("file://")) return fileURLToPath(trimmed);
@@ -84,7 +92,6 @@ async function computeDepsDigest(params: { artifactDir: string; manifest: any })
   const entryPath = entryRel ? path.resolve(params.artifactDir, entryRel) : "";
   const manifestPath = path.join(params.artifactDir, "manifest.json");
 
-  // mtime 校验
   const [manifestStat, entryStat] = await Promise.all([
     fs.stat(manifestPath).catch(() => null),
     entryPath ? fs.stat(entryPath).catch(() => null) : Promise.resolve(null),
@@ -128,6 +135,7 @@ export async function executeSkillInSandbox(params: {
   signal: AbortSignal;
   context?: { locale: string; apiBaseUrl?: string; authToken?: string };
 }): Promise<{ output: any; egress: EgressEvent[]; depsDigest: string }> {
+  // ── artifact 解析 + 安全校验（Runner 专属） ──
   const artifactDir = resolveArtifactDir(params.artifactRef);
   const roots = getSkillRoots();
   if (!roots.some((r) => isWithinRoot(r, artifactDir))) throw new Error("policy_violation:artifact_outside_roots");
@@ -137,31 +145,25 @@ export async function executeSkillInSandbox(params: {
   const entryRel = String(loaded.manifest?.entry ?? "");
   if (!entryRel) throw new Error("policy_violation:skill_manifest_missing_entry");
   const entryPath = path.resolve(artifactDir, entryRel);
-  // 路径越界防护：确保 entry 文件不会超出 artifact 目录
   assertSafePath(entryRel, artifactDir);
   if (!isWithinRoot(artifactDir, entryPath)) throw new Error("policy_violation:skill_entry_outside_artifact");
-
-  // 从进程池获取子进程（冷启动时自动 fork）
-  const pool = getProcessPool();
-  const { child, _poolEntry } = await pool.acquire(params.limits);
-
-  let executionFailed = false;
-  let heartbeatKilled = false;
-  const kill = () => {
-    pool.discard(child);
-  };
-  if (params.signal.aborted) kill();
-  params.signal.addEventListener("abort", kill, { once: true });
-
-  // 启动心跳监控：检测卡死进程
-  pool.startHeartbeat(child, () => {
-    heartbeatKilled = true;
-  });
 
   const cpuTimeLimitMs =
     typeof params.limits?.cpuTimeLimitMs === "number" && Number.isFinite(params.limits.cpuTimeLimitMs) && params.limits.cpuTimeLimitMs > 0
       ? Math.max(1, Math.floor(params.limits.cpuTimeLimitMs))
       : null;
+
+  // ── 委托给统一沙箱执行框架 ──
+  const pool = await getProcessPool();
+  const { child, _poolEntry } = await pool.acquire(params.limits);
+
+  let executionFailed = false;
+  let heartbeatKilled = false;
+  const kill = () => { pool.discard(child); };
+  if (params.signal.aborted) kill();
+  params.signal.addEventListener("abort", kill, { once: true });
+
+  pool.startHeartbeat(child, () => { heartbeatKilled = true; });
 
   const result = await new Promise<any>((resolve, reject) => {
     const onExit = (code: number | null) => {
@@ -202,11 +204,9 @@ export async function executeSkillInSandbox(params: {
     });
   }).finally(() => {
     params.signal.removeEventListener("abort", kill);
-    // 正常退出时停止心跳
     if (child.pid != null) pool.stopHeartbeat(child.pid);
   });
 
-  // 执行成功：归还进程到池；失败：kill 进程
   if (!result?.ok || executionFailed) {
     pool.discard(child);
   } else {

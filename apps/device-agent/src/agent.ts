@@ -4,6 +4,7 @@ import { safeError, safeLog, sha256_8 } from "./log";
 import { executeDeviceTool } from "./kernel/taskExecutor";
 import { disposeAllPlugins } from "./kernel/pluginLifecycle";
 import { syncPolicyToCache, getCachedPolicy, isCachedToolAllowed } from "./kernel/auth";
+import { WebSocketDeviceAgent } from "./websocketClient";
 
 export type DeviceExecution = {
   deviceExecutionId: string;
@@ -123,14 +124,17 @@ export async function runLoop(params: {
   confirmFn: (q: string) => Promise<boolean>;
   heartbeatIntervalMs: number;
   pollIntervalMs: number;
-  idleTimeoutMs?: number; // 空闲超时自动退出（毫秒），0或undefined表示禁用
+  idleTimeoutMs?: number;
   onLog?: (s: string) => void;
-  shouldStopFn?: () => boolean; // 外部控制停止（托盘模式用）
+  shouldStopFn?: () => boolean;
+  /** 传输模式: auto(WS优先降级HTTP) / ws(仅WS) / http(仅HTTP轮询) */
+  transport?: 'auto' | 'ws' | 'http';
 }) {
   const log = params.onLog ?? safeLog;
   const err = safeError;
+  const transport = params.transport ?? 'auto';
 
-  log(`device-agent running: deviceId=${params.cfg.deviceId} tokenSha256_8=${sha256_8(params.cfg.deviceToken)}`);
+  log(`device-agent running: deviceId=${params.cfg.deviceId} tokenSha256_8=${sha256_8(params.cfg.deviceToken)} transport=${transport}`);
 
   let stopped = false;
   let stopReason: "manual" | "re-enroll" | "heartbeat-fail" | "idle-timeout" = "manual";
@@ -141,7 +145,7 @@ export async function runLoop(params: {
 
   // 空闲自动退出机制（轻量化：无任务时自动释放资源）
   let lastTaskTime = Date.now();
-  const idleTimeoutMs = params.idleTimeoutMs ?? 0; // 默认禁用，由调用方决定
+  const idleTimeoutMs = params.idleTimeoutMs ?? 0;
   const checkIdleTimeout = () => {
     if (idleTimeoutMs > 0 && Date.now() - lastTaskTime > idleTimeoutMs) {
       log(`device-agent idle timeout: no tasks for ${Math.round(idleTimeoutMs / 1000)}s, exiting to save resources`);
@@ -150,11 +154,51 @@ export async function runLoop(params: {
     return false;
   };
 
+  // ── 通信模式状态 ──
+  let currentTransport: 'ws' | 'http-polling' = transport === 'http' ? 'http-polling' : 'ws';
+  let wsClient: WebSocketDeviceAgent | null = null;
+
+  // ── WS优先模式：尝试建立WS连接 ──
+  if (transport !== 'http') {
+    wsClient = new WebSocketDeviceAgent(params.cfg, params.confirmFn);
+
+    wsClient.onDisconnect(() => {
+      if (currentTransport === 'ws') {
+        log('[agent] WS断开，降级到HTTP轮询模式');
+        currentTransport = 'http-polling';
+      }
+    });
+    wsClient.onReconnect(() => {
+      if (currentTransport === 'http-polling') {
+        log('[agent] WS重连成功，切回WS模式');
+        currentTransport = 'ws';
+      }
+    });
+
+    try {
+      await wsClient.connect();
+      currentTransport = 'ws';
+      log('[agent] WS连接成功，进入WS推送驱动模式');
+    } catch (wsErr: unknown) {
+      const msg = wsErr instanceof Error ? wsErr.message : 'unknown';
+      log(`[agent] WS连接失败: ${msg}`);
+      if (transport === 'ws') {
+        err('[agent] WS-only模式，不降级HTTP，退出');
+        return { stopReason: 'manual' as const };
+      }
+      currentTransport = 'http-polling';
+      log('[agent] 降级到HTTP轮询模式');
+    }
+  }
+
+  // ── HTTP fallback模式下的心跳定时器（仅在HTTP轮询时活跃） ──
   let consecutiveHeartbeatFailures = 0;
-  const MAX_HEARTBEAT_FAILURES = 10; // 连续10次心跳失败才停止
+  const MAX_HEARTBEAT_FAILURES = 10;
 
   const heartbeatTimer = setInterval(async () => {
     if (stopped) return;
+    // WS模式下心跳由wsClient内部管理，跳过HTTP心跳
+    if (currentTransport === 'ws') return;
     try {
       const hb = await heartbeatOnce({ cfg: params.cfg });
       if (hb.needReEnroll) {
@@ -163,56 +207,70 @@ export async function runLoop(params: {
         return;
       }
       if (hb.ok) {
-        consecutiveHeartbeatFailures = 0; // 重置失败计数
+        consecutiveHeartbeatFailures = 0;
       } else {
         consecutiveHeartbeatFailures++;
         err(`device-agent heartbeat failed (${consecutiveHeartbeatFailures}/${MAX_HEARTBEAT_FAILURES})`);
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       consecutiveHeartbeatFailures++;
-      err(`device-agent heartbeat error (${consecutiveHeartbeatFailures}/${MAX_HEARTBEAT_FAILURES}): ${e?.message ?? "unknown"}`);
+      const msg = e instanceof Error ? e.message : 'unknown';
+      err(`device-agent heartbeat error (${consecutiveHeartbeatFailures}/${MAX_HEARTBEAT_FAILURES}): ${msg}`);
     }
-    // 连续多次失败后才停止，允许临时网络波动
     if (consecutiveHeartbeatFailures >= MAX_HEARTBEAT_FAILURES) {
       err(`device-agent stopping: ${MAX_HEARTBEAT_FAILURES} consecutive heartbeat failures`);
       stop("heartbeat-fail");
     }
   }, params.heartbeatIntervalMs);
 
+  // ── 统一主循环 ──
   while (!stopped) {
-    // 检查外部停止信号
     if (params.shouldStopFn?.()) {
       stop("manual");
       break;
     }
 
-    // 检查空闲超时
     if (checkIdleTimeout()) {
       stop("idle-timeout");
       break;
     }
 
-    const r = await runOnce({ cfg: params.cfg, confirmFn: params.confirmFn, now: () => new Date() });
-    if (!r.ok && r.needReEnroll) {
+    // 检查WS客户端是否要求重新配对
+    if (wsClient?.needReEnroll) {
       stop("re-enroll");
       break;
     }
 
-    // 如果本轮有任务执行，更新最后活跃时间
-    if (r.ok && r.hadTasks) {
-      lastTaskTime = Date.now();
+    if (currentTransport === 'ws') {
+      // WS模式：任务由WS推送处理，主循环仅等待
+      await new Promise((resolve) => setTimeout(resolve, params.heartbeatIntervalMs));
+    } else {
+      // HTTP fallback模式：使用原有轮询逻辑
+      const r = await runOnce({ cfg: params.cfg, confirmFn: params.confirmFn, now: () => new Date() });
+      if (!r.ok && r.needReEnroll) {
+        stop("re-enroll");
+        break;
+      }
+      if (r.ok && r.hadTasks) {
+        lastTaskTime = Date.now();
+      }
+      await new Promise((resolve) => setTimeout(resolve, params.pollIntervalMs));
     }
-
-    await new Promise((resolve) => setTimeout(resolve, params.pollIntervalMs));
   }
 
   clearInterval(heartbeatTimer);
 
-  // Graceful plugin shutdown — invoke dispose() on all registered plugins
+  // 停止WS客户端
+  if (wsClient) {
+    wsClient.stop();
+  }
+
+  // Graceful plugin shutdown
   try {
     await disposeAllPlugins();
-  } catch (e: any) {
-    err(`device-agent disposeAllPlugins error: ${e?.message ?? "unknown"}`);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'unknown';
+    err(`device-agent disposeAllPlugins error: ${msg}`);
   }
 
   log(`device-agent stopped: reason=${stopReason}`);

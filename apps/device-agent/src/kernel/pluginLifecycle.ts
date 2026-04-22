@@ -7,9 +7,12 @@
  * @layer kernel
  */
 import type { DeviceToolPlugin, PluginState, PluginResourceLimits, ToolExecutionContext, ToolExecutionResult, DeviceMessageContext, DeviceType, CapabilityDescriptor } from "./types";
+import { verifyPluginSignature } from "./pluginSandbox";
+import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 import { registerPlugin, findPluginForTool, listPlugins, unregisterPlugin, dispatchMessageToPlugins, exportCapabilityManifest } from "./capabilityRegistry";
 import { getCachedCapabilityReport, isToolAvailableOnDevice } from "../plugins/capabilityProbe";
 import type { DeviceCapabilityReport } from "../plugins/capabilityProbe";
+import { invalidateTrayState } from "../trayState";
 
 // ── 内部状态 ──────────────────────────────────────────────
 
@@ -97,6 +100,25 @@ function filterCapabilitiesByProbe(
 export async function initPlugin(plugin: DeviceToolPlugin): Promise<{ success: boolean; error?: string; filteredCapabilities?: { toolRef: string; reason: string }[] }> {
   if (pluginStates.has(plugin.name)) return { success: false, error: "plugin_already_initialized" };
 
+  // 外部插件签名校验（内置插件自动跳过）
+  if (plugin.source === "external" && plugin.manifest) {
+    const secretKey = resolveDeviceAgentEnv().secretKey;
+    if (!secretKey) {
+      // secretKey 未配置：记录警告，渐进式安全不阻塞加载
+      console.warn(`[pluginLifecycle] plugin_signature_skipped: ${plugin.name} (no secretKey configured)`);
+    } else if (!plugin.manifest.signature) {
+      // manifest 中无 signature 字段：记录警告，不阻塞
+      console.warn(`[pluginLifecycle] plugin_signature_skipped: ${plugin.name} (no signature in manifest)`);
+    } else {
+      const sigResult = verifyPluginSignature(plugin.manifest, secretKey);
+      if (!sigResult.valid) {
+        pluginStates.set(plugin.name, "error");
+        console.error(`[pluginLifecycle] plugin_signature_failed: ${plugin.name}, reason=${sigResult.reason}`);
+        return { success: false, error: `signature_verification_failed: ${sigResult.reason}` };
+      }
+    }
+  }
+
   pluginStates.set(plugin.name, "initializing");
 
   // 保存资源限制声明（强制约束）
@@ -147,6 +169,8 @@ export async function initPlugin(plugin: DeviceToolPlugin): Promise<{ success: b
     pluginStates.set(plugin.name, "ready");
     // 通知云端能力变更（热插拔同步）
     try { _onCapabilityChanged?.(exportCapabilityManifest()); } catch { /* 非致命 */ }
+    // 通知托盘缓存失效，触发事件驱动更新
+    try { invalidateTrayState(); } catch { /* 非致命 */ }
     return { success: true, filteredCapabilities: filtered.length > 0 ? filtered : undefined };
   } catch (e: any) {
     pluginStates.set(plugin.name, "error");

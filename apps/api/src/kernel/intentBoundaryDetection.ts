@@ -8,16 +8,32 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, resolveBoolean, resolveNumber } from "@openslin/shared";
 import type {
   IntentAnchor,
   BoundaryViolation as BoundaryViolationType,
   ViolationType,
   ViolationSeverity,
+  CumulativeDriftResult,
 } from "./intentAnchoringService";
+import { getOrCreateDriftTracker, recordDrift } from "./intentAnchoringService";
 import { listActiveIntentAnchors, recordBoundaryViolation } from "./intentAnchorRepo";
 
 const logger = new StructuredLogger({ module: "intentAnchoring.detection" });
+
+/* ================================================================== */
+/*  Result type                                                        */
+/* ================================================================== */
+
+/** 边界检测结果 */
+export interface BoundaryCheckResult {
+  isViolation: boolean;
+  violation?: BoundaryViolationType;
+  shouldPause: boolean;
+  reason?: string;
+  /** 累积偏离信息（仅当提供 sessionId 和 iteration 时存在） */
+  cumulativeDrift?: CumulativeDriftResult;
+}
 
 /* ================================================================== */
 /*  Main detection entry                                               */
@@ -28,6 +44,8 @@ const logger = new StructuredLogger({ module: "intentAnchoring.detection" });
  *
  * 在 Agent Loop 每轮迭代前调用，检查当前计划动作是否违背用户意图。
  * 如果检测到越界，立即触发熔断。
+ *
+ * 可选参数 sessionId / iteration 启用跨轮次累积偏离检测。
  */
 export async function checkAndEnforceIntentBoundary(params: {
   pool: Pool;
@@ -42,13 +60,12 @@ export async function checkAndEnforceIntentBoundary(params: {
   app?: FastifyInstance;
   /** P0-7: 调用者主体信息（LLM 调用需要） */
   subject?: { tenantId: string; spaceId?: string; subjectId: string };
-}): Promise<{
-  isViolation: boolean;
-  violation?: BoundaryViolationType;
-  shouldPause: boolean;
-  reason?: string;
-}> {
-  const { pool, tenantId, spaceId, subjectId, runId, stepId, proposedAction, currentContext, app, subject } = params;
+  /** 会话 ID，启用累积偏离检测时需要 */
+  sessionId?: string;
+  /** 当前迭代轮次，启用累积偏离检测时需要 */
+  iteration?: number;
+}): Promise<BoundaryCheckResult> {
+  const { pool, tenantId, spaceId, subjectId, runId, stepId, proposedAction, currentContext, app, subject, sessionId, iteration } = params;
 
   // 1. 获取所有活跃的意图锚点
   const anchors = await listActiveIntentAnchors({
@@ -67,19 +84,126 @@ export async function checkAndEnforceIntentBoundary(params: {
   const keywordResult = await _keywordBasedDetection({
     pool, tenantId, spaceId, runId, stepId, proposedAction, currentContext, anchors,
   });
-  if (keywordResult) return keywordResult;
 
   // 3. P0-7: LLM 语义冲突检测（关键词未命中时）
-  const useLlmCheck = (process.env.INTENT_ANCHOR_LLM_CHECK ?? "1") === "1" && app && subject;
-  if (useLlmCheck) {
-    const llmResult = await _llmBasedDetection({
-      pool, tenantId, spaceId, runId, stepId, proposedAction, currentContext,
-      app: app!, subject: subject!, anchors,
-    });
-    if (llmResult) return llmResult;
+  let llmResult: Awaited<ReturnType<typeof _llmBasedDetection>> = null;
+  if (!keywordResult) {
+    const useLlmCheck = resolveBoolean("INTENT_ANCHOR_LLM_CHECK").value && app && subject;
+    if (useLlmCheck) {
+      llmResult = await _llmBasedDetection({
+        pool, tenantId, spaceId, runId, stepId, proposedAction, currentContext,
+        app: app!, subject: subject!, anchors,
+      });
+    }
   }
 
+  // 4. 累积偏离检测（可选增强，不改变已有单轮违例逻辑）
+  if (sessionId != null && iteration != null) {
+    const tracker = getOrCreateDriftTracker(runId, sessionId);
+
+    // 计算本轮偏离量
+    let driftAmount = 0;
+    let driftSource: 'keyword' | 'llm' | 'cumulative' = 'cumulative';
+    if (keywordResult?.isViolation) {
+      driftAmount += 0.5;
+      driftSource = 'keyword';
+    }
+    if (llmResult?.isViolation) {
+      driftAmount += 0.8;
+      driftSource = 'llm';
+    }
+    // 部分匹配：关键词检测未触发违例但存在部分关键词重叠
+    if (!keywordResult && !llmResult) {
+      const partialScore = _computePartialMatchScore(proposedAction, anchors);
+      if (partialScore > 0) {
+        driftAmount += partialScore;
+        driftSource = 'cumulative';
+      }
+    }
+
+    if (driftAmount > 0) {
+      const driftResult = recordDrift(tracker, iteration, driftAmount, driftSource);
+
+      if (driftResult.exceeded) {
+        // 累积偏离超过阈值 → 触发 pause_for_review
+        // 如果已有单轮违例结果，附加累积偏离信息返回
+        const base = keywordResult ?? llmResult;
+        return {
+          isViolation: true,
+          violation: base?.violation,
+          shouldPause: true,
+          reason: `cumulative_drift_exceeded: score=${driftResult.currentScore.toFixed(2)}, threshold=${driftResult.threshold}`,
+          cumulativeDrift: driftResult,
+        };
+      }
+
+      // 未超阈值，将偏离信息附加到现有结果
+      if (keywordResult) {
+        return { ...keywordResult, cumulativeDrift: { currentScore: tracker.driftScore, threshold: tracker.threshold, exceeded: false } };
+      }
+      if (llmResult) {
+        return { ...llmResult, cumulativeDrift: { currentScore: tracker.driftScore, threshold: tracker.threshold, exceeded: false } };
+      }
+
+      return {
+        isViolation: false,
+        shouldPause: false,
+        cumulativeDrift: { currentScore: tracker.driftScore, threshold: tracker.threshold, exceeded: false },
+      };
+    }
+
+    // 无偏离，也附加当前累积信息
+    if (keywordResult) return { ...keywordResult, cumulativeDrift: { currentScore: tracker.driftScore, threshold: tracker.threshold, exceeded: false } };
+    if (llmResult) return { ...llmResult, cumulativeDrift: { currentScore: tracker.driftScore, threshold: tracker.threshold, exceeded: false } };
+    return {
+      isViolation: false,
+      shouldPause: false,
+      cumulativeDrift: { currentScore: tracker.driftScore, threshold: tracker.threshold, exceeded: false },
+    };
+  }
+
+  // 未启用累积偏离检测时，保持原有行为
+  if (keywordResult) return keywordResult;
+  if (llmResult) return llmResult;
   return { isViolation: false, shouldPause: false };
+}
+
+/* ================================================================== */
+/*  Partial match scoring (cumulative drift)                            */
+/* ================================================================== */
+
+/**
+ * 计算提议动作与意图锚点的部分匹配分数
+ *
+ * 用于累积偏离检测：当关键词/LLM检测未触发违例但存在部分关键词重叠时，
+ * 返回一个微小的偏离分数 (0-0.2)。
+ */
+function _computePartialMatchScore(
+  proposedAction: string,
+  anchors: IntentAnchor[],
+): number {
+  const actionLower = proposedAction.toLowerCase();
+  const actionKeywords = new Set(extractKeywords(actionLower));
+  if (actionKeywords.size === 0) return 0;
+
+  let maxPartial = 0;
+  for (const anchor of anchors) {
+    if (anchor.instructionType !== "prohibition" && anchor.instructionType !== "constraint") continue;
+    const instrKeywords = extractKeywords(anchor.originalInstruction.toLowerCase());
+    if (instrKeywords.length === 0) continue;
+
+    let matchCount = 0;
+    for (const kw of instrKeywords) {
+      if (actionKeywords.has(kw)) matchCount++;
+    }
+    const ratio = matchCount / instrKeywords.length;
+    // 部分匹配：重叠占比在 20%-50% 之间才计入偏离（低于20%算无关，高于50%业已由单轮检测处理）
+    if (ratio >= 0.2 && ratio < 0.5) {
+      const score = ratio * 0.4; // 最高贡献 0.2
+      if (score > maxPartial) maxPartial = score;
+    }
+  }
+  return maxPartial;
 }
 
 /* ================================================================== */
@@ -409,7 +533,7 @@ export async function detectIntentBoundary(params: {
   driftThreshold?: number;
 }): Promise<IntentDriftResult> {
   const { pool, tenantId, spaceId, subjectId, runId, currentMessage, originalGoal } = params;
-  const threshold = params.driftThreshold ?? Number(process.env.INTENT_DRIFT_THRESHOLD ?? "0.6");
+  const threshold = params.driftThreshold ?? resolveNumber("INTENT_DRIFT_THRESHOLD", undefined, undefined, 0.6).value;
 
   // 1. 获取活跃意图锚点
   const anchors = await listActiveIntentAnchors({ pool, tenantId, spaceId, subjectId, runId });

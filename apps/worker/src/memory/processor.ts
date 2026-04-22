@@ -25,7 +25,7 @@ export async function memoryWrite(params: {
   subjectId: string;
   input: any;
 }) {
-  const scope = params.input?.scope === "space" ? "space" : "user";
+  const scope = params.input?.scope === "space" ? "space" : params.input?.scope === "global" ? "global" : "user";
   const type = String(params.input?.type ?? "other");
   const title = params.input?.title ? String(params.input.title) : null;
   const contentTextRaw = String(params.input?.contentText ?? "");
@@ -263,7 +263,7 @@ export async function memoryWrite(params: {
 }
 
 export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId: string; subjectId: string; input: any }) {
-  const scope = params.input?.scope === "space" ? "space" : params.input?.scope === "user" ? "user" : null;
+  const scope = params.input?.scope === "space" ? "space" : params.input?.scope === "global" ? "global" : params.input?.scope === "user" ? "user" : null;
   const query = String(params.input?.query ?? "");
   const limit = typeof params.input?.limit === "number" && Number.isFinite(params.input.limit) ? Math.max(1, Math.min(20, params.input.limit)) : 5;
   const types = Array.isArray(params.input?.types) ? params.input.types.map((t: any) => String(t)).slice(0, 20) : null;

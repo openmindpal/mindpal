@@ -244,6 +244,7 @@ export {
 } from "./memoryCore";
 export type {
   MemoryRiskEvaluation, WriteProof, WriteIntent, MemoryRerankInput,
+  MemoryScope,
 } from "./memoryCore";
 
 // ─── 列级加密（AES-256-GCM，API / Worker 共享） ────────────────────────────
@@ -301,7 +302,7 @@ export { checkCapabilityEnvelopeNotExceedV1, validateCapabilityEnvelopeV1 } from
 export { ErrorCategory, type ErrorCategoryValue, isRetryableError, errorActionHint } from "./errorCategory";
 
 export { AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory } from "./audit";
-export type { AuditErrorCategory } from "./audit";
+export type { AuditErrorCategory, AuditEventInput, AuditWriter } from "./audit";
 
 export { PERM } from "./permissionActions";
 export type { PermissionAction } from "./permissionActions";
@@ -328,7 +329,7 @@ export type {
 export {
   CONFIG_REGISTRY,
   getConfigsByLevel, getConfigsByScope, getRuntimeMutableConfigs, findConfigEntry,
-  parseConfigValue, validateConfigValue,
+  parseConfigValue, validateConfigValue, requiresRestart,
 } from "./configRegistry";
 export type { ConfigLevel, ConfigScope, ConfigValueType, ConfigEntry } from "./configRegistry";
 export { validateEnvironment, formatValidationResult } from "./validateEnv";
@@ -410,6 +411,20 @@ export type {
   RiskLevel,
 } from "./skillSandbox";
 
+// ─── 统一 Skill 沙箱执行框架 ─────────────────────────────────────────────
+export {
+  SkillProcessPool,
+  createSandboxExecutor,
+  createSandboxExecutorWithPool,
+} from "./skillExecutor";
+export type {
+  SkillExecuteRequest,
+  SkillExecuteResponse,
+  SandboxExecutor,
+  SandboxExecutorOptions,
+  SkillVersionSwitch,
+} from "./skillExecutor";
+
 // ─── P2-4: 统一协作协议 + P2-03: 通用 DAG 工具函数 ──────────────────────
 export {
   validateDAG, detectCycleNodes, topologicalSortGeneric,
@@ -433,10 +448,12 @@ export {
   batchUpsertEntities, batchAddRelations,
   getValidFacts, getEntityRelations, getEntitiesByCategory,
   worldStateToPromptText,
+  detectWorldStateConflicts, mergeWorldStates,
 } from "./worldState";
 export type {
   EntityCategory, WorldEntity, RelationType, WorldRelation,
   FactCategory, WorldFact, WorldState,
+  WorldStateSource, WorldStateEntry, WorldStateConflict,
 } from "./worldState";
 
 // ─── OTel 初始化工具 ─────────────────────────────────────────────────
@@ -499,6 +516,9 @@ export {
 export type {
   CollabMessageType,
   CollabMessage,
+  CollabMessageEnvelope,
+  MessagePriority,
+  MessageStatus,
   ConsensusProposal,
   ConsensusVote,
   ConsensusQuorumType,
@@ -515,6 +535,40 @@ export type {
   DebateCorrection,
   ConsensusEvolutionEntry,
 } from "./collabProtocol";
+
+// ── Agent Loop 核心类型 ──
+export {
+  isBudgetExhausted, recordTokenUsage, recordCostUsage, createDefaultBudget,
+} from "./agentLoopTypes";
+export type {
+  AgentDecisionAction, AgentDecision, StepObservation,
+  ExecutionConstraints, TokenBudget, CostBudget, LoopBudget,
+  AgentLoopResult, DecisionQualityScore,
+} from "./agentLoopTypes";
+
+// ── Runner 协议统一类型 ──
+export {
+  computeRunnerRequestBodyDigestV1, computeRunnerResponseBodyDigestV1,
+  signRunnerRequestV1, verifyRunnerRequestSignatureV1,
+  signRunnerResponseV1, verifyRunnerResponseSignatureV1,
+  loadTrustedWorkerKeysFromEnv,
+} from "./runnerProtocol";
+export type {
+  RunnerErrorCode, RunnerErrorCategory,
+  RunnerEgressSummaryV1, RunnerResourceUsageSummaryV1,
+  RunnerExecuteRequestV1, RunnerExecuteResponseV1,
+} from "./runnerProtocol";
+
+// ── 统一错误处理 ──
+export { ServiceError, classifyError, toHttpResponse } from "./serviceError";
+export { ErrorCategory as ServiceErrorCategory } from "./serviceError";
+
+// ── 统一认证上下文 ──
+export type { AuthContext, AuthProvider, Permission } from "./authContext";
+
+// ── 统一追踪上下文 ──
+export { createTraceContext, injectTraceHeaders, extractTraceContext } from "./traceContext";
+export type { TraceContext } from "./traceContext";
 
 // ── Skill RPC Protocol ──
 export {
@@ -609,4 +663,46 @@ export type {
   DocumentParser,
   DocumentParseInput,
 } from "./documentParser";
+
+// ── Skill Manifest 共享类型与运行时验证 ──
+export {
+  validateManifest,
+} from "./skillManifest";
+export type {
+  SkillLayer, SkillToolDeclaration,
+  BuiltinSkillManifest, ExternalSkillManifest,
+  ManifestValidationResult,
+} from "./skillManifest";
+
+// ── 编排内核事件协议（Worker ↔ API 状态同步） ──
+export {
+  OrchestrationEventType,
+  OrchestrationCommandType,
+  createOrchestrationEvent,
+  buildStepExecutionResult,
+} from "./orchestrationEvents";
+export type {
+  OrchestrationEvent,
+  StepExecutionResult,
+  OrchestrationCommand,
+} from "./orchestrationEvents";
+
+// ── 统一流式事件类型 ──
+export {
+  StreamEventType,
+  STREAM_EVENT_SSE_NAME,
+  createStreamEvent,
+  getStreamEventSseName,
+} from "./streamEvents";
+export type {
+  StreamEvent,
+  StreamController,
+} from "./streamEvents";
+
+// ── 安全状态转换（跨包统一） ──
+export { safeTransitionRun } from "./stateTransition";
+export type { PoolLike, SafeTransitionRunOpts } from "./stateTransition";
+
+// ── 统一审批判定（API / Worker 共用 Single Source of Truth） ──
+export { shouldRequireApproval } from "./approvalDecision.js";
 

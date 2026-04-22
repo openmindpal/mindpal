@@ -14,6 +14,7 @@
   "category": "ai",
   "priority": 8,
   "tags": ["reflection", "learning", "improvement", "memory"],
+  "dependencies": ["memory"],
   "contract": {
     "scope": "read",
     "resourceType": "agent",
@@ -40,5 +41,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

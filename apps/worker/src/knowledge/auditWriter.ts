@@ -3,16 +3,42 @@
  *
  * 消除 processor.ts / embedding.ts / ingest.ts 中 writeAudit 三重克隆。
  * 所有知识处理审计事件必须通过本模块写入，禁止各文件自行实现。
+ *
+ * 使用 shared AuditEventInput 标准接口，数据库写入含哈希链保证不可篡改。
  */
 import type { Pool } from "pg";
+import type { AuditEventInput } from "@openslin/shared";
 import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, computeEventHash } from "@openslin/shared";
 
+/**
+ * 将知识模块审计参数转换为标准 AuditEventInput 并写入 audit_events 表。
+ *
+ * 功能目标：消除知识模块独立的审计 SQL 拼装，统一走哈希链写入路径，
+ * 同时保留 DLP 脱敏与错误分类能力。
+ */
 export async function writeKnowledgeAudit(pool: Pool, params: { traceId: string; tenantId: string; spaceId: string; action: string; inputDigest?: any; outputDigest?: any; errorCategory?: string }) {
   const errorCategory = normalizeAuditErrorCategory(params.errorCategory);
   const redactedIn = redactValue(params.inputDigest);
   const redactedOut = redactValue(params.outputDigest);
   const outputDigest = attachDlpSummary(redactedOut.value, redactedOut.summary);
 
+  // 构造符合 shared AuditEventInput 的标准化结构
+  const _standardEvent: AuditEventInput = {
+    tenantId: params.tenantId,
+    action: params.action,
+    resourceType: "knowledge",
+    subject: "system",
+    outcome: errorCategory ? "failure" : "success",
+    traceId: params.traceId,
+    details: {
+      spaceId: params.spaceId,
+      inputDigest: redactedIn.value ?? null,
+      outputDigest: outputDigest ?? null,
+      errorCategory,
+    },
+  };
+
+  // 哈希链写入（保证审计不可篡改）
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

@@ -3,7 +3,8 @@
  *
  * 包含 LLM 决策 prompt 构建、输出解析、执行约束辅助函数。
  */
-import type { AgentDecision, AgentDecisionAction, ExecutionConstraints, StepObservation } from "./loopTypes";
+import type { AgentDecision, AgentDecisionAction, ExecutionConstraints, StepObservation, DecisionQualityScore } from "./loopTypes";
+import { resolveNumber } from "@openslin/shared";
 import type { EnabledTool } from "../modules/agentContext";
 import { compressStepHistory, renderCompressedSteps, renderRecentSteps } from "./loopObservation";
 import { StructuredLogger } from "@openslin/shared";
@@ -257,6 +258,78 @@ export function parseAgentDecision(modelOutput: string): AgentDecision {
     reasoning: "LLM decision output was unparseable; falling back to replan instead of abort",
     abortReason: `unparseable_output: ${modelOutput.slice(0, 200)}`,
   };
+}
+
+/* ================================================================== */
+/*  Decision Quality — 置信度提取与质量评估                                 */
+/* ================================================================== */
+
+/**
+ * 从 LLM 输出中提取置信度信号。
+ * 支持显式 confidence 字段和启发式推断（如 reasoning 中含有不确定性词汇）。
+ * 返回 -1 表示未提供/无法推断。
+ */
+export function extractConfidenceFromOutput(modelOutput: string, parsedDecision: Record<string, unknown>): number {
+  // 1. 显式 confidence 字段（LLM 主动返回）
+  if (typeof parsedDecision.confidence === "number" && parsedDecision.confidence >= 0 && parsedDecision.confidence <= 1) {
+    return parsedDecision.confidence;
+  }
+
+  // 2. 启发式推断：reasoning 中的不确定性信号
+  const reasoning = typeof parsedDecision.reasoning === "string" ? parsedDecision.reasoning : "";
+  const lowConfidenceSignals = [
+    /\b(unsure|uncertain|not sure|might|maybe|possibly|unclear|ambiguous)\b/i,
+    /\b(不确定|可能|也许|或许|不太清楚|难以判断|不明确)\b/,
+  ];
+  const highConfidenceSignals = [
+    /\b(clearly|definitely|certain|confident|straightforward|obvious)\b/i,
+    /\b(明确|肯定|确定|显然|清晰)\b/,
+  ];
+
+  const lowHits = lowConfidenceSignals.filter(r => r.test(reasoning)).length;
+  const highHits = highConfidenceSignals.filter(r => r.test(reasoning)).length;
+
+  if (lowHits > 0 && highHits === 0) return 0.3;
+  if (highHits > 0 && lowHits === 0) return 0.9;
+  if (lowHits > 0 && highHits > 0) return 0.5;
+
+  // 无法推断
+  return -1;
+}
+
+/** 决策质量评估配置（通过环境变量可配置） */
+export interface DecisionQualityConfig {
+  /** 置信度低于此阈值触发重试，默认 0.3 */
+  confidenceThreshold: number;
+  /** 最大重试次数，默认 2 */
+  maxRetries: number;
+}
+
+export function getDecisionQualityConfig(): DecisionQualityConfig {
+  return {
+    confidenceThreshold: resolveNumber("AGENT_LOOP_CONFIDENCE_THRESHOLD", undefined, undefined, 0.3).value,
+    maxRetries: resolveNumber("AGENT_LOOP_CONFIDENCE_MAX_RETRIES", undefined, undefined, 2).value,
+  };
+}
+
+/**
+ * 评估决策质量，返回是否需要重试或升级模型。
+ * 返回 action: 'accept' | 'retry' | 'upgrade'
+ */
+export function evaluateDecisionQuality(params: {
+  confidence: number;
+  retryCount: number;
+  config: DecisionQualityConfig;
+}): { action: "accept" | "retry" | "upgrade" } {
+  const { confidence, retryCount, config } = params;
+  // 置信度未提供时，不干预
+  if (confidence < 0) return { action: "accept" };
+  // 置信度达标，接受
+  if (confidence >= config.confidenceThreshold) return { action: "accept" };
+  // 还有重试额度
+  if (retryCount < config.maxRetries) return { action: "retry" };
+  // 重试耗尽，尝试升级模型
+  return { action: "upgrade" };
 }
 
 function buildDecisionFromParsed(parsed: any): AgentDecision {

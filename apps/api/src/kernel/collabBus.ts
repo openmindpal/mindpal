@@ -14,27 +14,17 @@
  * 频道命名：collab:{collabRunId}:{targetRole|"broadcast"}
  * Stream 键名：collabstream:{collabRunId}:{role|"broadcast"}
  */
+import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { StructuredLogger, collabConfig } from "@openslin/shared";
+import { StructuredLogger, collabConfig, resolveString, resolveNumber } from "@openslin/shared";
+import type { CollabMessageEnvelope, MessagePriority } from "@openslin/shared";
 
 const logger = new StructuredLogger({ module: "collabBus" });
 
 // ── 类型 ────────────────────────────────────────────────────
 
-export interface CollabMessage {
-  collabRunId: string;
-  tenantId: string;
-  fromAgent: string;
-  fromRole: string;
-  toRole: string | null;  // null = broadcast
-  kind: string;           // "agent.result" | "shared_state.update" | "request" | "ack"
-  payload: Record<string, unknown>;
-  timestamp: number;      // epoch ms
-  /** P1: 消息优先级 */
-  priority?: MessagePriority;
-}
-
-export type MessagePriority = "low" | "normal" | "high" | "urgent";
+/** @deprecated 本地别名，统一使用 CollabMessageEnvelope */
+export type CollabMessage = CollabMessageEnvelope;
 
 const PRIORITY_WEIGHT: Record<MessagePriority, number> = {
   urgent: 4,
@@ -72,11 +62,11 @@ function streamKey(collabRunId: string, target: string): string {
 
 // ── 进程级 CollabBusInstance ────────────────────────────────
 
-type MessageHandler = (msg: CollabMessage) => void;
+type MessageHandler = (msg: CollabMessageEnvelope) => void;
 
 /** 进程内优先级消息队列条目 */
 interface PriorityQueueEntry {
-  msg: CollabMessage;
+  msg: CollabMessageEnvelope;
   weight: number;
 }
 
@@ -88,7 +78,7 @@ interface PriorityQueueEntry {
  */
 export interface CollabBusInstance {
   /** 发布消息（三层投递：进程内 → Redis Stream → DB） */
-  publish(msg: CollabMessage, opts?: { spaceId?: string | null; taskId?: string }): Promise<void>;
+  publish(msg: CollabMessageEnvelope, opts?: { spaceId?: string | null; taskId?: string }): Promise<void>;
   /** 订阅某个 collabRun 中某角色的消息 */
   subscribe(collabRunId: string, role: string, handler: MessageHandler): CollabSubscription;
   /** 获取背压状态 */
@@ -138,7 +128,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
     return `${collabRunId}:${role}`;
   }
 
-  function dispatchToLocalHandlers(msg: CollabMessage): boolean {
+  function dispatchToLocalHandlers(msg: CollabMessageEnvelope): boolean {
     let dispatched = false;
     // 定向消息
     if (msg.toRole) {
@@ -186,7 +176,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
   }
 
   /** 带背压的本地分发 */
-  function dispatchWithBackpressure(msg: CollabMessage): void {
+  function dispatchWithBackpressure(msg: CollabMessageEnvelope): void {
     const weight = PRIORITY_WEIGHT[msg.priority ?? "normal"];
     if (inFlight >= bp.maxInFlight) {
       paused = true;
@@ -201,7 +191,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
   }
 
   /** Layer 2: 写 Redis Stream */
-  async function writeRedisStream(msg: CollabMessage): Promise<void> {
+  async function writeRedisStream(msg: CollabMessageEnvelope): Promise<void> {
     const redis = config.redis;
     const channel = msg.toRole
       ? roleChannel(msg.collabRunId, msg.toRole)
@@ -235,7 +225,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
       await redis.xadd(sKey, "MAXLEN", "~", "5000", "*",
         "data", json,
         "priority", String(msg.priority ?? "normal"),
-        "kind", msg.kind,
+        "kind", msg.messageType,
         "from", msg.fromRole,
       );
       streamSent = true;
@@ -246,7 +236,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
         await redis.xadd(sKey, "MAXLEN", "~", "5000", "*",
           "data", json,
           "priority", String(msg.priority ?? "normal"),
-          "kind", msg.kind,
+          "kind", msg.messageType,
           "from", msg.fromRole,
         );
         streamSent = true;
@@ -287,7 +277,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
   }
 
   /** Layer 3: DB 持久化 */
-  async function writeDb(msg: CollabMessage, spaceId?: string | null, taskId?: string): Promise<void> {
+  async function writeDb(msg: CollabMessageEnvelope, spaceId?: string | null, taskId?: string): Promise<void> {
     try {
       await pool.query(
         `INSERT INTO collab_envelopes
@@ -301,7 +291,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
           msg.fromRole,
           msg.toRole,
           msg.toRole == null,
-          msg.kind,
+          msg.messageType,
           JSON.stringify(msg.payload),
         ],
       );
@@ -316,8 +306,8 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
     try {
       const { default: Redis } = await import("ioredis");
       const redisCfg = {
-        host: process.env.REDIS_HOST ?? "127.0.0.1",
-        port: Number(process.env.REDIS_PORT ?? 6379),
+        host: resolveString("REDIS_HOST").value,
+        port: resolveNumber("REDIS_PORT").value,
         maxRetriesPerRequest: null as null,
       };
       streamConsumer = new Redis(redisCfg);
@@ -345,7 +335,12 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
                 const dataIdx = fields.indexOf("data");
                 if (dataIdx < 0 || dataIdx + 1 >= fields.length) continue;
                 try {
-                  const msg: CollabMessage = JSON.parse(fields[dataIdx + 1]!);
+                  const raw = JSON.parse(fields[dataIdx + 1]!);
+                  if (!raw.messageId || !raw.collabRunId || !raw.messageType) {
+                    logger.warn("collabBus: 反序列化消息缺少必要字段，已跳过", { entryId, raw });
+                    continue;
+                  }
+                  const msg: CollabMessageEnvelope = raw;
                   dispatchWithBackpressure(msg);
                 } catch { /* malformed */ }
                 // ACK
@@ -450,8 +445,7 @@ export async function closeCollabBus(): Promise<void> {
   }
 }
 
-// ── 兼容旧 API ─────────────────────────────────────────────
-// 保持原有函数签名，内部优先走 CollabBusInstance
+// ── 模块级便捷函数（委托全局 CollabBusInstance）────────────────
 
 export interface CollabSubscription {
   /** 取消订阅 */
@@ -460,143 +454,43 @@ export interface CollabSubscription {
 
 /**
  * 发布协作消息（三层投递：进程内 → Redis Stream → DB）
- * 保持旧 API 签名，内部优先使用全局 CollabBusInstance。
+ * 委托全局 CollabBusInstance，实例未初始化时直接报错。
  */
 export async function publishCollabMessage(params: {
   pool: Pool;
   redis?: { publish(channel: string, message: string): Promise<number> };
-  message: CollabMessage;
+  message: CollabMessageEnvelope;
   spaceId?: string | null;
   taskId?: string;
 }): Promise<void> {
   const bus = _globalInstance;
-  if (bus) {
-    return bus.publish(params.message, { spaceId: params.spaceId, taskId: params.taskId });
+  if (!bus) {
+    throw new Error("CollabBus global instance not initialized. Call getCollabBus(config) first.");
   }
-  // 降级：无全局实例时走旧路径
-  const { pool, redis, message } = params;
-  const json = JSON.stringify(message);
-
-  // DB 持久化
-  try {
-    await pool.query(
-      `INSERT INTO collab_envelopes
-       (tenant_id, space_id, collab_run_id, task_id, from_role, to_role, broadcast, kind, payload_digest)
-       VALUES ($1, $2, $3::uuid, $4::uuid, $5, $6, $7, $8, $9)`,
-      [
-        message.tenantId,
-        params.spaceId ?? null,
-        message.collabRunId,
-        params.taskId ?? null,
-        message.fromRole,
-        message.toRole,
-        message.toRole == null,
-        message.kind,
-        JSON.stringify(message.payload),
-      ],
-    );
-  } catch (e: any) {
-    logger.warn("DB write failed", { collabRunId: message.collabRunId, error: String(e?.message ?? e) });
-  }
-
-  // Redis Pub/Sub
-  if (redis) {
-    try {
-      if (message.toRole) {
-        await redis.publish(roleChannel(message.collabRunId, message.toRole), json);
-      } else {
-        await redis.publish(broadcastChannel(message.collabRunId), json);
-      }
-    } catch { /* ignore */ }
-  }
+  return bus.publish(params.message, { spaceId: params.spaceId, taskId: params.taskId });
 }
 
 /**
- * 订阅协作消息 — 优先使用全局 CollabBusInstance（毫秒级），降级到 DB 轮询
+ * 订阅协作消息 — 委托全局 CollabBusInstance（进程内 + Redis Streams）
+ * 实例未初始化时直接报错。
  */
 export async function subscribeCollabMessages(params: {
   pool: Pool;
   collabRunId: string;
   role: string;
-  onMessage: (msg: CollabMessage) => void;
-  /** DB 轮询间隔（毫秒），默认 3000（仅降级路径使用） */
-  pollIntervalMs?: number;
+  onMessage: (msg: CollabMessageEnvelope) => void;
 }): Promise<CollabSubscription> {
-  const { pool, collabRunId, role, onMessage } = params;
-
-  // 优先使用全局 CollabBus（进程内 + Redis Streams）
   const bus = _globalInstance;
-  if (bus) {
-    return bus.subscribe(collabRunId, role, onMessage);
+  if (!bus) {
+    throw new Error("CollabBus global instance not initialized. Call getCollabBus(config) first.");
   }
-
-  // 降级：旧路径 — Redis Pub/Sub + DB 轮询
-  const pollMs = params.pollIntervalMs ?? 3000;
-  let stopped = false;
-  let subClient: any = null;
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let lastSeenAt = new Date().toISOString();
-
-  (async () => {
-    try {
-      const { default: Redis } = await import("ioredis");
-      const redisCfg = {
-        host: process.env.REDIS_HOST ?? "127.0.0.1",
-        port: Number(process.env.REDIS_PORT ?? 6379),
-        maxRetriesPerRequest: null as null,
-      };
-      subClient = new Redis(redisCfg);
-      const channels = [broadcastChannel(collabRunId), roleChannel(collabRunId, role)];
-      await subClient.subscribe(...channels);
-      subClient.on("message", (_ch: string, raw: string) => {
-        if (stopped) return;
-        try { onMessage(JSON.parse(raw)); } catch { /* ignore */ }
-      });
-    } catch { /* Redis 订阅失败，依赖 DB 轮询 */ }
-  })();
-
-  pollTimer = setInterval(async () => {
-    if (stopped) return;
-    try {
-      const res = await pool.query(
-        `SELECT from_role, kind, payload_digest, created_at FROM collab_envelopes
-         WHERE collab_run_id = $1::uuid AND (to_role = $2 OR broadcast = true)
-           AND created_at > $3
-         ORDER BY created_at ASC LIMIT 50`,
-        [collabRunId, role, lastSeenAt],
-      );
-      for (const r of res.rows) {
-        const row = r as Record<string, unknown>;
-        lastSeenAt = String(row.created_at);
-        try {
-          onMessage({
-            collabRunId, tenantId: "", fromAgent: "",
-            fromRole: String(row.from_role ?? ""),
-            toRole: role,
-            kind: String(row.kind ?? ""),
-            payload: (row.payload_digest ?? {}) as Record<string, unknown>,
-            timestamp: new Date(String(row.created_at)).getTime(),
-          });
-        } catch { /* skip */ }
-      }
-    } catch { /* DB poll failed */ }
-  }, pollMs);
-
-  return {
-    unsubscribe: async () => {
-      stopped = true;
-      if (pollTimer) clearInterval(pollTimer);
-      if (subClient) {
-        try { await subClient.quit(); } catch { /* ignore */ }
-      }
-    },
-  };
+  return bus.subscribe(params.collabRunId, params.role, params.onMessage);
 }
 
-// ── 工具函数（保持旧签名兼容） ──────────────────────────────
+// ── 工具函数 ────────────────────────────────────────────────
 
 /**
- * 将 AgentLoopResult 封装为 CollabMessage 并发布。
+ * 将 AgentLoopResult 封装为 CollabMessage 并发布（委托 publishCollabMessage）。
  */
 export async function publishAgentResult(params: {
   pool: Pool;
@@ -617,12 +511,12 @@ export async function publishAgentResult(params: {
     spaceId: params.spaceId,
     taskId: params.taskId,
     message: {
+      messageId: crypto.randomUUID(),
       collabRunId: params.collabRunId,
       tenantId: params.tenantId,
-      fromAgent: params.fromAgent,
       fromRole: params.fromRole,
       toRole: null,
-      kind: "agent.result",
+      messageType: "agent.result",
       payload: {
         ok: result.ok,
         endReason: result.endReason,
@@ -631,7 +525,10 @@ export async function publishAgentResult(params: {
         totalIterations: result.iterations ?? 0,
         runId,
       },
-      timestamp: Date.now(),
+      sentAt: new Date().toISOString(),
+      source: "api",
+      datacontenttype: "application/json",
+      version: "1.0.0",
       priority: "high",
     },
   });
@@ -655,14 +552,17 @@ export async function publishSharedStateUpdate(params: {
     pool,
     redis,
     message: {
+      messageId: crypto.randomUUID(),
       collabRunId,
       tenantId,
-      fromAgent: updatedByAgent,
       fromRole: updatedByRole,
       toRole: null,
-      kind: "shared_state.update",
+      messageType: "shared_state.update",
       payload: { key, version },
-      timestamp: Date.now(),
+      sentAt: new Date().toISOString(),
+      source: "api",
+      datacontenttype: "application/json",
+      version: "1.0.0",
       priority: "normal",
     },
   });

@@ -61,11 +61,9 @@ export type { CapabilityManifestEntry } from "./capabilityRegistry";
 
 // ── 模块 #4：任务执行引擎 ────────────────────────────────────
 export {
-  initTaskQueue, enqueueTask, dequeueTask, completeTask, cancelTask,
-  getQueueStatus, getTask, getPendingTasks,
   executeDeviceTool,
 } from "./taskExecutor";
-export type { TaskPriority, QueuedTask, TaskResult, TaskQueueConfig } from "./taskExecutor";
+export type { TaskPriority, QueuedTask, TaskResult, TaskQueueConfig } from "./session";
 
 // ── 模块 #5：会话管理与状态同步 ──────────────────────────────
 export {
@@ -73,8 +71,9 @@ export {
   createSession, getSession, getActiveSessionByType, getOrCreateSession,
   touchSession, closeSession, getActiveSessions, cleanupExpiredSessions,
   initSessionManager, shutdownSessionManager, getSessionManagerStatus,
+  ExecutionSession, getDefaultExecutionSession, resetDefaultExecutionSession,
 } from "./session";
-export type { SessionType, DeviceSession, HeartbeatConfig } from "./session";
+export type { SessionType, DeviceSession, HeartbeatConfig, SessionConfig } from "./session";
 
 // ── 模块 #6：审计与证据 ─────────────────────────────────────
 export {

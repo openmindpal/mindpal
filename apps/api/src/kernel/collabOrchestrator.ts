@@ -146,6 +146,7 @@ export async function runCollabOrchestrator(params: CollabOrchestratorParams): P
   }
 
   // 3. 按策略编排执行
+  let failoverApplied = false;
   try {
     switch (plan.strategy) {
       case "parallel":
@@ -159,19 +160,67 @@ export async function runCollabOrchestrator(params: CollabOrchestratorParams): P
         await executeSequential(agentStates, params, maxIterationsPerAgent);
         break;
     }
-  } catch (err: any) {
-    app.log.error({ err, taskId, collabRunId }, "[CollabOrchestrator] 协作执行异常");
-    await updateCollabRunStatus({ pool, tenantId: subject.tenantId, collabRunId, status: "failed" });
-    return {
-      ok: false,
-      endReason: "error",
-      agentResults: agentStates.map((s) => ({
-        agentId: s.agentId, role: s.role,
-        ok: s.status === "done", endReason: s.result?.endReason ?? s.status,
-        message: s.result?.message ?? "",
-      })),
-      message: `协作执行异常: ${err?.message ?? "unknown"}`,
-    };
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    app.log.warn({ err: errMsg, taskId, collabRunId, strategy: plan.strategy }, "[CollabOrchestrator] collab_failover: 协作执行异常，降级为单Agent执行");
+
+    // 保留已完成的部分结果
+    const completedResults = agentStates.filter((s) => s.status === "done");
+
+    // 选择表现评分最高的Agent作为降级执行者；若无已完成的则选第一个Agent
+    const primaryAgent = completedResults.length > 0
+      ? completedResults[0]!
+      : agentStates[0]!;
+
+    try {
+      const fallbackResult = await runSingleAgentFallback(params);
+      failoverApplied = true;
+
+      insertAuditEvent(pool, {
+        subjectId: subject.subjectId,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId,
+        resourceType: "memory",
+        action: "collab.failover",
+        inputDigest: {
+          collabRunId,
+          originalStrategy: plan.strategy,
+          failoverAgentId: primaryAgent.agentId,
+          error: errMsg.slice(0, 500),
+          completedAgentCount: completedResults.length,
+        },
+        outputDigest: { ok: fallbackResult.ok },
+        result: fallbackResult.ok ? "success" : "error",
+        traceId: traceId ?? "",
+      }).catch((e: unknown) => {
+        app.log.warn({ err: (e as Error)?.message, collabRunId }, "[CollabOrchestrator] failover audit event failed");
+      });
+
+      return {
+        ...fallbackResult,
+        metadata: {
+          ...fallbackResult.metadata,
+          failoverApplied: true,
+          failoverAgentId: primaryAgent.agentId,
+        },
+      };
+    } catch (fallbackErr: unknown) {
+      // 降级也失败，返回原始错误 + 降级失败信息
+      const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+      app.log.error({ err: fallbackMsg, taskId, collabRunId }, "[CollabOrchestrator] 降级单Agent执行也失败");
+      await updateCollabRunStatus({ pool, tenantId: subject.tenantId, collabRunId, status: "failed" });
+      return {
+        ok: false,
+        endReason: "error",
+        agentResults: agentStates.map((s) => ({
+          agentId: s.agentId, role: s.role,
+          ok: s.status === "done", endReason: s.result?.endReason ?? s.status,
+          message: s.result?.message ?? "",
+        })),
+        message: `协作执行异常: ${errMsg}；降级也失败: ${fallbackMsg}`,
+        metadata: { failoverApplied: true },
+      };
+    }
   }
 
   // 4. 汇总结果
@@ -274,5 +323,11 @@ export async function runCollabOrchestrator(params: CollabOrchestratorParams): P
     crossValidation: crossValidationResults,
     debate: debateResult,
     corrections: correctionResults,
+    metadata: {
+      ...(failoverApplied ? { failoverApplied: true } : {}),
+      ...((correctionResults as (typeof correctionResults) & { correctionExhausted?: boolean })?.correctionExhausted
+        ? { correctionExhausted: true }
+        : {}),
+    },
   };
 }

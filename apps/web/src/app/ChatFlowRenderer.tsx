@@ -22,7 +22,7 @@ import { FlowToolSuggestions } from "@/components/flow/FlowToolSuggestions";
 import { FlowTaskQueueEvent as FlowTaskQueueEventBlock } from "@/components/flow/FlowTaskQueueEvent";
 import { FlowNl2uiResult } from "@/components/flow/FlowNl2uiResult";
 import { FlowArtifactCard as FlowArtifactCardBlock } from "@/components/flow/FlowArtifactCard";
-import styles from "./page.module.css";
+import styles from "@/styles/page.module.css";
 
 export interface ChatFlowRendererProps {
   locale: string;

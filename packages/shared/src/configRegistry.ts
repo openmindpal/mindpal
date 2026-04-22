@@ -107,3 +107,9 @@ export function validateConfigValue(entry: ConfigEntry, raw: string | undefined)
   }
   return { valid: true };
 }
+
+/** 判断指定配置是否需要重启服务才能生效 */
+export function requiresRestart(envKey: string): boolean {
+  const entry = findConfigEntry(envKey);
+  return entry ? entry.level === "bootstrap" : false;
+}

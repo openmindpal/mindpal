@@ -8,8 +8,7 @@ import { IconChevronRight, IconCheck, IconX, IconRefresh } from "./ShellIcons";
 import { formatToolRefLocalized, formatErrorCategory, shortId, timeAgo, preloadToolNames } from "./shellUtils";
 import { useBottomPanel, type ActionStatus } from "./useBottomPanel";
 import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
-import shared from "./bottomTray.shared.module.css";
-import styles from "./PendingActionsQueue.module.css";
+import styles from "@/styles/shell.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
 
@@ -83,25 +82,25 @@ function ActionItem(props: {
     const { data } = item;
     const href = `/gov/approvals/${encodeURIComponent(data.approvalId)}?lang=${encodeURIComponent(locale)}`;
     return (
-      <div className={styles.actionItem}>
-        <span className={`${shared.statusDot} ${shared.statusDotOrange}`} />
-        <Link href={href} className={styles.actionContent}>
-          <span className={`${styles.actionLabel} ${shared.truncate}`}>
+      <div className={styles.paqActionItem}>
+        <span className={`${styles.statusDot} ${styles.statusDotOrange}`} />
+        <Link href={href} className={styles.paqActionContent}>
+          <span className={`${styles.actionLabel} ${styles.truncate}`}>
             {formatToolRefLocalized(data.toolRef, locale) || t(locale, "pendingActions.type.approval")}
           </span>
         </Link>
-        <span className={styles.actionTime}>{timeAgo(data.requestedAt, locale, "pendingActions")}</span>
+        <span className={styles.paqActionTime}>{timeAgo(data.requestedAt, locale, "pendingActions")}</span>
         {state === "done" ? (
-          <span className={`${shared.actionBadge} ${shared.actionBadgeSuccess}`}>
+          <span className={`${styles.actionBadge} ${styles.actionBadgeSuccess}`}>
             {t(locale, "pendingActions.done")}
           </span>
         ) : state === "error" ? (
           <span
-            className={`${shared.actionBadge} ${shared.actionBadgeError}`}
+            className={`${styles.actionBadge} ${styles.actionBadgeError}`}
             title={errorMsg || t(locale, "pendingActions.actionFailed")}
           >!</span>
         ) : (
-          <span className={styles.inlineActions}>
+          <span className={styles.paqInlineActions}>
             <button
               className={`${styles.inlineBtn} ${styles.inlineBtnApprove}`}
               disabled={state === "loading"}
@@ -129,25 +128,25 @@ function ActionItem(props: {
     const href = `/runs/${encodeURIComponent(data.runId)}?lang=${encodeURIComponent(locale)}`;
     const failedLabel = getFailedRunLabel(data, locale);
     return (
-      <div className={styles.actionItem}>
-        <span className={`${shared.statusDot} ${shared.statusDotRed}`} />
-        <Link href={href} className={styles.actionContent}>
-          <span className={`${styles.actionLabel} ${shared.truncate}`}>
+      <div className={styles.paqActionItem}>
+        <span className={`${styles.statusDot} ${styles.statusDotRed}`} />
+        <Link href={href} className={styles.paqActionContent}>
+          <span className={`${styles.actionLabel} ${styles.truncate}`}>
             {failedLabel}
           </span>
         </Link>
-        <span className={styles.actionTime}>{timeAgo(data.updatedAt, locale, "pendingActions")}</span>
+        <span className={styles.paqActionTime}>{timeAgo(data.updatedAt, locale, "pendingActions")}</span>
         {state === "done" ? (
-          <span className={`${shared.actionBadge} ${shared.actionBadgeSuccess}`}>
+          <span className={`${styles.actionBadge} ${styles.actionBadgeSuccess}`}>
             {t(locale, "pendingActions.retried")}
           </span>
         ) : state === "error" ? (
           <span
-            className={`${shared.actionBadge} ${shared.actionBadgeError}`}
+            className={`${styles.actionBadge} ${styles.actionBadgeError}`}
             title={errorMsg || t(locale, "pendingActions.actionFailed")}
           >!</span>
         ) : (
-          <span className={styles.inlineActions}>
+          <span className={styles.paqInlineActions}>
             <button
               className={`${styles.inlineBtn} ${styles.inlineBtnRetry}`}
               disabled={state === "loading"}
@@ -168,14 +167,14 @@ function ActionItem(props: {
     const dlLabel = formatToolRefLocalized(data.toolRef, locale);
     const errorHint = data.errorCategory ? ` (${formatErrorCategory(data.errorCategory, locale)})` : "";
     return (
-      <div className={styles.actionItem}>
-        <span className={`${shared.statusDot} ${shared.statusDotGray}`} />
-        <Link href={href} className={styles.actionContent}>
-          <span className={`${styles.actionLabel} ${shared.truncate}`}>
+      <div className={styles.paqActionItem}>
+        <span className={`${styles.statusDot} ${styles.statusDotGray}`} />
+        <Link href={href} className={styles.paqActionContent}>
+          <span className={`${styles.actionLabel} ${styles.truncate}`}>
             {dlLabel} #{data.attempt}{errorHint}
           </span>
         </Link>
-        <span className={styles.actionTime}>{timeAgo(data.deadletteredAt, locale, "pendingActions")}</span>
+        <span className={styles.paqActionTime}>{timeAgo(data.deadletteredAt, locale, "pendingActions")}</span>
         <Link href={href} className={styles.actionArrow}><IconChevronRight /></Link>
       </div>
     );
@@ -318,7 +317,7 @@ export default function PendingActionsQueue(props: {
   }
 
   return (
-    <div className={shared.panelWrap}>
+    <div className={styles.panelWrap}>
       {loading && <PanelLoading message={t(locale, "pendingActions.loading")} />}
 
       {!loading && error && (
@@ -330,7 +329,7 @@ export default function PendingActionsQueue(props: {
       )}
 
       {!loading && !error && items.length > 0 && (
-        <div className={styles.actionList}>
+        <div className={styles.paqActionList}>
           {displayItems.map((item, idx) => {
             const id = getItemId(item);
             return (

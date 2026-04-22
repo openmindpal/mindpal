@@ -36,16 +36,10 @@ import {
   cleanupCapture,
   ocrScreen,
   findTextInOcrResults,
-  clickMouse,
-  doubleClick,
-  typeText,
-  pressKey,
-  pressCombo,
-  moveMouse,
-  scroll,
   type OcrMatch,
   type ScreenCapture,
 } from "./localVision";
+import { executeNativeGuiAction, SCREEN_CHANGING_ACTIONS } from "../kernel/guiActionKernel";
 
 // ── 类型重导出（从 guiTypes.ts 统一导入） ─────────────────────────────
 
@@ -101,64 +95,15 @@ function hasError(r: { x: number; y: number } | { error: string }): r is { error
 }
 
 import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
+import { getOcrCacheService, type OcrCacheService } from "../kernel/ocrCacheService";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── GUI 步骤间延迟（毫秒），给 UI 渲染留出时间 ───────────────────
 const INTER_STEP_DELAY_MS = resolveDeviceAgentEnv().guiStepDelayMs;
 
-// ── OCR 坐标缓存（高频低风险任务快速通道）─────────────
-
-/** OCR 坐标缓存 TTL（毫秒） */
-const OCR_CACHE_TTL_MS = resolveDeviceAgentEnv().ocrCacheTtlMs;
-/** OCR 坐标缓存最大条目数 */
-const OCR_CACHE_MAX_ENTRIES = resolveDeviceAgentEnv().ocrCacheMax;
-
-interface CachedCoordinate {
-  x: number;
-  y: number;
-  cachedAt: number;
-  confidence: number;
-}
-
-/**
- * OCR 坐标缓存
- * 上一步 OCR 已定位的元素，在 TTL 内复用坐标（跳过截图+OCR）
- * 屏幕变化操作自动失效缓存
- */
-class OcrCoordinateCache {
-  private cache = new Map<string, CachedCoordinate>();
-
-  get(textKey: string): CachedCoordinate | null {
-    const entry = this.cache.get(textKey);
-    if (!entry) return null;
-    if (Date.now() - entry.cachedAt > OCR_CACHE_TTL_MS) {
-      this.cache.delete(textKey);
-      return null;
-    }
-    return entry;
-  }
-
-  set(textKey: string, coord: { x: number; y: number }, confidence = 1): void {
-    if (this.cache.size >= OCR_CACHE_MAX_ENTRIES) {
-      const oldestKey = this.cache.keys().next().value;
-      if (oldestKey !== undefined) this.cache.delete(oldestKey);
-    }
-    this.cache.set(textKey, { x: coord.x, y: coord.y, cachedAt: Date.now(), confidence });
-  }
-
-  invalidateAll(): void {
-    this.cache.clear();
-  }
-
-  get size(): number {
-    return this.cache.size;
-  }
-}
-
-const SCREEN_CHANGING_ACTIONS = new Set([
-  "click", "doubleClick", "type", "pressKey", "pressCombo", "scroll",
-]);
+// OCR 坐标缓存已统一到内核 ocrCacheService
+// SCREEN_CHANGING_ACTIONS 已统一到 guiActionKernel
 
 /**
  * 增强的目标解析（缓存优先）
@@ -167,7 +112,7 @@ const SCREEN_CHANGING_ACTIONS = new Set([
 async function resolveTargetWithCache(
   target: TargetSpec,
   ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null },
-  coordCache: OcrCoordinateCache,
+  coordCache: OcrCacheService,
 ): Promise<{ x: number; y: number; fromCache: boolean; source?: string } | { error: string }> {
   if (isTargetCoord(target)) return { x: target.x, y: target.y, fromCache: false, source: "coord" };
 
@@ -216,58 +161,49 @@ async function executeStep(
   ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null },
 ): Promise<{ status: "ok" | "failed"; detail?: any }> {
   switch (step.action) {
-    case "click": {
+    case "click":
+    case "doubleClick":
+    case "moveTo": {
       const pos = await resolveTarget(step.target, ocrCache);
       if (hasError(pos)) return { status: "failed", detail: pos.error };
-      await clickMouse(pos.x, pos.y, step.button ?? "left");
-      // 点击后界面会变化，清除 OCR 缓存
-      if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
-      return { status: "ok", detail: { x: pos.x, y: pos.y } };
-    }
-
-    case "doubleClick": {
-      const pos = await resolveTarget(step.target, ocrCache);
-      if (hasError(pos)) return { status: "failed", detail: pos.error };
-      await doubleClick(pos.x, pos.y);
-      if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
+      await executeNativeGuiAction(step.action, { x: pos.x, y: pos.y }, {
+        button: step.action === "click" ? (step.button ?? "left") : undefined,
+      });
+      // 屏幕变化操作后清除 OCR 缓存
+      if (step.action !== "moveTo" && ocrCache.capture) {
+        await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null;
+      }
       return { status: "ok", detail: { x: pos.x, y: pos.y } };
     }
 
     case "type": {
+      let target: { x: number; y: number } | undefined;
       if (step.target) {
         const pos = await resolveTarget(step.target, ocrCache);
         if (hasError(pos)) return { status: "failed", detail: pos.error };
-        await clickMouse(pos.x, pos.y);
-        await sleep(100);
+        target = pos;
       }
-      await typeText(step.text);
+      await executeNativeGuiAction("type", target, {
+        text: step.text,
+        typeClickDelayMs: 100,
+      });
       if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
       return { status: "ok", detail: { textLen: step.text.length } };
     }
 
-    case "pressKey": {
-      await pressKey(step.key);
-      if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
-      return { status: "ok", detail: { key: step.key } };
-    }
-
-    case "pressCombo": {
-      await pressCombo(step.keys);
-      if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
-      return { status: "ok", detail: { keys: step.keys } };
-    }
-
+    case "pressKey":
+    case "pressCombo":
     case "scroll": {
-      await scroll(step.direction, step.clicks ?? 3);
+      await executeNativeGuiAction(step.action, undefined, {
+        key: step.action === "pressKey" ? step.key : undefined,
+        keys: step.action === "pressCombo" ? step.keys : undefined,
+        direction: step.action === "scroll" ? step.direction : undefined,
+        clicks: step.action === "scroll" ? (step.clicks ?? 3) : undefined,
+      });
       if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
-      return { status: "ok" };
-    }
-
-    case "moveTo": {
-      const pos = await resolveTarget(step.target, ocrCache);
-      if (hasError(pos)) return { status: "failed", detail: pos.error };
-      await moveMouse(pos.x, pos.y);
-      return { status: "ok", detail: { x: pos.x, y: pos.y } };
+      return step.action === "scroll"
+        ? { status: "ok" }
+        : { status: "ok", detail: step.action === "pressKey" ? { key: step.key } : { keys: step.keys } };
     }
 
     case "wait": {
@@ -336,7 +272,7 @@ async function execRunPlan(ctx: ToolExecutionContext): Promise<ToolExecutionResu
 
   const stepResults: StepResult[] = [];
   const ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null } = { capture: null, results: null };
-  const coordCache = new OcrCoordinateCache();
+  const coordCache = getOcrCacheService();
 
   let allOk = true;
   let cacheHits = 0;
@@ -443,39 +379,35 @@ async function execRunPlan(ctx: ToolExecutionContext): Promise<ToolExecutionResu
 async function executeStepWithCache(
   step: PlanStep,
   ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null },
-  coordCache: OcrCoordinateCache,
+  coordCache: OcrCacheService,
 ): Promise<{ status: "ok" | "failed"; detail?: any }> {
   switch (step.action) {
-    case "click": {
-      const pos = await resolveTargetWithCache(step.target, ocrCache, coordCache);
-      if (hasErrorV2(pos)) return { status: "failed", detail: pos.error };
-      await clickMouse(pos.x, pos.y, step.button ?? "left");
-      if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
-      return { status: "ok", detail: { x: pos.x, y: pos.y, fromCache: pos.fromCache } };
-    }
-    case "doubleClick": {
-      const pos = await resolveTargetWithCache(step.target, ocrCache, coordCache);
-      if (hasErrorV2(pos)) return { status: "failed", detail: pos.error };
-      await doubleClick(pos.x, pos.y);
-      if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
-      return { status: "ok", detail: { x: pos.x, y: pos.y, fromCache: pos.fromCache } };
-    }
-    case "type": {
-      if (step.target) {
-        const pos = await resolveTargetWithCache(step.target, ocrCache, coordCache);
-        if (hasErrorV2(pos)) return { status: "failed", detail: pos.error };
-        await clickMouse(pos.x, pos.y);
-        await sleep(100);
-      }
-      await typeText(step.text);
-      if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
-      return { status: "ok", detail: { textLen: step.text.length } };
-    }
+    case "click":
+    case "doubleClick":
     case "moveTo": {
       const pos = await resolveTargetWithCache(step.target, ocrCache, coordCache);
       if (hasErrorV2(pos)) return { status: "failed", detail: pos.error };
-      await moveMouse(pos.x, pos.y);
+      await executeNativeGuiAction(step.action, { x: pos.x, y: pos.y }, {
+        button: step.action === "click" ? (step.button ?? "left") : undefined,
+      });
+      if (step.action !== "moveTo" && ocrCache.capture) {
+        await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null;
+      }
       return { status: "ok", detail: { x: pos.x, y: pos.y, fromCache: pos.fromCache } };
+    }
+    case "type": {
+      let target: { x: number; y: number; fromCache: boolean } | undefined;
+      if (step.target) {
+        const pos = await resolveTargetWithCache(step.target, ocrCache, coordCache);
+        if (hasErrorV2(pos)) return { status: "failed", detail: pos.error };
+        target = pos;
+      }
+      await executeNativeGuiAction("type", target, {
+        text: step.text,
+        typeClickDelayMs: 100,
+      });
+      if (ocrCache.capture) { await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null; }
+      return { status: "ok", detail: { textLen: step.text.length } };
     }
     default:
       // 非目标类动作回退到原始引擎
@@ -491,7 +423,7 @@ async function batchPreResolveTargets(
   plan: PlanStep[],
   maxSteps: number,
   ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null },
-  coordCache: OcrCoordinateCache,
+  coordCache: OcrCacheService,
 ): Promise<void> {
   // 收集前 N 步中的文字目标（仅在第一个屏幕变化动作之前）
   const textTargets: string[] = [];
@@ -534,7 +466,7 @@ async function execFindAndClick(ctx: ToolExecutionContext): Promise<ToolExecutio
     const results = await ocrScreen(capture);
     const match = findTextInOcrResults(results, text, { fuzzy: true });
     if (!match) return { status: "failed", errorCategory: "element_not_found", outputDigest: { text, ocrCount: results.length } };
-    await clickMouse(match.x, match.y, ctx.input.button ?? "left");
+    await executeNativeGuiAction("click", { x: match.x, y: match.y }, { button: ctx.input.button ?? "left" });
     return { status: "succeeded", outputDigest: { text, x: match.x, y: match.y, confidence: match.confidence } };
   } finally {
     await cleanupCapture(capture);
@@ -555,10 +487,10 @@ async function execFindAndType(ctx: ToolExecutionContext): Promise<ToolExecution
       const results = await ocrScreen(capture);
       const match = findTextInOcrResults(results, target, { fuzzy: true });
       if (!match) return { status: "failed", errorCategory: "element_not_found", outputDigest: { target, ocrCount: results.length } };
-      await clickMouse(match.x, match.y);
+      await executeNativeGuiAction("click", { x: match.x, y: match.y });
       await sleep(100);
     }
-    await typeText(text);
+    await executeNativeGuiAction("type", undefined, { text });
     return { status: "succeeded", outputDigest: { target, textLen: text.length } };
   } finally {
     await cleanupCapture(capture);

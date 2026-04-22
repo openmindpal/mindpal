@@ -8,8 +8,7 @@ import { IconBell, IconShield, IconAlert, IconCheckLg, IconInfo, IconRefresh, Ic
 import { formatErrorCategory } from "./shellUtils";
 import { useBottomPanel } from "./useBottomPanel";
 import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
-import shared from "./bottomTray.shared.module.css";
-import styles from "./NotificationPanel.module.css";
+import styles from "@/styles/shell.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────────────── */
 
@@ -159,14 +158,14 @@ export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: s
   return (
     <div className={styles.notificationPanel}>
       {/* Header */}
-      <div className={styles.header}>
-        <div className={styles.headerLeft}>
-          <span className={styles.title}>{t(locale, "notification.title")}</span>
+      <div className={styles.npHeader}>
+        <div className={styles.npHeaderLeft}>
+          <span className={styles.npTitle}>{t(locale, "notification.title")}</span>
           {unreadCount > 0 && (
             <span className={styles.unreadBadge}>{unreadCount}</span>
           )}
         </div>
-        <div className={styles.headerActions}>
+        <div className={styles.npHeaderActions}>
           <select
             className={styles.filterSelect}
             value={filter}
@@ -180,14 +179,14 @@ export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: s
               <IconCheckAll /> {t(locale, "notification.markAllRead")}
             </button>
           )}
-          <button className={styles.refreshBtn} onClick={reload} disabled={loading}>
+          <button className={styles.npRefreshBtn} onClick={reload} disabled={loading}>
             <IconRefresh />
           </button>
         </div>
       </div>
 
       {/* Content */}
-      <div className={styles.content}>
+      <div className={styles.npContent}>
         {loading && notifications.length === 0 ? (
           <PanelLoading message={t(locale, "common.loading")} />
         ) : error ? (
@@ -207,8 +206,8 @@ export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: s
                 </div>
                 <div className={styles.notificationContent}>
                   <div className={styles.notificationHeader}>
-                    <span className={`${styles.notificationTitle} ${shared.truncate}`}>{notification.title}</span>
-                    <span className={`${styles.notificationTime} ${shared.monoText}`}>{formatTimeAgo(notification.createdAt)}</span>
+                    <span className={`${styles.notificationTitle} ${styles.truncate}`}>{notification.title}</span>
+                    <span className={`${styles.notificationTime} ${styles.monoText}`}>{formatTimeAgo(notification.createdAt)}</span>
                   </div>
                   <div className={styles.notificationMessage}>{notification.message}</div>
                   {notification.url && (

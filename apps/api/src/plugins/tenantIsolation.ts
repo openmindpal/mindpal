@@ -17,7 +17,7 @@ const DEFAULT_HARD_LIMIT = 100; // 单租户并发查询硬上限
 const RETRY_AFTER_SEC = 5; // 429 建议重试间隔
 
 // 运行时计数器
-const tenantConcurrency = new Map<string, number>();
+export const tenantConcurrency = new Map<string, number>();
 
 /** 获取当前租户并发统计（用于健康检查/诊断） */
 export function getTenantConcurrencySnapshot(): Array<{ tenantId: string; concurrent: number }> {
@@ -29,7 +29,7 @@ export function getTenantConcurrencySnapshot(): Array<{ tenantId: string; concur
 }
 
 /** 递减租户并发计数器（确保不会小于 0） */
-function decrementTenantCounter(tenantId: string): void {
+export function decrementTenantCounter(tenantId: string): void {
   const current = Math.max(0, (tenantConcurrency.get(tenantId) ?? 0) - 1);
   if (current === 0) {
     tenantConcurrency.delete(tenantId);

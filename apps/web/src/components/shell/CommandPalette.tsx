@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { t } from "@/lib/i18n";
-import styles from "./CommandPalette.module.css";
+import styles from "@/styles/shell.module.css";
 
 export type CommandItem = {
   id: string;
@@ -159,7 +159,7 @@ export function CommandPalette(props: {
                   return (
                     <div
                       key={item.id}
-                      className={styles.item}
+                      className={styles.cpItem}
                       data-active={idx === activeIdx ? "true" : undefined}
                       onClick={() => navigate(item)}
                       onMouseEnter={() => setActiveIdx(idx)}
@@ -173,7 +173,7 @@ export function CommandPalette(props: {
           })()}
         </div>
 
-        <div className={styles.footer}>
+        <div className={styles.cpFooter}>
           <span className={styles.kbd}>↑↓</span> {t(props.locale, "cmdPalette.footer.navigate")}
           <span className={styles.kbd}>↵</span> {t(props.locale, "cmdPalette.footer.open")}
           <span className={styles.kbd}>Esc</span> {t(props.locale, "cmdPalette.footer.close")}

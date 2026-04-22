@@ -21,6 +21,7 @@ import type { CheckpointData } from "./taskQueueRepo";
 import { AppError } from "../lib/errors";
 import { type TaskDependencyResolver } from "./taskDependencyResolver";
 import { type SessionScheduler, type SessionConcurrencyConfig } from "./sessionScheduler";
+import type { CheckpointService } from "./loopCheckpoint";
 import { StructuredLogger } from "@openslin/shared";
 import {
   cascadeCancel as _cascadeCancel,
@@ -68,6 +69,103 @@ export interface CheckpointRedisClient {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ...args: unknown[]): Promise<unknown>;
   del(key: string | string[]): Promise<number>;
+}
+
+/* ================================================================== */
+/*  TaskCheckpointService — 任务级检查点 CheckpointService 实现           */
+/* ================================================================== */
+
+/**
+ * 任务级检查点数据（存储于 task_checkpoints 表 + session_task_queue.checkpoint_ref）。
+ * 底层存储方式不变，仅统一访问接口。
+ */
+export interface TaskCheckpointData {
+  currentStep: number;
+  intermediateResults: Record<string, unknown>[];
+  context: Record<string, unknown>;
+  savedAt: string;
+}
+
+/**
+ * 任务级检查点服务 — 实现通用 CheckpointService<TaskCheckpointData> 接口。
+ * 底层存储仍然是 task_checkpoints 表 + Redis 缓存，保持现有行为。
+ * 心跳 / 锁为空操作（任务检查点不需要独立心跳和恢复锁）。
+ */
+export class TaskCheckpointService implements CheckpointService<TaskCheckpointData> {
+  private pool: Pool;
+  private redis: CheckpointRedisClient | null;
+  private tenantId: string;
+  private static readonly CHECKPOINT_TTL_SEC = 86400;
+
+  constructor(pool: Pool, tenantId: string, redis?: CheckpointRedisClient | null) {
+    this.pool = pool;
+    this.tenantId = tenantId;
+    this.redis = redis ?? null;
+  }
+
+  async write(id: string, data: TaskCheckpointData): Promise<void> {
+    const checkpointRef = `checkpoint:${id}:${Date.now()}`;
+    const fullData: repo.CheckpointData = {
+      currentStep: data.currentStep,
+      intermediateResults: data.intermediateResults,
+      context: data.context,
+      savedAt: data.savedAt,
+    };
+    const serialized = JSON.stringify(fullData);
+
+    await repo.upsertCheckpoint(this.pool, id, fullData, checkpointRef, this.tenantId);
+
+    if (this.redis) {
+      try {
+        await this.redis.set(
+          `checkpoint:${id}`,
+          serialized,
+          "EX",
+          TaskCheckpointService.CHECKPOINT_TTL_SEC,
+        );
+      } catch {
+        log("warn", `TaskCheckpointService: Redis cache write failed`, { entryId: id });
+      }
+    }
+  }
+
+  async load(id: string): Promise<TaskCheckpointData | null> {
+    // 优先从 Redis 加载
+    if (this.redis) {
+      try {
+        const cached = await this.redis.get(`checkpoint:${id}`);
+        if (cached) {
+          return JSON.parse(cached) as TaskCheckpointData;
+        }
+      } catch {
+        log("warn", `TaskCheckpointService: Redis read failed, falling back to DB`, { entryId: id });
+      }
+    }
+    // 回退到 DB
+    const dbData = await repo.loadCheckpoint(this.pool, id);
+    if (!dbData) return null;
+    return {
+      currentStep: dbData.currentStep,
+      intermediateResults: dbData.intermediateResults,
+      context: dbData.context,
+      savedAt: dbData.savedAt,
+    };
+  }
+
+  /** 任务检查点不需要独立心跳 — 空操作 */
+  startHeartbeat(_id: string, _intervalMs?: number): void {
+    // no-op for task-level checkpoints
+  }
+
+  /** 任务检查点不需要独立心跳 — 空操作 */
+  stopHeartbeat(_id: string): void {
+    // no-op for task-level checkpoints
+  }
+
+  /** 任务检查点不需要恢复锁 — 始终返回 true */
+  async acquireLock(_id: string): Promise<boolean> {
+    return true;
+  }
 }
 
 /* ================================================================== */
@@ -628,45 +726,39 @@ export class TaskQueueManager {
 
   /* ── 检查点 ────────────────────────────────────────────────── */
 
+  /** 任务级检查点服务实例（懒初始化） */
+  private _taskCheckpointSvc: TaskCheckpointService | null = null;
+
+  /** 获取或创建 TaskCheckpointService 实例 */
+  private getTaskCheckpointService(tenantId: string): TaskCheckpointService {
+    if (!this._taskCheckpointSvc || (this._taskCheckpointSvc as TaskCheckpointService)["tenantId"] !== tenantId) {
+      this._taskCheckpointSvc = new TaskCheckpointService(this.pool, tenantId, this.redis);
+    }
+    return this._taskCheckpointSvc;
+  }
+
   /** 检查点 TTL（24 小时） */
   private static readonly CHECKPOINT_TTL_SEC = 86400;
 
   /**
    * 保存任务检查点。
-   * 将当前任务执行状态（当前步骤、中间结果、上下文）序列化为 JSON，
-   * 写入 task_checkpoints 表 + session_task_queue.checkpoint_ref，
-   * 同时在 Redis 中缓存（TTL 24h）。
+   * 委托给 TaskCheckpointService 统一接口处理。
    *
    * 在任务执行关键节点（如每个 step 完成后）调用。
    */
   async saveCheckpoint(entryId: string, checkpointData: Omit<repo.CheckpointData, "savedAt">, tenantId: string): Promise<void> {
     const now = new Date().toISOString();
-    const fullData: repo.CheckpointData = { ...checkpointData, savedAt: now };
-    const checkpointRef = `checkpoint:${entryId}:${Date.now()}`;
+    const data: TaskCheckpointData = {
+      currentStep: checkpointData.currentStep,
+      intermediateResults: checkpointData.intermediateResults,
+      context: checkpointData.context,
+      savedAt: now,
+    };
 
     try {
-      // 安全序列化校验：确保无循环引用
-      const serialized = JSON.stringify(fullData);
-
-      // 1. 写入 DB（task_checkpoints + session_task_queue.checkpoint_ref）
-      await repo.upsertCheckpoint(this.pool, entryId, fullData, checkpointRef, tenantId);
-
-      // 2. 写入 Redis 缓存（加速恢复读取）
-      if (this.redis) {
-        try {
-          await this.redis.set(
-            this.checkpointRedisKey(entryId),
-            serialized,
-            "EX",
-            TaskQueueManager.CHECKPOINT_TTL_SEC,
-          );
-        } catch (redisErr) {
-          // Redis 写入失败不影响主流程，DB 已持久化
-          log("warn", `Checkpoint Redis cache write failed`, { entryId, error: String(redisErr) });
-        }
-      }
-
-      log("info", `Checkpoint saved`, { entryId, checkpointRef, step: fullData.currentStep });
+      const svc = this.getTaskCheckpointService(tenantId);
+      await svc.write(entryId, data);
+      log("info", `Checkpoint saved`, { entryId, step: data.currentStep });
     } catch (err) {
       log("error", `Failed to save checkpoint`, { entryId, error: String(err) });
       throw new AppError({
@@ -680,41 +772,32 @@ export class TaskQueueManager {
 
   /**
    * 从检查点恢复任务执行状态。
-   * 优先从 Redis 读取（快），回退到 DB（慢）。
+   * 委托给 TaskCheckpointService 统一接口处理。
    * 返回 null 表示无检查点或数据损坏。
    */
   async restoreFromCheckpoint(entryId: string): Promise<repo.CheckpointData | null> {
     try {
-      // 1. 先检查 checkpoint_ref 是否存在
+      // 先检查 checkpoint_ref 是否存在
       const entry = await repo.getEntry(this.pool, entryId);
       if (!entry?.checkpointRef) {
         log("info", `No checkpoint_ref for entry`, { entryId });
         return null;
       }
 
-      // 2. 优先从 Redis 加载
-      if (this.redis) {
-        try {
-          const cached = await this.redis.get(this.checkpointRedisKey(entryId));
-          if (cached) {
-            const parsed = JSON.parse(cached) as repo.CheckpointData;
-            log("info", `Checkpoint restored from Redis`, { entryId, step: parsed.currentStep });
-            return parsed;
-          }
-        } catch (redisErr) {
-          log("warn", `Redis checkpoint read failed, falling back to DB`, { entryId, error: String(redisErr) });
-        }
-      }
-
-      // 3. 回退到 DB
-      const dbData = await repo.loadCheckpoint(this.pool, entryId);
-      if (!dbData) {
+      const svc = this.getTaskCheckpointService(entry.tenantId);
+      const data = await svc.load(entryId);
+      if (!data) {
         log("warn", `checkpoint_ref exists but no checkpoint data found`, { entryId, checkpointRef: entry.checkpointRef });
         return null;
       }
 
-      log("info", `Checkpoint restored from DB`, { entryId, step: dbData.currentStep });
-      return dbData;
+      log("info", `Checkpoint restored`, { entryId, step: data.currentStep });
+      return {
+        currentStep: data.currentStep,
+        intermediateResults: data.intermediateResults,
+        context: data.context,
+        savedAt: data.savedAt,
+      };
     } catch (err) {
       // 检查点数据损坏，返回 null 触发降级到重新排队
       log("error", `Checkpoint restore failed (data may be corrupted)`, { entryId, error: String(err) });
@@ -739,6 +822,61 @@ export class TaskQueueManager {
   /** 暴露 pool 给 Supervisor（启动恢复用） */
   getPool(): Pool {
     return this.pool;
+  }
+
+  /** 获取关联的 SessionScheduler（跨会话调度用） */
+  getSessionScheduler(): SessionScheduler | null {
+    return this.scheduler;
+  }
+
+  /* ── Manager-Executor 分离：纯选择接口 ─────────────────── */
+
+  /**
+   * 仅选择下一个应该执行的任务（不触发执行）。
+   * Manager 职责：检查并发限制 → 检查依赖 → 选择任务 → 返回。
+   * 实际执行由调用方决定。
+   *
+   * 与 tryScheduleNext 的区别：
+   * - tryScheduleNext 选择+执行（向后兼容，行为不变）
+   * - selectNextTask 仅选择，返回候选任务
+   */
+  async selectNextTask(tenantId: string, sessionId: string): Promise<{
+    decision: ScheduleDecision;
+    candidate: TaskQueueEntry | null;
+    preemptTarget: TaskQueueEntry | null;
+  }> {
+    if (this.scheduler) {
+      return this.scheduler.decideNext(
+        tenantId, sessionId, this.schedulerConfig ?? undefined,
+      );
+    }
+
+    // 回退：原始逻辑
+    const schedulable = await repo.listSchedulable(this.pool, tenantId, sessionId);
+    if (schedulable.length === 0) {
+      return {
+        decision: { immediate: false, reason: "no_schedulable_tasks" },
+        candidate: null,
+        preemptTarget: null,
+      };
+    }
+
+    for (const candidate of schedulable) {
+      const depsReady = await repo.areAllDepsResolved(this.pool, candidate.entryId);
+      if (depsReady) {
+        return {
+          decision: { immediate: true, reason: "slot_available" },
+          candidate,
+          preemptTarget: null,
+        };
+      }
+    }
+
+    return {
+      decision: { immediate: false, reason: "all_tasks_blocked_by_dependencies" },
+      candidate: null,
+      preemptTarget: null,
+    };
   }
 
   /* ── 内部工具 ────────────────────────────────────────────── */
@@ -766,4 +904,49 @@ export class TaskQueueManager {
 /** 创建 TaskQueueManager 实例 */
 export function createTaskQueueManager(pool: Pool): TaskQueueManager {
   return new TaskQueueManager(pool);
+}
+
+/* ================================================================== */
+/*  跨会话优先级比较                                                      */
+/* ================================================================== */
+
+/**
+ * 跨会话候选任务描述。
+ * 由各会话的 selectNextTask 返回后汇总而来。
+ */
+export interface CrossSessionCandidate {
+  sessionId: string;
+  tenantId: string;
+  entry: TaskQueueEntry;
+  /** 考虑 globalPriorityBoost 后的有效优先级 */
+  effectivePriority: number;
+}
+
+/**
+ * 跨会话优先级比较 — 当多个会话都有待执行任务时，
+ * 比较各会话候选任务的有效优先级（考虑 globalPriorityBoost），
+ * 选出全局优先级最高的任务。
+ *
+ * @param candidates 各会话的候选任务列表
+ * @returns 全局优先级最高的候选（null 表示无候选）
+ */
+export function compareAcrossSessions(
+  candidates: CrossSessionCandidate[],
+): CrossSessionCandidate | null {
+  if (candidates.length === 0) return null;
+
+  let best = candidates[0];
+  for (let i = 1; i < candidates.length; i++) {
+    const c = candidates[i];
+    // 有效优先级数值越低 = 优先级越高
+    if (c.effectivePriority < best.effectivePriority) {
+      best = c;
+    } else if (c.effectivePriority === best.effectivePriority) {
+      // 同优先级按入队时间（position）FIFO
+      if (c.entry.position < best.entry.position) {
+        best = c;
+      }
+    }
+  }
+  return best;
 }

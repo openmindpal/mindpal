@@ -9,7 +9,7 @@ import { type Nl2UiConfig } from "@/components/nl2ui/DynamicBlockRenderer";
 import {
   IconClose, IconExternal, IconChevronLeft, IconPage, IconPin, IconDragHandle,
 } from "./HomeIcons";
-import styles from "./page.module.css";
+import styles from "@/styles/page.module.css";
 
 const DynamicBlockRenderer = lazy(() => import("@/components/nl2ui/DynamicBlockRenderer"));
 

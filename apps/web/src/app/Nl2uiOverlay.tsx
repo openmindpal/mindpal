@@ -6,7 +6,7 @@ import { t } from "@/lib/i18n";
 import { type Nl2UiConfig } from "@/components/nl2ui/DynamicBlockRenderer";
 import type { FlowNl2UiResult } from "./homeHelpers";
 import { IconMinimize } from "./HomeIcons";
-import styles from "./page.module.css";
+import styles from "@/styles/page.module.css";
 
 const DynamicBlockRenderer = lazy(() => import("@/components/nl2ui/DynamicBlockRenderer"));
 

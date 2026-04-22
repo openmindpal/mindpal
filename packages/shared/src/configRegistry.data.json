@@ -93,6 +93,9 @@
 
   { "envKey": "MAX_CONCURRENT_AGENT_LOOPS", "level": "runtime", "valueType": "number", "defaultValue": "100", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "全局最大并发 Agent Loop 数量" },
   { "envKey": "AGENT_LOOP_STARVATION_THRESHOLD_MS", "level": "runtime", "valueType": "number", "defaultValue": "120000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent Loop 低优先级饥饿检测阈值（毫秒）" },
+  { "envKey": "SCHEDULER_STARVATION_THRESHOLD_MS", "level": "runtime", "valueType": "number", "defaultValue": "120000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "调度器饥饿检测时间阈值（毫秒）" },
+  { "envKey": "SCHEDULER_STARVATION_BOOST", "level": "runtime", "valueType": "number", "defaultValue": "2", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "饥饿检测触发时的优先级提升增量" },
+  { "envKey": "INTENT_DRIFT_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.6", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "意图漂移检测阈值 (0-1，越低越严格)" },
 
   { "envKey": "CACHE_TOOL_DISCOVERY_TTL_MS", "level": "runtime", "valueType": "number", "defaultValue": "30000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent Loop 工具发现缓存 TTL（毫秒）" },
   { "envKey": "CACHE_MEMORY_RECALL_TTL_MS", "level": "runtime", "valueType": "number", "defaultValue": "60000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent Loop 记忆召回缓存 TTL（毫秒）" },
@@ -189,5 +192,27 @@
   { "envKey": "DOCUMENT_PARSER_MAX_TEXT_LENGTH", "level": "runtime", "valueType": "number", "defaultValue": "0", "scopes": ["api", "worker"], "sensitive": false, "runtimeMutable": true, "description": "Document parser max text length (0 = unlimited)" },
   { "envKey": "DOCUMENT_PARSER_OCR_FALLBACK", "level": "runtime", "valueType": "boolean", "defaultValue": "false", "scopes": ["api", "worker"], "sensitive": false, "runtimeMutable": true, "description": "Enable OCR fallback for document parsing" },
   { "envKey": "DOCUMENT_PARSER_OCR_ENDPOINT", "level": "runtime", "valueType": "string", "defaultValue": "", "scopes": ["api", "worker"], "sensitive": false, "runtimeMutable": true, "description": "OCR service endpoint for document parsing" },
-  { "envKey": "DOCUMENT_PARSER_TIMEOUT_MS", "level": "runtime", "valueType": "number", "defaultValue": "0", "scopes": ["api", "worker"], "sensitive": false, "runtimeMutable": true, "description": "Document parser timeout (ms, 0 = no timeout)" }
+  { "envKey": "DOCUMENT_PARSER_TIMEOUT_MS", "level": "runtime", "valueType": "number", "defaultValue": "0", "scopes": ["api", "worker"], "sensitive": false, "runtimeMutable": true, "description": "Document parser timeout (ms, 0 = no timeout)" },
+
+  { "envKey": "AGENT_LOOP_PARALLEL_LLM", "level": "runtime", "valueType": "boolean", "defaultValue": "false", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "是否启用并行 LLM 调用" },
+  { "envKey": "AGENT_LOOP_VERIFIER", "level": "runtime", "valueType": "boolean", "defaultValue": "true", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "是否启用验证代理" },
+  { "envKey": "AGENT_LOOP_MAX_TOKENS", "level": "runtime", "valueType": "number", "defaultValue": "0", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent 循环最大 token 数（0 表示不限制）" },
+  { "envKey": "AGENT_LOOP_MAX_COST", "level": "runtime", "valueType": "number", "defaultValue": "0", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent 循环最大成本（0 表示不限制）" },
+  { "envKey": "AGENT_LOOP_MAX_TOOL_EXECUTIONS", "level": "runtime", "valueType": "number", "defaultValue": "0", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent 循环最大工具执行次数（0 表示不限制）" },
+  { "envKey": "AGENT_LOOP_COST_CURRENCY", "level": "runtime", "valueType": "string", "defaultValue": "USD", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "成本计算币种" },
+
+  { "envKey": "COLLAB_CONFIDENCE_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.7", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "辩论收敛最低置信度" },
+  { "envKey": "COLLAB_CONSENSUS_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.6", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "共识度收敛阈值" },
+  { "envKey": "COLLAB_DIVERGENCE_CONF_DIFF", "level": "runtime", "valueType": "number", "defaultValue": "0.15", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "分歧检测置信度差上限" },
+  { "envKey": "COLLAB_DIVERGENCE_MIN_CONF", "level": "runtime", "valueType": "number", "defaultValue": "0.8", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "双方收敛最低置信度" },
+  { "envKey": "COLLAB_PENALTY_SEVERE", "level": "runtime", "valueType": "number", "defaultValue": "0.06", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "事实错误/幻觉惩罚系数" },
+  { "envKey": "COLLAB_PENALTY_MILD", "level": "runtime", "valueType": "number", "defaultValue": "0.03", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "其他错误类型惩罚系数" },
+  { "envKey": "COLLAB_BUS_MAX_IN_FLIGHT", "level": "runtime", "valueType": "number", "defaultValue": "100", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "背压最大并发消息数" },
+  { "envKey": "COLLAB_BUS_RESUME_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.7", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "背压恢复消费阈值" },
+  { "envKey": "COLLAB_BUS_POLL_MS", "level": "runtime", "valueType": "number", "defaultValue": "20", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Redis Stream 轮询间隔(ms)" },
+  { "envKey": "COLLAB_AUTO_DEBATE_MAX_ROUNDS", "level": "runtime", "valueType": "number", "defaultValue": "3", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "自动辩论最大轮次" },
+  { "envKey": "COLLAB_AUTO_DEBATE_MAX_PARTIES", "level": "runtime", "valueType": "number", "defaultValue": "6", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "自动辩论最大参与方" },
+  { "envKey": "COLLAB_CORRECTION_FEEDBACK_MAX_LEN", "level": "runtime", "valueType": "number", "defaultValue": "800", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "纠错建议截断长度" },
+  { "envKey": "COLLAB_CORRECTION_PREV_OUTPUT_MAX_LEN", "level": "runtime", "valueType": "number", "defaultValue": "500", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "上一轮输出截断长度" },
+  { "envKey": "COLLAB_ENVELOPE_OBSERVATION_LIMIT", "level": "runtime", "valueType": "number", "defaultValue": "5", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Envelope 包含的前述结果数" }
 ]

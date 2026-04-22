@@ -1,28 +1,38 @@
 {
   "identity": { "name": "example.rust", "version": "0.1.0" },
-  "runtime": "rust",
-  "entry": "dist/skill",
-  "description": "Rust Skill开发模板 — 实现JSON-RPC over stdio协议",
-  "io": {
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "message": { "type": "string", "description": "输入消息" }
-      },
-      "required": ["message"]
-    },
-    "outputSchema": {
-      "type": "object",
-      "properties": {
-        "reply": { "type": "string", "description": "处理后的回复" }
-      }
-    }
+  "displayName": {
+    "zh-CN": "Rust Skill 开发模板",
+    "en-US": "Rust Skill Template"
   },
+  "description": {
+    "zh-CN": "Rust Skill 开发模板，实现 JSON-RPC over stdio 协议",
+    "en-US": "Rust Skill development template implementing JSON-RPC over stdio protocol"
+  },
+  "category": "testing",
+  "priority": 1,
+  "tags": ["template", "rust", "example"],
+  "dependencies": [],
+  "runtime": "rust",
   "contract": {
     "scope": "read",
     "resourceType": "tool",
     "action": "execute",
+    "idempotencyRequired": false,
     "riskLevel": "low",
     "approvalRequired": false
-  }
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "message": { "type": "string", "required": true, "description": "输入消息" }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "reply": { "type": "string", "required": true, "description": "处理后的回复" }
+      }
+    }
+  },
+  "engines": { "rust": ">=1.70.0" },
+  "entry": "dist/skill"
 }

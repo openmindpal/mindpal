@@ -4,10 +4,13 @@
  * 统一任务状态机：pending → claimed → running → succeeded → failed → canceled → timed_out
  * 统一主链路：registerCapability → policyCheck → claim → execute → result → audit/evidence → replay
  *
+ * 任务队列逻辑已统一到 ExecutionSession（session.ts），
+ * 本文件仅保留 executeDeviceTool 业务逻辑。
+ *
  * @layer kernel
  */
-import type { TaskState, ToolExecutionContext, ToolExecutionResult, DeviceClaimEnvelope } from "./types";
-import { isValidTransition, isTerminalState, toolName } from "./types";
+import type { ToolExecutionContext, ToolExecutionResult, DeviceClaimEnvelope } from "./types";
+import { toolName } from "./types";
 import { findPluginForTool, getToolRiskLevel, registerPlugin } from "./capabilityRegistry";
 import { isCallerAllowed, isToolAllowed, getOrCreateContext, extractCallerFromRequest } from "./auth";
 import { resolveToolAlias } from "./capabilityRegistry";
@@ -16,121 +19,10 @@ import { auditToolStart, auditToolSuccess, auditToolFailed, auditToolDenied } fr
 import { sha256_8, safeError, safeLog } from "../log";
 import { isToolLocallyDisabled } from "../tray";
 import builtinToolPlugin from "../plugins/builtinToolPlugin";
+import { getDefaultExecutionSession } from "./session";
 
 // ══════════════════════════════════════════════════════════════
-// 第一部分：任务状态机与队列
-// ══════════════════════════════════════════════════════════════
-
-export type TaskPriority = "urgent" | "high" | "normal" | "low";
-const PRIORITY_WEIGHT: Record<TaskPriority, number> = { urgent: 1000, high: 100, normal: 10, low: 1 };
-
-export interface QueuedTask {
-  taskId: string;
-  deviceExecutionId: string;
-  toolRef: string;
-  input?: any;
-  priority: TaskPriority;
-  state: TaskState;
-  enqueuedAt: string;
-  claimedAt?: string;
-  startedAt?: string;
-  completedAt?: string;
-  idempotencyKey?: string;
-  retryCount: number;
-  maxRetries: number;
-  timeoutMs: number;
-  metadata?: Record<string, any>;
-}
-
-export interface TaskResult {
-  taskId: string;
-  status: "succeeded" | "failed" | "canceled" | "timed_out";
-  errorCategory?: string;
-  outputDigest?: any;
-  evidenceRefs?: string[];
-  executedAt: string;
-  durationMs: number;
-}
-
-export type TaskQueueConfig = { maxQueueSize?: number; defaultPriority?: TaskPriority; defaultTimeoutMs?: number; maxRetries?: number };
-
-let queueConfig: TaskQueueConfig = { maxQueueSize: 100, defaultPriority: "normal", defaultTimeoutMs: 60_000, maxRetries: 3 };
-const taskQueue: QueuedTask[] = [];
-const executingTasks = new Map<string, { task: QueuedTask; startedAt: number }>();
-const completedTasks = new Map<string, TaskResult>();
-const idempotencyMap = new Map<string, string>();
-
-export function initTaskQueue(cfg?: TaskQueueConfig): void {
-  if (cfg) queueConfig = { ...queueConfig, ...cfg };
-}
-
-function generateTaskId(): string { return `task_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`; }
-function sortQueue(): void {
-  taskQueue.sort((a, b) => {
-    const sa = (PRIORITY_WEIGHT[a.priority] ?? 10) * 1e6 + (Date.now() - new Date(a.enqueuedAt).getTime());
-    const sb = (PRIORITY_WEIGHT[b.priority] ?? 10) * 1e6 + (Date.now() - new Date(b.enqueuedAt).getTime());
-    return sb - sa;
-  });
-}
-
-export function enqueueTask(params: { deviceExecutionId: string; toolRef: string; input?: any; priority?: TaskPriority; idempotencyKey?: string; timeoutMs?: number; maxRetries?: number; metadata?: Record<string, any> }): QueuedTask | null {
-  if (taskQueue.length >= (queueConfig.maxQueueSize ?? 100)) return null;
-  if (params.idempotencyKey && idempotencyMap.has(params.idempotencyKey)) {
-    const existingId = idempotencyMap.get(params.idempotencyKey);
-    if (existingId) { const existing = taskQueue.find((t) => t.taskId === existingId); if (existing) return existing; }
-    idempotencyMap.delete(params.idempotencyKey);
-  }
-  let priority = params.priority ?? queueConfig.defaultPriority ?? "normal";
-  if (!params.priority) { const risk = getToolRiskLevel(toolName(params.toolRef)); if (risk === "critical" || risk === "high") priority = "high"; }
-  const task: QueuedTask = { taskId: generateTaskId(), deviceExecutionId: params.deviceExecutionId, toolRef: params.toolRef, input: params.input, priority, state: "pending", enqueuedAt: new Date().toISOString(), idempotencyKey: params.idempotencyKey, retryCount: 0, maxRetries: params.maxRetries ?? queueConfig.maxRetries ?? 3, timeoutMs: params.timeoutMs ?? queueConfig.defaultTimeoutMs ?? 60_000, metadata: params.metadata };
-  taskQueue.push(task); sortQueue();
-  if (params.idempotencyKey) idempotencyMap.set(params.idempotencyKey, task.taskId);
-  return task;
-}
-
-export function dequeueTask(): QueuedTask | null {
-  if (taskQueue.length === 0) return null;
-  const task = taskQueue.shift()!; task.state = "claimed"; task.claimedAt = new Date().toISOString();
-  executingTasks.set(task.taskId, { task, startedAt: Date.now() });
-  return task;
-}
-
-export function completeTask(taskId: string, result: Omit<TaskResult, "taskId">): void {
-  const executing = executingTasks.get(taskId);
-  if (!executing) return;
-  executingTasks.delete(taskId);
-  if (executing.task.idempotencyKey) idempotencyMap.delete(executing.task.idempotencyKey);
-  executing.task.state = result.status === "succeeded" ? "succeeded" : result.status === "timed_out" ? "timed_out" : "failed";
-  executing.task.completedAt = new Date().toISOString();
-  completedTasks.set(taskId, { taskId, ...result });
-  if (completedTasks.size > 100) { const oldest = completedTasks.keys().next().value; if (oldest) completedTasks.delete(oldest); }
-}
-
-export function cancelTask(taskId: string): boolean {
-  const qIdx = taskQueue.findIndex((t) => t.taskId === taskId);
-  if (qIdx !== -1) { const task = taskQueue.splice(qIdx, 1)[0]; task.state = "canceled"; if (task.idempotencyKey) idempotencyMap.delete(task.idempotencyKey); return true; }
-  const executing = executingTasks.get(taskId);
-  if (executing) { executingTasks.delete(taskId); executing.task.state = "canceled"; if (executing.task.idempotencyKey) idempotencyMap.delete(executing.task.idempotencyKey); completeTask(taskId, { status: "canceled", executedAt: new Date().toISOString(), durationMs: Date.now() - executing.startedAt }); return true; }
-  return false;
-}
-
-export function getQueueStatus() {
-  const byPriority: Record<TaskPriority, number> = { urgent: 0, high: 0, normal: 0, low: 0 };
-  for (const t of taskQueue) byPriority[t.priority]++;
-  return { queueSize: taskQueue.length, executingCount: executingTasks.size, completedCount: completedTasks.size, byPriority };
-}
-
-export function getTask(taskId: string): { task: QueuedTask | null; status: "queued" | "executing" | "completed" | "not_found" } {
-  const queued = taskQueue.find((t) => t.taskId === taskId); if (queued) return { task: queued, status: "queued" };
-  const executing = executingTasks.get(taskId); if (executing) return { task: executing.task, status: "executing" };
-  if (completedTasks.has(taskId)) return { task: null, status: "completed" };
-  return { task: null, status: "not_found" };
-}
-
-export function getPendingTasks(): QueuedTask[] { return [...taskQueue]; }
-
-// ══════════════════════════════════════════════════════════════
-// 第二部分：设备工具执行（纯调度器）
+// 第二部分：设备工具执行（纯调度器 — 业务逻辑保留在此）
 // ══════════════════════════════════════════════════════════════
 
 function isPlainObject(v: any): boolean { return v && typeof v === "object" && !Array.isArray(v); }

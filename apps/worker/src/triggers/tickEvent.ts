@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { Queue } from "bullmq";
 import { fireEventTrigger, toTrigger, type TriggerDefinitionRow } from "./runner";
 import { isPlainObject } from "@openslin/shared";
@@ -46,6 +46,24 @@ function watermarkKey(source: string) {
   return source === "governance.audit" ? "audit" : "ingress";
 }
 
+async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export async function tickEventTriggers(params: { pool: Pool; queue: Queue }) {
   const triggersRes = await params.pool.query(
     `
@@ -64,144 +82,126 @@ export async function tickEventTriggers(params: { pool: Pool; queue: Queue }) {
 
     const wm = isPlainObject(trigger.eventWatermark) ? trigger.eventWatermark : {};
     if (source === "ingress.envelope") {
-      const lastAt = typeof (wm as any).lastCreatedAt === "string" ? String((wm as any).lastCreatedAt) : "1970-01-01T00:00:00.000Z";
-      const lastId = typeof (wm as any).lastId === "string" ? String((wm as any).lastId) : "00000000-0000-0000-0000-000000000000";
-      const args: any[] = [trigger.tenantId, lastAt, lastAt, lastId];
-      let idx = 4;
-      let where = "tenant_id = $1 AND (created_at > $2 OR (created_at = $3 AND id > $4))";
-      if (trigger.spaceId) {
-        args.push(trigger.spaceId);
-        where += ` AND space_id = $${++idx}`;
-      }
-      const evRes = await params.pool.query(
-        `
-          SELECT id, tenant_id, space_id, provider, workspace_id, event_id, body_json, created_at
-          FROM channel_ingress_events
-          WHERE ${where}
-          ORDER BY created_at ASC, id ASC
-          LIMIT 50
-        `,
-        args,
-      );
-      let newLastAt = lastAt;
-      let newLastId = lastId;
-      let missCount = 0;
-      for (const ev of evRes.rows as any[]) {
-        newLastAt = String(ev.created_at);
-        newLastId = String(ev.id);
-        const payload = ev.body_json ?? null;
-        const eventType = payload && typeof payload === "object" ? String((payload as any).type ?? "") : "";
-        const eventObj = {
-          source,
-          provider: String(ev.provider ?? ""),
-          workspaceId: String(ev.workspace_id ?? ""),
-          spaceId: ev.space_id ? String(ev.space_id) : null,
-          eventId: String(ev.event_id ?? ""),
-          eventType,
-          payload,
-        };
-        const m = matchFilter(trigger.eventFilter, eventObj);
-        if (!m.matched && m.reason !== "provider_mismatch" && m.reason !== "workspace_mismatch" && missCount < 5) {
-          missCount += 1;
-          await fireEventTrigger({
-            pool: params.pool,
-            queue: params.queue,
-            trigger,
-            scheduledAt: now.toISOString(),
-            traceId,
-            event: { ...eventObj, payload },
-            eventRef: { source: "channel_ingress_events", id: String(ev.id) },
-            matchReason: m.reason,
-            matched: false,
-          });
+      await withTransaction(params.pool, async (client) => {
+        await client.query(
+          "SELECT 1 FROM trigger_definitions WHERE trigger_id = $1 FOR UPDATE",
+          [trigger.triggerId],
+        );
+        const lastAt = typeof (wm as any).lastCreatedAt === "string" ? String((wm as any).lastCreatedAt) : "1970-01-01T00:00:00.000Z";
+        const lastId = typeof (wm as any).lastId === "string" ? String((wm as any).lastId) : "00000000-0000-0000-0000-000000000000";
+        const args: any[] = [trigger.tenantId, lastAt, lastAt, lastId];
+        let idx = 4;
+        let where = "tenant_id = $1 AND (created_at > $2 OR (created_at = $3 AND id > $4))";
+        if (trigger.spaceId) {
+          args.push(trigger.spaceId);
+          where += ` AND space_id = $${++idx}`;
         }
-        if (m.matched) {
-          await fireEventTrigger({
-            pool: params.pool,
-            queue: params.queue,
-            trigger,
-            scheduledAt: now.toISOString(),
-            traceId,
-            event: { ...eventObj, payload },
-            eventRef: { source: "channel_ingress_events", id: String(ev.id) },
-            matchReason: "matched",
-            matched: true,
-          });
+        const evRes = await client.query(
+          `
+            SELECT id, tenant_id, space_id, provider, workspace_id, event_id, body_json, created_at
+            FROM channel_ingress_events
+            WHERE ${where}
+            ORDER BY created_at ASC, id ASC
+            LIMIT 50
+          `,
+          args,
+        );
+        let newLastAt = lastAt;
+        let newLastId = lastId;
+        for (const ev of evRes.rows as any[]) {
+          newLastAt = String(ev.created_at);
+          newLastId = String(ev.id);
+          const payload = ev.body_json ?? null;
+          const eventType = payload && typeof payload === "object" ? String((payload as any).type ?? "") : "";
+          const eventObj = {
+            source,
+            provider: String(ev.provider ?? ""),
+            workspaceId: String(ev.workspace_id ?? ""),
+            spaceId: ev.space_id ? String(ev.space_id) : null,
+            eventId: String(ev.event_id ?? ""),
+            eventType,
+            payload,
+          };
+          const m = matchFilter(trigger.eventFilter, eventObj);
+          if (m.matched) {
+            await fireEventTrigger({
+              pool: params.pool,
+              queue: params.queue,
+              trigger,
+              scheduledAt: now.toISOString(),
+              traceId,
+              event: { ...eventObj, payload },
+              eventRef: { source: "channel_ingress_events", id: String(ev.id) },
+              matchReason: "matched",
+              matched: true,
+            });
+          }
         }
-      }
-      const nextWm = { ...wm, lastCreatedAt: newLastAt, lastId: newLastId, source: watermarkKey(source) };
-      await params.pool.query("UPDATE trigger_definitions SET event_watermark_json = $2::jsonb, updated_at = now() WHERE trigger_id = $1", [trigger.triggerId, nextWm]);
+        const nextWm = { ...wm, lastCreatedAt: newLastAt, lastId: newLastId, source: watermarkKey(source) };
+        await client.query("UPDATE trigger_definitions SET event_watermark_json = $2::jsonb, updated_at = now() WHERE trigger_id = $1", [trigger.triggerId, nextWm]);
+      });
       continue;
     }
 
     if (source === "governance.audit") {
-      const lastTs = typeof (wm as any).lastTimestamp === "string" ? String((wm as any).lastTimestamp) : "1970-01-01T00:00:00.000Z";
-      const lastEventId = typeof (wm as any).lastEventId === "string" ? String((wm as any).lastEventId) : "00000000-0000-0000-0000-000000000000";
-      const args: any[] = [trigger.tenantId, lastTs, lastTs, lastEventId];
-      let idx = 4;
-      let where = "tenant_id = $1 AND (timestamp > $2 OR (timestamp = $3 AND event_id > $4))";
-      if (trigger.spaceId) {
-        args.push(trigger.spaceId);
-        where += ` AND space_id = $${++idx}`;
-      }
-      const evRes = await params.pool.query(
-        `
-          SELECT event_id, tenant_id, space_id, resource_type, action, input_digest, output_digest, timestamp
-          FROM audit_events
-          WHERE ${where}
-          ORDER BY timestamp ASC, event_id ASC
-          LIMIT 50
-        `,
-        args,
-      );
-      let newLastTs = lastTs;
-      let newLastEventId = lastEventId;
-      let missCount = 0;
-      for (const ev of evRes.rows as any[]) {
-        newLastTs = String(ev.timestamp);
-        newLastEventId = String(ev.event_id);
-        const eventType = `${String(ev.resource_type ?? "")}.${String(ev.action ?? "")}`;
-        const payload = { inputDigest: ev.input_digest ?? null, outputDigest: ev.output_digest ?? null };
-        const eventObj = {
-          source,
-          provider: null,
-          workspaceId: null,
-          spaceId: ev.space_id ? String(ev.space_id) : null,
-          eventId: String(ev.event_id ?? ""),
-          eventType,
-          payload,
-        };
-        const m = matchFilter(trigger.eventFilter, eventObj);
-        if (!m.matched && missCount < 5) {
-          missCount += 1;
-          await fireEventTrigger({
-            pool: params.pool,
-            queue: params.queue,
-            trigger,
-            scheduledAt: now.toISOString(),
-            traceId,
-            event: eventObj,
-            eventRef: { source: "audit_events", eventId: String(ev.event_id) },
-            matchReason: m.reason,
-            matched: false,
-          });
+      await withTransaction(params.pool, async (client) => {
+        await client.query(
+          "SELECT 1 FROM trigger_definitions WHERE trigger_id = $1 FOR UPDATE",
+          [trigger.triggerId],
+        );
+        const lastTs = typeof (wm as any).lastTimestamp === "string" ? String((wm as any).lastTimestamp) : "1970-01-01T00:00:00.000Z";
+        const lastEventId = typeof (wm as any).lastEventId === "string" ? String((wm as any).lastEventId) : "00000000-0000-0000-0000-000000000000";
+        const args: any[] = [trigger.tenantId, lastTs, lastTs, lastEventId];
+        let idx = 4;
+        let where = "tenant_id = $1 AND (timestamp > $2 OR (timestamp = $3 AND event_id > $4))";
+        if (trigger.spaceId) {
+          args.push(trigger.spaceId);
+          where += ` AND space_id = $${++idx}`;
         }
-        if (m.matched) {
-          await fireEventTrigger({
-            pool: params.pool,
-            queue: params.queue,
-            trigger,
-            scheduledAt: now.toISOString(),
-            traceId,
-            event: eventObj,
-            eventRef: { source: "audit_events", eventId: String(ev.event_id) },
-            matchReason: "matched",
-            matched: true,
-          });
+        const evRes = await client.query(
+          `
+            SELECT event_id, tenant_id, space_id, resource_type, action, input_digest, output_digest, timestamp
+            FROM audit_events
+            WHERE ${where}
+            ORDER BY timestamp ASC, event_id ASC
+            LIMIT 50
+          `,
+          args,
+        );
+        let newLastTs = lastTs;
+        let newLastEventId = lastEventId;
+        for (const ev of evRes.rows as any[]) {
+          newLastTs = String(ev.timestamp);
+          newLastEventId = String(ev.event_id);
+          const eventType = `${String(ev.resource_type ?? "")}.${String(ev.action ?? "")}`;
+          const payload = { inputDigest: ev.input_digest ?? null, outputDigest: ev.output_digest ?? null };
+          const eventObj = {
+            source,
+            provider: null,
+            workspaceId: null,
+            spaceId: ev.space_id ? String(ev.space_id) : null,
+            eventId: String(ev.event_id ?? ""),
+            eventType,
+            payload,
+          };
+          const m = matchFilter(trigger.eventFilter, eventObj);
+          if (m.matched) {
+            await fireEventTrigger({
+              pool: params.pool,
+              queue: params.queue,
+              trigger,
+              scheduledAt: now.toISOString(),
+              traceId,
+              event: eventObj,
+              eventRef: { source: "audit_events", eventId: String(ev.event_id) },
+              matchReason: "matched",
+              matched: true,
+            });
+          }
         }
-      }
-      const nextWm = { ...wm, lastTimestamp: newLastTs, lastEventId: newLastEventId, source: watermarkKey(source) };
-      await params.pool.query("UPDATE trigger_definitions SET event_watermark_json = $2::jsonb, updated_at = now() WHERE trigger_id = $1", [trigger.triggerId, nextWm]);
+        const nextWm = { ...wm, lastTimestamp: newLastTs, lastEventId: newLastEventId, source: watermarkKey(source) };
+        await client.query("UPDATE trigger_definitions SET event_watermark_json = $2::jsonb, updated_at = now() WHERE trigger_id = $1", [trigger.triggerId, nextWm]);
+      });
       continue;
     }
   }

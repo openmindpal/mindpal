@@ -3,11 +3,17 @@
  *
  * 共享的 SSE Agent Loop 回调工厂 + 总结流式生成
  * 消灭 dispatch.stream.ts / dispatch.streamAnswer.ts 之间的重复代码
+ *
+ * 流式事件类型统一使用 @openslin/shared 的 StreamEventType。
  */
 import { invokeModelChatUpstreamStream } from "../model-gateway/modules/invokeChatUpstreamStream";
 import { getArtifactContent } from "../artifact-manager/modules/artifactRepo";
 import type { AgentLoopResult } from "../../kernel/agentLoop";
 import { emitTaskEvent } from "../../lib/sessionEventBus";
+import { StreamEventType, getStreamEventSseName } from "@openslin/shared";
+
+// Re-export 统一流式事件类型，供 dispatch.stream*.ts 模块引用
+export { StreamEventType, getStreamEventSseName };
 
 /* ------------------------------------------------------------------ */
 /*  类型定义                                                            */
@@ -68,17 +74,17 @@ export interface StepNarrationParams {
   sessionId?: string;
 }
 
-async function resolveApprovalIdForStep(params: {
+async function resolveApprovalContextForStep(params: {
   app: any;
   tenantId: string;
   runId: string;
   stepId?: string | null;
-}): Promise<string | null> {
+}): Promise<{ approvalId: string; riskLevel: string; humanSummary: string; inputDigest: any } | null> {
   const { app, tenantId, runId, stepId } = params;
   if (!stepId) return null;
   try {
     const res = await app.db.query(
-      `SELECT approval_id
+      `SELECT approval_id, assessment_context, input_digest
          FROM approvals
         WHERE tenant_id = $1
           AND run_id = $2
@@ -88,7 +94,16 @@ async function resolveApprovalIdForStep(params: {
       [tenantId, runId, stepId],
     );
     if (!res.rowCount) return null;
-    return String(res.rows[0].approval_id ?? "");
+    const row = res.rows[0];
+    const ctx = typeof row.assessment_context === "string"
+      ? JSON.parse(row.assessment_context)
+      : (row.assessment_context ?? {});
+    return {
+      approvalId: String(row.approval_id ?? ""),
+      riskLevel: ctx.riskLevel ?? "medium",
+      humanSummary: ctx.humanSummary ?? "",
+      inputDigest: row.input_digest ?? null,
+    };
   } catch {
     return null;
   }
@@ -233,14 +248,14 @@ export function makeOnStepComplete(params: StepNarrationParams) {
 
       // 1.2 检测 needs_approval 状态，发射 approvalNode
       if (obs.status === "needs_approval") {
-        const approvalId = await resolveApprovalIdForStep({
+        const approvalCtx = await resolveApprovalContextForStep({
           app,
           tenantId: subject.tenantId,
           runId,
           stepId: obs.stepId ?? null,
         });
         muxSse.sendEvent("approvalNode", {
-          approvalId: approvalId ?? "",
+          approvalId: approvalCtx?.approvalId ?? "",
           runId,
           taskId: taskId ?? null,
           stepId: obs.stepId ?? null,
@@ -250,6 +265,10 @@ export function makeOnStepComplete(params: StepNarrationParams) {
           status: "pending",
           requestedAt: new Date().toISOString(),
           decidedAt: null,
+          // 审批上下文增强字段
+          riskLevel: approvalCtx?.riskLevel ?? "medium",
+          humanSummary: approvalCtx?.humanSummary ?? `工具 ${obs.toolRef} 需要审批`,
+          inputDigest: approvalCtx?.inputDigest ?? null,
         });
       }
 

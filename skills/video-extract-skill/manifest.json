@@ -14,6 +14,7 @@
   "category": "knowledge",
   "priority": 6,
   "tags": ["video", "transcription", "ocr", "knowledge", "multimodal"],
+  "dependencies": ["media"],
   "executionTimeoutMs": 600000,
   "contract": {
     "scope": "read",
@@ -48,5 +49,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

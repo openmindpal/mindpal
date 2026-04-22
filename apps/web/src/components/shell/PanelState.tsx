@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import styles from "./bottomTray.shared.module.css";
+import styles from "@/styles/shell.module.css";
 import { t } from "@/lib/i18n";
 
 interface PanelLoadingProps {

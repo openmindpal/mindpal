@@ -110,7 +110,15 @@ describe("toolMetrics — 聚合", () => {
     recordToolMetric(sample({ toolName: "device.snap" }));
     const snap = exportMetricsSnapshot();
     const summary = getToolMetricsSummary();
-    expect(snap).toEqual(summary);
+    // Window timestamps may differ by 1ms due to separate Date.now() calls
+    expect(snap.length).toBe(summary.length);
+    for (let i = 0; i < snap.length; i++) {
+      const { windowStartMs: _ws1, windowEndMs: _we1, ...snapRest } = snap[i];
+      const { windowStartMs: _ws2, windowEndMs: _we2, ...sumRest } = summary[i];
+      expect(snapRest).toEqual(sumRest);
+      expect(Math.abs(snap[i].windowStartMs - summary[i].windowStartMs)).toBeLessThanOrEqual(5);
+      expect(Math.abs(snap[i].windowEndMs - summary[i].windowEndMs)).toBeLessThanOrEqual(5);
+    }
   });
 });
 

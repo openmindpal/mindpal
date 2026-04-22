@@ -23,7 +23,7 @@ import shell from "highlight.js/lib/languages/shell";
 import diff from "highlight.js/lib/languages/diff";
 import dockerfile from "highlight.js/lib/languages/dockerfile";
 import { t } from "@/lib/i18n";
-import styles from "../../app/page.module.css";
+import styles from "@/styles/page.module.css";
 
 /* ─── Register highlight.js languages ─── */
 hljs.registerLanguage("javascript", javascript);

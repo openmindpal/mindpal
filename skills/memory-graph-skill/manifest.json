@@ -14,6 +14,7 @@
   "category": "ai",
   "priority": 7,
   "tags": ["memory", "graph", "similarity", "history"],
+  "dependencies": ["memory"],
   "contract": {
     "scope": "read",
     "resourceType": "memory",
@@ -38,5 +39,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

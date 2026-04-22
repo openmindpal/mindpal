@@ -10,8 +10,7 @@ import SysTray from "systray2";
 import fs from "node:fs";
 import path from "node:path";
 import { listPlugins } from "./pluginRegistry";
-import { listCapabilities } from "./kernel/capabilityRegistry";
-import { listPluginStates } from "./kernel/pluginLifecycle";
+import { getCachedCapabilities, getCachedPluginStates } from "./trayState";
 import { executionStats } from "./tray/stats";
 import { getLocalDisabledTools, isHighRiskConfirmEnabled } from "./tray/disableList";
 import type { RiskLevel } from "./kernel/types";
@@ -47,7 +46,7 @@ export function loadIcon(): string {
 /* ── 辅助摘要函数 ───────────────────────────────────────────── */
 
 export function getToolRiskSummary(): { low: number; medium: number; high: number; critical: number; total: number; disabled: number } {
-  const caps = listCapabilities();
+  const caps = getCachedCapabilities();
   const disabled = getLocalDisabledTools().size;
   const summary = { low: 0, medium: 0, high: 0, critical: 0, total: caps.length, disabled };
   for (const cap of caps) {
@@ -60,7 +59,7 @@ export function getToolRiskSummary(): { low: number; medium: number; high: numbe
 }
 
 export function getPluginStatusSummary(): { total: number; ready: number; error: number; details: string } {
-  const states = listPluginStates();
+  const states = getCachedPluginStates();
   const ready = states.filter((s) => s.state === "ready").length;
   const error = states.filter((s) => s.state === "error").length;
   const details = states.map((s) => {

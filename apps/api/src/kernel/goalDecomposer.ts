@@ -12,6 +12,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { GoalGraph } from "@openslin/shared";
+import { resolveBoolean, resolveNumber } from "@openslin/shared";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
 import { analyzeDecompositionQuality, applySemanticRepairs, type PlanningQualityReport } from "./goalDecomposerQuality";
 import { buildDecomposePrompt } from "./goalDecomposerPrompt";
@@ -111,7 +112,7 @@ export async function decomposeGoal(params: DecomposeGoalParams): Promise<Decomp
   const startMs = Date.now();
 
   // ── 0. 环境变量开关：禁用 GoalGraph 分解时降级为单节点
-  if ((process.env.AGENT_LOOP_GOAL_DECOMPOSE ?? "1") === "0") {
+  if (!resolveBoolean("AGENT_LOOP_GOAL_DECOMPOSE").value) {
     const r = buildSingleGoalFallback(runId, goal, "disabled_by_env");
     r.planningQualityReport = analyzeDecompositionQuality(r.graph, goal);
     app.metrics.observePlanQualityScore({
@@ -153,7 +154,7 @@ export async function decomposeGoal(params: DecomposeGoalParams): Promise<Decomp
   try {
     const systemPrompt = buildDecomposePrompt(toolCatalog);
     const userPrompt = `## User's Goal\n${goal}\n\nMax sub-goals: ${maxSubGoals}\nComplexity hint: ${assessment.complexity}\n\nDecompose this goal into a structured plan.`;
-    const timeoutMs = Math.max(15_000, Number(process.env.GOAL_DECOMPOSE_MODEL_TIMEOUT_MS) || 60_000);
+    const timeoutMs = resolveNumber("GOAL_DECOMPOSE_MODEL_TIMEOUT_MS").value;
 
     const llmResult = await invokeModelChat({
       app,

@@ -204,15 +204,15 @@ async function bridgeSend(params: {
 
 async function sendViaWebhook(params: { webhookUrl: string; text: string }) {
   await invokeFirstPartySkill({
-    skillDir: "webhook-send-skill",
-    input: { webhookUrl: params.webhookUrl, text: params.text },
+    skillDir: "bridge-send-skill",
+    input: { provider: "webhook", webhookUrl: params.webhookUrl, text: params.text },
   });
 }
 
 async function sendViaSlack(params: { botToken: string; channel: string; text: string }) {
   await invokeFirstPartySkill({
-    skillDir: "slack-send-skill",
-    input: { botToken: params.botToken, channel: params.channel, text: params.text },
+    skillDir: "bridge-send-skill",
+    input: { provider: "slack", botToken: params.botToken, channel: params.channel, text: params.text },
   });
 }
 

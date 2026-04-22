@@ -9,112 +9,24 @@
  * this interface; they go through the Skill Runtime (apps/runner/).
  */
 import type { FastifyPluginAsync } from "fastify";
+import type {
+  SkillLayer as _SkillLayer,
+  SkillToolDeclaration as _SkillToolDeclaration,
+  BuiltinSkillManifest,
+} from "@openslin/shared";
 
 /* ------------------------------------------------------------------ */
-/*  Skill Layer — three-tier classification                            */
+/*  Re-export shared types under local names for backward compat       */
 /* ------------------------------------------------------------------ */
+
+export type SkillLayer = _SkillLayer;
+export type SkillToolDeclaration = _SkillToolDeclaration;
 
 /**
- * kernel       — Core platform tool declarations (entity CRUD etc.), no HTTP routes.
- *                Always auto-enabled. Part of the OS minimum viable kernel.
- * core         — Essential platform capabilities, always registered, cannot be disabled.
- *                (orchestrator, model-gateway, knowledge, memory, safety …).
- * optional     — Default-enabled platform capabilities, can be disabled via env.
- *                (nl2ui, device-runtime, collab-runtime, yjs-collab …).
- * extension    — Upper-layer capabilities loaded on demand via explicit configuration.
- *                (analytics, media-pipeline, replay-viewer, ai-event-reasoning …).
- *
- * NOTE: Legacy value "builtin" is mapped to "optional" by resolveSkillLayer().
+ * Built-in skill manifest — re-exported from @openslin/shared.
+ * Local alias `SkillManifestV2` kept for backward compatibility.
  */
-export type SkillLayer = "kernel" | "core" | "optional" | "extension";
-
-/* ------------------------------------------------------------------ */
-/*  Skill Manifest v2 (built-in variant)                               */
-/* ------------------------------------------------------------------ */
-
-export interface SkillManifestV2 {
-  /** Unique skill identity. */
-  identity: {
-    /** Dot-separated name, e.g. "nl2ui.generator" */
-    name: string;
-    /** Semver version. */
-    version: string;
-  };
-
-  /**
-   * i18n display name for this skill.
-   * Used when the skill is registered as a tool without explicit tools declarations.
-   */
-  displayName?: Record<string, string>;
-
-  /**
-   * i18n description for this skill.
-   * Used when the skill is registered as a tool without explicit tools declarations.
-   */
-  description?: Record<string, string>;
-
-  /**
-   * Classification layer for this skill.
-   * Determines auto-enable policy, startup behaviour and governance defaults.
-   * @default "builtin"
-   */
-  layer?: SkillLayer;
-
-  /** HTTP route prefixes this skill owns, e.g. ["/nl2ui", "/ui"]. */
-  routes?: string[];
-
-  /** Frontend page routes, e.g. ["/gov/models", "/settings/models"]. */
-  frontend?: string[];
-
-  /**
-   * Core primitives this skill depends on.
-   * e.g. ["schemas", "entities", "tools", "audit", "rbac"]
-   */
-  dependencies?: string[];
-
-  /**
-   * Other built-in skills this skill depends on.
-   * e.g. ["nl2ui.generator"]
-   */
-  skillDependencies?: string[];
-
-  /**
-   * Tool operations this skill provides.
-   * Auto-discovery reads these to register tool_definitions.
-   */
-  tools?: SkillToolDeclaration[];
-}
-
-/** Tool declaration within a skill manifest. */
-export interface SkillToolDeclaration {
-  name: string;
-  displayName?: Record<string, string>;
-  description?: Record<string, string>;
-  scope: "read" | "write";
-  resourceType: string;
-  action: string;
-  idempotencyRequired?: boolean;
-  riskLevel?: "low" | "medium" | "high";
-  approvalRequired?: boolean;
-  category?: string;
-  priority?: number;
-  tags?: string[];
-  inputSchema?: any;
-  outputSchema?: any;
-  /**
-   * P1-5b: 声明工具所需的 secret scope
-   * - 列出工具运行时可能访问的 connector 类型
-   * - 运行时根据此声明限制 secretDomain.connectorInstanceIds
-   * - 示例: ["mail.imap", "mail.exchange", "oauth.google"]
-   */
-  requiredSecretScopes?: string[];
-  /**
-   * 额外权限声明：工具执行前需动态检查的附加权限。
-   * 每条声明包含 resourceType 和 action，由执行内核自动调用 requirePermission。
-   * 示例: [{ resourceType: "memory", action: "read" }]
-   */
-  extraPermissions?: Array<{ resourceType: string; action: string }>;
-}
+export type SkillManifestV2 = BuiltinSkillManifest;
 
 /* ------------------------------------------------------------------ */
 /*  Built-in Skill Plugin Contract                                     */

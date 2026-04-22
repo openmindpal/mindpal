@@ -14,6 +14,7 @@
   "category": "ai",
   "priority": 7,
   "tags": ["speech", "transcription", "tts", "audio", "multimodal", "iflytek", "讯飞"],
+  "dependencies": ["media"],
   "executionTimeoutMs": 300000,
   "contract": {
     "scope": "read",
@@ -45,5 +46,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

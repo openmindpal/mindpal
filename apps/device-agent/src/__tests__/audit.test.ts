@@ -3,12 +3,12 @@ import path from "node:path";
 import os from "node:os";
 
 // ── Mock node:fs/promises ─────────────────────────────────────
-const mockMkdir = vi.fn(async () => {});
-const mockAppendFile = vi.fn(async () => {});
-const mockReadFile = vi.fn(async () => "");
-const mockReaddir = vi.fn(async () => []);
-const mockUnlink = vi.fn(async () => {});
-const mockWriteFile = vi.fn(async () => {});
+const mockMkdir = vi.fn<(...args: any[]) => Promise<any>>();
+const mockAppendFile = vi.fn<(...args: any[]) => Promise<any>>();
+const mockReadFile = vi.fn<(...args: any[]) => Promise<any>>();
+const mockReaddir = vi.fn<(...args: any[]) => Promise<any>>();
+const mockUnlink = vi.fn<(...args: any[]) => Promise<any>>();
+const mockWriteFile = vi.fn<(...args: any[]) => Promise<any>>();
 
 vi.mock("node:fs/promises", () => ({
   default: {

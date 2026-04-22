@@ -9,7 +9,7 @@ import {
 } from "@/app/homeHelpers";
 import { IconStar, IconPage, IconWorkbench, IconChevronRight } from "./ShellIcons";
 import { timeAgoFromTs } from "./shellUtils";
-import styles from "./RecentAndFavorites.module.css";
+import styles from "@/styles/shell.module.css";
 
 /* ─── Utility Functions ─────────────────────────────────────────────────────── */
 
@@ -47,7 +47,7 @@ function ListItem(props: {
   };
 
   return (
-    <Link href={url} className={styles.item} onClick={handleClick}>
+    <Link href={url} className={styles.rafItem} onClick={handleClick}>
       <span className={styles.itemIcon}>
         {kind === "page" ? <IconPage /> : <IconWorkbench />}
       </span>
@@ -111,17 +111,17 @@ export default function RecentAndFavorites(props: {
   return (
     <div className={styles.container}>
       {/* Tab Header */}
-      <div className={styles.header}>
-        <div className={styles.tabs}>
+      <div className={styles.rafHeader}>
+        <div className={styles.rafTabs}>
           <button
-            className={`${styles.tab} ${tab === "recent" ? styles.tabActive : ""}`}
+            className={`${styles.rafTab} ${tab === "recent" ? styles.rafTabActive : ""}`}
             onClick={() => setTab("recent")}
           >
             {t(locale, "recentFav.recentTab")}
             {hasRecent && <span className={styles.tabCount}>{recent.length}</span>}
           </button>
           <button
-            className={`${styles.tab} ${tab === "favorites" ? styles.tabActive : ""}`}
+            className={`${styles.rafTab} ${tab === "favorites" ? styles.rafTabActive : ""}`}
             onClick={() => setTab("favorites")}
           >
             <IconStar filled />
@@ -137,7 +137,7 @@ export default function RecentAndFavorites(props: {
       </div>
 
       {/* Content */}
-      <div className={styles.content}>
+      <div className={styles.rafContent}>
         {tab === "recent" && (
           <>
             {!hasRecent && (

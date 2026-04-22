@@ -15,6 +15,7 @@
   "category": "database",
   "priority": 9,
   "tags": ["schema", "database", "nl2schema", "auto-generation"],
+  "dependencies": ["metadata"],
   "contract": {
     "scope": "write",
     "resourceType": "schema",
@@ -75,8 +76,6 @@
       }
     }
   },
-  "entry": "dist/index.js",
-  "dependencies": {
-    "@openslin/shared": "^1.0.0"
-  }
+  "engines": { "node": ">=18.0.0" },
+  "entry": "dist/index.js"
 }

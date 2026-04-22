@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { collabStreamRedisChannel, createCollabStreamSignal, isToolAllowedForPolicy, redactValue } from "@openslin/shared";
+import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 import { Errors, isAppError } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
@@ -1116,7 +1117,12 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
 
       if (!queueJobId) {
         const nextRole = stepInput?.actorRole ? String(stepInput.actorRole) : "executor";
-        const approvalRequired = Boolean(stepInput?.toolContract?.approvalRequired) || stepInput?.toolContract?.riskLevel === "high";
+        const approvalRequired = shouldRequireApproval({
+          approvalRequired: stepInput?.toolContract?.approvalRequired,
+          riskLevel: stepInput?.toolContract?.riskLevel,
+          sourceLayer: stepInput?.toolContract?.sourceLayer,
+          scope: stepInput?.toolContract?.scope,
+        });
         if (approvalRequired) {
           await setRunAndJobStatus({ pool: app.db, tenantId: subject.tenantId, runId: updated.primaryRunId, jobId, runStatus: "needs_approval", jobStatus: "needs_approval" });
           const approval = await createApproval({

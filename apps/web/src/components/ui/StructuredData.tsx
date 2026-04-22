@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import styles from "./ui.module.css";
+import styles from "@/styles/ui.module.css";
 import { Badge } from "./Badge";
 import { t } from "@/lib/i18n";
 

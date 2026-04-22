@@ -73,10 +73,28 @@ export class WebSocketDeviceAgent {
   /** P1: 流式执行器状态（委托给 wsStreamingHandlers） */
   private streamingState: StreamingState = { executor: null, sessionId: null };
 
+  /** 降级/恢复回调（由 agent.ts runLoop 注册，用于通信模式切换） */
+  private _onDisconnectCb: (() => void) | null = null;
+  private _onReconnectCb: (() => void) | null = null;
+
+  /** 背压：高频上报连续失败计数与当前降频因子 */
+  private reportConsecutiveFailures = 0;
+  private reportFrequencyDivisor = 1;
+
   constructor(config: DeviceAgentConfig, confirmFn?: (q: string) => Promise<boolean>) {
     this.config = config;
     // 默认自动确认（WebSocket 模式通常无终端交互能力）
     this.confirmFn = confirmFn ?? (async () => true);
+  }
+
+  /** 注册WS断开回调（非主动stop时触发，通知调用方切换到HTTP fallback） */
+  onDisconnect(cb: () => void): void {
+    this._onDisconnectCb = cb;
+  }
+
+  /** 注册WS重连成功回调（通知调用方切回WS模式） */
+  onReconnect(cb: () => void): void {
+    this._onReconnectCb = cb;
   }
 
   /** 是否需要重新配对（收到 401/403 后置 true） */
@@ -103,9 +121,14 @@ export class WebSocketDeviceAgent {
 
         this.ws.on('open', () => {
           safeLog('[WebSocketDeviceAgent] 连接成功');
+          const wasReconnect = this.consecutiveFailures > 0;
           this.consecutiveFailures = 0;
           this.startHeartbeat();
           this.sendProtocolHandshake();
+          // 重连成功时触发回调，通知调用方切回WS模式
+          if (wasReconnect && this._onReconnectCb) {
+            this._onReconnectCb();
+          }
           resolve();
         });
 
@@ -127,6 +150,10 @@ export class WebSocketDeviceAgent {
             return;
           }
           safeLog('[WebSocketDeviceAgent] 连接关闭，准备重连...');
+          // 非主动stop时触发降级回调，通知调用方切换到HTTP fallback
+          if (this._onDisconnectCb) {
+            this._onDisconnectCb();
+          }
           this.scheduleReconnect();
         });
 
@@ -168,25 +195,46 @@ export class WebSocketDeviceAgent {
    * 启动高频状态上报（50-100Hz）
    */
   startHighFrequencyReporting(frequency: number = 100): void {
-    const intervalMs = 1000 / frequency;
+    const baseIntervalMs = 1000 / frequency;
+    this.reportConsecutiveFailures = 0;
+    this.reportFrequencyDivisor = 1;
 
     if (this.statusReportTimer) {
       clearInterval(this.statusReportTimer);
     }
 
-    this.statusReportTimer = setInterval(() => {
-      if (!this.isRunning) return;
+    const scheduleNext = () => {
+      const effectiveInterval = baseIntervalMs * this.reportFrequencyDivisor;
+      this.statusReportTimer = setTimeout(() => {
+        if (!this.isRunning) { scheduleNext(); return; }
 
-      this.sendStatusReport({
-        deviceId: this.config.deviceId,
-        timestamp: Date.now(),
-        status: this.currentTaskId ? 'running' : 'idle',
-        currentTaskId: this.currentTaskId,
-        frequency,
-      }).catch(err => {
-        safeError(`[WebSocketDeviceAgent] 状态上报失败：${err.message}`);
-      });
-    }, intervalMs);
+        this.sendStatusReport({
+          deviceId: this.config.deviceId,
+          timestamp: Date.now(),
+          status: this.currentTaskId ? 'running' : 'idle',
+          currentTaskId: this.currentTaskId,
+          frequency: frequency / this.reportFrequencyDivisor,
+        }).then(() => {
+          // 连续成功5次后尝试恢复频率
+          if (this.reportFrequencyDivisor > 1) {
+            this.reportConsecutiveFailures = 0;
+            this.reportFrequencyDivisor = Math.max(1, this.reportFrequencyDivisor / 2);
+            safeLog(`[WebSocketDeviceAgent] 上报频率恢复: ${Math.round(frequency / this.reportFrequencyDivisor)}Hz`);
+          }
+          scheduleNext();
+        }).catch((err: Error) => {
+          this.reportConsecutiveFailures++;
+          // 连续失败时自适应降频: 100Hz → 50Hz → 25Hz
+          if (this.reportConsecutiveFailures >= 3 && this.reportFrequencyDivisor < 4) {
+            this.reportFrequencyDivisor *= 2;
+            safeLog(`[WebSocketDeviceAgent] 上报背压降频: ${Math.round(frequency / this.reportFrequencyDivisor)}Hz`);
+          }
+          safeError(`[WebSocketDeviceAgent] 状态上报失败：${err.message}`);
+          scheduleNext();
+        });
+      }, effectiveInterval);
+    };
+    scheduleNext();
 
     safeLog(`[WebSocketDeviceAgent] 启动高频上报：${frequency}Hz`);
   }

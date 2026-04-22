@@ -188,6 +188,9 @@ export function handleSSEEvent(evtName: string, data: any, ctx: SSEEventContext)
         status: data.status ?? "pending",
         requestedAt: data.requestedAt ?? new Date().toISOString(),
         decidedAt: data.decidedAt ?? undefined,
+        riskLevel: data.riskLevel ?? undefined,
+        humanSummary: data.humanSummary ?? undefined,
+        inputDigest: data.inputDigest ?? undefined,
       }]);
       break;
     }

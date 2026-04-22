@@ -1,19 +1,20 @@
 {
   "identity": {
     "name": "bridge.send",
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "displayName": {
-    "zh-CN": "Bridge 桥接消息发送",
-    "en-US": "Bridge Message Send"
+    "zh-CN": "统一消息发送",
+    "en-US": "Unified Message Send"
   },
   "description": {
-    "zh-CN": "通过 Bridge 协议向 IM 平台（QQ、iMessage 等）发送消息，支持幂等性和追踪",
-    "en-US": "Sends messages to IM platforms (QQ, iMessage, etc.) via Bridge protocol, supports idempotency and tracing"
+    "zh-CN": "统一消息发送技能，支持三种模式：Bridge 协议（QQ/iMessage 等 IM）、Webhook（第三方 HTTP 回调）、Slack（频道/用户消息）。根据 provider 参数自动路由，支持幂等性和追踪",
+    "en-US": "Unified message sending skill with three modes: Bridge protocol (QQ/iMessage IM), Webhook (third-party HTTP callback), Slack (channel/user messages). Auto-routes by provider, supports idempotency and tracing"
   },
   "category": "communication",
   "priority": 7,
-  "tags": ["bridge", "im", "qq", "imessage", "outbound"],
+  "tags": ["bridge", "webhook", "slack", "im", "qq", "imessage", "outbound", "notification", "integration"],
+  "dependencies": ["secrets"],
   "contract": {
     "scope": "write",
     "resourceType": "channel",
@@ -25,22 +26,33 @@
   "io": {
     "inputSchema": {
       "fields": {
-        "baseUrl": { "type": "string", "required": true },
-        "secret": { "type": "string", "required": true },
-        "provider": { "type": "string", "required": true },
-        "workspaceId": { "type": "string", "required": true },
-        "requestId": { "type": "string", "required": true },
-        "traceId": { "type": "string", "required": true },
-        "to": { "type": "json", "required": true },
-        "message": { "type": "json", "required": true },
-        "idempotencyKey": { "type": "string", "required": true }
+        "provider": {
+          "type": "string",
+          "required": true,
+          "description": "发送模式: bridge | webhook | slack",
+          "enum": ["bridge", "webhook", "slack"]
+        },
+        "baseUrl": { "type": "string", "description": "Bridge 模式: Bridge 服务地址" },
+        "secret": { "type": "string", "description": "Bridge 模式: 认证密钥" },
+        "workspaceId": { "type": "string", "description": "Bridge 模式: 工作空间 ID" },
+        "requestId": { "type": "string", "description": "Bridge 模式: 请求 ID" },
+        "traceId": { "type": "string", "description": "Bridge/通用: 追踪 ID" },
+        "to": { "type": "json", "description": "Bridge 模式: 目标 {channelChatId}" },
+        "message": { "type": "json", "description": "Bridge 模式: 消息体 {text}" },
+        "idempotencyKey": { "type": "string", "description": "Bridge 模式: 幂等键" },
+        "webhookUrl": { "type": "string", "description": "Webhook 模式: 目标 URL" },
+        "text": { "type": "string", "description": "Webhook/Slack 模式: 消息文本" },
+        "botToken": { "type": "string", "description": "Slack 模式: Bot Token" },
+        "channel": { "type": "string", "description": "Slack 模式: 频道或用户 ID" }
       }
     },
     "outputSchema": {
       "fields": {
-        "ok": { "type": "boolean", "required": true }
+        "ok": { "type": "boolean", "required": true },
+        "status": { "type": "number", "description": "Webhook 模式: HTTP 状态码" }
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

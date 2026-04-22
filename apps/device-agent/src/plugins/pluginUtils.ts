@@ -2,7 +2,7 @@
  * 插件共享工具函数 — 从 desktopPlugin.ts 提取的纯工具代码。
  * 不依赖外部运行时状态，仅依赖 Node.js 内置模块。
  */
-import crypto from "node:crypto";
+import { sha256_8 } from "@openslin/shared";
 import childProcess from "node:child_process";
 import path from "node:path";
 
@@ -41,9 +41,7 @@ export type DesktopBackendStatus = {
 
 // ── 工具函数 ──────────────────────────────────────────────────────
 
-export function sha256_8(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8);
-}
+export { sha256_8 };
 
 export function normalizeRoots(v: any) {
   const roots = Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];

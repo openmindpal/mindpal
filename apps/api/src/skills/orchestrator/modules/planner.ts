@@ -5,6 +5,7 @@ import { authorize } from "../../../modules/auth/authz";
 import { isToolEnabled } from "../../../modules/governance/toolGovernanceRepo";
 import { resolveEffectiveToolRef } from "../../../modules/tools/resolve";
 import { getToolDefinition, getToolVersionByRef, type ToolDefinition } from "../../../modules/tools/toolRepo";
+import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 
 function sha256_8(input: string) {
   return sha256Hex(input).slice(0, 8);
@@ -282,7 +283,7 @@ export async function buildHeuristicPlan(params: {
 
   const planSteps: any[] = [];
   for (const c of candidates.slice(0, params.maxSteps)) {
-    const approvalRequired = Boolean(c.def?.approvalRequired) || c.def?.riskLevel === "high";
+    const approvalRequired = shouldRequireApproval(c.def ?? {});
     planSteps.push({
       stepId: crypto.randomUUID(),
       actorRole: "executor",

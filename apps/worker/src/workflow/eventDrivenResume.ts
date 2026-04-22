@@ -19,7 +19,7 @@
  *   - manual.resume       → 手动恢复
  */
 import type { Pool } from "pg";
-import { tryTransitionRun, type RunStatus, StructuredLogger } from "@openslin/shared";
+import { safeTransitionRun, type RunStatus, StructuredLogger } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: 'worker:eventDrivenResume' });
 import { writeAudit } from "./processor/audit";
@@ -184,22 +184,21 @@ export async function dispatchResumeEvent(
     return handleForceAnomaly(pool, event, targetRunId, currentStatus);
   }
 
-  // 5. P0-2 FIX: 恢复必须经过状态机校验，且统一转为 queued（needs_approval → running 在状态机中非法）
+  // 5. P0-2 FIX: 恢复必须经过状态机校验，统一调用 safeTransitionRun
   const currentRunStatus = currentStatus as RunStatus;
   const targetStatus: RunStatus = "queued";
-  const transition = tryTransitionRun(currentRunStatus, targetStatus);
-  if (!transition.ok) {
+  const transitioned = await safeTransitionRun(pool, targetRunId, targetStatus, {
+    tenantId,
+    fromStatus: currentRunStatus,
+    log: _logger,
+  });
+  if (!transitioned) {
     return {
       ok: false, type, runId: targetRunId,
       previousStatus: currentStatus, newStatus: currentStatus,
-      message: `状态机拒绝转换: ${currentStatus} → ${targetStatus} (${transition.violation?.message ?? "unknown"})`,
+      message: `状态机拒绝转换: ${currentStatus} → ${targetStatus}`,
     };
   }
-
-  await pool.query(
-    "UPDATE runs SET status = $3, updated_at = now() WHERE tenant_id = $1 AND run_id = $2",
-    [tenantId, targetRunId, targetStatus],
-  );
 
   // 6. 找到下一个待执行的 step 并入队
   const nextStep = await findNextPendingStep(pool, targetRunId);

@@ -18,6 +18,7 @@ export type { ToolExecutionContext, ToolExecutionResult, DeviceMessageContext, D
 
 import { initPlugin } from "./kernel/pluginLifecycle";
 import type { DeviceToolPlugin } from "./kernel/types";
+import type { PluginManifest } from "./kernel/pluginSandbox";
 
 // ── 外部插件加载 ──────────────────────────────────────────────
 
@@ -49,8 +50,20 @@ export async function loadPluginsFromDir(dirPath: string): Promise<string[]> {
 
     const fullPath = nodePath.join(dirPath, entry.name);
     try {
+      // 尝试读取同目录下的 manifest.json（外部插件签名校验依赖）
+      let manifest: PluginManifest | undefined;
+      const manifestPath = nodePath.join(dirPath, entry.name.replace(/\.js$/, ".manifest.json"));
+      const dirManifestPath = nodePath.join(dirPath, "manifest.json");
+      try {
+        // 优先查找 <pluginName>.manifest.json，其次查找目录级 manifest.json
+        const raw = await fs.readFile(manifestPath, "utf-8").catch(() => fs.readFile(dirManifestPath, "utf-8"));
+        manifest = JSON.parse(raw) as PluginManifest;
+      } catch {
+        // manifest 不存在：不阻塞加载（渐进式安全）
+      }
+
       const mod = await import(fullPath);
-      const plugin: any = mod.default ?? mod;
+      const plugin: Record<string, unknown> = mod.default ?? mod;
       if (
         !plugin ||
         typeof plugin !== "object" ||
@@ -61,12 +74,17 @@ export async function loadPluginsFromDir(dirPath: string): Promise<string[]> {
         process.stderr.write(`plugin_invalid_export: ${fullPath}（需导出 { name, toolPrefixes, execute }）\n`);
         continue;
       }
-      const result = await initPlugin(plugin as DeviceToolPlugin);
+      const externalPlugin: DeviceToolPlugin = {
+        ...(plugin as unknown as DeviceToolPlugin),
+        source: "external" as const,
+        ...(manifest ? { manifest } : {}),
+      };
+      const result = await initPlugin(externalPlugin);
       if (!result.success) {
         process.stderr.write(`plugin_init_failed: ${fullPath} - ${result.error ?? "unknown"}\n`);
         continue;
       }
-      loaded.push(plugin.name);
+      loaded.push(String(plugin.name));
     } catch (e: any) {
       process.stderr.write(`plugin_load_failed: ${fullPath} - ${e?.message ?? "unknown"}\n`);
     }

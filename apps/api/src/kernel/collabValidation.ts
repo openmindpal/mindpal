@@ -16,6 +16,9 @@ import type { AgentState, CollabResult, CollabOrchestratorParams } from "./colla
 import { writeCollabEnvelope } from "./collabEnvelope";
 import { collabConfig } from "@openslin/shared";
 
+/** 最大纠错轮次限制，超过后返回当前最佳结果而非继续重试 */
+const MAX_CORRECTION_ROUNDS = 3;
+
 // ── 交叉验证执行阶段 ──────────────────────────────────────────
 
 /**
@@ -108,8 +111,10 @@ export async function runDynamicCorrectionPhase(params: {
   params: CollabOrchestratorParams;
   maxIterationsPerAgent: number;
   maxRetries: number;
-}): Promise<NonNullable<CollabResult["corrections"]>> {
+}): Promise<NonNullable<CollabResult["corrections"]> & { correctionExhausted?: boolean }> {
   const { agentStates, crossValidationResults, params: orchestratorParams, maxIterationsPerAgent, maxRetries } = params;
+  // 实际轮次不能超过 MAX_CORRECTION_ROUNDS 上限
+  const effectiveMaxRetries = Math.min(maxRetries, MAX_CORRECTION_ROUNDS);
   const { app, pool, subject } = orchestratorParams;
 
   const corrections: NonNullable<CollabResult["corrections"]> = [];
@@ -136,7 +141,7 @@ export async function runDynamicCorrectionPhase(params: {
     let corrected = false;
     let lastCorrectionSignature = "";
 
-    for (let retry = 0; retry < maxRetries; retry++) {
+    for (let retry = 0; retry < effectiveMaxRetries; retry++) {
       if (orchestratorParams.signal?.aborted) break;
 
       // 指数退避：第一次重试不延迟，后续按 1s → 2s → 4s → 8s → 10s(cap) 递增
@@ -312,6 +317,18 @@ export async function runDynamicCorrectionPhase(params: {
       }
     }
 
+    // 超过最大轮次仍未通过，标记纠错耗尽，保留当前最佳结果
+    const exhausted = !corrected && retriesAttempted >= effectiveMaxRetries;
+    if (exhausted) {
+      app.log.warn({
+        event: "collab.correction.exhausted",
+        agentId: targetState.agentId,
+        retriesAttempted,
+        maxCorrectionRounds: MAX_CORRECTION_ROUNDS,
+        finalVerdict: currentVerdict,
+      }, "[CollabOrchestrator] 纠错轮次耗尽，返回当前最佳可用结果");
+    }
+
     app.log.info({
       event: "collab.correction.completed",
       agentId: targetState.agentId,
@@ -319,6 +336,7 @@ export async function runDynamicCorrectionPhase(params: {
       finalVerdict: currentVerdict,
       retriesAttempted,
       corrected,
+      exhausted,
     }, "[CollabOrchestrator] 单Agent纠错流程完成");
 
     corrections.push({
@@ -330,12 +348,20 @@ export async function runDynamicCorrectionPhase(params: {
     });
   }
 
+  // 检查是否有任何Agent纠错耗尽
+  const anyCorrectionExhausted = corrections.some(
+    (c) => !c.corrected && c.retriesAttempted >= effectiveMaxRetries,
+  );
+
   app.log.info({
     total: corrections.length,
     corrected: corrections.filter((c) => c.corrected).length,
+    correctionExhausted: anyCorrectionExhausted,
   }, "[CollabOrchestrator] 动态纠错阶段完成");
 
-  return corrections;
+  const result = corrections as NonNullable<CollabResult["corrections"]> & { correctionExhausted?: boolean };
+  result.correctionExhausted = anyCorrectionExhausted;
+  return result;
 }
 
 /**

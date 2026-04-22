@@ -40,7 +40,7 @@ interface RateBucket {
 }
 
 /** 每租户 API 请求速率计数器 */
-const rateBuckets = new Map<string, RateBucket>();
+export const rateBuckets = new Map<string, RateBucket>();
 
 /** 自定义配额覆盖（可通过 setTenantQuota 运行时调整） */
 const quotaOverrides = new Map<string, Partial<TenantQuotaConfig>>();
@@ -62,7 +62,7 @@ export function setTenantQuota(tenantId: string, quota: Partial<TenantQuotaConfi
 }
 
 /** 检查并递增 API 请求计数，返回是否超配额 */
-function checkAndIncrementApiRate(tenantId: string, limit: number): { exceeded: boolean; current: number; resetMs: number } {
+export function checkAndIncrementApiRate(tenantId: string, limit: number): { exceeded: boolean; current: number; resetMs: number } {
   const now = Date.now();
   const windowMs = 60_000; // 1 minute window
   let bucket = rateBuckets.get(tenantId);

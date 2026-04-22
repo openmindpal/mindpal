@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { t } from "@/lib/i18n";
-import styles from "./ui.module.css";
+import styles from "@/styles/ui.module.css";
 
 /* ─── JSON Form Editor: visual key-value editing with JSON advanced mode toggle ─── */
 

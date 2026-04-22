@@ -61,6 +61,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
           idempotencyRequired: true,
           riskLevel: "high",
           approvalRequired: true,
+          sourceLayer: "builtin",
           fieldRules: (decision as any).fieldRules ?? null,
           rowFilters: (decision as any).rowFilters ?? null,
         },

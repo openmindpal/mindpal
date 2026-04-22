@@ -5,7 +5,6 @@ import { defaultConfigPath, loadConfigFile, saveConfigFile, killExistingInstance
 import type { DeviceType } from "./config";
 import { apiPostJson } from "./api";
 import { runLoop } from "./agent";
-import { createWebSocketDeviceAgent } from "./websocketClient";
 import { confirmPrompt } from "./prompt";
 import { safeError, safeLog, sha256_8 } from "./log";
 import { resolveDeviceAgentEnv } from "./deviceAgentEnv";
@@ -44,8 +43,8 @@ async function initDeviceRuntime(cfg: { deviceId: string; deviceToken: string; a
     });
     cleanupExpiredContexts();
 
-    const { initTaskQueue } = await import("./kernel/taskExecutor");
-    initTaskQueue({ maxQueueSize: 100, defaultPriority: "normal", defaultTimeoutMs: 60_000, maxRetries: 3 });
+    const { getDefaultExecutionSession } = await import("./kernel/session");
+    getDefaultExecutionSession().initTaskQueue({ maxQueueSize: 100, defaultPriority: "normal", defaultTimeoutMs: 60_000, maxRetries: 3 });
   }
 
   // 初始化会话管理器（含心跳）
@@ -239,71 +238,22 @@ async function cmdRun(opts: Record<string, string | boolean>) {
   process.on("SIGINT", cleanupSessionManager);
   process.on("SIGTERM", cleanupSessionManager);
 
-  // ── 传输模式选择：优先 WebSocket，失败降级 HTTP 轮询 ──────────
   const daCfg = resolveDeviceAgentEnv();
-  const transportMode = daCfg.transport;
-  const useWs = transportMode === "ws" || transportMode === "auto";
-  const useHttpFallback = transportMode !== "ws"; // ws-only 模式不降级
-
-  if (useWs) {
-    try {
-      safeLog("[device-agent] 尝试 WebSocket 连接...");
-      const wsAgent = await createWebSocketDeviceAgent(
-        { ...cfg, apiBase: cfg.apiBase ?? resolveApiBase(opts) },
-        async (q) => {
-          if (daCfg.autoConfirm) return true;
-          return confirmPrompt({ question: q, defaultNo: true });
-        },
-      );
-      safeLog("[device-agent] WebSocket 连接成功，进入 WS 模式");
-
-      // WS 模式下保持进程运行，监听进程退出信号
-      const wsCleanup = () => { wsAgent.stop(); };
-      process.on("SIGINT", wsCleanup);
-      process.on("SIGTERM", wsCleanup);
-
-      // 等待 WS agent 停止（会在重连次数耗尽或 needReEnroll 时停止）
-      await new Promise<void>((resolve) => {
-        const check = setInterval(() => {
-          // WebSocketDeviceAgent 内部 stop() 后 ws 会置 null
-          if (wsAgent.needReEnroll) {
-            clearInterval(check);
-            safeLog("[device-agent] WS 模式要求重新配对");
-            resolve();
-          }
-        }, 5000);
-        check.unref();
-      });
-
-      safeLog("device-agent exited: ws-stopped");
-      return;
-    } catch (wsErr: any) {
-      safeLog(`[device-agent] WebSocket 连接失败: ${wsErr?.message ?? "unknown"}`);
-      if (!useHttpFallback) {
-        safeError("[device-agent] WS-only 模式，不降级 HTTP，退出");
-        return;
-      }
-      safeLog("[device-agent] 降级到 HTTP 轮询模式...");
-    }
-  }
-
-  // ── HTTP 轮询模式（原有逻辑） ────────────────────────
   const heartbeatIntervalMs = Number(getStringOpt(opts, "heartbeatMs") || "30000");
   const pollIntervalMs = Number(getStringOpt(opts, "pollMs") || "5000");
-  // 空闲超时：默认5分钟无任务自动退出（轻量化设计），设为0禁用
   const idleTimeoutMs = Number(getStringOpt(opts, "idleTimeoutMs") || "300000");
+
+  // 统一通信入口：runLoop 内部根据 transport 配置自动选择 WS/HTTP
   const result = await runLoop({
-    cfg,
+    cfg: { ...cfg, apiBase },
     confirmFn: async (q) => {
-      // 环境变量 DEVICE_AGENT_AUTO_CONFIRM=true 时自动确认
-      if (daCfg.autoConfirm) {
-        return true;
-      }
+      if (daCfg.autoConfirm) return true;
       return confirmPrompt({ question: q, defaultNo: true });
     },
     heartbeatIntervalMs,
     pollIntervalMs,
     idleTimeoutMs,
+    transport: daCfg.transport,
   });
   safeLog(`device-agent exited: ${result.stopReason}`);
 }

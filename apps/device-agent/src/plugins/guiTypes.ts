@@ -15,21 +15,26 @@ export type TargetSpec =
   | { x: number; y: number }
   | { xPercent: number; yPercent: number };
 
+// ── 感知策略（云端下发） ─────────────────────────────────────────
+
+/** 云端下发的感知方式选择策略 */
+export type PerceptionStrategy = 'playwright' | 'ocr' | 'auto';
+
 // ── 动作步骤 ──────────────────────────────────────────────────────
 
 /** 通用 GUI 动作步骤（guiAutomationPlugin.PlanStep 和 streamingExecutor.StreamingStep 的统一定义） */
 export type GuiActionStep =
-  | { action: "click";        target: TargetSpec; button?: "left" | "right" }
-  | { action: "doubleClick";  target: TargetSpec }
-  | { action: "type";         target?: TargetSpec; text: string }
-  | { action: "pressKey";     key: string }
-  | { action: "pressCombo";   keys: string[] }
-  | { action: "scroll";       direction: "up" | "down"; clicks?: number }
-  | { action: "moveTo";       target: TargetSpec }
-  | { action: "wait";         ms: number }
-  | { action: "waitForText";  text: string; timeoutMs?: number }
-  | { action: "assertText";   text: string; present?: boolean }
-  | { action: "screenshot" };
+  | { action: "click";        target: TargetSpec; button?: "left" | "right"; perceptionStrategy?: PerceptionStrategy }
+  | { action: "doubleClick";  target: TargetSpec; perceptionStrategy?: PerceptionStrategy }
+  | { action: "type";         target?: TargetSpec; text: string; perceptionStrategy?: PerceptionStrategy }
+  | { action: "pressKey";     key: string; perceptionStrategy?: PerceptionStrategy }
+  | { action: "pressCombo";   keys: string[]; perceptionStrategy?: PerceptionStrategy }
+  | { action: "scroll";       direction: "up" | "down"; clicks?: number; perceptionStrategy?: PerceptionStrategy }
+  | { action: "moveTo";       target: TargetSpec; perceptionStrategy?: PerceptionStrategy }
+  | { action: "wait";         ms: number; perceptionStrategy?: PerceptionStrategy }
+  | { action: "waitForText";  text: string; timeoutMs?: number; perceptionStrategy?: PerceptionStrategy }
+  | { action: "assertText";   text: string; present?: boolean; perceptionStrategy?: PerceptionStrategy }
+  | { action: "screenshot";   perceptionStrategy?: PerceptionStrategy };
 
 /** 语义别名：在 GUI 自动化和流式执行场景下的语境类型 */
 export type PlanStep = GuiActionStep;

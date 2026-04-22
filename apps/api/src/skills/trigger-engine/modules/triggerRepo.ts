@@ -266,6 +266,12 @@ export async function listTriggers(params: { pool: Pool; tenantId: string; limit
   return res.rows.map(toTrigger);
 }
 
+export async function deleteTrigger(params: { pool: Pool; tenantId: string; triggerId: string }) {
+  await params.pool.query("DELETE FROM trigger_runs WHERE tenant_id = $1 AND trigger_id = $2", [params.tenantId, params.triggerId]);
+  const res = await params.pool.query("DELETE FROM trigger_definitions WHERE tenant_id = $1 AND trigger_id = $2", [params.tenantId, params.triggerId]);
+  return res.rowCount ?? 0;
+}
+
 export async function listTriggerRuns(params: { pool: Pool; tenantId: string; triggerId: string; limit: number }) {
   const res = await params.pool.query(
     `

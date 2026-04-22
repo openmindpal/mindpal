@@ -1,15 +1,26 @@
 import type { I18nText } from "@openslin/shared";
+import { ServiceError, ServiceErrorCategory, classifyError as sharedClassifyError, toHttpResponse } from "@openslin/shared";
+export { ServiceError, ServiceErrorCategory as ErrorCategory, toHttpResponse };
+export { sharedClassifyError as classifyError };
 
-export class AppError extends Error {
+/** 将 httpStatus 映射到 ErrorCategory */
+function categoryFromStatus(httpStatus: number): ServiceErrorCategory {
+  if (httpStatus === 401) return ServiceErrorCategory.AUTH_FAILED;
+  if (httpStatus === 403) return ServiceErrorCategory.POLICY_VIOLATION;
+  if (httpStatus === 404) return ServiceErrorCategory.NOT_FOUND;
+  if (httpStatus === 429) return ServiceErrorCategory.RESOURCE_EXHAUSTED;
+  if (httpStatus === 504) return ServiceErrorCategory.TIMEOUT;
+  if (httpStatus >= 400 && httpStatus < 500) return ServiceErrorCategory.INVALID_REQUEST;
+  return ServiceErrorCategory.INTERNAL;
+}
+
+export class AppError extends ServiceError {
   public readonly errorCode: string;
   public readonly messageI18n: I18nText;
-  public readonly httpStatus: number;
   /** 可选：429 限流时的重试间隔秒数 */
   public retryAfterSec?: number;
   /** 可选：附加审计信息 */
   public audit?: { errorCategory?: string; outputDigest?: unknown };
-  /** 可选：附加详情 */
-  public details?: unknown;
 
   constructor(params: {
     errorCode: string;
@@ -17,21 +28,21 @@ export class AppError extends Error {
     httpStatus: number;
     cause?: unknown;
   }) {
-    super(params.errorCode, params.cause !== undefined ? { cause: params.cause } : undefined);
+    super({
+      category: categoryFromStatus(params.httpStatus),
+      code: params.errorCode,
+      httpStatus: params.httpStatus,
+      message: params.errorCode,
+      cause: params.cause instanceof Error ? params.cause : undefined,
+    });
+    this.name = "AppError";
     this.errorCode = params.errorCode;
     this.messageI18n = params.message;
-    this.httpStatus = params.httpStatus;
   }
 }
 
 export function isAppError(err: unknown): err is AppError {
-  return Boolean(
-    err &&
-      typeof err === "object" &&
-      "errorCode" in err &&
-      "messageI18n" in err &&
-      "httpStatus" in err,
-  );
+  return err instanceof AppError;
 }
 
 /** 模型上游调用失败时的专用错误，携带上游 HTTP 状态、响应体、是否超时等信息 */

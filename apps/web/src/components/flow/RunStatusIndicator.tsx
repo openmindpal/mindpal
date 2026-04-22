@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/fmtDateTime";
 import { t } from "@/lib/i18n";
 import { type TaskState, getPhaseLabel, isPhaseTerminal, isPhaseBlocking } from "@/lib/types";
-import styles from "./RunStatusIndicator.module.css";
+import styles from "@/styles/flow.module.css";
 
 interface RunStatusIndicatorProps {
   taskState: TaskState | null | undefined;
@@ -82,7 +82,7 @@ export default function RunStatusIndicator({
         className={`${styles.phaseBadge} ${phaseColor}`}
       >
         {!isTerminal && !isBlocking && (
-          <span className={styles.pulseDot} />
+          <span className={styles.rsiPulseDot} />
         )}
         {phaseLabel}
       </span>
@@ -94,7 +94,7 @@ export default function RunStatusIndicator({
       <div className={styles.panelHeader}>
         <div className={styles.panelHeaderLeft}>
           {!isTerminal && !isBlocking && (
-            <span className={styles.pulseDot} />
+            <span className={styles.rsiPulseDot} />
           )}
           {isTerminal && phase === "succeeded" && (
             <svg className={styles.statusIcon} fill="currentColor" viewBox="0 0 20 20">
@@ -161,7 +161,7 @@ export default function RunStatusIndicator({
           </div>
           <div className={styles.progressTrack}>
             <div
-              className={styles.progressBar}
+              className={styles.rsiProgressBar}
               style={{ width: `${progress}%` }}
             />
           </div>

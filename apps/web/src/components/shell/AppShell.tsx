@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
-import styles from "./AppShell.module.css";
+import styles from "@/styles/shell.module.css";
 
 export function AppShell(props: { header?: ReactNode; sideNav?: ReactNode; children: ReactNode }) {
   return (
     <div className={styles.root}>
-      <header className={styles.header}>{props.header}</header>
+      <header className={styles.asHeader}>{props.header}</header>
       <aside className={styles.sideNav}>{props.sideNav}</aside>
-      <main className={styles.content}>{props.children}</main>
+      <main className={styles.asContent}>{props.children}</main>
     </div>
   );
 }

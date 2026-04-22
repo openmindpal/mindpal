@@ -5,7 +5,7 @@ import { t } from "@/lib/i18n";
 import { API_BASE } from "@/lib/api";
 import { type FlowArtifactCard, type WorkspaceTab } from "../../app/homeHelpers";
 import { IconPanel } from "../../app/HomeIcons";
-import styles from "../../app/page.module.css";
+import styles from "@/styles/page.module.css";
 
 const ARTIFACT_ICONS: Record<string, string> = {
   json: "📊", table: "📊", chart: "📈", markdown: "📄", text: "📄", file: "📦",

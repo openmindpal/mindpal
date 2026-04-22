@@ -34,7 +34,7 @@ import ChatFlowRenderer from "./ChatFlowRenderer";
 import ChatInputArea from "./ChatInputArea";
 import ConversationHistory from "./ConversationHistory";
 import Nl2uiOverlay from "./Nl2uiOverlay";
-import styles from "./page.module.css";
+import styles from "@/styles/page.module.css";
 
 export default function HomeChatShell(props: { locale: string }) {
   const locale = props.locale;

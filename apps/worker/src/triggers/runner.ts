@@ -243,6 +243,34 @@ export async function fireCronTrigger(params: { pool: Pool; queue: Queue; trigge
   const now = new Date();
   const scheduledAt = params.scheduledAt;
   const firedAt = nowIso();
+
+  /* ── rate_limit_per_min 限流检查（事务 + 行级锁） ── */
+  const rateLimited = await withTransaction(params.pool, async (client) => {
+    // 对 trigger_definitions 行加锁，防止并发绕过
+    await client.query(
+      "SELECT 1 FROM trigger_definitions WHERE tenant_id = $1 AND trigger_id = $2 FOR UPDATE",
+      [trigger.tenantId, trigger.triggerId],
+    );
+    const recentCountRes = await client.query(
+      "SELECT COUNT(*)::int AS c FROM trigger_runs WHERE tenant_id = $1 AND trigger_id = $2 AND created_at > NOW() - INTERVAL '1 minute'",
+      [trigger.tenantId, trigger.triggerId],
+    );
+    const recentCount = Number(recentCountRes.rows[0]?.c ?? 0);
+    if (recentCount >= trigger.rateLimitPerMin) {
+      await client.query(
+        `
+          INSERT INTO trigger_runs (tenant_id, trigger_id, status, scheduled_at, fired_at, matched, match_reason, match_digest, idempotency_key, event_ref_json)
+          VALUES ($1,$2,'skipped',$3,$4,false,'rate_limited',$5::jsonb,NULL,NULL)
+        `,
+        [trigger.tenantId, trigger.triggerId, scheduledAt, firedAt, { type: "cron", reason: "rate_limited" }],
+      );
+      return true;
+    }
+    return false;
+  });
+  if (rateLimited) {
+    return { ok: true, rateLimited: true as const };
+  }
   const vars: Record<string, string> = {
     triggerId: trigger.triggerId,
     tenantId: trigger.tenantId,

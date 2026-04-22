@@ -9,7 +9,7 @@ import { isToolEnabled } from "../../modules/governance/toolGovernanceRepo";
 import { getEffectiveToolNetworkPolicy } from "../../modules/governance/toolNetworkPolicyRepo";
 import { getToolDefinition, getToolVersionByRef } from "../../modules/tools/toolRepo";
 import { createJobRunStep, createJobRunStepWithoutToolRef } from "../../modules/workflow/jobRepo";
-import { createTrigger, getTrigger, listTriggerRuns, listTriggers, updateTrigger, computeCronNextFireAt } from "./modules/triggerRepo";
+import { createTrigger, deleteTrigger, getTrigger, listTriggerRuns, listTriggers, updateTrigger, computeCronNextFireAt } from "./modules/triggerRepo";
 
 function normalizeTriggerType(v: string) {
   if (v === "cron" || v === "event") return v;
@@ -159,6 +159,19 @@ export const triggerRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true, trigger, summary: { nextFireAt, enabledCount: c, enabledLimit }, recentRuns };
   });
 
+  app.delete("/governance/triggers/:triggerId", async (req) => {
+    setAuditContext(req, { resourceType: "trigger", action: "manage" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "trigger", action: "manage" });
+    const subject = requireSubject(req);
+    const params = z.object({ triggerId: z.string().uuid() }).parse(req.params);
+    const trigger = await getTrigger({ pool: app.db, tenantId: subject.tenantId, triggerId: params.triggerId });
+    if (!trigger) throw Errors.notFound("trigger");
+    if (trigger.status === "enabled") throw Errors.badRequest("需先禁用触发器才能删除");
+    await deleteTrigger({ pool: app.db, tenantId: subject.tenantId, triggerId: params.triggerId });
+    req.ctx.audit!.outputDigest = { triggerId: params.triggerId, deleted: true };
+    return { ok: true };
+  });
+
   app.post("/governance/triggers/:triggerId/fire", async (req) => {
     setAuditContext(req, { resourceType: "trigger", action: "fire" });
     const decision = await requirePermission({ req, resourceType: "trigger", action: "fire" });
@@ -228,7 +241,7 @@ export const triggerRoutes: FastifyPluginAsync = async (app) => {
               input: {
                 toolRef,
                 idempotencyKey: idempotencyKey ?? undefined,
-                toolContract: { scope, resourceType, action, idempotencyRequired, riskLevel: def?.riskLevel, approvalRequired: def?.approvalRequired, fieldRules: env.dataDomain.toolContract.fieldRules ?? null, rowFilters: env.dataDomain.toolContract.rowFilters ?? null },
+                toolContract: { scope, resourceType, action, idempotencyRequired, riskLevel: def?.riskLevel, approvalRequired: def?.approvalRequired, sourceLayer: def?.sourceLayer, fieldRules: env.dataDomain.toolContract.fieldRules ?? null, rowFilters: env.dataDomain.toolContract.rowFilters ?? null },
                 input,
                 limits: env.resourceDomain.limits,
                 networkPolicy: env.egressDomain.networkPolicy,

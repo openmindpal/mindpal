@@ -300,8 +300,8 @@ describe("workflow tooling", () => {
   });
 
   it("buildSafeToolOutput 对大字段做裁剪", () => {
-    expect(buildSafeToolOutput("echo.tool", { a: "x".repeat(10000), b: 1 })).toBeNull();
-    const out = buildSafeToolOutput("sleep", { sleptMs: 12, big: "x".repeat(10000) });
+    expect(buildSafeToolOutput("utility.echo", { a: "x".repeat(10000), b: 1 })).toBeNull();
+    const out = buildSafeToolOutput("utility.sleep", { sleptMs: 12, big: "x".repeat(10000) });
     expect(out).toEqual({ sleptMs: 12 });
   });
 });
@@ -928,7 +928,7 @@ describe.skipIf(!hasDbEnv)("workflow processor", () => {
           actorRole: "executor",
           rolePermissionContext: {
             roleName: "executor",
-            allowedTools: ["sleep"],
+            allowedTools: ["utility.sleep"],
             policySnapshotRef: "snap-role",
           },
           toolContract: { scope: "read", resourceType: "tool", action: "execute", fieldRules: { read: { allow: ["*"] }, write: { allow: ["*"] } }, rowFilters: null },

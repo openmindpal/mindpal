@@ -7,7 +7,7 @@ import {
   type FlowApprovalNode,
   friendlyToolName,
 } from "@/app/homeHelpers";
-import styles from "./FlowItemRenderer.module.css";
+import styles from "@/styles/flow.module.css";
 
 /* ─── Icons (used by ApprovalNodeRenderer) ─────────────────────────────────── */
 
@@ -83,9 +83,21 @@ export function ApprovalNodeRenderer(props: { item: FlowApprovalNode; locale: st
         <span className={styles.approvalNodeTitle}>
           {t(locale, `flowItem.approval.${item.status}`)}
         </span>
+        {item.riskLevel && (
+          <span className={`${styles.approvalRiskBadge} ${
+            item.riskLevel === "high" ? styles.approvalRiskHigh
+            : item.riskLevel === "medium" ? styles.approvalRiskMedium
+            : styles.approvalRiskLow
+          }`}>
+            {item.riskLevel === "high" ? "高风险" : item.riskLevel === "medium" ? "中风险" : "低风险"}
+          </span>
+        )}
       </div>
 
       <div className={styles.approvalNodeContent}>
+        {item.humanSummary && (
+          <div className={styles.approvalHumanSummary}>{item.humanSummary}</div>
+        )}
         <div className={styles.approvalNodeTool}>
           <span className={styles.approvalNodeLabel}>{t(locale, "flowItem.approval.tool")}:</span>
           <span>{friendlyToolName(locale, item.toolRef)}</span>
@@ -99,6 +111,12 @@ export function ApprovalNodeRenderer(props: { item: FlowApprovalNode; locale: st
             <span className={styles.approvalNodeLabel}>{t(locale, "flowItem.approval.decidedAt")}:</span>
             <span>{fmtDateTime(item.decidedAt, locale)}</span>
           </div>
+        )}
+        {item.inputDigest && Object.keys(item.inputDigest).length > 0 && (
+          <details className={styles.approvalInputDigest}>
+            <summary>参数摘要</summary>
+            <pre>{JSON.stringify(item.inputDigest, null, 2)}</pre>
+          </details>
         )}
       </div>
 

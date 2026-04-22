@@ -24,13 +24,14 @@ describe("validateCollabMessage", () => {
   it("合法消息通过验证", () => {
     const msg: CollabMessage = {
       messageId: "m-1",
-      type: "task.assign",
+      messageType: "task.assign",
       collabRunId: "cr-1",
+      tenantId: "tenant-001",
       fromRole: "planner",
       toRole: "executor",
       payload: { task: "分析数据" },
       sentAt: new Date().toISOString(),
-      version: 1,
+      version: "1.0.0",
     };
     const result = validateCollabMessage(msg);
     expect(result.ok).toBe(true);
@@ -567,7 +568,7 @@ describe("Debate Round Progression（辩论轮次推进）", () => {
 /*  CollabBus — 消息发布/订阅                                           */
 /* ================================================================== */
 
-import { publishCollabMessage, publishAgentResult, publishSharedStateUpdate } from "./collabBus";
+import { publishCollabMessage, publishAgentResult, publishSharedStateUpdate, getCollabBus, closeCollabBus } from "./collabBus";
 
 type TurnOutcome = "continue" | "retry" | "rollback" | "replan" | "escalate" | "complete" | "abort";
 
@@ -611,17 +612,24 @@ describe("requiresConsensus", () => {
 });
 
 describe("publishCollabMessage", () => {
-  it("通过 Redis 发布消息 + DB 持久化", async () => {
-    const pool = {
-      query: vi.fn(async () => ({ rows: [], rowCount: 1 })),
-    } as any;
-    const redis = {
-      publish: vi.fn(async () => 1),
-    } as any;
+  let mockPool: any;
+  let mockRedis: any;
 
+  beforeEach(() => {
+    mockPool = { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) };
+    mockRedis = { publish: vi.fn(async () => 1) };
+    // 初始化全局 CollabBus 实例
+    getCollabBus({ pool: mockPool, redis: mockRedis });
+  });
+
+  afterEach(async () => {
+    await closeCollabBus();
+  });
+
+  it("通过全局 CollabBus 实例发布消息", async () => {
     await publishCollabMessage({
-      pool,
-      redis,
+      pool: mockPool,
+      redis: mockRedis,
       message: {
         collabRunId: "cr-1",
         tenantId: "t1",
@@ -634,45 +642,49 @@ describe("publishCollabMessage", () => {
       },
     });
 
-    // Redis 发布被调用
-    expect(redis.publish).toHaveBeenCalled();
-    // DB 持久化被调用
-    expect(pool.query).toHaveBeenCalled();
+    // DB 持久化被调用（通过全局实例的 Layer 3）
+    expect(mockPool.query).toHaveBeenCalled();
   });
 
-  it("Redis 不可用时降级到仅 DB 写入", async () => {
-    const pool = {
-      query: vi.fn(async () => ({ rows: [], rowCount: 1 })),
-    } as any;
-
-    await publishCollabMessage({
-      pool,
-      redis: undefined,
-      message: {
-        collabRunId: "cr-1",
-        tenantId: "t1",
-        fromAgent: "agent_2",
-        fromRole: "executor",
-        toRole: null,
-        kind: "task.complete",
-        payload: { result: "done" },
-        timestamp: Date.now(),
-      },
-    });
-
-    // 仅 DB 被调用
-    expect(pool.query).toHaveBeenCalled();
+  it("全局实例未初始化时抛错", async () => {
+    await closeCollabBus();
+    await expect(
+      publishCollabMessage({
+        pool: mockPool,
+        redis: undefined,
+        message: {
+          collabRunId: "cr-1",
+          tenantId: "t1",
+          fromAgent: "agent_2",
+          fromRole: "executor",
+          toRole: null,
+          kind: "task.complete",
+          payload: { result: "done" },
+          timestamp: Date.now(),
+        },
+      }),
+    ).rejects.toThrow("CollabBus global instance not initialized");
   });
 });
 
 describe("publishAgentResult", () => {
-  it("发布 Agent 结果并持久化", async () => {
-    const pool = { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) } as any;
-    const redis = { publish: vi.fn(async () => 1) } as any;
+  let mockPool: any;
+  let mockRedis: any;
 
+  beforeEach(() => {
+    mockPool = { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) };
+    mockRedis = { publish: vi.fn(async () => 1) };
+    getCollabBus({ pool: mockPool, redis: mockRedis });
+  });
+
+  afterEach(async () => {
+    await closeCollabBus();
+  });
+
+  it("发布 Agent 结果并持久化", async () => {
     await publishAgentResult({
-      pool,
-      redis,
+      pool: mockPool,
+      redis: mockRedis,
       tenantId: "t1",
       spaceId: "s1",
       collabRunId: "cr-1",
@@ -683,18 +695,28 @@ describe("publishAgentResult", () => {
       runId: "run-1",
     });
 
-    expect(pool.query).toHaveBeenCalled();
+    expect(mockPool.query).toHaveBeenCalled();
   });
 });
 
 describe("publishSharedStateUpdate", () => {
-  it("发布共享状态更新", async () => {
-    const pool = { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) } as any;
-    const redis = { publish: vi.fn(async () => 1) } as any;
+  let mockPool: any;
+  let mockRedis: any;
 
+  beforeEach(() => {
+    mockPool = { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) };
+    mockRedis = { publish: vi.fn(async () => 1) };
+    getCollabBus({ pool: mockPool, redis: mockRedis });
+  });
+
+  afterEach(async () => {
+    await closeCollabBus();
+  });
+
+  it("发布共享状态更新", async () => {
     await publishSharedStateUpdate({
-      pool,
-      redis,
+      pool: mockPool,
+      redis: mockRedis,
       tenantId: "t1",
       collabRunId: "cr-1",
       key: "shared_progress",
@@ -703,6 +725,6 @@ describe("publishSharedStateUpdate", () => {
       updatedByRole: "executor",
     });
 
-    expect(pool.query).toHaveBeenCalled();
+    expect(mockPool.query).toHaveBeenCalled();
   });
 });

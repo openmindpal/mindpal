@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveSupplyChainPolicy, stableStringify } from "@openslin/shared";
+import { resolveSupplyChainPolicy, stableStringify, validateManifest } from "@openslin/shared";
 
 export function resolveArtifactDir(artifactRef: string) {
   const trimmed = artifactRef.trim();
@@ -15,6 +15,15 @@ export async function loadSkillManifest(artifactDir: string) {
   const p = path.join(artifactDir, "manifest.json");
   const raw = await fs.readFile(p, "utf8");
   const manifest = JSON.parse(raw);
+
+  // Runtime validation: warn on schema violations but do not block loading
+  const validation = validateManifest(manifest);
+  if (!validation.valid) {
+    console.warn(
+      `[skillPackage] manifest validation warnings for ${p}: ${validation.errors.join("; ")}`,
+    );
+  }
+
   return { path: p, raw, manifest };
 }
 

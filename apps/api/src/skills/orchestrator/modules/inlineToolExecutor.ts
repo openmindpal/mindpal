@@ -17,7 +17,7 @@ import type { FastifyInstance } from "fastify";
 import { searchMemory, listMemoryEntries, createMemoryEntry, updateMemoryEntry, getMemoryEntry } from "../../../modules/memory/repo";
 import { searchChunksHybrid } from "../../knowledge-rag/modules/repo";
 import type { EnabledTool } from "../../../modules/agentContext";
-import { evaluateMemoryRisk, resolveNumber } from "@openslin/shared";
+import { evaluateMemoryRisk, resolveNumber, shouldRequireApproval } from "@openslin/shared";
 import { admitInlineExecution } from "../../../kernel/executionKernel";
 import { insertAuditEvent } from "../../../modules/audit/auditRepo";
 
@@ -190,10 +190,31 @@ export function classifyToolCalls(
     }
     if (!enabledToolRefSet.has(tc.toolRef)) continue;
     if (isInlineEligible(tc.toolRef, enabledTools)) {
-      inlineTools.push(tc);
+      // 即使 read+low，也检查工具定义是否显式要求审批
+      const toolMeta = enabledToolMap.get(tc.toolRef);
+      if (toolMeta && shouldRequireApproval({
+        approvalRequired: toolMeta.def.approvalRequired,
+        riskLevel: toolMeta.def.riskLevel,
+        sourceLayer: toolMeta.def.sourceLayer,
+        scope: toolMeta.def.scope,
+      })) {
+        upgradeTools.push(tc);  // 显式要求审批的工具不走内联，升级到 workflow 路径
+      } else {
+        inlineTools.push(tc);
+      }
     } else if (inlineWritableEntities && isInlineWriteEligible(tc.toolRef, tc.inputDraft, inlineWritableEntities, enabledTools)) {
-      // 安全写入白名单实体（schema 中标记 inlineCreatable）→ 内联执行，跳过工作流管线
-      inlineTools.push(tc);
+      // 安全写入白名单实体 → 仍需检查审批策略
+      const toolMeta = enabledToolMap.get(tc.toolRef);
+      if (toolMeta && shouldRequireApproval({
+        approvalRequired: toolMeta.def.approvalRequired,
+        riskLevel: toolMeta.def.riskLevel,
+        sourceLayer: toolMeta.def.sourceLayer,
+        scope: toolMeta.def.scope,
+      })) {
+        upgradeTools.push(tc);  // 显式要求审批的工具不走内联，升级到 workflow 路径
+      } else {
+        inlineTools.push(tc);
+      }
     } else {
       upgradeTools.push(tc);
     }
@@ -374,7 +395,7 @@ async function executeMemoryRead(
   ctx: InlineExecContext,
 ): Promise<unknown> {
   const query = String(input?.query ?? "");
-  const scope = input?.scope === "space" ? "space" : input?.scope === "user" ? "user" : undefined;
+  const scope = input?.scope === "space" ? "space" : input?.scope === "user" ? "user" : input?.scope === "global" ? "global" : undefined;
   const limit = typeof input?.limit === "number" && Number.isFinite(input.limit)
     ? Math.max(1, Math.min(20, input.limit)) : 10;
 
@@ -670,7 +691,7 @@ async function executeMemoryWriteInline(
   input: Record<string, unknown>,
   ctx: InlineExecContext,
 ): Promise<unknown> {
-  const scope = input?.scope === "space" ? "space" : "user";
+  const scope = input?.scope === "space" ? "space" : input?.scope === "global" ? "global" : "user";
   const type = String(input?.type ?? "other");
   const title = input?.title ? String(input.title) : null;
   const contentText = String(input?.contentText ?? "");

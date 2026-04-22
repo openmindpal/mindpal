@@ -13,13 +13,16 @@
  */
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import { resolveBoolean } from "@openslin/shared";
 import type {
   WorldState, WorldEntity, WorldRelation, WorldFact,
   GoalGraph, GoalCondition, SuccessCriterion,
+  WorldStateEntry,
 } from "@openslin/shared";
 import {
   createWorldState, upsertEntity, addRelation, upsertFact,
   batchUpsertEntities, batchAddRelations,
+  mergeWorldStates,
 } from "@openslin/shared";
 import type { StepObservation } from "./agentLoop";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
@@ -321,7 +324,7 @@ export async function llmExtractWorldState(params: LlmExtractParams): Promise<Wo
   const now = new Date().toISOString();
 
   // 环境变量开关
-  if ((process.env.AGENT_LOOP_LLM_EXTRACT ?? "0") !== "1") {
+  if (!resolveBoolean("AGENT_LOOP_LLM_EXTRACT").value) {
     return state;
   }
 
@@ -569,8 +572,10 @@ export function extractWorldState(params: {
   memoryContext?: string;
   knowledgeContext?: string;
   existingState?: WorldState;
+  /** 多源融合：额外的状态声明来源，与观察提取结果融合（不传时行为不变） */
+  additionalSources?: WorldStateEntry[];
 }): WorldState {
-  const { runId, observations, userGoal, memoryContext, knowledgeContext, existingState } = params;
+  const { runId, observations, userGoal, memoryContext, knowledgeContext, existingState, additionalSources } = params;
   const now = new Date().toISOString();
 
   // 基于已有状态增量构建，或全新创建
@@ -627,6 +632,53 @@ export function extractWorldState(params: {
     const kFacts = extractFactsFromText(knowledgeContext, "observation", now);
     for (const fact of kFacts) {
       state = upsertFact(state, fact);
+    }
+  }
+
+  // 5. 多源融合：将观察提取的事实转为 WorldStateEntry，与 additionalSources 融合
+  //    功能目标：支持多个来源的状态声明融合，检测并解决矛盾
+  if (additionalSources && additionalSources.length > 0) {
+    // 将当前 state 中的有效事实转换为 WorldStateEntry 格式
+    const observationEntries: WorldStateEntry[] = state.facts
+      .filter(f => f.valid)
+      .map(f => ({
+        key: f.key,
+        value: f.value ?? f.statement,
+        source: 'observation' as const,
+        confidence: f.confidence,
+        timestamp: Date.parse(f.recordedAt) || Date.now(),
+      }));
+
+    const { merged, conflicts } = mergeWorldStates(observationEntries, additionalSources);
+
+    // 将融合后的结果写回 state 事实
+    for (const [key, entry] of Object.entries(merged) as [string, WorldStateEntry][]) {
+      state = upsertFact(state, {
+        factId: crypto.randomUUID(),
+        category: entry.source === 'user_input' ? 'user_stated'
+          : entry.source === 'inference' ? 'inference'
+          : 'observation',
+        key,
+        statement: typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value),
+        value: entry.value,
+        confidence: entry.confidence,
+        valid: true,
+        recordedAt: now,
+      });
+    }
+
+    // 将未解决的冲突记录为事实，供下游决策者感知
+    for (const conflict of conflicts.filter((c: { resolved: boolean }) => !c.resolved)) {
+      state = upsertFact(state, {
+        factId: crypto.randomUUID(),
+        category: 'observation',
+        key: `conflict:${conflict.key}`,
+        statement: `Conflict detected on "${conflict.key}": ${conflict.entries.length} sources disagree`,
+        value: { conflictKey: conflict.key, sourceCount: conflict.entries.length },
+        confidence: 1.0,
+        valid: true,
+        recordedAt: now,
+      });
     }
   }
 

@@ -8,8 +8,7 @@ import { IconX } from "./ShellIcons";
 import { formatToolRefLocalized, shortId, timeAgo, preloadToolNames } from "./shellUtils";
 import { useBottomPanel, type ActionStatus } from "./useBottomPanel";
 import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
-import shared from "./bottomTray.shared.module.css";
-import styles from "./ActiveRunList.module.css";
+import styles from "@/styles/shell.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
 
@@ -40,9 +39,9 @@ type ActiveRun = {
 function dotClass(phase: string): string {
   switch (phase) {
     case "executing": case "running":
-      return `${shared.statusDotGreen} ${shared.statusDotPulse}`;
+      return `${styles.statusDotGreen} ${styles.statusDotPulse}`;
     case "needs_approval": case "needs_device": case "needs_arbiter":
-      return shared.statusDotOrange;
+      return styles.statusDotOrange;
     default:
       return "";
   }
@@ -64,15 +63,15 @@ function RunItem(props: {
     : null;
 
   return (
-    <div className={styles.runItem}>
+    <div className={styles.arlRunItem}>
       {/* Status dot */}
-      <span className={`${shared.statusDot} ${styles.statusDotAlign} ${dotClass(run.phase)}`} />
+      <span className={`${styles.statusDot} ${styles.statusDotAlign} ${dotClass(run.phase)}`} />
 
       {/* Info block (clickable link) */}
       <Link href={runHref} className={styles.runInfo}>
         {/* Row 1: ID + phase + step count */}
         <div className={styles.runRow1}>
-          <span className={shared.monoText}>#{shortId(run.runId)}</span>
+          <span className={styles.monoText}>#{shortId(run.runId)}</span>
           <span className={styles.runPhase}>{t(locale, `activeRuns.phase.${run.phase}`)}</span>
           <span className={styles.runStepCount}>
             {t(locale, "activeRuns.step")} {run.progress.current}/{run.progress.total}
@@ -81,7 +80,7 @@ function RunItem(props: {
         {/* Row 2: tool/step name (if available) */}
         {stepLabel && (
           <div className={styles.runRow2}>
-            <span className={shared.truncate}>{stepLabel}</span>
+            <span className={styles.truncate}>{stepLabel}</span>
             {run.currentStep!.attempt > 1 && (
               <span className={styles.stepAttempt}>
                 {t(locale, "activeRuns.retry")} #{run.currentStep!.attempt}
@@ -105,7 +104,7 @@ function RunItem(props: {
           <span className={styles.cancelDone}>{t(locale, "activeRuns.cancelled")}</span>
         ) : cancelState === "error" ? (
           <button
-            className={`${shared.actionBtn} ${styles.cancelBtnDanger}`}
+            className={`${styles.actionBtnShared} ${styles.cancelBtnDanger}`}
             onClick={(e) => { e.stopPropagation(); onCancel(run.runId); }}
             title={cancelError || t(locale, "activeRuns.cancelFailed")}
           >
@@ -113,7 +112,7 @@ function RunItem(props: {
           </button>
         ) : (
           <button
-            className={`${shared.actionBtn} ${styles.cancelBtnDanger}`}
+            className={`${styles.actionBtnShared} ${styles.cancelBtnDanger}`}
             disabled={cancelState === "loading"}
             onClick={(e) => { e.stopPropagation(); onCancel(run.runId); }}
             title={t(locale, "activeRuns.cancel")}
@@ -187,7 +186,7 @@ export default function ActiveRunList(props: {
   }, [locale, setActionState, resetActionState]);
 
   return (
-    <div className={shared.panelWrap}>
+    <div className={styles.panelWrap}>
       {loading && <PanelLoading message={t(locale, "activeRuns.loading")} />}
 
       {!loading && error && (
@@ -199,7 +198,7 @@ export default function ActiveRunList(props: {
       )}
 
       {!loading && !error && runs.length > 0 && (
-        <div className={styles.runList}>
+        <div className={styles.arlRunList}>
           {runs.map((run) => (
             <RunItem
               key={run.runId}

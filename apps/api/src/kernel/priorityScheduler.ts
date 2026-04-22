@@ -10,7 +10,7 @@
  * - P1-05: 饥饿检测：低优先级任务等待超阈自动提升优先级
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, resolveNumber } from "@openslin/shared";
 
 const logger = new StructuredLogger({ module: "priorityScheduler" });
 
@@ -70,7 +70,7 @@ export async function tryScheduleProcess(params: {
   const maxPerTenant = cfg.maxConcurrentPerTenant ?? 20;
   const maxPerSpace = cfg.maxConcurrentPerSpace ?? 10;
   const preemptThreshold = cfg.preemptionThreshold ?? 3;
-  const maxGlobal = cfg.maxGlobalConcurrent ?? MAX_CONCURRENT_AGENT_LOOPS;
+  const maxGlobal = cfg.maxGlobalConcurrent ?? getMaxConcurrentAgentLoops();
 
   // 1. 检查租户级并发
   const tenantRunning = await pool.query<{ cnt: string }>(
@@ -287,7 +287,9 @@ export async function getSchedulerStats(params: {
 
 // ── P1-05: 全局并发 Agent Loop 限制 + 进程入口门 ──────────────────
 
-export const MAX_CONCURRENT_AGENT_LOOPS = Math.max(1, Number(process.env.MAX_CONCURRENT_AGENT_LOOPS) || 50);
+export function getMaxConcurrentAgentLoops(): number {
+  return Math.max(1, resolveNumber("MAX_CONCURRENT_AGENT_LOOPS", undefined, undefined, 50).value);
+}
 
 let _activeLoops = 0;
 const _waitQueue: Array<{ resolve: () => void; priority: number; enqueuedAt: number }> = [];
@@ -300,7 +302,7 @@ export async function acquireLoopSlot(params: { priority?: number; timeoutMs?: n
   const priority = params.priority ?? 5;
   const timeoutMs = params.timeoutMs ?? 60_000;
 
-  if (_activeLoops < MAX_CONCURRENT_AGENT_LOOPS) {
+  if (_activeLoops < getMaxConcurrentAgentLoops()) {
     _activeLoops++;
     return () => releaseLoopSlot();
   }
@@ -324,7 +326,7 @@ export async function acquireLoopSlot(params: { priority?: number; timeoutMs?: n
     const timer = setTimeout(() => {
       const pos = _waitQueue.indexOf(entry);
       if (pos >= 0) _waitQueue.splice(pos, 1);
-      reject(new Error(`agent_loop_admission_timeout: waited ${timeoutMs}ms, global slots=${MAX_CONCURRENT_AGENT_LOOPS}, active=${_activeLoops}, queued=${_waitQueue.length}`));
+      reject(new Error(`agent_loop_admission_timeout: waited ${timeoutMs}ms, global slots=${getMaxConcurrentAgentLoops()}, active=${_activeLoops}, queued=${_waitQueue.length}`));
     }, timeoutMs);
 
     // 清理 timer 引用 — 通过替换 resolve
@@ -340,7 +342,7 @@ function releaseLoopSlot() {
   _activeLoops = Math.max(0, _activeLoops - 1);
 
   // 唤醒队列中等待的下一个
-  if (_waitQueue.length > 0 && _activeLoops < MAX_CONCURRENT_AGENT_LOOPS) {
+  if (_waitQueue.length > 0 && _activeLoops < getMaxConcurrentAgentLoops()) {
     const next = _waitQueue.shift();
     next?.resolve();
   }
@@ -348,13 +350,17 @@ function releaseLoopSlot() {
 
 /** 获取当前全局 Agent Loop 并发状态 */
 export function getGlobalLoopConcurrency(): { active: number; queued: number; max: number } {
-  return { active: _activeLoops, queued: _waitQueue.length, max: MAX_CONCURRENT_AGENT_LOOPS };
+  return { active: _activeLoops, queued: _waitQueue.length, max: getMaxConcurrentAgentLoops() };
 }
 
 // ── P1-05: 饥饿检测与优先级自动提升 ───────────────────
 
-const STARVATION_THRESHOLD_MS = Number(process.env.SCHEDULER_STARVATION_THRESHOLD_MS) || 120_000; // 2 min
-const STARVATION_PRIORITY_BOOST = Number(process.env.SCHEDULER_STARVATION_BOOST) || 2;
+function getStarvationThresholdMs(): number {
+  return resolveNumber("SCHEDULER_STARVATION_THRESHOLD_MS", undefined, undefined, 120_000).value;
+}
+function getStarvationPriorityBoost(): number {
+  return resolveNumber("SCHEDULER_STARVATION_BOOST", undefined, undefined, 2).value;
+}
 
 /**
  * P1-05: 检测等待时间超阈的 pending 进程，自动提升优先级以防饥饿。
@@ -372,11 +378,11 @@ export async function detectAndBoostStarvedProcesses(params: {
        AND created_at < now() - ($2::bigint * interval '1 millisecond')
        AND priority < 10
      RETURNING process_id, priority`,
-    [STARVATION_PRIORITY_BOOST, STARVATION_THRESHOLD_MS],
+    [getStarvationPriorityBoost(), getStarvationThresholdMs()],
   );
   const boosted = res.rowCount ?? 0;
   if (boosted > 0) {
-    logger.info(`Boosted ${boosted} starved processes by +${STARVATION_PRIORITY_BOOST} priority`);
+    logger.info(`Boosted ${boosted} starved processes by +${getStarvationPriorityBoost()} priority`);
   }
   return { boosted };
 }

@@ -7,8 +7,7 @@
  * - 批量禁用/解禁工具 (handleDisableHighRiskTools, handleEnableAllTools)
  * - trayConfirmFn（智能确认函数）
  */
-import { listCapabilities } from "./kernel/capabilityRegistry";
-import { listPluginStates } from "./kernel/pluginLifecycle";
+import { getCachedCapabilities, getCachedPluginStates } from "./trayState";
 import type { RiskLevel } from "./kernel/types";
 import { executionStats, recordExecution } from "./tray/stats";
 import {
@@ -22,8 +21,8 @@ import { formatTimeDelta, type PendingConfirmation } from "./trayMenuBuilder";
 /* ── 工具详情弹窗 ────────────────────────────────────────── */
 
 export function handleViewToolDetails() {
-  const caps = listCapabilities();
-  const pluginStates = listPluginStates();
+  const caps = getCachedCapabilities();
+  const pluginStates = getCachedPluginStates();
   const isWin = process.platform === "win32";
   const riskIcons: Record<RiskLevel, string> = isWin
     ? { low: "[低]", medium: "[中]", high: "[高]", critical: "[危]" }
@@ -93,7 +92,7 @@ export function handleToggleHighRiskConfirm(updateTray: () => void) {
 }
 
 export function handleDisableHighRiskTools(updateTray: () => void) {
-  const highRisk = listCapabilities().filter((c) => c.riskLevel === "high" || c.riskLevel === "critical");
+  const highRisk = getCachedCapabilities().filter((c) => c.riskLevel === "high" || c.riskLevel === "critical");
   const disabledSet = getLocalDisabledTools();
   let added = 0;
   for (const cap of highRisk) {
@@ -142,7 +141,7 @@ export async function trayConfirmFn(
     return false;
   }
 
-  const caps = listCapabilities();
+  const caps = getCachedCapabilities();
   const cap = caps.find((c) => c.toolRef === toolRef);
   const riskLevel: RiskLevel = cap?.riskLevel ?? "medium";
 

@@ -8,7 +8,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, resolveString } from "@openslin/shared";
 
 const logger = new StructuredLogger({ module: "intentAnchoring.rules" });
 
@@ -53,7 +53,7 @@ export function loadAnchorRules(): {
 } {
   try {
     const cfgPath =
-      process.env.INTENT_ANCHOR_RULES_PATH ||
+      resolveString("INTENT_ANCHOR_RULES_PATH").value ||
       path.resolve(__dirname, "anchor-rules.json");
     if (fs.existsSync(cfgPath)) {
       const json: AnchorRulesJson = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));

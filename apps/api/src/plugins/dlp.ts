@@ -1,11 +1,14 @@
-import type { FastifyPluginAsync } from "fastify";
 import { attachDlpSummary, redactValue, shouldDenyDlpForTarget } from "@openslin/shared";
 import { Errors } from "../lib/errors";
 import { digestBody, digestPayload } from "./digests";
 import { resolveRequestDlpPolicyContext } from "../lib/dlpPolicy";
 
-export const dlpPlugin: FastifyPluginAsync = async (app) => {
-  app.addHook("preSerialization", async (req, reply, payload) => {
+export async function handleDlpPreSerialization(
+  app: { db: import("pg").Pool },
+  req: import("fastify").FastifyRequest,
+  reply: import("fastify").FastifyReply,
+  payload: unknown,
+): Promise<unknown> {
     const subject = req.ctx.subject;
     const dlpContext = await resolveRequestDlpPolicyContext({ db: app.db, subject });
     const dlpPolicy = dlpContext.policy;
@@ -60,5 +63,4 @@ export const dlpPlugin: FastifyPluginAsync = async (app) => {
     audit.outputDigest = outWithDlp;
 
     return payloadWithDlp ?? payload;
-  });
-};
+}

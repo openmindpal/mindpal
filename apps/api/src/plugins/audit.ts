@@ -158,7 +158,7 @@ function resolveResult(reply: FastifyReply): "success" | "denied" | "error" {
       : "error";
 }
 
-async function finalizeAudit(app: FastifyInstance, params: { req: FastifyRequest; reply: FastifyReply; payload: unknown; mergeDigest: boolean }): Promise<unknown> {
+export async function finalizeAudit(app: FastifyInstance, params: { req: FastifyRequest; reply: FastifyReply; payload: unknown; mergeDigest: boolean }): Promise<unknown> {
   const audit = params.req.ctx.audit;
   if (!audit?.resourceType || !audit?.action) return params.payload;
   if (audit.auditWritten) return params.payload;

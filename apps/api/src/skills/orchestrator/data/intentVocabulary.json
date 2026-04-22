@@ -1,0 +1,79 @@
+{
+  "$schema": "intent-vocabulary-defaults",
+  "version": 1,
+  "description": "意图词汇库默认数据 — 编译时内嵌的最小词表，供 intentVocabulary.ts 加载。运行时可被 intent-vocab.json 热更新覆盖。",
+  "updatedAt": "2026-04-22T00:00:00Z",
+
+  "greetingWords": [
+    "你好", "您好", "早上好", "下午好", "晚上好", "嗨", "哈喽",
+    "hi", "hello", "hey", "good morning",
+    "good evening", "good afternoon", "morning", "afternoon", "evening",
+    "howdy", "greetings", "sup", "hiya", "yo"
+  ],
+
+  "collabKeywords": [
+    "协作", "讨论", "辩论", "多智能体", "团队", "分配", "分工", "合作", "一起",
+    "collaborate", "discuss", "debate", "assign", "team"
+  ],
+
+  "executeRequestPrefixes": [
+    "请执行", "请帮我执行", "请运行",
+    "please run", "please execute"
+  ],
+
+  "executeActionVerbs": [
+    "执行", "运行", "启动", "停止", "创建", "更新", "修改", "删除",
+    "审批", "提交", "发布", "部署", "改为", "设为", "帮忙",
+    "生成", "发送", "查找", "搜索", "分析", "计算", "下载", "上传",
+    "导出", "导入", "编辑", "配置", "设置", "安装", "打开", "关闭",
+    "同步", "备份", "恢复", "迁移", "转换",
+    "execute", "run", "create", "update", "delete", "submit", "approve", "deploy"
+  ],
+
+  "questionIndicators": [
+    "什么是", "怎么", "为什么", "如何", "是否", "能不能", "什么",
+    "能否", "可以吗", "有没有", "有哪些", "多少", "哪个", "哪些", "哪里", "何时",
+    "what is", "how to", "why",
+    "which", "what", "how", "when", "where", "can you", "could you",
+    "is there", "are there", "do you"
+  ],
+
+  "opinionPrefixes": [
+    "我觉得", "我认为", "I think", "I believe",
+    "其实", "说实话", "坦白说", "我个人认为", "依我看",
+    "老实说", "客观来说", "事实上", "实际上"
+  ],
+
+  "followUpConfirms": [
+    "好的", "确认", "继续", "ok", "yes"
+  ],
+
+  "queryKeywords": [
+    "查询", "查找", "搜索", "查看", "列出", "统计", "汇总",
+    "找下", "找找", "拉一下", "找出来",
+    "翻翻", "有哪些",
+    "给我拉", "报表", "再多看几条",
+    "筛选", "导出"
+  ],
+
+  "uiPatternVerbs": [
+    "显示", "生成", "创建", "展示", "弄", "做", "设计",
+    "show me", "design"
+  ],
+
+  "uiPatternTargets": [
+    "页面", "界面", "面板", "看板", "dashboard", "图表",
+    "仪表盘", "布局", "表单", "报表"
+  ],
+
+  "uiDisplayVerbs": [
+    "显示", "展示", "show me", "show"
+  ],
+
+  "multimodalHints": [
+    { "attachmentType": "image", "boostIntent": "execute", "boostConfidence": 0.10 },
+    { "attachmentType": "document", "textPattern": "分析|总结|摘要|analyze|summarize", "boostIntent": "execute", "boostConfidence": 0.15 },
+    { "attachmentType": "voice", "boostIntent": "chat", "boostConfidence": 0.05 },
+    { "attachmentType": "video", "boostIntent": "execute", "boostConfidence": 0.10 }
+  ]
+}

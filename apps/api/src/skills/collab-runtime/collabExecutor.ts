@@ -289,7 +289,7 @@ export async function executeCollabPipeline(params: CollabExecutionParams): Prom
       const list = permByRole.get(roleKey) ?? [];
       list.push({
         toolRef: resolved.toolRef,
-        toolContract: { scope: resolved.scope, resourceType: resolved.resourceType, action: resolved.action, idempotencyRequired: resolved.idempotencyRequired },
+        toolContract: { scope: resolved.scope, resourceType: resolved.resourceType, action: resolved.action, idempotencyRequired: resolved.idempotencyRequired, sourceLayer: resolved.definition.sourceLayer },
         policySnapshotRef: opDecision.snapshotRef ?? null,
         fieldRules: (opDecision as any).fieldRules ?? null,
         rowFilters: (opDecision as any).rowFilters ?? null,

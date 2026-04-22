@@ -1,6 +1,6 @@
 {
   "identity": {
-    "name": "knowledge.ocr.extract",
+    "name": "knowledge.extract.ocr",
     "version": "1.0.0"
   },
   "displayName": {
@@ -14,6 +14,7 @@
   "category": "knowledge",
   "priority": 7,
   "tags": ["ocr", "image", "text-extraction", "knowledge", "document"],
+  "dependencies": ["media"],
   "executionTimeoutMs": 300000,
   "contract": {
     "scope": "read",
@@ -43,5 +44,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

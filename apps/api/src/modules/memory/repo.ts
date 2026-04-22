@@ -13,10 +13,11 @@ import {
   type WriteProof,
   type WriteIntent,
   type MemoryRerankInput,
+  type MemoryScope,
 } from "@openslin/shared";
 import { encryptMemoryContent, decryptMemoryContent } from "./memoryEncryption";
 
-export type { WriteProof, WriteIntent, MemoryRiskEvaluation } from "@openslin/shared";
+export type { WriteProof, WriteIntent, MemoryRiskEvaluation, MemoryScope } from "@openslin/shared";
 export { evaluateMemoryRisk, MEMORY_TYPE_RISK_LEVELS } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "memory:repo" });
@@ -47,7 +48,7 @@ export type MemoryEntryRow = {
   tenantId: string;
   spaceId: string;
   ownerSubjectId: string | null;
-  scope: "user" | "space";
+  scope: MemoryScope;
   type: string;
   title: string | null;
   contentText: string;
@@ -601,7 +602,7 @@ export async function createMemoryEntry(params: {
   tenantId: string;
   spaceId: string;
   ownerSubjectId: string | null;
-  scope: "user" | "space";
+  scope: MemoryScope;
   type: string;
   title?: string | null;
   contentText: string;
@@ -842,7 +843,7 @@ export async function exportMemoryEntries(params: {
   tenantId: string;
   spaceId: string;
   subjectId: string;
-  scope?: "user" | "space";
+  scope?: MemoryScope;
   types?: string[];
   limit: number;
 }) {
@@ -883,7 +884,7 @@ export async function listMemoryEntries(params: {
   tenantId: string;
   spaceId: string;
   subjectId: string;
-  scope?: "user" | "space";
+  scope?: MemoryScope;
   type?: string;
   limit: number;
   offset: number;
@@ -956,7 +957,7 @@ export async function deleteMemoryEntry(params: { pool: Pool; tenantId: string; 
   return Boolean(res.rowCount);
 }
 
-export async function clearMemory(params: { pool: Pool; tenantId: string; spaceId: string; subjectId: string; scope: "user" | "space" }) {
+export async function clearMemory(params: { pool: Pool; tenantId: string; spaceId: string; subjectId: string; scope: "user" | "space" | "global" }) {
   const res = await params.pool.query(
     `
       UPDATE memory_entries
@@ -977,7 +978,7 @@ export async function exportAndClearMemory(params: {
   tenantId: string;
   spaceId: string;
   subjectId: string;
-  scope: "user" | "space";
+  scope: "user" | "space" | "global";
   types?: string[];
   limit: number;
 }) {
@@ -1044,7 +1045,7 @@ export async function searchMemory(params: {
   spaceId: string;
   subjectId: string;
   query: string;
-  scope?: "user" | "space";
+  scope?: MemoryScope;
   types?: string[];
   limit: number;
 }) {
@@ -1308,6 +1309,7 @@ export async function searchMemory(params: {
       decayScore: typeof c.decay_score === "number" && Number.isFinite(c.decay_score) ? c.decay_score : 1.0,
       distilledTo: c.distilled_to ?? null,
       sourcePriority: src && typeof src.priority === "number" ? src.priority : 0,
+      scope: c.scope ?? undefined,
     };
     const score = computeMemoryRerankScore(input, params.query, qMinhash, nowMs);
     return { ...c, _score: score };

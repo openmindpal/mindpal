@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import styles from "./ui.module.css";
+import styles from "@/styles/ui.module.css";
 
 export type TabItem = { key: string; label: string; content: ReactNode };
 

@@ -10,32 +10,25 @@
  */
 import type { Pool } from "pg";
 import type { RoleName } from "./dynamicCoordinator";
-import { getCollabBus, type CollabMessage } from "../../../kernel/collabBus";
+import { getCollabBus } from "../../../kernel/collabBus";
+import type { CollabMessageEnvelope, CollabMessageType, MessagePriority, MessageStatus } from "@openslin/shared";
+import crypto from "node:crypto";
 
 /* ================================================================== */
 /*  Types                                                               */
 /* ================================================================== */
 
-export type MessageType =
-  | "request"        // 请求消息
-  | "response"       // 响应消息
-  | "notification"   // 通知消息
-  | "broadcast"      // 广播消息
-  | "handoff"        // 任务交接
-  | "feedback"       // 反馈消息
-  | "query"          // 查询消息
-  | "ack";           // 确认消息
+/** @deprecated 使用 CollabMessageType */
+export type MessageType = CollabMessageType;
 
-export type MessagePriority = "low" | "normal" | "high" | "urgent";
-
-export type MessageStatus = "pending" | "delivered" | "read" | "processed" | "failed" | "expired";
+export type { MessagePriority, MessageStatus } from "@openslin/shared";
 
 export interface AgentMessage {
   messageId: string;
   collabRunId: string;
   fromRole: RoleName;
   toRole: RoleName | null;  // null 表示广播
-  messageType: MessageType;
+  messageType: CollabMessageType;
   priority: MessagePriority;
   /** 消息内容 */
   payload: Record<string, unknown>;
@@ -235,19 +228,21 @@ export async function sendMessage(params: {
   try {
     const bus = getCollabBus();
     if (bus) {
-      const collabMsg: CollabMessage = {
+      const collabMsg: CollabMessageEnvelope = {
+        messageId: saved.messageId,
         collabRunId,
         tenantId,
-        fromAgent: message.fromRole,
         fromRole: message.fromRole,
         toRole: message.toRole ?? null,
-        kind: message.messageType,
+        messageType: message.messageType,
         payload: {
-          messageId: saved.messageId,
           ...message.payload,
           replyTo: message.replyTo,
         },
-        timestamp: Date.now(),
+        sentAt: new Date().toISOString(),
+        source: "api",
+        datacontenttype: "application/json",
+        version: "1.0.0",
         priority: message.priority,
       };
       bus.publish(collabMsg).catch(() => {});
@@ -703,7 +698,7 @@ function mapMessageRow(row: any): AgentMessage {
     collabRunId: row.collab_run_id,
     fromRole: row.from_role,
     toRole: row.to_role,
-    messageType: row.message_type as MessageType,
+    messageType: row.message_type as CollabMessageType,
     priority: row.priority as MessagePriority,
     payload: row.payload ?? {},
     replyTo: row.reply_to ?? undefined,

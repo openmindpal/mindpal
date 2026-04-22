@@ -359,3 +359,117 @@ export function worldStateToPromptText(state: WorldState, maxLength = 2000): str
   const safeIdx = truncIdx > 0 ? truncIdx : maxLength - 20;
   return text.slice(0, safeIdx) + "\n\n... (truncated)";
 }
+
+/* ================================================================== */
+/*  多源融合与一致性检测                                                  */
+/* ================================================================== */
+
+/** 世界状态声明的来源类型 */
+export type WorldStateSource =
+  | 'observation'       // 直接观察（工具执行结果）
+  | 'external_query'    // 外部查询（API/数据库查询结果）
+  | 'user_input'        // 用户明确输入
+  | 'sensor'            // 传感器数据
+  | 'inference';        // 推理得出
+
+/**
+ * 带来源标记的世界状态条目
+ * 功能目标：为多源融合提供统一的状态声明单元，每个条目携带来源和置信度信息
+ */
+export interface WorldStateEntry {
+  key: string;
+  value: unknown;
+  source: WorldStateSource;
+  /** 0-1，状态声明的置信度 */
+  confidence: number;
+  timestamp: number;
+  /** 与哪些其他 entry 的 source 冲突 */
+  conflictsWith?: string[];
+}
+
+/**
+ * 同一 key 下多个来源声明值不一致时产生的冲突记录
+ */
+export interface WorldStateConflict {
+  key: string;
+  /** 同一 key 的多个冲突声明 */
+  entries: WorldStateEntry[];
+  resolved: boolean;
+  /** 解决后选择的值 */
+  resolution?: WorldStateEntry;
+}
+
+/**
+ * 检测多个 WorldStateEntry 中同一 key 的值冲突。
+ *
+ * 功能目标：在多源状态融合时，识别同一 key 下不同来源给出了不同值的矛盾，
+ * 为后续的冲突解决（取最高置信度）提供依据。
+ *
+ * 纯函数，不涉及 IO。
+ */
+export function detectWorldStateConflicts(
+  entries: WorldStateEntry[],
+): WorldStateConflict[] {
+  const byKey = new Map<string, WorldStateEntry[]>();
+  for (const e of entries) {
+    const list = byKey.get(e.key);
+    if (list) {
+      list.push(e);
+    } else {
+      byKey.set(e.key, [e]);
+    }
+  }
+
+  const conflicts: WorldStateConflict[] = [];
+  for (const [key, list] of byKey) {
+    if (list.length <= 1) continue;
+    // 检查值是否一致
+    const values = list.map(e => JSON.stringify(e.value));
+    const unique = new Set(values);
+    if (unique.size > 1) {
+      conflicts.push({ key, entries: list, resolved: false });
+    }
+  }
+  return conflicts;
+}
+
+/**
+ * 融合多个来源的 WorldStateEntry 列表，产出合并后的状态 + 冲突报告。
+ *
+ * 功能目标：支持将 observation、external_query、user_input 等多个来源的状态声明
+ * 合并为统一视图，自动检测矛盾并以置信度最高者为准解决冲突。
+ *
+ * 纯函数，不涉及 IO。
+ */
+export function mergeWorldStates(
+  ...states: WorldStateEntry[][]
+): { merged: Record<string, WorldStateEntry>; conflicts: WorldStateConflict[] } {
+  const all = states.flat();
+  const conflicts = detectWorldStateConflicts(all);
+
+  // 非冲突 entry 直接合并（同 key 保留 confidence 最高的）
+  const merged: Record<string, WorldStateEntry> = {};
+  const conflictKeys = new Set(conflicts.map(c => c.key));
+
+  for (const e of all) {
+    if (conflictKeys.has(e.key)) continue;
+    if (!merged[e.key] || e.confidence > merged[e.key].confidence) {
+      merged[e.key] = e;
+    }
+  }
+
+  // 冲突 entry 保留 confidence 最高的（但标记冲突来源）
+  for (const conflict of conflicts) {
+    const best = conflict.entries.reduce((a, b) => a.confidence >= b.confidence ? a : b);
+    merged[conflict.key] = {
+      ...best,
+      conflictsWith: conflict.entries
+        .filter(e => e !== best)
+        .map(e => e.source),
+    };
+    conflict.resolved = true;
+    conflict.resolution = merged[conflict.key];
+  }
+
+  return { merged, conflicts };
+}

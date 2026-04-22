@@ -1,3 +1,26 @@
+// ─── 标准审计事件输入接口 ──────────────────────────────────────────
+
+/** 统一审计事件输入，API 与 Worker 共用 */
+export interface AuditEventInput {
+  tenantId: string;
+  action: string;
+  resourceType: string;
+  resourceId?: string;
+  subject: string;
+  outcome: "success" | "failure" | "denied";
+  details?: Record<string, unknown>;
+  traceId?: string;
+  timestamp?: string;
+}
+
+/** 审计写入器抽象（可由 API / Worker 各自实现） */
+export interface AuditWriter {
+  write(event: AuditEventInput): Promise<void>;
+  writeBatch(events: AuditEventInput[]): Promise<void>;
+}
+
+// ─── 审计错误分类常量 ──────────────────────────────────────────
+
 export const AUDIT_ERROR_CATEGORIES = [
   "policy_violation",
   "validation_error",

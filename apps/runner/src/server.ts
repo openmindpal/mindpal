@@ -3,20 +3,21 @@ import Fastify from "fastify";
 import { z } from "zod";
 import type { CapabilityEnvelopeV1 } from "@openslin/shared";
 import { normalizeLimits, normalizeNetworkPolicy, validateCapabilityEnvelopeV1, withConcurrency, withTimeout } from "@openslin/shared";
+import { classifyError, toHttpResponse } from "@openslin/shared";
+import { StructuredLogger } from "@openslin/shared";
+import { extractTraceContext } from "@openslin/shared";
 import { jsonByteLength, sha256Hex, stableStringify } from "./common";
 import type { NetworkPolicy } from "./runtime";
 import { pushEgressAudit, setEgressAuditSink } from "./runtime";
 import { executeSkillInSandbox } from "./executeSkill";
-import { computeRunnerRequestBodyDigestV1, loadTrustedWorkerKeysFromEnv, signRunnerResponseV1, verifyRunnerRequestSignatureV1 } from "./runnerProtocol";
-import type { RunnerExecuteRequestV1, RunnerExecuteResponseV1 } from "./runnerProtocol";
+import { computeRunnerRequestBodyDigestV1, loadTrustedWorkerKeysFromEnv, signRunnerResponseV1, verifyRunnerRequestSignatureV1 } from "@openslin/shared";
+import type { RunnerExecuteRequestV1, RunnerExecuteResponseV1 } from "@openslin/shared";
+import { createBearerAuthProvider } from "./bearerAuthProvider";
+
+const logger = new StructuredLogger({ module: "runner" });
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function requireBearerToken() {
-  const raw = String(process.env.RUNNER_BEARER_TOKEN ?? "").trim();
-  return raw || null;
 }
 
 function requireSignature() {
@@ -52,16 +53,11 @@ function incMap(m: Map<string, number>, k: string) {
   m.set(k, (m.get(k) ?? 0) + 1);
 }
 
-function classifyError(rawMsg: string) {
-  const msg = rawMsg.startsWith("concurrency_limit:") ? "resource_exhausted:max_concurrency" : rawMsg;
-  if (msg === "timeout") return { errorCategory: "timeout" as const, errorCode: "TIMEOUT" as const, message: msg };
-  if (msg.startsWith("resource_exhausted:")) return { errorCategory: "resource_exhausted" as const, errorCode: "RESOURCE_EXHAUSTED" as const, message: msg };
-  if (msg.startsWith("policy_violation:")) return { errorCategory: "policy_violation" as const, errorCode: "POLICY_VIOLATION" as const, message: msg };
-  return { errorCategory: "internal" as const, errorCode: "INTERNAL" as const, message: msg };
-}
 
 export function buildServer() {
   const app = Fastify({ logger: true });
+  const authProvider = createBearerAuthProvider();
+  const hasRunnerBearerToken = !!String(process.env.RUNNER_BEARER_TOKEN ?? "").trim();
 
   app.get("/healthz", async () => {
     return {
@@ -99,11 +95,18 @@ export function buildServer() {
 
   app.post("/v1/execute", async (req, reply) => {
     runnerMetrics.executeTotal += 1;
-    const bearer = requireBearerToken();
+    const traceCtx = extractTraceContext(req.headers as Record<string, string | string[] | undefined>);
+    const reqLogger = logger.child({ traceId: traceCtx.traceId });
     const auth = String((req.headers as any).authorization ?? "");
-    if (bearer) {
-      const expected = `Bearer ${bearer}`;
-      if (auth !== expected) {
+    if (hasRunnerBearerToken) {
+      const authResult = await authProvider.authenticate(auth);
+      if (!authResult) {
+        runnerMetrics.executeRejected += 1;
+        return reply.status(401).send({ errorCode: "UNAUTHORIZED", message: { "zh-CN": "未授权", "en-US": "Unauthorized" } });
+      }
+    } else if (auth) {
+      const authResult = await authProvider.authenticate(auth);
+      if (!authResult) {
         runnerMetrics.executeRejected += 1;
         return reply.status(401).send({ errorCode: "UNAUTHORIZED", message: { "zh-CN": "未授权", "en-US": "Unauthorized" } });
       }
@@ -228,7 +231,6 @@ export function buildServer() {
       if (outputBytes > limits.maxOutputBytes) throw new Error("resource_exhausted:max_output_bytes");
       status = "succeeded";
     } catch (e: any) {
-      const raw = String(e?.message ?? e ?? "internal");
       const errEgress = Array.isArray((e as any)?.egress) ? ((e as any).egress as any[]) : [];
       if (errEgress.length) {
         egressEvents = errEgress;
@@ -240,10 +242,10 @@ export function buildServer() {
           else egressDenied += 1;
         }
       }
-      const cls = classifyError(raw);
+      const cls = classifyError(e);
       status = "failed";
-      errorCategory = cls.errorCategory;
-      errorCode = cls.errorCode;
+      errorCategory = cls.category;
+      errorCode = cls.code;
       output = null;
     } finally {
       runnerMetrics.inFlight = Math.max(0, runnerMetrics.inFlight - 1);
@@ -277,10 +279,13 @@ export function buildServer() {
       );
     }
 
-    if (status === "succeeded") runnerMetrics.executeSucceeded += 1;
-    else {
+    if (status === "succeeded") {
+      runnerMetrics.executeSucceeded += 1;
+      reqLogger.info("execute succeeded", { toolRef: parsed.toolRef, durationMs: latencyMs });
+    } else {
       runnerMetrics.executeFailed += 1;
       incMap(runnerMetrics.failuresByErrorCode, String(errorCode ?? "UNKNOWN"));
+      reqLogger.warn("execute failed", { toolRef: parsed.toolRef, durationMs: latencyMs, errorCode, errorCategory });
     }
 
     const sk = runnerSigningKey();

@@ -1,6 +1,6 @@
 {
   "identity": {
-    "name": "echo.tool",
+    "name": "utility.echo",
     "version": "1.0.0"
   },
   "displayName": {
@@ -14,6 +14,7 @@
   "category": "testing",
   "priority": 3,
   "tags": ["test", "debug", "utility"],
+  "dependencies": [],
   "contract": {
     "scope": "read",
     "resourceType": "tool",
@@ -34,6 +35,7 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }
 

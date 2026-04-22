@@ -7,6 +7,8 @@
  * - reportExecutionResult: HTTP+WS 双通道结果上报
  */
 import { safeLog, safeError, sha256_8 } from './log';
+import { classifyError } from '@openslin/shared';
+import { createTraceContext, injectTraceHeaders } from '@openslin/shared';
 import { executeDeviceTool, type DeviceClaimEnvelope } from './executors';
 import { apiPostJson } from './api';
 import { syncPolicyToCache } from './kernel/auth';
@@ -48,6 +50,7 @@ export function sendTaskResult(
       outputDigest: extra?.outputDigest,
       evidenceRefs: extra?.evidenceRefs,
       timestamp: Date.now(),
+      ...injectTraceHeaders(createTraceContext()),
     },
   };
 
@@ -195,10 +198,12 @@ export async function handleTaskPending(
     await reportExecutionResult(ctx, executionId, claim, result, durationMs);
   } catch (err: any) {
     const durationMs = Date.now() - startTime;
-    safeError(`[WebSocketDeviceAgent] 任务执行异常：${err?.message ?? 'unknown'}（${durationMs}ms）`);
+    const svcErr = classifyError(err);
+    const execCategory = svcErr.category === 'internal' ? 'executor_exception' : svcErr.category;
+    safeError(`[WebSocketDeviceAgent] 任务执行异常：${svcErr.message}（${durationMs}ms）`);
     sendTaskResult(ctx, executionId, 'failed', {
-      errorCategory: 'executor_exception',
-      outputDigest: { error: String(err?.message ?? 'unknown').slice(0, 200) },
+      errorCategory: execCategory,
+      outputDigest: { errorCode: svcErr.code, error: svcErr.message.slice(0, 200) },
     });
   } finally {
     ctx.setCurrentTask(undefined);

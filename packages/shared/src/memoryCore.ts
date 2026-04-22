@@ -75,6 +75,13 @@ export function minhashOverlapScore(a: number[], b: number[]): number {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+ * 1b. 记忆作用域类型（跨会话全局记忆支持）
+ * ══════════════════════════════════════════════════════════════════ */
+
+/** 记忆作用域：user=用户私有, space=空间共享, global=跨会话全局持久 */
+export type MemoryScope = "user" | "space" | "global";
+
+/* ══════════════════════════════════════════════════════════════════
  * 2. 记忆类型风险分级模型
  * ══════════════════════════════════════════════════════════════════ */
 
@@ -286,6 +293,8 @@ export interface MemoryRerankInput {
   distilledTo: string | null;
   /** source_ref.priority（0-100, 默认 0） */
   sourcePriority: number;
+  /** 记忆作用域（用于 global 加权） */
+  scope?: MemoryScope;
 }
 
 /** 记忆分类加权因子（均衡化：避免特定类型记忆因权重偏低被系统性排挤） */
@@ -354,10 +363,12 @@ export function computeMemoryRerankScore(
   // 12. Source priority
   const prio = Number.isFinite(c.sourcePriority) ? Math.max(0, Math.min(100, c.sourcePriority)) : 0;
   const priorityBoost = (prio / 100) * 0.08;
+  // 13. Global scope boost（全局记忆优先级微增）
+  const globalBoost = c.scope === "global" ? 0.1 : 0;
 
   return sLex * 1.2 + sVec + sDense * 1.5 + recencyBoost * 0.05 + bothBonus
     + confidenceBoost + versionBoost + conflictPenalty + classBoost + decayBoost
-    + distilledPenalty + priorityBoost;
+    + distilledPenalty + priorityBoost + globalBoost;
 }
 
 /* ══════════════════════════════════════════════════════════════════

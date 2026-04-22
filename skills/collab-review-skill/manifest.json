@@ -14,6 +14,7 @@
   "category": "governance",
   "priority": 8,
   "tags": ["review", "collaboration", "validation", "quality"],
+  "dependencies": ["rbac", "audit"],
   "contract": {
     "scope": "write",
     "resourceType": "agent_runtime",
@@ -37,5 +38,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

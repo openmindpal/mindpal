@@ -6,6 +6,7 @@
  */
 import crypto from "node:crypto";
 import { redactValue, parseDocument, dataUrlToBuffer, StructuredLogger, resolveNumber } from "@openslin/shared";
+import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 
 const _logger = new StructuredLogger({ module: "api:dispatch.streamAnswer" });
 import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, type ContextMeta, shouldTriggerEventDrivenSummary } from "./modules/orchestrator";
@@ -528,14 +529,18 @@ export async function handleStreamAnswerMode(params: {
   });
   const workflowSuggestions = resolution.workflowTools.map((suggestion) => {
     const tool = enabledToolMap.get(suggestion.toolRef);
+    const toolDef = tool?.def;
     return {
       toolRef: suggestion.toolRef,
       inputDraft: suggestion.inputDraft,
-      riskLevel: tool?.def.riskLevel ?? "low",
-      approvalRequired: tool?.def.approvalRequired ?? false,
+      riskLevel: toolDef?.riskLevel ?? "low",
+      approvalRequired: toolDef ? shouldRequireApproval(toolDef) : false,
+      approvalReason: toolDef?.riskLevel === "high"
+        ? `工具 ${suggestion.toolRef} 风险等级为 high，需要审批`
+        : (toolDef?.approvalRequired ? `工具 ${suggestion.toolRef} 已配置强制审批` : ""),
       suggestionId: crypto.randomUUID(),
       // scope=write 的工具需要 idempotencyKey，供前端手动执行时使用
-      idempotencyKey: tool?.def.scope === "write" ? crypto.randomUUID() : undefined,
+      idempotencyKey: toolDef?.scope === "write" ? crypto.randomUUID() : undefined,
     };
   });
 

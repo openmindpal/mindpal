@@ -13,7 +13,7 @@
  * 运行方式：由 API 启动流程中的 setInterval 周期性调用（或在 Worker 进程中）。
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, resolveNumber } from "@openslin/shared";
 import { listZombieExecutingEntries, listStaleExecutingEntries, updateEntryStatus } from "./taskQueueRepo";
 import { broadcastToSession } from "../lib/sessionEventBus";
 import { persistSchedulerMetrics } from "./sessionScheduler";
@@ -24,11 +24,11 @@ const logger = new StructuredLogger({ module: "taskQueueSupervisor" });
 /* ───── 动态配置 ───── */
 
 function zombieThresholdMs(): number {
-  return Math.max(30_000, Number(process.env.TASK_QUEUE_ZOMBIE_THRESHOLD_MS) || 120_000);
+  return Math.max(30_000, resolveNumber("TASK_QUEUE_ZOMBIE_THRESHOLD_MS", undefined, undefined, 120_000).value);
 }
 
 function supervisorIntervalMs(): number {
-  return Math.max(10_000, Number(process.env.TASK_QUEUE_SUPERVISOR_INTERVAL_MS) || 60_000);
+  return Math.max(10_000, resolveNumber("TASK_QUEUE_SUPERVISOR_INTERVAL_MS", undefined, undefined, 60_000).value);
 }
 
 /* ───── Types ───── */

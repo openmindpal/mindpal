@@ -1,6 +1,6 @@
 {
   "identity": {
-    "name": "sleep",
+    "name": "utility.sleep",
     "version": "1.0.0"
   },
   "displayName": {
@@ -14,6 +14,7 @@
   "category": "testing",
   "priority": 2,
   "tags": ["test", "delay", "timeout"],
+  "dependencies": [],
   "contract": {
     "scope": "read",
     "resourceType": "tool",
@@ -34,5 +35,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

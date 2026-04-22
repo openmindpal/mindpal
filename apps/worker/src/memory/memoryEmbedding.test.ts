@@ -8,9 +8,13 @@ import {
 
 /* ── 全局 mock ─────────────────────────────────────────── */
 
-vi.mock("@openslin/shared", () => ({
-  computeMinhash: vi.fn(() => new Array(16).fill(42)),
-}));
+vi.mock("@openslin/shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@openslin/shared")>();
+  return {
+    ...actual,
+    computeMinhash: vi.fn(() => new Array(16).fill(42)),
+  };
+});
 
 const savedEnv = { ...process.env };
 

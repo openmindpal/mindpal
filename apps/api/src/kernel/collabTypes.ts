@@ -74,6 +74,17 @@ export interface CollabResult {
     finalVerdict: string;
     corrected: boolean;
   }>;
+  /** 协作元数据（降级/纠错耗尽等运行时标记） */
+  metadata?: {
+    /** 协作执行失败后自动降级为单Agent执行 */
+    failoverApplied?: boolean;
+    /** 降级选中的Agent信息 */
+    failoverAgentId?: string;
+    /** 纠错轮次已耗尽（返回最佳可用结果而非报错） */
+    correctionExhausted?: boolean;
+    /** 各策略中被跳过的失败Agent列表 */
+    skippedAgents?: Array<{ agentId: string; role: string; reason: string }>;
+  };
 }
 
 /** 协作调度参数 */

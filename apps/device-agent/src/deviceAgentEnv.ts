@@ -23,8 +23,8 @@ export interface DeviceAgentEnvConfig {
   agentVersion: string;
   /** 操作系统标识 */
   agentOs: string;
-  /** 传输模式: auto / ws / http */
-  transport: string;
+  /** 传输模式: auto(WS优先降级HTTP) / ws(仅WS) / http(仅HTTP轮询) */
+  transport: 'auto' | 'ws' | 'http';
   /** 自动确认（跳过人工交互） */
   autoConfirm: boolean;
   /** GUI 步骤间延迟 (ms) */
@@ -37,9 +37,22 @@ export interface DeviceAgentEnvConfig {
   browserCdpUrl: string;
   /** 应用启动模式: spawn / exec */
   launchMode: string;
+  /** 流式执行器步骤间延迟 (ms) */
+  streamingInterStepDelayMs: number;
+  /** 流式执行器队列积压上限 */
+  streamingMaxQueueSize: number;
+  /** OCR 引擎选择 */
+  ocrEngine: 'paddleocr' | 'tesseract';
 }
 
 let _cached: DeviceAgentEnvConfig | null = null;
+
+const VALID_TRANSPORTS = ['auto', 'ws', 'http'] as const;
+function parseTransport(raw: string | undefined): 'auto' | 'ws' | 'http' {
+  const v = (raw ?? 'auto').toLowerCase();
+  if ((VALID_TRANSPORTS as readonly string[]).includes(v)) return v as 'auto' | 'ws' | 'http';
+  return 'auto';
+}
 
 /** 从 process.env 一次性解析所有 device-agent 配置 */
 export function resolveDeviceAgentEnv(): DeviceAgentEnvConfig {
@@ -54,13 +67,16 @@ export function resolveDeviceAgentEnv(): DeviceAgentEnvConfig {
     policyCacheEnabled: env.POLICY_CACHE_ENABLED !== "false",
     agentVersion: env.AGENT_VERSION || "1.0.0",
     agentOs: env.AGENT_OS || `${os.platform()}-${os.release()}`,
-    transport: (env.DEVICE_AGENT_TRANSPORT ?? "auto").toLowerCase(),
+    transport: parseTransport(env.DEVICE_AGENT_TRANSPORT),
     autoConfirm: env.DEVICE_AGENT_AUTO_CONFIRM === "true" || env.AUTO_CONFIRM === "true",
     guiStepDelayMs: Number(env.DEVICE_AGENT_GUI_STEP_DELAY_MS ?? "200"),
     ocrCacheTtlMs: Math.max(500, Number(env.DEVICE_AGENT_OCR_CACHE_TTL_MS ?? "2000")),
     ocrCacheMax: Math.max(10, Number(env.DEVICE_AGENT_OCR_CACHE_MAX ?? "100")),
     browserCdpUrl: String(env.DEVICE_AGENT_BROWSER_CDP_URL ?? "http://localhost:9222").trim() || "http://localhost:9222",
     launchMode: String(env.DEVICE_AGENT_LAUNCH_MODE ?? "spawn").toLowerCase(),
+    streamingInterStepDelayMs: Math.max(0, Number(env.DEVICE_AGENT_STREAMING_INTER_STEP_DELAY_MS ?? "200")),
+    streamingMaxQueueSize: Math.max(1, Number(env.DEVICE_AGENT_STREAMING_MAX_QUEUE_SIZE ?? "50")),
+    ocrEngine: (env.DEVICE_AGENT_OCR_ENGINE === 'tesseract' ? 'tesseract' : 'paddleocr') as 'paddleocr' | 'tesseract',
   };
   return _cached;
 }

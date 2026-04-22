@@ -1,6 +1,6 @@
 {
   "identity": {
-    "name": "knowledge.pdf.ocr",
+    "name": "knowledge.extract.pdf",
     "version": "1.0.0"
   },
   "displayName": {
@@ -14,6 +14,7 @@
   "category": "knowledge",
   "priority": 7,
   "tags": ["pdf", "ocr", "scanned", "knowledge", "document"],
+  "dependencies": ["media"],
   "executionTimeoutMs": 300000,
   "contract": {
     "scope": "read",
@@ -46,5 +47,6 @@
       }
     }
   },
+  "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import type { AuditEventInput } from "@openslin/shared";
 import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget, computeEventHash } from "@openslin/shared";
 
 const policyCache = new Map<string, { at: number; policyJson: any | null; policyDigest: string | null }>();
@@ -43,6 +44,12 @@ async function getEffectiveContentPolicy(pool: Pool, tenantId: string, spaceId: 
   return out;
 }
 
+/**
+ * 将工作流审计参数转换为标准 AuditEventInput 并写入 audit_events 表。
+ *
+ * 功能目标：统一工作流审计数据结构与 shared AuditEventInput 对齐，
+ * 保留 DLP 内容策略执行和哈希链不可篡改写入。
+ */
 export async function writeAudit(
   pool: Pool,
   e: {
@@ -62,6 +69,23 @@ export async function writeAudit(
   },
 ) {
   const errorCategory = normalizeAuditErrorCategory(e.errorCategory);
+  const outcomeMap: Record<string, AuditEventInput["outcome"]> = { success: "success", error: "failure" };
+  const _standardEvent: AuditEventInput = {
+    tenantId: e.tenantId ?? "",
+    action: e.action ?? "execute",
+    resourceType: e.resourceType ?? "tool",
+    subject: e.subjectId ?? "system",
+    outcome: outcomeMap[e.result] ?? "failure",
+    traceId: e.traceId,
+    details: {
+      spaceId: e.spaceId ?? null,
+      runId: e.runId ?? null,
+      stepId: e.stepId ?? null,
+      toolRef: e.toolRef ?? null,
+      errorCategory,
+    },
+  };
+
   const redactedIn = redactValue(e.inputDigest);
   const redactedOut = redactValue(e.outputDigest);
   const target = `${e.resourceType ?? "tool"}:${e.action ?? "execute"}`;

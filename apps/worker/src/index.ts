@@ -2,7 +2,8 @@ import { Worker } from "bullmq";
 import "./otel";
 import { SpanStatusCode, context, trace } from "@opentelemetry/api";
 import { loadConfig } from "./config";
-import { validateEnvironment, formatValidationResult, StructuredLogger } from "@openslin/shared";
+import { validateEnvironment, formatValidationResult, StructuredLogger, classifyError } from "@openslin/shared";
+import { extractTraceContext, injectTraceHeaders } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "worker:main" });
 import { extractJobTraceContext } from "./lib/tracing";
@@ -215,6 +216,7 @@ async function main() {
     const attemptsMade = Number(job?.attemptsMade ?? 0);
 
     // 结构化日志：每次失败都记录，便于排障
+    const svcErr = classifyError(err);
     _logger.error("job failed", {
       queueJobId: job?.id ?? null,
       jobId,
@@ -223,8 +225,9 @@ async function main() {
       attemptsMade,
       maxAttempts,
       isFinalAttempt: attemptsMade >= maxAttempts,
-      errorMessage: err instanceof Error ? err.message : String(err),
-      errorCode: err instanceof Error && 'code' in err ? String((err as Record<string, unknown>).code) : null,
+      errorMessage: svcErr.message,
+      errorCode: svcErr.code,
+      errorCategory: svcErr.category,
     });
 
     try {

@@ -30,23 +30,21 @@ import {
   cleanupCapture,
   ocrScreen,
   findTextInOcrResults,
-  clickMouse,
-  doubleClick,
-  typeText,
-  pressKey,
-  pressCombo,
-  moveMouse,
-  scroll,
   type OcrMatch,
   type ScreenCapture,
 } from "./plugins/localVision";
+import { executeNativeGuiAction, SCREEN_CHANGING_ACTIONS } from "./kernel/guiActionKernel";
 import { logAuditEvent, uploadArtifact } from "./kernel/audit";
 import { registerCapabilities } from "./kernel/capabilityRegistry";
 import type { CapabilityDescriptor } from "./kernel/types";
 import {
   type StreamingStep, type StreamingTargetSpec, type TargetSpec,
+  type PerceptionStrategy,
   isTargetCoord as isCoord, isTargetPercent as isPercent, isTargetText as isText,
 } from "./plugins/guiTypes";
+import { perceive } from "./plugins/perceptionRouter";
+import { resolveDeviceAgentEnv } from "./deviceAgentEnv";
+import { getOcrCacheService } from "./kernel/ocrCacheService";
 
 // ── 类型（共享类型从 guiTypes.ts 导入，以下为 streaming 专属类型）────
 
@@ -90,39 +88,7 @@ export interface StreamingExecutorConfig {
   stopOnError?: boolean;
 }
 
-const SCREEN_CHANGING_ACTIONS = new Set([
-  "click", "doubleClick", "type", "pressKey", "pressCombo", "scroll",
-]);
-
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-// ── OCR 坐标缓存 ─────────────────────────────────────────────────
-
-class CoordCache {
-  private cache = new Map<string, { x: number; y: number; cachedAt: number }>();
-  constructor(private ttlMs: number) {}
-
-  get(key: string): { x: number; y: number } | null {
-    const e = this.cache.get(key);
-    if (!e) return null;
-    if (Date.now() - e.cachedAt > this.ttlMs) { this.cache.delete(key); return null; }
-    // P3-2: LRU touch — delete+re-set 将条目移到 Map 尾部，淘汰时优先移除最久未访问的
-    this.cache.delete(key);
-    this.cache.set(key, e);
-    return { x: e.x, y: e.y };
-  }
-
-  set(key: string, coord: { x: number; y: number }): void {
-    if (this.cache.size >= 200) {
-      const oldest = this.cache.keys().next().value;
-      if (oldest !== undefined) this.cache.delete(oldest);
-    }
-    this.cache.set(key, { ...coord, cachedAt: Date.now() });
-  }
-
-  invalidateAll(): void { this.cache.clear(); }
-  get size(): number { return this.cache.size; }
-}
 
 // ── StreamingExecutor ─────────────────────────────────────────────
 
@@ -178,10 +144,11 @@ export interface StreamingExecutor {
 }
 
 export function createStreamingExecutor(config?: StreamingExecutorConfig): StreamingExecutor {
-  const interStepDelayMs = config?.interStepDelayMs ?? 50;
+  const env = resolveDeviceAgentEnv();
+  const interStepDelayMs = config?.interStepDelayMs ?? env.streamingInterStepDelayMs;
   const stepTimeoutMs = config?.stepTimeoutMs ?? 10_000;
   const ocrCacheTtlMs = config?.ocrCacheTtlMs ?? 2000;
-  const maxQueueSize = config?.maxQueueSize ?? 200;
+  const maxQueueSize = config?.maxQueueSize ?? env.streamingMaxQueueSize;
   const stopOnError = config?.stopOnError ?? false;
 
   let state: StreamingState = "idle";
@@ -195,7 +162,7 @@ export function createStreamingExecutor(config?: StreamingExecutorConfig): Strea
   let cacheMisses = 0;
 
   const handlers: StreamingEventHandler[] = [];
-  const coordCache = new CoordCache(ocrCacheTtlMs);
+  const coordCache = getOcrCacheService();
   let ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null } = { capture: null, results: null };
 
   let doneResolve: (() => void) | null = null;
@@ -249,8 +216,11 @@ export function createStreamingExecutor(config?: StreamingExecutorConfig): Strea
     }
   }
 
-  // ── 目标解析（缓存优先） ──
-  async function resolveTarget(target: StreamingTargetSpec): Promise<{ x: number; y: number; fromCache: boolean } | { error: string }> {
+  // ── 目标解析（缓存优先，支持云端感知策略） ──
+  async function resolveTarget(
+    target: StreamingTargetSpec,
+    perceptionStrategy: PerceptionStrategy = 'auto',
+  ): Promise<{ x: number; y: number; fromCache: boolean } | { error: string }> {
     if (isCoord(target)) return { x: target.x, y: target.y, fromCache: false };
 
     if (isPercent(target)) {
@@ -381,45 +351,39 @@ export function createStreamingExecutor(config?: StreamingExecutorConfig): Strea
 
   async function runStepAction(step: StreamingStep): Promise<{ status: "ok" | "failed"; detail?: unknown }> {
     switch (step.action) {
-      case "click": {
-        const pos = await resolveTarget(step.target);
+      case "click":
+      case "doubleClick":
+      case "moveTo": {
+        const pos = await resolveTarget(step.target, step.perceptionStrategy);
         if (hasError(pos)) return { status: "failed", detail: pos.error };
-        await clickMouse(pos.x, pos.y, step.button ?? "left");
-        return { status: "ok", detail: { x: pos.x, y: pos.y, fromCache: pos.fromCache } };
-      }
-      case "doubleClick": {
-        const pos = await resolveTarget(step.target);
-        if (hasError(pos)) return { status: "failed", detail: pos.error };
-        await doubleClick(pos.x, pos.y);
-        return { status: "ok", detail: { x: pos.x, y: pos.y, fromCache: pos.fromCache } };
+        const result = await executeNativeGuiAction(step.action, { x: pos.x, y: pos.y }, {
+          button: step.action === "click" ? (step.button ?? "left") : undefined,
+        });
+        return { status: "ok", detail: { ...result.detail, fromCache: pos.fromCache } };
       }
       case "type": {
+        let targetCoord: { x: number; y: number; fromCache: boolean } | undefined;
         if (step.target) {
-          const pos = await resolveTarget(step.target);
+          const pos = await resolveTarget(step.target, step.perceptionStrategy);
           if (hasError(pos)) return { status: "failed", detail: pos.error };
-          await clickMouse(pos.x, pos.y);
-          await sleep(50);
+          targetCoord = pos;
         }
-        await typeText(step.text);
-        return { status: "ok", detail: { textLen: step.text.length } };
+        const result = await executeNativeGuiAction("type", targetCoord, {
+          text: step.text,
+          typeClickDelayMs: 50,
+        });
+        return { status: "ok", detail: { ...result.detail, fromCache: targetCoord?.fromCache } };
       }
-      case "pressKey": {
-        await pressKey(step.key);
-        return { status: "ok", detail: { key: step.key } };
-      }
-      case "pressCombo": {
-        await pressCombo(step.keys);
-        return { status: "ok", detail: { keys: step.keys } };
-      }
+      case "pressKey":
+      case "pressCombo":
       case "scroll": {
-        await scroll(step.direction, step.clicks ?? 3);
-        return { status: "ok", detail: { direction: step.direction, clicks: step.clicks ?? 3 } };
-      }
-      case "moveTo": {
-        const pos = await resolveTarget(step.target);
-        if (hasError(pos)) return { status: "failed", detail: pos.error };
-        await moveMouse(pos.x, pos.y);
-        return { status: "ok", detail: { x: pos.x, y: pos.y, fromCache: pos.fromCache } };
+        const result = await executeNativeGuiAction(step.action, undefined, {
+          key: step.action === "pressKey" ? step.key : undefined,
+          keys: step.action === "pressCombo" ? step.keys : undefined,
+          direction: step.action === "scroll" ? step.direction : undefined,
+          clicks: step.action === "scroll" ? (step.clicks ?? 3) : undefined,
+        });
+        return { status: "ok", detail: result.detail };
       }
       case "wait": {
         await sleep(step.ms);

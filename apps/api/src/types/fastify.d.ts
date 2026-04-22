@@ -5,6 +5,7 @@ import type { Span, Context as OtelContext } from "@opentelemetry/api";
 import type { RedisClient } from "../modules/redis/client";
 import type { ApiConfig } from "../config";
 import type { MetricsRegistry } from "../modules/metrics/metrics";
+import type { AuthContext, AuthProvider } from "@openslin/shared";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -13,6 +14,7 @@ declare module "fastify" {
     redis: RedisClient;
     cfg: ApiConfig;
     metrics: MetricsRegistry;
+    authProvider: AuthProvider;
   }
 
   interface FastifyRequest {
@@ -31,6 +33,7 @@ declare module "fastify" {
         tenantId: string;
         spaceId?: string;
       };
+      authContext?: AuthContext;
       audit?: {
         resourceType?: string;
         action?: string;

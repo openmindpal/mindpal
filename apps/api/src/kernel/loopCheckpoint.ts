@@ -14,6 +14,28 @@
  */
 import type { Pool } from "pg";
 import type { StepObservation, AgentDecision, AgentLoopParams } from "./agentLoop";
+import { resolveNumber } from "@openslin/shared";
+
+/* ================================================================== */
+/*  通用检查点接口                                                       */
+/* ================================================================== */
+
+/**
+ * 通用检查点服务接口 — 统一 Agent Loop / 任务级 / 未来扩展场景的检查点访问契约。
+ * 不强制底层存储方式：实现方可自由选择 DB 表、metadata 字段、Redis 等。
+ */
+export interface CheckpointService<T> {
+  /** 写入（UPSERT 语义） */
+  write(id: string, data: T): Promise<void>;
+  /** 加载（返回 null 表示不存在） */
+  load(id: string): Promise<T | null>;
+  /** 启动心跳（不需要时可为空操作） */
+  startHeartbeat(id: string, intervalMs?: number): void;
+  /** 停止心跳 */
+  stopHeartbeat(id: string): void;
+  /** 尝试获取恢复锁（CAS 语义，返回是否成功） */
+  acquireLock(id: string): Promise<boolean>;
+}
 
 /* ================================================================== */
 /*  Types                                                               */
@@ -86,12 +108,12 @@ export interface ProcessRow {
 
 /** 心跳间隔（毫秒），默认 10 秒 */
 export function heartbeatIntervalMs(): number {
-  return Math.max(3_000, Number(process.env.AGENT_LOOP_HEARTBEAT_INTERVAL_MS) || 10_000);
+  return Math.max(3_000, resolveNumber("AGENT_LOOP_HEARTBEAT_INTERVAL_MS", undefined, undefined, 10_000).value);
 }
 
 /** Supervisor 判定超时阈值（毫秒），默认 60 秒 */
 export function heartbeatTimeoutMs(): number {
-  return Math.max(15_000, Number(process.env.AGENT_LOOP_HEARTBEAT_TIMEOUT_MS) || 60_000);
+  return Math.max(15_000, resolveNumber("AGENT_LOOP_HEARTBEAT_TIMEOUT_MS", undefined, undefined, 60_000).value);
 }
 
 /** 当前节点 ID（用于标识哪个进程持有循环） */
@@ -142,7 +164,7 @@ export async function writeCheckpoint(params: WriteCheckpointParams): Promise<vo
   const nodeId = currentNodeId();
 
   // 裁剪 observations 为摘要（保留最近 50 条，避免 JSONB 过大）
-  const maxObsToStore = Math.max(10, Number(process.env.AGENT_LOOP_MAX_OBS_CHECKPOINT) || 50);
+  const maxObsToStore = Math.max(10, resolveNumber("AGENT_LOOP_MAX_OBS_CHECKPOINT", undefined, undefined, 50).value);
   const obsDigest = params.observations.length > maxObsToStore
     ? params.observations.slice(-maxObsToStore)
     : params.observations;
@@ -347,7 +369,7 @@ export async function acquireResumeLock(
  */
 export async function findExpiredCheckpoints(pool: Pool): Promise<Array<{ loopId: string; runId: string; tenantId: string; resumeCount: number }>> {
   const timeoutMs = heartbeatTimeoutMs();
-  const maxResumes = Math.max(1, Number(process.env.AGENT_LOOP_MAX_RESUMES) || 3);
+  const maxResumes = Math.max(1, resolveNumber("AGENT_LOOP_MAX_RESUMES", undefined, undefined, 3).value);
   const res = await pool.query<{
     loop_id: string;
     run_id: string;
@@ -375,7 +397,7 @@ export async function findExpiredCheckpoints(pool: Pool): Promise<Array<{ loopId
  * 将超过最大恢复次数的检查点标记为 expired（永久终止）。
  */
 export async function expireStaleCheckpoints(pool: Pool): Promise<number> {
-  const maxResumes = Math.max(1, Number(process.env.AGENT_LOOP_MAX_RESUMES) || 3);
+  const maxResumes = Math.max(1, resolveNumber("AGENT_LOOP_MAX_RESUMES", undefined, undefined, 3).value);
   const timeoutMs = heartbeatTimeoutMs();
   const res = await pool.query(
     `UPDATE agent_loop_checkpoints
@@ -447,6 +469,10 @@ export async function updateProcessStatus(
 /**
  * 查询指定 run 的活跃进程。
  */
+/* ================================================================== */
+/*  5. Agent Process Table                                              */
+/* ================================================================== */
+
 export async function findActiveProcess(pool: Pool, runId: string): Promise<ProcessRow | null> {
   const res = await pool.query<{
     process_id: string; tenant_id: string; space_id: string | null;

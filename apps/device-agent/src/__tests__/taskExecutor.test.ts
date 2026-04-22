@@ -50,16 +50,19 @@ vi.mock("../plugins/builtinToolPlugin", () => ({
 }));
 
 import {
-  initTaskQueue,
-  enqueueTask,
-  dequeueTask,
-  completeTask,
-  cancelTask,
-  getQueueStatus,
-  getTask,
-  getPendingTasks,
+  getDefaultExecutionSession,
   type TaskPriority,
-} from "../kernel/taskExecutor";
+} from "../kernel/session";
+
+const session = () => getDefaultExecutionSession();
+const initTaskQueue = (cfg?: any) => session().initTaskQueue(cfg);
+const enqueueTask = (params: any) => session().enqueueTask(params);
+const dequeueTask = () => session().dequeueTask();
+const completeTask = (taskId: string, result: any) => session().completeTask(taskId, result);
+const cancelTask = (taskId: string) => session().cancelTask(taskId);
+const getQueueStatus = () => session().getQueueStatus();
+const getTask = (taskId: string) => session().getTask(taskId);
+const getPendingTasks = () => session().getPendingTasks();
 
 describe("taskExecutor — queue operations", () => {
   beforeEach(() => {

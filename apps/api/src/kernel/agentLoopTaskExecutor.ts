@@ -52,17 +52,17 @@ function deriveLoopPresentationStatus(loopResult: AgentLoopResult): "succeeded" 
   return loopResult.ok ? "succeeded" : "failed";
 }
 
-async function resolveApprovalIdForStep(params: {
+async function resolveApprovalContextForStep(params: {
   app: FastifyInstance;
   tenantId: string;
   runId: string;
   stepId?: string | null;
-}): Promise<string | null> {
+}): Promise<{ approvalId: string; riskLevel: string; humanSummary: string; inputDigest: any } | null> {
   const { app, tenantId, runId, stepId } = params;
   if (!stepId) return null;
   try {
     const res = await (app as any).db.query(
-      `SELECT approval_id
+      `SELECT approval_id, assessment_context, input_digest
          FROM approvals
         WHERE tenant_id = $1
           AND run_id = $2
@@ -72,7 +72,16 @@ async function resolveApprovalIdForStep(params: {
       [tenantId, runId, stepId],
     );
     if (!res.rowCount) return null;
-    return String(res.rows[0].approval_id ?? "");
+    const row = res.rows[0];
+    const ctx = typeof row.assessment_context === "string"
+      ? JSON.parse(row.assessment_context)
+      : (row.assessment_context ?? {});
+    return {
+      approvalId: String(row.approval_id ?? ""),
+      riskLevel: ctx.riskLevel ?? "medium",
+      humanSummary: ctx.humanSummary ?? "",
+      inputDigest: row.input_digest ?? null,
+    };
   } catch {
     return null;
   }
@@ -117,14 +126,14 @@ function createBackgroundStepCallback(params: {
       latencyMs: obs.durationMs ?? null,
     });
     if (obs.status === "needs_approval") {
-      const approvalId = await resolveApprovalIdForStep({
+      const approvalCtx = await resolveApprovalContextForStep({
         app,
         tenantId,
         runId,
         stepId: obs.stepId ?? null,
       });
       emitTaskEvent(sessionId, tenantId, taskId ?? "", "approvalNode", {
-        approvalId: approvalId ?? "",
+        approvalId: approvalCtx?.approvalId ?? "",
         runId,
         taskId: taskId ?? null,
         stepId: obs.stepId ?? null,
@@ -134,6 +143,10 @@ function createBackgroundStepCallback(params: {
         status: "pending",
         requestedAt: new Date().toISOString(),
         decidedAt: null,
+        // 审批上下文增强字段
+        riskLevel: approvalCtx?.riskLevel ?? "medium",
+        humanSummary: approvalCtx?.humanSummary ?? `工具 ${obs.toolRef} 需要审批`,
+        inputDigest: approvalCtx?.inputDigest ?? null,
       });
     }
     const toolName = obs.toolRef.replace(/@\d+$/, "");

@@ -24,7 +24,8 @@ async function main() {
   await app.listen({ host, port });
 
   // 预热进程池
-  await getProcessPool().warmup();
+  const pool = await getProcessPool();
+  await pool.warmup();
 
   // 优雅退出时关闭进程池
   const onExit = async () => {

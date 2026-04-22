@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "@/lib/i18n";
 import { type RecentEntry } from "./homeHelpers";
 import { IconClock, IconPage, IconConsole, IconGov, IconSliders } from "./HomeIcons";
-import styles from "./page.module.css";
+import styles from "@/styles/page.module.css";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 

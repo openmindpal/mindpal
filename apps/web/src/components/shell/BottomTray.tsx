@@ -9,7 +9,7 @@ import NotificationPanel from "./NotificationPanel";
 import DeviceActionsPanel from "./DeviceActionsPanel";
 import ActiveRunList from "./ActiveRunList";
 import PendingActionsQueue from "./PendingActionsQueue";
-import styles from "./BottomTray.module.css";
+import styles from "@/styles/shell.module.css";
 
 /* ─── Types ─────────────────────────────────────────────────────────────────── */
 
@@ -217,8 +217,8 @@ export default function BottomTray({
       )}
 
       {/* Header bar (always visible) */}
-      <div className={styles.header}>
-        <div className={styles.tabs} role="tablist" aria-label="Bottom tray tabs">
+      <div className={styles.btHeader}>
+        <div className={styles.btTabs} role="tablist" aria-label="Bottom tray tabs">
           {tabs.map((tab) => {
             const count = tab.badgeKey ? badges[tab.badgeKey] : 0;
             const isActive = activeTab === tab.key;
@@ -229,7 +229,7 @@ export default function BottomTray({
                 id={`tray-tab-${tab.key}`}
                 aria-selected={isActive}
                 aria-controls={expanded ? `tray-panel-${tab.key}` : undefined}
-                className={`${styles.tab} ${isActive ? styles.tabActive : ""}`}
+                className={`${styles.btTab} ${isActive ? styles.btTabActive : ""}`}
                 onClick={() => {
                   setActiveTab(tab.key);
                   if (!expanded) setExpanded(true);
@@ -254,7 +254,7 @@ export default function BottomTray({
             );
           })}
         </div>
-        <div className={styles.headerActions}>
+        <div className={styles.btHeaderActions}>
           {/* Collapsed summary: compact dot + count when tray is collapsed */}
           {!expanded && (badges.activeRuns > 0 || badges.pendingActions > 0) && (
             <span className={styles.collapsedSummary}>
@@ -287,7 +287,7 @@ export default function BottomTray({
       {/* Content panel (only when expanded) */}
       {expanded && (
         <div
-          className={styles.content}
+          className={styles.btContent}
           style={{ height }}
           role="tabpanel"
           id={`tray-panel-${activeTab}`}

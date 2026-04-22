@@ -6,7 +6,7 @@
  * - topologicalSortPlan: 拓扑排序
  * - constrainToolAvailability: P2-12 工具可用性约束前置
  * - enforceHighRiskDualApproval: P2-14 高风险写操作双通过
- * - rerankByHistoricalSuccess: P2-11 历史成功经验重排（占位）
+ * - rerankByHistoricalSuccess: P2-11 历史成功经验重排
  */
 import type { GoalGraph } from "@openslin/shared";
 import type { PlanStep } from "./planningKernel";
@@ -280,20 +280,151 @@ export function enforceHighRiskDualApproval(
 /*  P2-11: 历史成功经验重排                                                */
 /* ================================================================== */
 
+/** 历史计划条目 */
+export interface HistoricalPlan {
+  goalSummary: string;
+  subGoalOrder: string[];
+  successRate: number;
+}
+
+/** 匹配结果 */
+interface PlanMatch {
+  plan: HistoricalPlan;
+  similarity: number;
+}
+
 /**
- * P2-11: 历史成功经验重排（占位接口）
+ * 将文本拆分为小写 token 集合（按空格、标点分词）
+ */
+function tokenize(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[\s,;.!?()\[\]{}|/\\，；。！？（）【】]+/)
+      .filter((t) => t.length > 0),
+  );
+}
+
+/**
+ * 计算两个字符串集合的 Jaccard 相似度（|A∩B| / |A∪B|）
+ */
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 0;
+  let intersectionSize = 0;
+  for (const item of a) {
+    if (b.has(item)) intersectionSize++;
+  }
+  const unionSize = a.size + b.size - intersectionSize;
+  return unionSize === 0 ? 0 : intersectionSize / unionSize;
+}
+
+/**
+ * 从历史计划中找到与当前 GoalGraph 最匹配的成功计划。
+ * 相似度综合：子目标描述的 Jaccard 重叠度 × successRate 加权。
+ */
+function findBestMatchingPlan(
+  graph: GoalGraph,
+  historicalPlans: HistoricalPlan[],
+): PlanMatch | undefined {
+  // 提取当前图的子目标描述 token 集合
+  const currentTokens = new Set<string>();
+  for (const sub of graph.subGoals) {
+    for (const t of tokenize(sub.description)) {
+      currentTokens.add(t);
+    }
+  }
+  // 当前子目标 ID 集合（用于 subGoalOrder 重叠度）
+  const currentIds = new Set(graph.subGoals.map((s) => s.goalId));
+
+  let best: PlanMatch | undefined;
+
+  for (const plan of historicalPlans) {
+    if (plan.successRate <= 0) continue;
+
+    // 文本相似度：goalSummary + subGoalOrder tokens vs 当前子目标描述 tokens
+    const planTokens = tokenize(plan.goalSummary);
+    for (const id of plan.subGoalOrder) {
+      for (const t of tokenize(id)) {
+        planTokens.add(t);
+      }
+    }
+    const textSim = jaccardSimilarity(currentTokens, planTokens);
+
+    // ID 重叠度：历史计划 subGoalOrder 中有多少 ID 存在于当前图
+    const orderSet = new Set(plan.subGoalOrder);
+    const idOverlap = jaccardSimilarity(currentIds, orderSet);
+
+    // 综合相似度 = 0.5 * 文本相似 + 0.3 * ID重叠 + 0.2 * 成功率
+    const similarity = 0.5 * textSim + 0.3 * idOverlap + 0.2 * plan.successRate;
+
+    if (!best || similarity > best.similarity) {
+      best = { plan, similarity };
+    }
+  }
+
+  return best;
+}
+
+/**
+ * 根据历史计划的 subGoalOrder 调整当前图中子目标的 priority。
+ * 仅修改 priority 数值，不改变 dependsOn 边，保持 DAG 合法性。
+ */
+function applyHistoricalOrder(
+  graph: GoalGraph,
+  historicalOrder: string[],
+): GoalGraph {
+  // 建立历史顺序索引 (goalId -> 排序位置)
+  const orderIndex = new Map<string, number>();
+  for (let i = 0; i < historicalOrder.length; i++) {
+    orderIndex.set(historicalOrder[i], i);
+  }
+
+  // 深拷贝 subGoals 并按历史顺序调整 priority
+  const reorderedSubGoals = graph.subGoals.map((sub) => {
+    const historicalPos = orderIndex.get(sub.goalId);
+    if (historicalPos !== undefined) {
+      // 在历史计划中出现的子目标：按历史顺序设置优先级
+      return { ...sub, priority: historicalPos };
+    }
+    // 未在历史计划中出现的子目标：排到历史列表之后，保持原相对顺序
+    return { ...sub, priority: historicalOrder.length + sub.priority };
+  });
+
+  return { ...graph, subGoals: reorderedSubGoals };
+}
+
+/**
+ * P2-11: 历史成功经验重排
  *
- * 参考类似任务的历史成功计划，对新分解结果重新排序。
- * 当前为占位实现，待历史数据积累后接入 embedding 相似度匹配。
+ * 参考类似任务的历史成功计划，对新分解结果的子目标优先级重新排序。
+ * 使用 Jaccard 文本相似度匹配最佳历史计划，按其 subGoalOrder 调整 priority。
  */
 export function rerankByHistoricalSuccess(
-  _graph: GoalGraph,
-  _historicalPlans?: Array<{ goalSummary: string; subGoalOrder: string[]; successRate: number }>,
-): { reranked: boolean; reason: string } {
-  // TODO: 接入历史成功计划的 embedding 索引后实现
-  // 当前保持原始顺序
-  if (!_historicalPlans || _historicalPlans.length === 0) {
+  graph: GoalGraph,
+  historicalPlans?: HistoricalPlan[],
+): { reranked: boolean; reason: string; graph?: GoalGraph } {
+  if (!historicalPlans || historicalPlans.length === 0) {
     return { reranked: false, reason: "no_historical_data" };
   }
-  return { reranked: false, reason: "not_yet_implemented" };
+
+  // 单子目标无需排序
+  if (graph.subGoals.length <= 1) {
+    return { reranked: false, reason: "single_subgoal" };
+  }
+
+  // 找到最匹配的历史成功计划
+  const bestMatch = findBestMatchingPlan(graph, historicalPlans);
+
+  if (!bestMatch || bestMatch.similarity < 0.3) {
+    return { reranked: false, reason: "no_similar_plan_found" };
+  }
+
+  // 按历史成功计划的子目标顺序调整优先级
+  const reorderedGraph = applyHistoricalOrder(graph, bestMatch.plan.subGoalOrder);
+
+  return {
+    reranked: true,
+    reason: `matched_plan_similarity_${bestMatch.similarity.toFixed(2)}_success_rate_${bestMatch.plan.successRate.toFixed(2)}`,
+    graph: reorderedGraph,
+  };
 }

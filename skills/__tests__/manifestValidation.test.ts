@@ -8,7 +8,7 @@ const skillDirs = readdirSync(SKILLS_DIR, { withFileTypes: true })
   .filter(d => d.isDirectory() && !EXCLUDED.has(d.name))
   .map(d => d.name);
 
-// 确认已知的22个技能（除 template-skill 外）
+// 确认已知的22个技能（除 template-skill 外；webhook-send-skill 和 slack-send-skill 已合并到 bridge-send-skill）
 const EXPECTED_SKILLS = [
   'bridge-send-skill',
   'collab-guard-skill',
@@ -23,27 +23,26 @@ const EXPECTED_SKILLS = [
   'reflexion-skill',
   'scanned-pdf-skill',
   'schema-create-skill',
-  'slack-send-skill',
   'sleep-skill',
   'sparse-search-skill',
   'speech-skill',
   'streaming-device-control',
+  'template-go-skill',
+  'template-rust-skill',
   'tool-discovery-skill',
   'video-extract-skill',
   'vision-skill',
-  'webhook-send-skill',
 ];
 
-// streaming-device-control 使用非标准 manifest 格式，单独处理
-const NON_STANDARD_MANIFEST = new Set(['streaming-device-control']);
-const standardSkillDirs = skillDirs.filter(d => !NON_STANDARD_MANIFEST.has(d));
+// template-go-skill 和 template-rust-skill 使用非 Node 运行时，displayName 等字段结构已统一
+const standardSkillDirs = skillDirs;
 
 describe('All skills manifest validation', () => {
   it('应发现全部22个技能目录', () => {
     expect(skillDirs.sort()).toEqual(EXPECTED_SKILLS.sort());
   });
 
-  // 标准 manifest 格式技能验证
+  // 所有技能统一验证标准 manifest 格式
   describe.each(standardSkillDirs)('skill "%s"', (skillName) => {
     const manifestPath = join(SKILLS_DIR, skillName, 'manifest.json');
 
@@ -105,19 +104,17 @@ describe('All skills manifest validation', () => {
     });
   });
 
-  // 非标准 manifest 格式技能验证（streaming-device-control 等）
-  describe.each([...NON_STANDARD_MANIFEST])('non-standard skill "%s"', (skillName) => {
+  // engines 字段验证
+  describe.each(standardSkillDirs)('skill "%s" engines', (skillName) => {
     const manifestPath = join(SKILLS_DIR, skillName, 'manifest.json');
 
-    it('manifest.json 文件存在', () => {
-      expect(existsSync(manifestPath)).toBe(true);
-    });
-
-    it('name 和 version 存在', () => {
+    it('engines 字段存在且包含运行时约束', () => {
       if (!existsSync(manifestPath)) return;
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-      expect(manifest.name).toBeTruthy();
-      expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/);
+      expect(manifest.engines).toBeDefined();
+      expect(typeof manifest.engines).toBe('object');
+      const keys = Object.keys(manifest.engines);
+      expect(keys.length).toBeGreaterThan(0);
     });
   });
 });

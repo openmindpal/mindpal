@@ -6,6 +6,7 @@ import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import type { CapabilityEnvelopeV1 } from "@openslin/shared";
 import { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicy, normalizeLimits, validateCapabilityEnvelopeV1 } from "@openslin/shared";
+import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { insertAuditEvent } from "../../modules/audit/auditRepo";
@@ -160,11 +161,12 @@ export const runsExecutionRoutes: FastifyPluginAsync = async (app) => {
       run.runId,
     ]);
 
-    const approvalRequired =
-      Boolean(stepInput?.toolContract?.approvalRequired) ||
-      stepInput?.toolContract?.riskLevel === "high" ||
-      Boolean(def?.approvalRequired) ||
-      def?.riskLevel === "high";
+    const approvalRequired = shouldRequireApproval({
+      approvalRequired: stepInput?.toolContract?.approvalRequired ?? def?.approvalRequired,
+      riskLevel: stepInput?.toolContract?.riskLevel ?? def?.riskLevel,
+      sourceLayer: stepInput?.toolContract?.sourceLayer ?? def?.sourceLayer,
+      scope: stepInput?.toolContract?.scope ?? def?.scope,
+    });
     const receipt = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId, runId: run.runId, stepId: step.stepId }, status: "queued" as const };
 
     if (approvalRequired) {

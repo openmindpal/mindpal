@@ -5,7 +5,7 @@ import {
   computeRunnerResponseBodyDigestV1,
   type RunnerExecuteRequestV1,
   type RunnerExecuteResponseV1,
-} from "../runnerProtocol";
+} from "@openslin/shared";
 
 /* ── common.ts ── */
 describe("runner/common", () => {

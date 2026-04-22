@@ -102,6 +102,7 @@ export type ToolSuggestion = {
   action?: string;
   riskLevel?: string;
   approvalRequired?: boolean;
+  approvalReason?: string;
   idempotencyKey?: string;
 };
 

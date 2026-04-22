@@ -1,17 +1,47 @@
-import child_process from "node:child_process";
-import fs from "node:fs/promises";
+/**
+ * dynamicSkillSandbox.ts — Worker 侧 Skill 沙箱执行
+ *
+ * 使用 @openslin/shared 的统一 SkillProcessPool 进行进程管理和 IPC 通信，
+ * 消除原先内联的 child_process.fork() 逻辑。
+ *
+ * Worker 专属逻辑：结果适配为 DynamicSkillExecResult 格式。
+ */
 import path from "node:path";
+import fs from "node:fs/promises";
+import { SkillProcessPool, classifyError } from "@openslin/shared";
 import type { RuntimeLimits, NetworkPolicy } from "./runtime";
 import type { DynamicSkillExecResult } from "./dynamicSkillTypes";
 
+/* ── 解析 Worker 侧 skillSandboxChild 路径 ──────────────── */
+let _childEntryCache: { entry: string; execArgv: string[] } | null = null;
+
 async function resolveSandboxChildEntry() {
+  if (_childEntryCache) return _childEntryCache;
   const jsPath = path.resolve(__dirname, "..", "skillSandboxChild.js");
   try {
     const st = await fs.stat(jsPath);
-    if (st.isFile()) return { entry: jsPath, execArgv: [] as string[] };
+    if (st.isFile()) {
+      _childEntryCache = { entry: jsPath, execArgv: [] };
+      return _childEntryCache;
+    }
   } catch {}
   const tsPath = path.resolve(__dirname, "..", "skillSandboxChild.ts");
-  return { entry: tsPath, execArgv: ["-r", "tsx/cjs"] as string[] };
+  _childEntryCache = { entry: tsPath, execArgv: ["-r", "tsx/cjs"] };
+  return _childEntryCache;
+}
+
+/* ── 延迟初始化的进程池单例 ──────────────────────────────── */
+let _pool: SkillProcessPool | null = null;
+
+async function getPool(): Promise<SkillProcessPool> {
+  if (_pool) return _pool;
+  const childInfo = await resolveSandboxChildEntry();
+  _pool = new SkillProcessPool({
+    maxProcesses: 2,
+    childScriptPath: childInfo.entry,
+    childExecArgv: childInfo.execArgv,
+  });
+  return _pool;
 }
 
 export async function executeDynamicSkillSandboxed(params: {
@@ -30,23 +60,15 @@ export async function executeDynamicSkillSandboxed(params: {
   signal: AbortSignal;
   context?: { locale: string; apiBaseUrl?: string; authToken?: string };
 }): Promise<DynamicSkillExecResult> {
-  const childInfo = await resolveSandboxChildEntry();
-  const memArgv =
-    typeof params.limits.memoryMb === "number" && Number.isFinite(params.limits.memoryMb) && params.limits.memoryMb > 0
-      ? [`--max-old-space-size=${Math.max(32, Math.round(params.limits.memoryMb))}`]
-      : [];
-  const child = child_process.fork(childInfo.entry, [], {
-    execArgv: [...childInfo.execArgv, ...memArgv],
-    stdio: ["ignore", "ignore", "ignore", "ipc"],
-  });
+  const pool = await getPool();
+  const { child, _poolEntry } = await pool.acquire({ memoryMb: params.limits.memoryMb ?? undefined });
 
-  const kill = () => {
-    try {
-      child.kill("SIGKILL");
-    } catch {}
-  };
+  const kill = () => { pool.discard(child); };
   if (params.signal.aborted) kill();
   params.signal.addEventListener("abort", kill, { once: true });
+
+  // Heartbeat monitoring (inherited from shared pool)
+  pool.startHeartbeat(child);
 
   const result = await new Promise<any>((resolve, reject) => {
     const onExit = (code: number | null) => {
@@ -86,12 +108,20 @@ export async function executeDynamicSkillSandboxed(params: {
     });
   }).finally(() => {
     params.signal.removeEventListener("abort", kill);
-    kill();
+    if (child.pid != null) pool.stopHeartbeat(child.pid);
+    // Worker: release back to pool on success, discard handled below on error
   });
+
+  // Release or discard process
+  if (!result?.ok) {
+    pool.discard(child);
+  } else {
+    pool.release(child, _poolEntry);
+  }
 
   if (!result?.ok) {
     const msg = String(result?.error?.message ?? "skill_sandbox_error");
-    throw new Error(msg);
+    throw classifyError(new Error(msg));
   }
   return {
     output: result.output,

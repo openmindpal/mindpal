@@ -54,7 +54,7 @@ export function buildSafeToolOutput(toolName: string, output: any) {
     if (typeof output.citationsCount === "number") out.citationsCount = output.citationsCount;
     return out;
   }
-  if (toolName === "sleep") {
+  if (toolName === "utility.sleep") {
     const out: any = {};
     if (typeof output.sleptMs === "number") out.sleptMs = output.sleptMs;
     return out;

@@ -44,24 +44,36 @@ export function collabConfig(key: string): number {
 /*  Layer 1: Message Protocol                                          */
 /* ================================================================== */
 
-/** 协作消息类型 */
+/** 消息优先级 */
+export type MessagePriority = "low" | "normal" | "high" | "urgent";
+
+/** 消息状态 */
+export type MessageStatus = "pending" | "delivered" | "read" | "processed" | "failed" | "expired";
+
+/** 协作消息类型（统一三处定义的全部消息种类） */
 export type CollabMessageType =
+  // ── 任务生命周期 ──
   | "task.assign"       // 任务分配
   | "task.accept"       // 任务接受
   | "task.reject"       // 任务拒绝
   | "task.complete"     // 任务完成
   | "task.fail"         // 任务失败
+  // ── 步骤生命周期 ──
   | "step.start"        // 步骤开始
   | "step.progress"     // 步骤进度
   | "step.complete"     // 步骤完成
   | "step.fail"         // 步骤失败
+  // ── 共识协议 ──
   | "consensus.propose" // 共识提案
   | "consensus.vote"    // 共识投票
   | "consensus.resolve" // 共识决议
+  // ── 能力发现 ──
   | "discovery.query"   // 能力查询
   | "discovery.reply"   // 能力应答
+  // ── 状态同步 ──
   | "sync.state"        // 状态同步
   | "sync.ack"          // 同步确认
+  // ── 辩论协议 ──
   | "debate.open"       // 辩论开始
   | "debate.position"   // 辩论立场陈述
   | "debate.rebuttal"   // 辩论反驳
@@ -70,36 +82,69 @@ export type CollabMessageType =
   | "debate.consensus_evolution" // v2: 共识演化通知
   | "debate.party_join"  // v2: N方辩论参与方加入
   | "debate.party_leave" // v2: N方辩论参与方退出
+  // ── 总线运行时消息 (来自 collabBus) ──
+  | "agent.result"            // Agent Loop 执行结果
+  | "shared_state.update"     // 共享状态变更通知
+  // ── 智能体通信协议 (来自 agentProtocol) ──
+  | "request"           // 请求消息
+  | "response"          // 响应消息
+  | "notification"      // 通知消息
+  | "broadcast"         // 广播消息
+  | "handoff"           // 任务交接
+  | "feedback"          // 反馈消息
+  | "query"             // 查询消息
+  | "ack"               // 确认消息
+  // ── 通用 ──
   | "escalate"          // 问题上报
   | "heartbeat";        // 心跳
 
-/** 协作消息信封 */
-export interface CollabMessage {
-  /** 消息唯一ID */
+/**
+ * 统一协作消息信封（CollabMessageEnvelope）
+ *
+ * 合并自三处独立定义：
+ * - packages/shared collabProtocol.ts (CollabMessage)
+ * - apps/api/kernel/collabBus.ts (CollabMessage)
+ * - apps/api/skills/collab-runtime/modules/agentProtocol.ts (AgentMessage)
+ *
+ * 所有协作模块统一使用此结构进行通信。
+ */
+export interface CollabMessageEnvelope {
+  /** 消息唯一 ID（UUID v4），必填。用于幂等和去重 */
   messageId: string;
-  /** 消息类型 */
-  type: CollabMessageType;
-  /** 协作运行ID */
+  /** 协作运行 ID，必填。标识本消息所属的协作会话 */
   collabRunId: string;
-  /** 发送方角色 */
+  /** 租户 ID，必填。多租户隔离标识 */
+  tenantId: string;
+  /** 发送方角色名称，必填。如 "planner" / "executor" / "reviewer" */
   fromRole: string;
-  /** 接收方角色（* 表示广播） */
-  toRole: string;
-  /** 关联的 taskId */
-  taskId?: string;
-  /** 关联的 stepId */
-  stepId?: string;
-  /** 消息载荷 */
+  /** 接收方角色名称，可选。null 表示广播给同 collabRun 下所有角色 */
+  toRole: string | null;
+  /** 消息类型（统一字段名），必填。取值见 CollabMessageType 枚举 */
+  messageType: CollabMessageType;
+  /** 消息载荷，必填。业务数据，结构由 messageType 决定 */
   payload: Record<string, unknown>;
-  /** 发送时间 (ISO 8601) */
+  /** 发送时间，必填。ISO 8601 格式，如 "2025-01-01T00:00:00.000Z" */
   sentAt: string;
-  /** 追踪ID */
+  /** 消息来源标识，可选。标识产生此消息的子系统，取值如 "api" / "worker" / "runner" / "device-agent" */
+  source?: string;
+  /** payload 的 MIME 类型，可选。默认 "application/json" */
+  datacontenttype?: string;
+  /** 消息优先级，可选。默认 "normal"，取值见 MessagePriority */
+  priority?: MessagePriority;
+  /** 消息状态，可选。用于追踪消息生命周期，取值见 MessageStatus */
+  status?: MessageStatus;
+  /** 分布式追踪 ID，可选。用于链路追踪关联 */
   traceId?: string;
-  /** 因果关系：引用触发此消息的前序 messageId */
-  causedBy?: string;
-  /** 消息版本（用于幂等和去重） */
-  version: number;
+  /** 协议版本号（semver），必填。当前版本 "1.0.0"，用于兼容性判断 */
+  version: string;
+  /** 回复目标消息 ID，可选。用于 request-response 模式关联请求消息 */
+  replyTo?: string;
+  /** 消息过期时间，可选。ISO 8601 格式，超时后消费端应丢弃 */
+  expiresAt?: string;
 }
+
+/** @deprecated 使用 CollabMessageEnvelope */
+export type CollabMessage = CollabMessageEnvelope;
 
 export function toolNameFromRef(toolRef: string): string {
   const value = String(toolRef ?? "").trim();
@@ -559,11 +604,11 @@ export function validateCollabMessage(msg: unknown): { ok: boolean; error?: stri
   if (!msg || typeof msg !== "object") return { ok: false, error: "消息必须是对象" };
   const m = msg as Record<string, unknown>;
   if (typeof m.messageId !== "string" || !m.messageId) return { ok: false, error: "缺少 messageId" };
-  if (typeof m.type !== "string" || !m.type) return { ok: false, error: "缺少 type" };
+  if (typeof m.messageType !== "string" || !m.messageType) return { ok: false, error: "缺少 messageType" };
   if (typeof m.collabRunId !== "string" || !m.collabRunId) return { ok: false, error: "缺少 collabRunId" };
+  if (typeof m.tenantId !== "string" || !m.tenantId) return { ok: false, error: "缺少 tenantId" };
   if (typeof m.fromRole !== "string" || !m.fromRole) return { ok: false, error: "缺少 fromRole" };
-  if (typeof m.toRole !== "string" || !m.toRole) return { ok: false, error: "缺少 toRole" };
-  if (typeof m.version !== "number") return { ok: false, error: "缺少 version" };
+  if (typeof m.version !== "string" || !m.version) return { ok: false, error: "缺少 version" };
   return { ok: true };
 }
 

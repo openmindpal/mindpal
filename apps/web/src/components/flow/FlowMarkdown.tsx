@@ -4,7 +4,7 @@ import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import FlowCodeBlock from "./FlowCodeBlock";
-import styles from "../../app/page.module.css";
+import styles from "@/styles/page.module.css";
 
 const FlowMarkdown = memo(function FlowMarkdown({ text, locale, onImageClick }: {
   text: string;

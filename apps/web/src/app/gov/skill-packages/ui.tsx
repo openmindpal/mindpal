@@ -51,7 +51,7 @@ export default function GovSkillPackagesClient(props: { locale: string; initial:
   const [importGitStatus, setImportGitStatus] = useState<number>(0);
   const [importGitResult, setImportGitResult] = useState<SkillPackageUploadResponse | null>(null);
 
-  const [pubToolName, setPubToolName] = useState<string>("echo.tool");
+  const [pubToolName, setPubToolName] = useState<string>("utility.echo")
   const [pubArtifactId, setPubArtifactId] = useState<string>("");
   const [pubDepsDigest, setPubDepsDigest] = useState<string>("");
   const [pubStatus, setPubStatus] = useState<number>(0);

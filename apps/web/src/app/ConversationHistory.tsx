@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
-import styles from "./page.module.css";
+import styles from "@/styles/page.module.css";
 import type { FrontendTaskQueueEntry } from "./homeHelpers";
 
 type SessionItem = {

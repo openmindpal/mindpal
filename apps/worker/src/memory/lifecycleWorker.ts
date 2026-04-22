@@ -668,17 +668,18 @@ export async function distillUpgradeMemories(params: {
           const sourceIds = rows.map((r: Record<string, unknown>) => String(r.id));
           const maxGen = Math.max(...rows.map((r: Record<string, unknown>) => Number(r.distillation_generation ?? 0)), 0);
 
-          // 创建 semantic 记忆
+          // 创建 semantic 记忆（蒸馏产物跨多会话时自动标记为 global）
+          const distillScope = sourceIds.length >= 3 ? "global" : "space";
           const insertRes = await params.pool.query(
             `INSERT INTO memory_entries (
               tenant_id, space_id, owner_subject_id, scope, type, title,
               content_text, content_digest, write_policy,
               embedding_model_ref, embedding_minhash, embedding_updated_at,
               memory_class, distilled_from, distillation_generation, confidence
-            ) VALUES ($1,$2,NULL,'space',$3,$4,$5,$6,'policyAllowed',$7,$8,now(),'semantic',$9,$10,$11)
+            ) VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,'policyAllowed',$8,$9,now(),'semantic',$10,$11,$12)
             RETURNING id`,
             [
-              params.tenantId, params.spaceId, `${type}_experience`, summaryTitle,
+              params.tenantId, params.spaceId, distillScope, `${type}_experience`, summaryTitle,
               summary, crypto.createHash("sha256").update(summary, "utf8").digest("hex"),
               "minhash:16@1", minhash, sourceIds, maxGen + 1,
               Math.min(0.9, Math.max(...rows.map((r: Record<string, unknown>) => Number(r.confidence ?? 0.5)), 0.5) + 0.1),
@@ -751,7 +752,7 @@ export async function distillUpgradeMemories(params: {
             content_text, content_digest, write_policy,
             embedding_model_ref, embedding_minhash, embedding_updated_at,
             memory_class, distilled_from, distillation_generation, confidence
-          ) VALUES ($1,$2,NULL,'space','procedural_strategy',$3,$4,$5,'policyAllowed',$6,$7,now(),'procedural',$8,$9,$10)
+          ) VALUES ($1,$2,NULL,'global','procedural_strategy',$3,$4,$5,'policyAllowed',$6,$7,now(),'procedural',$8,$9,$10)
           RETURNING id`,
           [
             params.tenantId, params.spaceId,
@@ -818,7 +819,7 @@ export async function updateMemoryDecayScores(params: {
 
     // 批量获取需要更新衰减的记忆（距离上次衰减更新超过 1 小时，排除 pinned=true 的记忆）
     const res = await params.pool.query(
-      `SELECT id, memory_class, access_count, last_accessed_at, decay_score, decay_updated_at, created_at, confidence
+      `SELECT id, memory_class, access_count, last_accessed_at, decay_score, decay_updated_at, created_at, confidence, scope
        FROM memory_entries
        WHERE deleted_at IS NULL
          AND pinned = FALSE
@@ -842,37 +843,40 @@ export async function updateMemoryDecayScores(params: {
 
     for (const r of rows) {
       const memClass = String(r.memory_class ?? "semantic");
+      const isGlobal = String(r.scope ?? "") === "global";
       const createdAtMs = Date.parse(String(r.created_at ?? ""));
       const ageDays = Number.isFinite(createdAtMs) ? Math.max(0, nowMs - createdAtMs) / (24 * 60 * 60 * 1000) : 0;
       const accessCount = typeof r.access_count === "number" ? r.access_count : 0;
       const confidence = typeof r.confidence === "number" ? Math.max(0, Math.min(1, r.confidence)) : 0.5;
+      // global 记忆衰减更慢：半衰期翻倍
+      const globalFactor = isGlobal ? 2 : 1;
 
       let newScore: number;
 
       switch (memClass) {
         case "episodic": {
-          // 指数衰减，半衰期 7 天，访问可延缓
-          const halfLifeDays = 7;
+          // 指数衰减，半衰期 7 天，访问可延缓（global 记忆半衰期翻倍）
+          const halfLifeDays = 7 * globalFactor;
           const accessSlowdown = 1 + accessCount * 0.1; // 访问越多衰减越慢
           newScore = Math.exp(-0.693 * ageDays / (halfLifeDays * accessSlowdown));
           break;
         }
         case "semantic": {
-          // 线性衰减，半衰期 90 天，置信度加成
-          const halfLifeDays = 90;
+          // 线性衰减，半衰期 90 天，置信度加成（global 记忆半衰期翻倍）
+          const halfLifeDays = 90 * globalFactor;
           const confidenceBonus = confidence * 0.3; // 高置信度衰减更慢
           newScore = Math.max(0, 1 - (ageDays / (halfLifeDays * 2)) * (1 - confidenceBonus));
           break;
         }
         case "procedural": {
-          // 几乎不衰减，半衰期 365 天
-          const halfLifeDays = 365;
+          // 几乎不衰减，半衰期 365 天（global 记忆半衰期翻倍）
+          const halfLifeDays = 365 * globalFactor;
           newScore = Math.exp(-0.693 * ageDays / halfLifeDays);
           newScore = Math.max(0.1, newScore); // procedural 最低保留 0.1
           break;
         }
         default:
-          newScore = Math.exp(-0.693 * ageDays / 30); // 默认 30 天半衰期
+          newScore = Math.exp(-0.693 * ageDays / (30 * globalFactor)); // 默认 30 天半衰期
       }
 
       newScore = Math.max(0, Math.min(1, newScore));

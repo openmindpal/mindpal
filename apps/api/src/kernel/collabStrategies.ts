@@ -10,7 +10,7 @@ import { readCollabEnvelopes, buildEnvelopeContext, writeCollabEnvelope } from "
 
 // ── 顺序执行 ─────────────────────────────────────────────────────
 
-/** 顺序执行：Agent 1 完成后 Agent 2 开始 */
+/** 顺序执行：Agent 1 完成后 Agent 2 开始，失败Agent输出用空结果替代继续下一个 */
 export async function executeSequential(
   states: AgentState[],
   params: CollabOrchestratorParams,
@@ -35,25 +35,45 @@ export async function executeSequential(
         ? `${state.goal}${structuredContext}`
         : state.goal;
 
-    state.result = await runAgentLoop({
-      app: params.app,
-      pool: params.pool,
-      queue: params.queue,
-      subject: params.subject,
-      locale: params.locale,
-      authorization: params.authorization,
-      traceId: params.traceId,
-      goal: enhancedGoal,
-      runId: state.runId,
-      jobId: state.jobId,
-      taskId: params.taskId,
-      maxIterations,
-      signal: params.signal,
-    });
+    try {
+      state.result = await runAgentLoop({
+        app: params.app,
+        pool: params.pool,
+        queue: params.queue,
+        subject: params.subject,
+        locale: params.locale,
+        authorization: params.authorization,
+        traceId: params.traceId,
+        goal: enhancedGoal,
+        runId: state.runId,
+        jobId: state.jobId,
+        taskId: params.taskId,
+        maxIterations,
+        signal: params.signal,
+      });
 
-    state.status = state.result.ok ? "done" : "failed";
+      state.status = state.result.ok ? "done" : "failed";
+    } catch (agentErr: unknown) {
+      // Agent级failover：失败Agent的输出用空结果替代，继续下一个Agent
+      const errMsg = agentErr instanceof Error ? agentErr.message : String(agentErr);
+      params.app.log.warn({
+        agentId: state.agentId, role: state.role, err: errMsg,
+      }, "[CollabOrchestrator] 顺序Agent执行失败，用空结果替代继续");
+      state.status = "failed";
+      state.result = {
+        ok: false,
+        endReason: "error",
+        message: `Agent执行异常: ${errMsg}`,
+        iterations: 0,
+        succeededSteps: 0,
+        failedSteps: 0,
+        observations: [],
+        lastDecision: null,
+      };
+    }
 
     // 将结果写入 collab_envelopes 供下游 Agent 结构化查询
+    const seqResult = state.result!;
     await writeCollabEnvelope({
       pool: params.pool,
       tenantId: params.subject.tenantId,
@@ -64,21 +84,21 @@ export async function executeSequential(
       toRole: null,
       broadcast: true,
       kind: "agent.result",
-      result: state.result,
+      result: seqResult,
       runId: state.runId,
     });
 
     params.app.log.info({
       agentId: state.agentId,
       status: state.status,
-      endReason: state.result.endReason,
+      endReason: seqResult.endReason,
     }, "[CollabOrchestrator] Agent 执行完成");
   }
 }
 
 // ── 并行执行 ─────────────────────────────────────────────────────
 
-/** 并行执行：所有 Agent 同时启动 */
+/** 并行执行：所有 Agent 同时启动，收集成功Agent的结果，忽略失败Agent */
 export async function executeParallel(
   states: AgentState[],
   params: CollabOrchestratorParams,
@@ -92,22 +112,42 @@ export async function executeParallel(
       { agentId: state.agentId, role: state.role, runId: state.runId },
       "[CollabOrchestrator] 并行 Agent 开始执行",
     );
-    state.result = await runAgentLoop({
-      app: params.app,
-      pool: params.pool,
-      queue: params.queue,
-      subject: params.subject,
-      locale: params.locale,
-      authorization: params.authorization,
-      traceId: params.traceId,
-      goal: state.goal,
-      runId: state.runId,
-      jobId: state.jobId,
-      taskId: params.taskId,
-      maxIterations,
-      signal: params.signal,
-    });
-    state.status = state.result.ok ? "done" : "failed";
+    try {
+      state.result = await runAgentLoop({
+        app: params.app,
+        pool: params.pool,
+        queue: params.queue,
+        subject: params.subject,
+        locale: params.locale,
+        authorization: params.authorization,
+        traceId: params.traceId,
+        goal: state.goal,
+        runId: state.runId,
+        jobId: state.jobId,
+        taskId: params.taskId,
+        maxIterations,
+        signal: params.signal,
+      });
+      state.status = state.result.ok ? "done" : "failed";
+    } catch (agentErr: unknown) {
+      // Agent级failover：收集成功Agent的结果，忽略失败Agent
+      const errMsg = agentErr instanceof Error ? agentErr.message : String(agentErr);
+      params.app.log.warn({
+        agentId: state.agentId, role: state.role, err: errMsg,
+      }, "[CollabOrchestrator] 并行Agent执行失败，忽略该Agent继续");
+      state.status = "failed";
+      state.result = {
+        ok: false,
+        endReason: "error",
+        message: `Agent执行异常: ${errMsg}`,
+        iterations: 0,
+        succeededSteps: 0,
+        failedSteps: 0,
+        observations: [],
+        lastDecision: null,
+      };
+    }
+    const parResult = state.result!;
     await writeCollabEnvelope({
       pool: params.pool,
       tenantId: params.subject.tenantId,
@@ -118,7 +158,7 @@ export async function executeParallel(
       toRole: null,
       broadcast: true,
       kind: "agent.result",
-      result: state.result,
+      result: parResult,
       runId: state.runId,
     });
   });
@@ -246,7 +286,7 @@ export async function executePipeline(
     const promises = ready.map(async (state) => {
       state.status = "running";
 
-      // 注入依赖 Agent 的结构化结果
+      // 注入依赖 Agent 的结构化结果（包含已完成的和已失败但被绕过的）
       const agent = agents.find((a) => a.agentId === state.agentId);
       const envelopes = await readCollabEnvelopes({ pool: params.pool, collabRunId: params.collabRunId, toRole: state.role });
       const structuredContext = buildEnvelopeContext(envelopes);
@@ -261,25 +301,45 @@ export async function executePipeline(
           ? `${state.goal}${structuredContext}`
           : state.goal;
 
-      state.result = await runAgentLoop({
-        app: params.app,
-        pool: params.pool,
-        queue: params.queue,
-        subject: params.subject,
-        locale: params.locale,
-        authorization: params.authorization,
-        traceId: params.traceId,
-        goal: enhancedGoal,
-        runId: state.runId,
-        jobId: state.jobId,
-        taskId: params.taskId,
-        maxIterations,
-        signal: params.signal,
-      });
+      try {
+        state.result = await runAgentLoop({
+          app: params.app,
+          pool: params.pool,
+          queue: params.queue,
+          subject: params.subject,
+          locale: params.locale,
+          authorization: params.authorization,
+          traceId: params.traceId,
+          goal: enhancedGoal,
+          runId: state.runId,
+          jobId: state.jobId,
+          taskId: params.taskId,
+          maxIterations,
+          signal: params.signal,
+        });
 
-      state.status = state.result.ok ? "done" : "failed";
+        state.status = state.result.ok ? "done" : "failed";
+      } catch (agentErr: unknown) {
+        // Agent级failover：中间节点失败时标记为failed并绕过（让completed也包含它以解除下游依赖）
+        const errMsg = agentErr instanceof Error ? agentErr.message : String(agentErr);
+        params.app.log.warn({
+          agentId: state.agentId, role: state.role, err: errMsg,
+        }, "[CollabOrchestrator] 流水线Agent执行失败，尝试绕过继续");
+        state.status = "failed";
+        state.result = {
+          ok: false,
+          endReason: "error",
+          message: `Agent执行异常: ${errMsg}`,
+          iterations: 0,
+          succeededSteps: 0,
+          failedSteps: 0,
+          observations: [],
+          lastDecision: null,
+        };
+      }
 
       // 将结果写入 collab_envelopes 供下游 Agent 查询
+      const pipResult = state.result!;
       await writeCollabEnvelope({
         pool: params.pool,
         tenantId: params.subject.tenantId,
@@ -290,10 +350,11 @@ export async function executePipeline(
         toRole: null,
         broadcast: true,
         kind: "agent.result",
-        result: state.result,
+        result: pipResult,
         runId: state.runId,
       });
 
+      // 无论成功失败都标记为completed以解除下游依赖阻塞
       completed.add(state.agentId);
       remaining.delete(state.agentId);
     });

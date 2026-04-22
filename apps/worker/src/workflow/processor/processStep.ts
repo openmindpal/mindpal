@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import type Redis from "ioredis";
-import { validateCapabilityEnvelopeV1, resolveSupplyChainPolicy, checkTrust, checkDependencyScan, checkSbom, isToolAllowedForPolicy, StructuredLogger, resolveString } from "@openslin/shared";
+import { validateCapabilityEnvelopeV1, resolveSupplyChainPolicy, checkTrust, checkDependencyScan, checkSbom, isToolAllowedForPolicy, StructuredLogger, resolveString, buildStepExecutionResult, type StepExecutionResult } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "worker:processStep" });
 import { acquireWriteLease, releaseWriteLease } from "../writeLease";
@@ -1168,8 +1168,16 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     }
 
     await writeAudit(params.pool, { traceId, runId: params.runId, stepId: params.stepId, toolRef, result: "success", inputDigest, outputDigest });
-    // ── Redis Pub/Sub: 发布步骤完成事件，通知 Agent Loop 停止轮询 ──
-    publishStepDone(params);
+    // ── Redis Pub/Sub: 发布步骤完成事件（含 StepExecutionResult），通知编排内核 ──
+    publishStepDone(params, buildStepExecutionResult({
+      runId: params.runId,
+      stepId: params.stepId,
+      status: "completed",
+      output: safeOutput && typeof safeOutput === "object" ? safeOutput as Record<string, unknown> : undefined,
+      durationMs: outputDigest?.latencyMs ? Number(outputDigest.latencyMs) : 0,
+      toolRef: toolRef ?? undefined,
+      seq,
+    }));
   } catch (err: any) {
     const { message: msg, category } = extractErrorInfo(err);
     const recoveryDecision = getErrorRecoveryDecision(category);
@@ -1327,8 +1335,17 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
     }
 
     await writeAudit(params.pool, { traceId, runId: params.runId, stepId: params.stepId, toolRef: toolRef ?? undefined, result: "error", inputDigest, outputDigest, errorCategory: category });
-    // ── Redis Pub/Sub: 发布步骤完成事件（失败也是终态） ──
-    publishStepDone(params);
+    // ── Redis Pub/Sub: 发布步骤完成事件（失败也是终态，含 StepExecutionResult） ──
+    publishStepDone(params, buildStepExecutionResult({
+      runId: params.runId,
+      stepId: params.stepId,
+      status: "failed",
+      error: { code: category, category, message: msg, recoverable: !recoveryDecision.isTerminal },
+      durationMs: 0,
+      toolRef: toolRef ?? undefined,
+      seq,
+      errorCategory: category,
+    }));
     if (!recoveryDecision.shouldRethrow) return;
     throw err;
   }
@@ -1338,9 +1355,23 @@ export async function processStep(params: { pool: Pool; jobId: string; runId: st
  * 通过 Redis Pub/Sub 发布步骤完成信号。
  * Agent Loop 订阅 `step:done:{stepId}` 频道，收到信号后从 DB 确认终态。
  * fire-and-forget，失败不影响主流程。
+ *
+ * 同时构造 StepExecutionResult 并写入 Redis 供编排内核消费。
+ * 编排内核（OrchestrationKernel）未来将从此事件驱动后续决策，
+ * 替代当前 Worker 侧的 scheduleNextAgentRunStep 编排逻辑。
  */
-function publishStepDone(params: { stepId: string; redis?: Redis }) {
+function publishStepDone(
+  params: { stepId: string; runId: string; redis?: Redis },
+  result?: StepExecutionResult,
+) {
   try {
+    if (result && params.redis) {
+      // 将 StepExecutionResult 写入 Redis，供编排内核异步消费
+      params.redis.publish(
+        `step:result:${params.runId}`,
+        JSON.stringify(result),
+      ).catch(() => {});
+    }
     params.redis?.publish(`step:done:${params.stepId}`, "1").catch(() => {});
   } catch {
     // fire-and-forget

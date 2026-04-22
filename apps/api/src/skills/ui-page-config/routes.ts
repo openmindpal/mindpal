@@ -5,6 +5,7 @@ import { Errors } from "../../lib/errors";
 import { requirePermission } from "../../modules/auth/guard";
 import { setAuditContext } from "../../modules/audit/context";
 import { getLatestReleasedToolVersion, getToolDefinition, getToolVersionByRef } from "../../modules/tools/toolRepo";
+import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 import { buildEffectiveEntitySchema } from "../../modules/metadata/effectiveSchema";
 import { getEffectiveSchema, resolveSchemaNameForEntity } from "../../modules/metadata/schemaRepo";
 import { pageDraftSchema, pageViewPrefsSchema } from "./modules/pageModel";
@@ -91,7 +92,7 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
       const def = await getToolDefinition(app.db, subject.tenantId, toolName);
       if (!def) throw Errors.uiConfigDenied("ActionBinding.toolRef 不存在或未发布");
       const idempotencyRequired = Boolean(def.idempotencyRequired);
-      const approvalRequired = Boolean(def.approvalRequired) || def.riskLevel === "high";
+      const approvalRequired = shouldRequireApproval(def);
       if (idempotencyRequired && String(a.idempotencyKeyStrategy ?? "") !== "required") {
         throw Errors.uiConfigDenied("ActionBinding 缺少幂等键策略");
       }

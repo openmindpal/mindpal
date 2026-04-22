@@ -10,7 +10,7 @@ describe('vision-skill', () => {
   describe('manifest.json', () => {
     it('identity.name 存在且非空', () => {
       expect(manifest.identity).toBeDefined();
-      expect(manifest.identity.name).toBe('media.vision.analyze');
+      expect(manifest.identity.name).toBe('ai.multimodal.analyze');
     });
 
     it('identity.version 符合 semver', () => {
