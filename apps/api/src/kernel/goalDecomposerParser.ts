@@ -269,6 +269,28 @@ export function buildSingleGoalFallback(
       ];
     }
 
+    // 条件型模板：先X，如果/若Y就/则Z
+    {
+      const conditionalMatch = trimmed.match(/^(?:先)?(.+?)[，,](?:如果|若)(.+?)(?:就|则|再)(.+)$/);
+      if (conditionalMatch) {
+        const checkDesc = conditionalMatch[1].trim();
+        const condition = conditionalMatch[2].trim();
+        const actionDesc = conditionalMatch[3].trim();
+        const subject = checkDesc.replace(/^(?:检查|查看|确认|核实|验证)/, "").trim();
+        return [
+          buildStep(checkDesc, {
+            priority: 0,
+            postconditions: [`确认${subject}是否${condition}`],
+          }),
+          buildStep(actionDesc, {
+            dependsOn: [0],
+            priority: 1,
+            preconditions: [`${subject}${condition}`],
+          }),
+        ];
+      }
+    }
+
     // 通用拆分：按连接词拆分
     const normalized = trimmed
       .replace(/->|→/g, "，")
@@ -309,7 +331,10 @@ export function buildSingleGoalFallback(
       return [part];
     });
     if (expanded.length >= 2) {
-      return expanded.map((part, index) => buildStep(part, { priority: index }));
+      return expanded.map((part, index) => buildStep(part, {
+        priority: index,
+        dependsOn: index > 0 ? [index - 1] : [],
+      }));
     }
     return [buildStep(trimmed)];
   };

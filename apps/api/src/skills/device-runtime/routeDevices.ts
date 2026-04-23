@@ -41,7 +41,7 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
     const body = z
       .object({
         ownerScope: z.enum(["user", "space"]).optional(),
-        deviceType: z.enum(["desktop", "mobile"]),
+        deviceType: z.enum(["desktop", "mobile", "iot", "robot", "vehicle", "home", "gateway"]),
         os: z.string().min(1).max(100),
         agentVersion: z.string().min(1).max(100),
       })

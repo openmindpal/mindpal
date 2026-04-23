@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { API_BASE, apiHeaders } from "@/lib/api";
 import { t, boolLabel } from "@/lib/i18n";
 import { fmtDateTime } from "@/lib/fmtDateTime";
@@ -25,6 +25,14 @@ type Props = {
   vectorStoreInitial?: unknown; retrievalInitial?: unknown; retentionInitial?: unknown;
 };
 
+const PAGE_SIZE = 20;
+function usePagination<T>(items: T[]) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const paged = useMemo(() => items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [items, page]);
+  return { page, setPage, totalPages, paged } as const;
+}
+
 export default function KnowledgeEngineClient(props: Props) {
   const L = props.locale;
   const [tab, setTab] = useState<TabId>("rerank");
@@ -32,6 +40,7 @@ export default function KnowledgeEngineClient(props: Props) {
 
   /* ── Rerank state ── */
   const [rerankConfigs, setRerankConfigs] = useState<RerankConfigRow[]>(() => safeArr(props.rerankInitial, "configs"));
+  const rkPg = usePagination(rerankConfigs);
   const [rkSpaceId, setRkSpaceId] = useState(""); const [rkEnabled, setRkEnabled] = useState(true);
   const [rkProvider, setRkProvider] = useState("external"); const [rkEndpoint, setRkEndpoint] = useState("");
   const [rkApiKey, setRkApiKey] = useState(""); const [rkModel, setRkModel] = useState("rerank-v1");
@@ -42,6 +51,7 @@ export default function KnowledgeEngineClient(props: Props) {
 
   /* ── Embedding state ── */
   const [embConfigs, setEmbConfigs] = useState<EmbeddingConfigRow[]>(() => safeArr(props.embeddingInitial, "configs"));
+  const embPg = usePagination(embConfigs);
   const [embSpaceId, setEmbSpaceId] = useState(""); const [embModelName, setEmbModelName] = useState("text-embedding-3-small");
   const [embProvider, setEmbProvider] = useState("openai"); const [embEndpoint, setEmbEndpoint] = useState("");
   const [embApiKey, setEmbApiKey] = useState(""); const [embDims, setEmbDims] = useState(1536);
@@ -52,6 +62,7 @@ export default function KnowledgeEngineClient(props: Props) {
 
   /* ── Chunk state ── */
   const [chunkConfigs, setChunkConfigs] = useState<ChunkConfigRow[]>(() => safeArr(props.chunkInitial, "configs"));
+  const ckPg = usePagination(chunkConfigs);
   const [ckSpaceId, setCkSpaceId] = useState(""); const [ckStrategy, setCkStrategy] = useState("recursive");
   const [ckMaxLen, setCkMaxLen] = useState(600); const [ckOverlap, setCkOverlap] = useState(80);
   const [ckSemThreshold, setCkSemThreshold] = useState(0.5);
@@ -62,6 +73,7 @@ export default function KnowledgeEngineClient(props: Props) {
 
   /* ── Vector Store state ── */
   const [vsConfigs, setVsConfigs] = useState<VectorStoreConfigRow[]>(() => safeArr(props.vectorStoreInitial, "configs"));
+  const vsPg = usePagination(vsConfigs);
   const [vsSpaceId, setVsSpaceId] = useState(""); const [vsProvider, setVsProvider] = useState("pg_fallback");
   const [vsEndpoint, setVsEndpoint] = useState(""); const [vsApiKey, setVsApiKey] = useState("");
   const [vsTimeout, setVsTimeout] = useState(10000); const [vsPrefix, setVsPrefix] = useState("");
@@ -70,6 +82,7 @@ export default function KnowledgeEngineClient(props: Props) {
 
   /* ── Retrieval Strategy state ── */
   const [rtStrategies, setRtStrategies] = useState<RetrievalStrategyRow[]>(() => safeArr(props.retrievalInitial, "strategies"));
+  const rtPg = usePagination(rtStrategies);
   const [rtSpaceId, setRtSpaceId] = useState(""); const [rtName, setRtName] = useState("");
   const [rtStatus, setRtStatus] = useState("draft"); const [rtHyde, setRtHyde] = useState(false);
   const [rtHydePrompt, setRtHydePrompt] = useState(""); const [rtQueryExp, setRtQueryExp] = useState(false);
@@ -78,6 +91,7 @@ export default function KnowledgeEngineClient(props: Props) {
 
   /* ── Retention Policy state ── */
   const [retPolicies, setRetPolicies] = useState<RetentionPolicyRow[]>(() => safeArr(props.retentionInitial, "policies"));
+  const retPg = usePagination(retPolicies);
   const [retSpaceId, setRetSpaceId] = useState(""); const [retAllowSnippet, setRetAllowSnippet] = useState(true);
   const [retDays, setRetDays] = useState(30); const [retMaxLen, setRetMaxLen] = useState(600);
   const [retError, setRetError] = useState(""); const [retBusy, setRetBusy] = useState(false);
@@ -94,32 +108,32 @@ export default function KnowledgeEngineClient(props: Props) {
   }
 
   /* ── Rerank actions ── */
-  async function refreshRerank() { try { const j: any = await apiCall("GET", "/governance/knowledge/rerank-configs"); setRerankConfigs(safeArr(j, "configs")); } catch {} }
+  async function refreshRerank() { try { const j: any = await apiCall("GET", "/governance/knowledge/rerank-configs"); setRerankConfigs(safeArr(j, "configs")); rkPg.setPage(0); } catch {} }
   async function upsertRerank() { setRkError(""); setRkBusy(true); try { await apiCall("PUT", "/governance/knowledge/rerank-config", { spaceId: rkSpaceId.trim(), enabled: rkEnabled, provider: rkProvider, endpoint: rkEndpoint.trim(), apiKey: rkApiKey.trim(), model: rkModel.trim(), topN: rkTopN, timeoutMs: rkTimeoutMs, fallbackMode: rkFallbackMode, crossEncoderModelPath: rkCeModelPath.trim(), crossEncoderModelType: rkCeModelType }); setRkSpaceId(""); setRkEndpoint(""); setRkApiKey(""); setRkModel("rerank-v1"); setRkTopN(10); setRkTimeoutMs(5000); setRkCeModelPath(""); setRkCeModelType("mock"); await refreshRerank(); } catch (e: unknown) { setRkError(errText(L, toApiError(e))); } finally { setRkBusy(false); } }
   async function deleteRerank(spaceId: string) { setRkError(""); setRkBusy(true); try { await apiCall("DELETE", `/governance/knowledge/rerank-config/${encodeURIComponent(spaceId)}`); await refreshRerank(); } catch (e: unknown) { setRkError(errText(L, toApiError(e))); } finally { setRkBusy(false); } }
 
   /* ── Embedding actions ── */
-  async function refreshEmb() { try { const j: any = await apiCall("GET", "/governance/knowledge/embedding-configs"); setEmbConfigs(safeArr(j, "configs")); } catch {} }
+  async function refreshEmb() { try { const j: any = await apiCall("GET", "/governance/knowledge/embedding-configs"); setEmbConfigs(safeArr(j, "configs")); embPg.setPage(0); } catch {} }
   async function upsertEmb() { setEmbError(""); setEmbBusy(true); try { await apiCall("PUT", "/governance/knowledge/embedding-config", { spaceId: embSpaceId.trim() || undefined, modelName: embModelName.trim(), provider: embProvider, endpoint: embEndpoint.trim(), apiKeyRef: embApiKey.trim(), dimensions: embDims, batchSize: embBatch, concurrency: embConcurrency, maxRetries: embRetries, timeoutMs: embTimeout, isDefault: embDefault, isActive: embActive }); setEmbSpaceId(""); setEmbModelName("text-embedding-3-small"); setEmbEndpoint(""); setEmbApiKey(""); setEmbDims(1536); await refreshEmb(); } catch (e: unknown) { setEmbError(errText(L, toApiError(e))); } finally { setEmbBusy(false); } }
   async function deleteEmb(id: string) { setEmbError(""); setEmbBusy(true); try { await apiCall("DELETE", `/governance/knowledge/embedding-config/${encodeURIComponent(id)}`); await refreshEmb(); } catch (e: unknown) { setEmbError(errText(L, toApiError(e))); } finally { setEmbBusy(false); } }
 
   /* ── Chunk actions ── */
-  async function refreshChunk() { try { const j: any = await apiCall("GET", "/governance/knowledge/chunk-configs"); setChunkConfigs(safeArr(j, "configs")); } catch {} }
+  async function refreshChunk() { try { const j: any = await apiCall("GET", "/governance/knowledge/chunk-configs"); setChunkConfigs(safeArr(j, "configs")); ckPg.setPage(0); } catch {} }
   async function upsertChunk() { setCkError(""); setCkBusy(true); try { await apiCall("PUT", "/governance/knowledge/chunk-config", { spaceId: ckSpaceId.trim(), strategy: ckStrategy, maxLen: ckMaxLen, overlap: ckOverlap, semanticThreshold: ckSemThreshold, enableParentChild: ckParentChild, parentMaxLen: ckParentMax, childMaxLen: ckChildMax, tableAware: ckTableAware, codeAware: ckCodeAware }); setCkSpaceId(""); setCkStrategy("recursive"); setCkMaxLen(600); setCkOverlap(80); await refreshChunk(); } catch (e: unknown) { setCkError(errText(L, toApiError(e))); } finally { setCkBusy(false); } }
   async function deleteChunk(spaceId: string) { setCkError(""); setCkBusy(true); try { await apiCall("DELETE", `/governance/knowledge/chunk-config/${encodeURIComponent(spaceId)}`); await refreshChunk(); } catch (e: unknown) { setCkError(errText(L, toApiError(e))); } finally { setCkBusy(false); } }
 
   /* ── Vector Store actions ── */
-  async function refreshVs() { try { const j: any = await apiCall("GET", "/governance/knowledge/vector-store-configs"); setVsConfigs(safeArr(j, "configs")); } catch {} }
+  async function refreshVs() { try { const j: any = await apiCall("GET", "/governance/knowledge/vector-store-configs"); setVsConfigs(safeArr(j, "configs")); vsPg.setPage(0); } catch {} }
   async function upsertVs() { setVsError(""); setVsBusy(true); try { await apiCall("PUT", "/governance/knowledge/vector-store-config", { spaceId: vsSpaceId.trim(), provider: vsProvider, endpoint: vsEndpoint.trim(), apiKey: vsApiKey.trim(), timeoutMs: vsTimeout, collectionPrefix: vsPrefix.trim(), dbName: vsDbName.trim(), enabled: vsEnabled }); setVsSpaceId(""); setVsEndpoint(""); setVsApiKey(""); setVsProvider("pg_fallback"); await refreshVs(); } catch (e: unknown) { setVsError(errText(L, toApiError(e))); } finally { setVsBusy(false); } }
   async function deleteVs(spaceId: string) { setVsError(""); setVsBusy(true); try { await apiCall("DELETE", `/governance/knowledge/vector-store-config/${encodeURIComponent(spaceId)}`); await refreshVs(); } catch (e: unknown) { setVsError(errText(L, toApiError(e))); } finally { setVsBusy(false); } }
 
   /* ── Retrieval Strategy actions ── */
-  async function refreshRt() { try { const j: any = await apiCall("GET", "/governance/knowledge/retrieval-strategies"); setRtStrategies(safeArr(j, "strategies")); } catch {} }
+  async function refreshRt() { try { const j: any = await apiCall("GET", "/governance/knowledge/retrieval-strategies"); setRtStrategies(safeArr(j, "strategies")); rtPg.setPage(0); } catch {} }
   async function upsertRt() { setRtError(""); setRtBusy(true); try { await apiCall("PUT", "/governance/knowledge/retrieval-strategy", { spaceId: rtSpaceId.trim(), name: rtName.trim(), status: rtStatus, enableHyde: rtHyde, hydePromptTemplate: rtHydePrompt.trim(), enableQueryExpansion: rtQueryExp, queryExpansionMode: rtExpMode, enableSparseEmbedding: rtSparse }); setRtSpaceId(""); setRtName(""); setRtStatus("draft"); setRtHyde(false); setRtHydePrompt(""); setRtQueryExp(false); setRtSparse(false); await refreshRt(); } catch (e: unknown) { setRtError(errText(L, toApiError(e))); } finally { setRtBusy(false); } }
   async function deleteRt(id: string) { setRtError(""); setRtBusy(true); try { await apiCall("DELETE", `/governance/knowledge/retrieval-strategy/${encodeURIComponent(id)}`); await refreshRt(); } catch (e: unknown) { setRtError(errText(L, toApiError(e))); } finally { setRtBusy(false); } }
 
   /* ── Retention actions ── */
-  async function refreshRet() { try { const j: any = await apiCall("GET", "/governance/knowledge/retention-policies"); setRetPolicies(safeArr(j, "policies")); } catch {} }
+  async function refreshRet() { try { const j: any = await apiCall("GET", "/governance/knowledge/retention-policies"); setRetPolicies(safeArr(j, "policies")); retPg.setPage(0); } catch {} }
   async function upsertRet() { setRetError(""); setRetBusy(true); try { await apiCall("PUT", "/governance/knowledge/retention-policy", { spaceId: retSpaceId.trim(), allowSnippet: retAllowSnippet, retentionDays: retDays, maxSnippetLen: retMaxLen }); setRetSpaceId(""); setRetAllowSnippet(true); setRetDays(30); setRetMaxLen(600); await refreshRet(); } catch (e: unknown) { setRetError(errText(L, toApiError(e))); } finally { setRetBusy(false); } }
   async function deleteRet(spaceId: string) { setRetError(""); setRetBusy(true); try { await apiCall("DELETE", `/governance/knowledge/retention-policy/${encodeURIComponent(spaceId)}`); await refreshRet(); } catch (e: unknown) { setRetError(errText(L, toApiError(e))); } finally { setRetBusy(false); } }
 
@@ -198,10 +212,11 @@ export default function KnowledgeEngineClient(props: Props) {
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.rerank.listTitle")}</span> <Badge>{rerankConfigs.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.rerank.spaceId")}</th><th align="left">{t(L, "gov.rerank.provider")}</th><th align="left">{t(L, "gov.rerank.model")}</th><th align="left">{t(L, "gov.rerank.endpoint")}</th><th align="left">{t(L, "gov.rerank.fallbackMode")}</th><th align="left">{t(L, "gov.rerank.enabled")}</th><th align="left">{t(L, "gov.rerank.updatedAt")}</th><th align="left">{t(L, "gov.rerank.actions")}</th></tr></thead>
-            <tbody>{rerankConfigs.length === 0 ? <NoData cols={8} /> : rerankConfigs.map((c, i) => (
+            <tbody>{rerankConfigs.length === 0 ? <NoData cols={8} /> : rkPg.paged.map((c, i) => (
               <tr key={c.id ?? i}><td style={monoStyle}>{c.spaceId ?? "-"}</td><td>{c.provider ?? "external"}</td><td style={monoStyle}>{c.model ?? "-"}</td><td style={{ ...monoStyle, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{c.endpoint || "-"}</td><td>{c.fallbackMode ?? "-"}</td><td>{boolLabel(Boolean(c.enabled), L)}</td><td>{fmtDateTime(c.updatedAt, L)}</td><td>{c.spaceId ? <button onClick={() => deleteRerank(c.spaceId!)} disabled={rkBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
+          {rkPg.totalPages > 1 && (<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}><span style={{ opacity: 0.7, fontSize: 13 }}>{t(L, "pagination.showing").replace("{from}", String(rkPg.page * PAGE_SIZE + 1)).replace("{to}", String(Math.min((rkPg.page + 1) * PAGE_SIZE, rerankConfigs.length)))}{t(L, "pagination.total").replace("{count}", String(rerankConfigs.length))}</span><div style={{ display: "flex", gap: 8 }}><button disabled={rkPg.page === 0} onClick={() => rkPg.setPage(p => Math.max(0, p - 1))}>{t(L, "pagination.prev")}</button><span style={{ lineHeight: "32px", fontSize: 13 }}>{t(L, "pagination.page").replace("{page}", String(rkPg.page + 1))}</span><button disabled={rkPg.page >= rkPg.totalPages - 1} onClick={() => rkPg.setPage(p => p + 1)}>{t(L, "pagination.next")}</button></div></div>)}
         </div>
       </>)}
 
@@ -238,10 +253,11 @@ export default function KnowledgeEngineClient(props: Props) {
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.embedding.title")}</span> <Badge>{embConfigs.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.embedding.spaceId")}</th><th align="left">{t(L, "gov.embedding.provider")}</th><th align="left">{t(L, "gov.embedding.modelName")}</th><th align="left">{t(L, "gov.embedding.dimensions")}</th><th align="left">{t(L, "gov.embedding.endpoint")}</th><th align="left">{t(L, "gov.embedding.isActive")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{embConfigs.length === 0 ? <NoData cols={8} /> : embConfigs.map((c, i) => (
+            <tbody>{embConfigs.length === 0 ? <NoData cols={8} /> : embPg.paged.map((c, i) => (
               <tr key={c.id ?? i}><td style={monoStyle}>{c.spaceId || t(L, "gov.embedding.noData")}</td><td>{c.provider ?? "openai"}</td><td style={monoStyle}>{c.modelName ?? "-"}</td><td>{c.dimensions ?? 1536}</td><td style={{ ...monoStyle, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{c.endpoint || "-"}</td><td>{boolLabel(Boolean(c.isActive), L)}</td><td>{fmtDateTime(c.updatedAt, L)}</td><td>{c.id ? <button onClick={() => deleteEmb(c.id!)} disabled={embBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
+          {embPg.totalPages > 1 && (<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}><span style={{ opacity: 0.7, fontSize: 13 }}>{t(L, "pagination.showing").replace("{from}", String(embPg.page * PAGE_SIZE + 1)).replace("{to}", String(Math.min((embPg.page + 1) * PAGE_SIZE, embConfigs.length)))}{t(L, "pagination.total").replace("{count}", String(embConfigs.length))}</span><div style={{ display: "flex", gap: 8 }}><button disabled={embPg.page === 0} onClick={() => embPg.setPage(p => Math.max(0, p - 1))}>{t(L, "pagination.prev")}</button><span style={{ lineHeight: "32px", fontSize: 13 }}>{t(L, "pagination.page").replace("{page}", String(embPg.page + 1))}</span><button disabled={embPg.page >= embPg.totalPages - 1} onClick={() => embPg.setPage(p => p + 1)}>{t(L, "pagination.next")}</button></div></div>)}
         </div>
       </>)}
 
@@ -284,10 +300,11 @@ export default function KnowledgeEngineClient(props: Props) {
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.chunk.title")}</span> <Badge>{chunkConfigs.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.chunk.spaceId")}</th><th align="left">{t(L, "gov.chunk.strategy")}</th><th align="left">{t(L, "gov.chunk.maxLen")}</th><th align="left">{t(L, "gov.chunk.overlap")}</th><th align="left">{t(L, "gov.chunk.tableAware")}</th><th align="left">{t(L, "gov.chunk.codeAware")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{chunkConfigs.length === 0 ? <NoData cols={8} /> : chunkConfigs.map((c, i) => (
+            <tbody>{chunkConfigs.length === 0 ? <NoData cols={8} /> : ckPg.paged.map((c, i) => (
               <tr key={c.id ?? i}><td style={monoStyle}>{c.spaceId ?? "-"}</td><td>{c.strategy ?? "recursive"}</td><td>{c.maxLen ?? 600}</td><td>{c.overlap ?? 80}</td><td>{boolLabel(Boolean(c.tableAware), L)}</td><td>{boolLabel(Boolean(c.codeAware), L)}</td><td>{fmtDateTime(c.updatedAt, L)}</td><td>{c.spaceId ? <button onClick={() => deleteChunk(c.spaceId!)} disabled={ckBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
+          {ckPg.totalPages > 1 && (<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}><span style={{ opacity: 0.7, fontSize: 13 }}>{t(L, "pagination.showing").replace("{from}", String(ckPg.page * PAGE_SIZE + 1)).replace("{to}", String(Math.min((ckPg.page + 1) * PAGE_SIZE, chunkConfigs.length)))}{t(L, "pagination.total").replace("{count}", String(chunkConfigs.length))}</span><div style={{ display: "flex", gap: 8 }}><button disabled={ckPg.page === 0} onClick={() => ckPg.setPage(p => Math.max(0, p - 1))}>{t(L, "pagination.prev")}</button><span style={{ lineHeight: "32px", fontSize: 13 }}>{t(L, "pagination.page").replace("{page}", String(ckPg.page + 1))}</span><button disabled={ckPg.page >= ckPg.totalPages - 1} onClick={() => ckPg.setPage(p => p + 1)}>{t(L, "pagination.next")}</button></div></div>)}
         </div>
       </>)}
 
@@ -318,10 +335,11 @@ export default function KnowledgeEngineClient(props: Props) {
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.vectorStore.title")}</span> <Badge>{vsConfigs.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.vectorStore.spaceId")}</th><th align="left">{t(L, "gov.vectorStore.provider")}</th><th align="left">{t(L, "gov.vectorStore.endpoint")}</th><th align="left">{t(L, "gov.vectorStore.timeoutMs")}</th><th align="left">{t(L, "gov.vectorStore.enabled")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{vsConfigs.length === 0 ? <NoData cols={7} /> : vsConfigs.map((c, i) => (
+            <tbody>{vsConfigs.length === 0 ? <NoData cols={7} /> : vsPg.paged.map((c, i) => (
               <tr key={c.id ?? i}><td style={monoStyle}>{c.spaceId ?? "-"}</td><td>{c.provider ?? "pg_fallback"}</td><td style={{ ...monoStyle, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{c.endpoint || "-"}</td><td>{c.timeoutMs ?? 10000}</td><td>{boolLabel(Boolean(c.enabled), L)}</td><td>{fmtDateTime(c.updatedAt, L)}</td><td>{c.spaceId ? <button onClick={() => deleteVs(c.spaceId!)} disabled={vsBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
+          {vsPg.totalPages > 1 && (<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}><span style={{ opacity: 0.7, fontSize: 13 }}>{t(L, "pagination.showing").replace("{from}", String(vsPg.page * PAGE_SIZE + 1)).replace("{to}", String(Math.min((vsPg.page + 1) * PAGE_SIZE, vsConfigs.length)))}{t(L, "pagination.total").replace("{count}", String(vsConfigs.length))}</span><div style={{ display: "flex", gap: 8 }}><button disabled={vsPg.page === 0} onClick={() => vsPg.setPage(p => Math.max(0, p - 1))}>{t(L, "pagination.prev")}</button><span style={{ lineHeight: "32px", fontSize: 13 }}>{t(L, "pagination.page").replace("{page}", String(vsPg.page + 1))}</span><button disabled={vsPg.page >= vsPg.totalPages - 1} onClick={() => vsPg.setPage(p => p + 1)}>{t(L, "pagination.next")}</button></div></div>)}
         </div>
       </>)}
 
@@ -358,10 +376,11 @@ export default function KnowledgeEngineClient(props: Props) {
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.retrieval.title")}</span> <Badge>{rtStrategies.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.retrieval.spaceId")}</th><th align="left">{t(L, "gov.retrieval.name")}</th><th align="left">{t(L, "gov.retrieval.status")}</th><th align="left">HyDE</th><th align="left">{t(L, "gov.retrieval.enableQueryExpansion")}</th><th align="left">{t(L, "gov.retrieval.enableSparseEmbedding")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{rtStrategies.length === 0 ? <NoData cols={8} /> : rtStrategies.map((s, i) => (
+            <tbody>{rtStrategies.length === 0 ? <NoData cols={8} /> : rtPg.paged.map((s, i) => (
               <tr key={s.id ?? i}><td style={monoStyle}>{s.spaceId ?? "-"}</td><td>{s.name ?? "-"}</td><td><Badge>{s.status ?? "draft"}</Badge></td><td>{boolLabel(Boolean(s.enableHyde), L)}</td><td>{boolLabel(Boolean(s.enableQueryExpansion), L)}</td><td>{boolLabel(Boolean(s.enableSparseEmbedding), L)}</td><td>{fmtDateTime(s.updatedAt, L)}</td><td>{s.id ? <button onClick={() => deleteRt(s.id!)} disabled={rtBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
+          {rtPg.totalPages > 1 && (<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}><span style={{ opacity: 0.7, fontSize: 13 }}>{t(L, "pagination.showing").replace("{from}", String(rtPg.page * PAGE_SIZE + 1)).replace("{to}", String(Math.min((rtPg.page + 1) * PAGE_SIZE, rtStrategies.length)))}{t(L, "pagination.total").replace("{count}", String(rtStrategies.length))}</span><div style={{ display: "flex", gap: 8 }}><button disabled={rtPg.page === 0} onClick={() => rtPg.setPage(p => Math.max(0, p - 1))}>{t(L, "pagination.prev")}</button><span style={{ lineHeight: "32px", fontSize: 13 }}>{t(L, "pagination.page").replace("{page}", String(rtPg.page + 1))}</span><button disabled={rtPg.page >= rtPg.totalPages - 1} onClick={() => rtPg.setPage(p => p + 1)}>{t(L, "pagination.next")}</button></div></div>)}
         </div>
       </>)}
 
@@ -382,10 +401,11 @@ export default function KnowledgeEngineClient(props: Props) {
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.retention.title")}</span> <Badge>{retPolicies.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.retention.spaceId")}</th><th align="left">{t(L, "gov.retention.allowSnippet")}</th><th align="left">{t(L, "gov.retention.retentionDays")}</th><th align="left">{t(L, "gov.retention.maxSnippetLen")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{retPolicies.length === 0 ? <NoData cols={6} /> : retPolicies.map((p, i) => (
+            <tbody>{retPolicies.length === 0 ? <NoData cols={6} /> : retPg.paged.map((p, i) => (
               <tr key={p.spaceId ?? i}><td style={monoStyle}>{p.spaceId ?? "-"}</td><td>{boolLabel(Boolean(p.allowSnippet), L)}</td><td>{p.retentionDays ?? 30}</td><td>{p.maxSnippetLen ?? 600}</td><td>{fmtDateTime(p.updatedAt, L)}</td><td>{p.spaceId ? <button onClick={() => deleteRet(p.spaceId!)} disabled={retBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
+          {retPg.totalPages > 1 && (<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}><span style={{ opacity: 0.7, fontSize: 13 }}>{t(L, "pagination.showing").replace("{from}", String(retPg.page * PAGE_SIZE + 1)).replace("{to}", String(Math.min((retPg.page + 1) * PAGE_SIZE, retPolicies.length)))}{t(L, "pagination.total").replace("{count}", String(retPolicies.length))}</span><div style={{ display: "flex", gap: 8 }}><button disabled={retPg.page === 0} onClick={() => retPg.setPage(p => Math.max(0, p - 1))}>{t(L, "pagination.prev")}</button><span style={{ lineHeight: "32px", fontSize: 13 }}>{t(L, "pagination.page").replace("{page}", String(retPg.page + 1))}</span><button disabled={retPg.page >= retPg.totalPages - 1} onClick={() => retPg.setPage(p => p + 1)}>{t(L, "pagination.next")}</button></div></div>)}
         </div>
       </>)}
 

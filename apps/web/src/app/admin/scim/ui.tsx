@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api"
 import { fmtDateTime } from "@/lib/fmtDateTime";
 import { t } from "@/lib/i18n";
@@ -37,13 +37,18 @@ export default function ScimConfigClient(props: {
   const [formAutoProvision, setFormAutoProvision] = useState(true);
   const [generatedToken, setGeneratedToken] = useState<string>("");
 
-  const configItems = Array.isArray(configs?.configs) ? configs.configs : [];
+  const configItems = useMemo(() => Array.isArray(configs?.configs) ? configs.configs : [], [configs]);
+  const scimPageSize = 20;
+  const [scimPage, setScimPage] = useState(0);
+  const scimTotalPages = Math.max(1, Math.ceil(configItems.length / scimPageSize));
+  const pagedConfigs = useMemo(() => configItems.slice(scimPage * scimPageSize, (scimPage + 1) * scimPageSize), [configItems, scimPage]);
 
   async function refreshConfigs() {
     const res = await apiFetch(`/scim/v2/admin/configs`, { locale: props.locale, cache: "no-store" });
     setStatus(res.status);
     const json: unknown = await res.json().catch(() => null);
     setConfigs((json as ConfigsList) ?? null);
+    setScimPage(0);
     if (!res.ok) throw toApiError(json);
   }
 
@@ -211,6 +216,7 @@ export default function ScimConfigClient(props: {
             {t(props.locale, "admin.scim.noConfigs")}
           </div>
         ) : (
+          <>
           <Table>
             <thead>
               <tr>
@@ -222,7 +228,7 @@ export default function ScimConfigClient(props: {
               </tr>
             </thead>
             <tbody>
-              {configItems.map((c) => (
+              {pagedConfigs.map((c) => (
                 <tr key={c.configId}>
                   <td>{c.tenantId || "-"}</td>
                   <td>
@@ -265,6 +271,20 @@ export default function ScimConfigClient(props: {
               ))}
             </tbody>
           </Table>
+          {scimTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(scimPage * scimPageSize + 1)).replace("{to}", String(Math.min((scimPage + 1) * scimPageSize, configItems.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(configItems.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={scimPage === 0} onClick={() => setScimPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(scimPage + 1))}</span>
+                <button disabled={scimPage >= scimTotalPages - 1} onClick={() => setScimPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
+          </>
         )}
       </Card>
 

@@ -25,12 +25,13 @@ function createMockChildProcess(overrides?: Partial<{ connected: boolean; killed
   return cp;
 }
 
-vi.mock("node:child_process", () => ({
-  default: {
-    fork: vi.fn(() => createMockChildProcess()),
-  },
-  fork: vi.fn(() => createMockChildProcess()),
-}));
+vi.mock("node:child_process", () => {
+  const fork = vi.fn(() => createMockChildProcess());
+  return {
+    default: { fork },
+    fork,
+  };
+});
 
 vi.mock("node:fs/promises", () => ({
   default: {
@@ -39,7 +40,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import { SkillProcessPool } from "../skillProcessPool";
-import child_process from "node:child_process";
+import * as child_process from "node:child_process";
 
 describe("SkillProcessPool", () => {
   beforeEach(() => {
@@ -54,7 +55,7 @@ describe("SkillProcessPool", () => {
   /* ── acquire ─────────────────────────────────────────────── */
   describe("acquire", () => {
     it("池空时应 fork 新子进程", async () => {
-      const pool = new SkillProcessPool({ poolSize: 2, maxIdleMs: 60000, maxUses: 10 });
+      const pool = new SkillProcessPool({ maxProcesses: 2, idleTimeoutMs: 60000, maxUses: 10 });
       const { child, _poolEntry } = await pool.acquire();
 
       expect(child_process.fork).toHaveBeenCalledTimes(1);
@@ -65,7 +66,7 @@ describe("SkillProcessPool", () => {
     });
 
     it("空闲池有进程时应复用而非 fork 新进程", async () => {
-      const pool = new SkillProcessPool({ poolSize: 2, maxIdleMs: 60000, maxUses: 10 });
+      const pool = new SkillProcessPool({ maxProcesses: 2, idleTimeoutMs: 60000, maxUses: 10 });
 
       // 先 acquire 再 release 使进程进入空闲池
       const first = await pool.acquire();
@@ -79,7 +80,7 @@ describe("SkillProcessPool", () => {
     });
 
     it("传递 memoryMb 配置到 fork execArgv", async () => {
-      const pool = new SkillProcessPool({ poolSize: 1, maxIdleMs: 60000, maxUses: 10 });
+      const pool = new SkillProcessPool({ maxProcesses: 1, idleTimeoutMs: 60000, maxUses: 10 });
       await pool.acquire({ memoryMb: 512 });
 
       expect(child_process.fork).toHaveBeenCalledWith(
@@ -92,7 +93,7 @@ describe("SkillProcessPool", () => {
     });
 
     it("shutdown 后 acquire 应抛出异常", async () => {
-      const pool = new SkillProcessPool({ poolSize: 1 });
+      const pool = new SkillProcessPool({ maxProcesses: 1 });
       await pool.shutdown();
 
       await expect(pool.acquire()).rejects.toThrow("skill_process_pool_shutdown");
@@ -102,7 +103,7 @@ describe("SkillProcessPool", () => {
   /* ── release ─────────────────────────────────────────────── */
   describe("release", () => {
     it("正常回收到空闲池（新 fork 进程无 poolEntry）", async () => {
-      const pool = new SkillProcessPool({ poolSize: 2, maxIdleMs: 60000, maxUses: 10 });
+      const pool = new SkillProcessPool({ maxProcesses: 2, idleTimeoutMs: 60000, maxUses: 10 });
       const { child, _poolEntry } = await pool.acquire();
 
       pool.release(child, _poolEntry);
@@ -115,7 +116,7 @@ describe("SkillProcessPool", () => {
     });
 
     it("超过 maxUses 时应 kill 进程并补充新进程", async () => {
-      const pool = new SkillProcessPool({ poolSize: 1, maxIdleMs: 60000, maxUses: 2 });
+      const pool = new SkillProcessPool({ maxProcesses: 1, idleTimeoutMs: 60000, maxUses: 2 });
 
       // 第一轮：acquire → release（uses=1）
       const first = await pool.acquire();
@@ -131,7 +132,7 @@ describe("SkillProcessPool", () => {
     });
 
     it("shutdown 期间 release 应直接 kill", async () => {
-      const pool = new SkillProcessPool({ poolSize: 2, maxIdleMs: 60000, maxUses: 10 });
+      const pool = new SkillProcessPool({ maxProcesses: 2, idleTimeoutMs: 60000, maxUses: 10 });
       const { child, _poolEntry } = await pool.acquire();
 
       await pool.shutdown();
@@ -143,7 +144,7 @@ describe("SkillProcessPool", () => {
   /* ── discard ─────────────────────────────────────────────── */
   describe("discard", () => {
     it("出错时直接 kill 不归还池", async () => {
-      const pool = new SkillProcessPool({ poolSize: 2, maxIdleMs: 60000, maxUses: 10 });
+      const pool = new SkillProcessPool({ maxProcesses: 2, idleTimeoutMs: 60000, maxUses: 10 });
       const { child } = await pool.acquire();
 
       pool.discard(child);
@@ -159,7 +160,7 @@ describe("SkillProcessPool", () => {
   /* ── shutdown ────────────────────────────────────────────── */
   describe("shutdown", () => {
     it("优雅关闭所有空闲进程", async () => {
-      const pool = new SkillProcessPool({ poolSize: 3, maxIdleMs: 60000, maxUses: 50 });
+      const pool = new SkillProcessPool({ maxProcesses: 3, idleTimeoutMs: 60000, maxUses: 50 });
 
       // warmup 填充池
       await pool.warmup();
@@ -168,7 +169,7 @@ describe("SkillProcessPool", () => {
 
       // 收集所有 mock child
       const children = (child_process.fork as ReturnType<typeof vi.fn>).mock.results.map(
-        (r: { value: ReturnType<typeof createMockChildProcess> }) => r.value,
+        (r: any) => r.value as ReturnType<typeof createMockChildProcess>,
       );
 
       await pool.shutdown();
@@ -184,7 +185,7 @@ describe("SkillProcessPool", () => {
   describe("idle timeout", () => {
     it("超过 maxIdleMs 的进程应被自动清理", async () => {
       const maxIdleMs = 1000;
-      const pool = new SkillProcessPool({ poolSize: 2, maxIdleMs, maxUses: 50 });
+      const pool = new SkillProcessPool({ maxProcesses: 2, idleTimeoutMs: maxIdleMs, maxUses: 50 });
 
       const { child, _poolEntry } = await pool.acquire();
       pool.release(child, _poolEntry);

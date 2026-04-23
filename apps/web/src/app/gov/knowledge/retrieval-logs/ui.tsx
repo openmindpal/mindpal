@@ -33,9 +33,15 @@ export default function RetrievalLogsClient(props: { locale: string; initial?: I
 
   const rows = useMemo(() => (Array.isArray(data?.logs) ? data!.logs! : []), [data]);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const paged = useMemo(() => rows.slice(page * pageSize, (page + 1) * pageSize), [rows, page]);
+
   async function refresh() {
     setError("");
     setBusy(true);
+    setPage(0);
     try {
       const q = new URLSearchParams();
       const nLimit = Number(limit);
@@ -115,7 +121,7 @@ export default function RetrievalLogsClient(props: { locale: string; initial?: I
         <tbody>
           {rows.length === 0 ? (
                   <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{String(t(props.locale, "widget.noData"))}</td></tr>
-                ) : rows.map((r) => (
+                ) : paged.map((r) => (
             <tr key={r.id}>
               <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{typeof r.id === 'object' ? JSON.stringify(r.id) : r.id}</td>
               <td>{fmtDateTime(r.createdAt, props.locale)}</td>
@@ -130,6 +136,19 @@ export default function RetrievalLogsClient(props: { locale: string; initial?: I
           ))}
         </tbody>
       </Table>
+      {totalPages > 1 && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+          <span style={{ opacity: 0.7, fontSize: 13 }}>
+            {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, rows.length)))}
+            {t(props.locale, "pagination.total").replace("{count}", String(rows.length))}
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+            <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+            <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

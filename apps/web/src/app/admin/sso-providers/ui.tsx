@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { PageHeader, Card, Table, Badge, getHelpHref } from "@/components/ui";
@@ -41,13 +41,18 @@ export default function SsoProvidersClient(props: {
   const [formScopes, setFormScopes] = useState("openid profile email");
   const [formAutoProvision, setFormAutoProvision] = useState(true);
 
-  const providerItems = Array.isArray(providers?.providers) ? providers.providers : [];
+  const providerItems = useMemo(() => Array.isArray(providers?.providers) ? providers.providers : [], [providers]);
+  const ssoPageSize = 20;
+  const [ssoPage, setSsoPage] = useState(0);
+  const ssoTotalPages = Math.max(1, Math.ceil(providerItems.length / ssoPageSize));
+  const pagedProviders = useMemo(() => providerItems.slice(ssoPage * ssoPageSize, (ssoPage + 1) * ssoPageSize), [providerItems, ssoPage]);
 
   async function refreshProviders() {
     const res = await apiFetch(`/sso/providers`, { locale: props.locale, cache: "no-store" });
     setStatus(res.status);
     const json: unknown = await res.json().catch(() => null);
     setProviders((json as ProvidersList) ?? null);
+    setSsoPage(0);
     if (!res.ok) throw toApiError(json);
   }
 
@@ -235,6 +240,7 @@ export default function SsoProvidersClient(props: {
             {t(props.locale, "admin.sso.noProviders")}
           </div>
         ) : (
+          <>
           <Table>
             <thead>
               <tr>
@@ -246,7 +252,7 @@ export default function SsoProvidersClient(props: {
               </tr>
             </thead>
             <tbody>
-              {providerItems.map((p) => (
+              {pagedProviders.map((p) => (
                 <tr key={p.providerId}>
                   <td>
                     <Badge tone={p.providerType === "oidc" ? "success" : "warning"}>
@@ -282,6 +288,20 @@ export default function SsoProvidersClient(props: {
               ))}
             </tbody>
           </Table>
+          {ssoTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(ssoPage * ssoPageSize + 1)).replace("{to}", String(Math.min((ssoPage + 1) * ssoPageSize, providerItems.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(providerItems.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={ssoPage === 0} onClick={() => setSsoPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(ssoPage + 1))}</span>
+                <button disabled={ssoPage >= ssoTotalPages - 1} onClick={() => setSsoPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
+          </>
         )}
       </Card>
 

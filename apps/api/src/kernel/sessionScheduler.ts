@@ -20,7 +20,7 @@ import type {
 } from "./taskQueue.types";
 import { TERMINAL_QUEUE_STATUSES, ACTIVE_STATUSES } from "./taskQueue.types";
 import * as repo from "./taskQueueRepo";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, createMemoryCacheManager, type CacheManager } from "@openslin/shared";
 
 /* ================================================================== */
 /*  日志                                                               */
@@ -115,12 +115,17 @@ const DEFAULT_CONFIG: SessionConcurrencyConfig = {
   starvationBoost: 2,
 };
 
-/** 租户级配置覆盖（内存缓存） */
-const tenantConfigCache = new Map<string, SessionConcurrencyConfig>();
+/** 租户级配置缓存（metadata tier，TTL 5分钟） */
+const _tenantConfigCacheManager: CacheManager = createMemoryCacheManager({
+  maxSize: 200,
+  defaultTtlMs: 300_000, // 5 min
+  purgeIntervalMs: 60_000,
+});
+const TENANT_CONFIG_TTL_MS = 300_000; // 5 min
 
 /** 获取会话并发配置（可由租户等级/系统负载/资源可用性动态决定） */
 export function getSessionConfig(tenantId: string): SessionConcurrencyConfig {
-  const cached = tenantConfigCache.get(tenantId);
+  const cached = _tenantConfigCacheManager.get<SessionConcurrencyConfig>("metadata", tenantId);
   if (cached) return cached;
   return { ...DEFAULT_CONFIG };
 }
@@ -129,7 +134,7 @@ export function getSessionConfig(tenantId: string): SessionConcurrencyConfig {
 export function updateSessionConfig(tenantId: string, partial: Partial<SessionConcurrencyConfig>): SessionConcurrencyConfig {
   const current = getSessionConfig(tenantId);
   const updated = { ...current, ...partial };
-  tenantConfigCache.set(tenantId, updated);
+  _tenantConfigCacheManager.set("metadata", tenantId, updated, TENANT_CONFIG_TTL_MS);
   log("info", `Session config updated`, { tenantId, config: updated });
   return updated;
 }

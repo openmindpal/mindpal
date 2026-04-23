@@ -122,13 +122,13 @@ export const COLLAB_TRANSITIONS: Readonly<Record<CollabPhase, ReadonlySet<Collab
 /* ================================================================== */
 
 export interface TransitionViolation {
-  entity: "step" | "run" | "collab";
+  entity: "step" | "run" | "collab" | "agent";
   from: string;
   to: string;
   message: string;
 }
 
-function createTransitionViolation(entity: "step" | "run" | "collab", from: string, to: string): TransitionViolation {
+function createTransitionViolation(entity: "step" | "run" | "collab" | "agent", from: string, to: string): TransitionViolation {
   return { entity, from, to, message: `Illegal ${entity} transition: ${from} → ${to}` };
 }
 
@@ -225,6 +225,7 @@ export function checkStateInvariant(params: {
   runStatus: string;
   steps: Array<{ stepId: string; status: string }>;
   collabPhase?: string | null;
+  agentPhase?: string | null;
 }): StateInvariantViolation[] {
   const violations: StateInvariantViolation[] = [];
   const runSt = normalizeRunStatus(params.runStatus);
@@ -269,5 +270,107 @@ export function checkStateInvariant(params: {
     }
   }
 
+  if (params.agentPhase) {
+    if (!(AGENT_PHASES as readonly string[]).includes(params.agentPhase)) {
+      violations.push({ code: "agent.invalid_phase", severity: "error", message: `Invalid agent phase: ${params.agentPhase}`, details: { agentPhase: params.agentPhase } });
+    } else if (isAgentTerminal(params.agentPhase as AgentPhase)) {
+      const terminalRuns = ["succeeded", "failed", "canceled", "stopped", "compensated"];
+      if (!terminalRuns.includes(params.runStatus)) {
+        violations.push({ code: "agent.terminal_run_active", severity: "warn", message: `Terminal agent phase ${params.agentPhase} but run is ${params.runStatus}`, details: { agentPhase: params.agentPhase, runStatus: params.runStatus } });
+      }
+    }
+  }
+
   return violations;
+}
+
+/* ================================================================== */
+/*  Agent 生命周期状态机                                                 */
+/* ================================================================== */
+
+export const AGENT_PHASES = [
+  "idle", "planning", "thinking", "deciding", "acting",
+  "waiting", "blocked", "completed", "failed", "timeout",
+] as const;
+export type AgentPhase = (typeof AGENT_PHASES)[number];
+
+export const AGENT_TRANSITIONS: Readonly<Record<AgentPhase, ReadonlySet<AgentPhase>>> = {
+  idle:      new Set(["planning", "failed"]),
+  planning:  new Set(["thinking", "failed", "timeout"]),
+  thinking:  new Set(["deciding", "waiting", "failed", "timeout"]),
+  deciding:  new Set(["acting", "blocked", "failed", "timeout"]),
+  acting:    new Set(["thinking", "completed", "failed", "timeout"]),
+  waiting:   new Set(["thinking", "failed", "timeout"]),
+  blocked:   new Set(["thinking", "failed", "timeout"]),
+  completed: new Set(["idle"]),
+  failed:    new Set(["idle"]),
+  timeout:   new Set(["idle"]),
+};
+
+export const AGENT_TERMINAL: ReadonlySet<AgentPhase> = new Set(["completed", "failed", "timeout"]);
+
+/** 安全转换 Agent 阶段（返回结果对象，不抛异常） */
+export function tryTransitionAgent(
+  from: AgentPhase,
+  to: AgentPhase,
+): TransitionResult<AgentPhase> {
+  if (from === to) return { ok: true, status: to };
+  const allowed = AGENT_TRANSITIONS[from];
+  if (!allowed || !allowed.has(to)) {
+    return { ok: false, status: from, violation: createTransitionViolation("agent", from, to) };
+  }
+  return { ok: true, status: to };
+}
+
+/** 硬转换 Agent 阶段（违反时抛异常） */
+export function transitionAgent(from: AgentPhase, to: AgentPhase): AgentPhase {
+  if (from === to) return to;
+  const allowed = AGENT_TRANSITIONS[from];
+  if (!allowed || !allowed.has(to)) throw createTransitionViolation("agent", from, to);
+  return to;
+}
+
+/** 判断是否为 Agent 终态 */
+export function isAgentTerminal(phase: AgentPhase): boolean {
+  return AGENT_TERMINAL.has(phase);
+}
+
+/* ================================================================== */
+/*  OrchestrationPhase ↔ AgentPhase 映射                                */
+/* ================================================================== */
+
+/**
+ * 将 OrchestrationPhase 字符串映射到 AgentPhase。
+ * 用于桥接旧编排系统与新 Agent 状态机。
+ */
+export function mapOrchestrationToAgent(phase: string): AgentPhase {
+  const mapping: Record<string, AgentPhase> = {
+    idle: "idle",
+    planning: "planning",
+    executing: "acting",
+    reviewing: "thinking",
+    done: "completed",
+    failed: "failed",
+    cancelled: "failed",
+  };
+  return mapping[phase.toLowerCase()] ?? "idle";
+}
+
+/**
+ * 将 AgentPhase 映射回 OrchestrationPhase 字符串。
+ */
+export function mapAgentToOrchestration(phase: AgentPhase): string {
+  const mapping: Record<AgentPhase, string> = {
+    idle: "idle",
+    planning: "planning",
+    thinking: "reviewing",
+    deciding: "executing",
+    acting: "executing",
+    waiting: "executing",
+    blocked: "executing",
+    completed: "done",
+    failed: "failed",
+    timeout: "failed",
+  };
+  return mapping[phase];
 }

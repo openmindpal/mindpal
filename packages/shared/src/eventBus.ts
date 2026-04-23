@@ -114,6 +114,8 @@ export const EventChannels = {
   SECURITY_ALERT: "security.alert",
   /** 配置变更 */
   CONFIG_CHANGE: "config.change",
+  /** 配置热更新事件（config.updated.{key}） */
+  CONFIG_UPDATED: "config.updated",
   /** 系统广播 */
   SYSTEM_BROADCAST: "system.broadcast",
 } as const;

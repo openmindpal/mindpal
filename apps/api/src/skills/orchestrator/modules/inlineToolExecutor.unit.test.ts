@@ -1,5 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+// ── mock 准入检查 & 审计模块 ──
+vi.mock("../../../kernel/executionKernel", () => ({
+  admitInlineExecution: vi.fn().mockResolvedValue({ admitted: true }),
+}));
+
+vi.mock("../../../modules/audit/auditRepo", () => ({
+  insertAuditEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ── mock repo 模块，拦截数据库调用 ──
 vi.mock("../../../modules/memory/repo", () => ({
   searchMemory: vi.fn(),
@@ -16,6 +25,16 @@ vi.mock("../../knowledge-rag/modules/repo", () => ({
 vi.mock("@openslin/shared", () => ({
   evaluateMemoryRisk: vi.fn(() => ({ level: "low", reasons: [] })),
   resolveNumber: vi.fn(() => ({ value: 0.6 })),
+  shouldRequireApproval: vi.fn(() => false),
+  ServiceError: class ServiceError extends Error {
+    category; code; httpStatus; details;
+    constructor(p: any) { super(p.message); this.category = p.category; this.code = p.code; this.httpStatus = p.httpStatus; this.details = p.details; }
+  },
+  ServiceErrorCategory: { AUTH_FAILED: "auth_failed", POLICY_VIOLATION: "policy_violation", RESOURCE_EXHAUSTED: "resource_exhausted", INVALID_REQUEST: "invalid_request", NOT_FOUND: "not_found", INTERNAL: "internal", TIMEOUT: "timeout" },
+  ErrorCategory: { AUTH_FAILED: "auth_failed", POLICY_VIOLATION: "policy_violation", RESOURCE_EXHAUSTED: "resource_exhausted", INVALID_REQUEST: "invalid_request", NOT_FOUND: "not_found", INTERNAL: "internal", TIMEOUT: "timeout" },
+  classifyError: vi.fn((err: any) => ({ category: "internal", code: "INTERNAL", httpStatus: 500, message: err?.message ?? "unknown" })),
+  toHttpResponse: vi.fn((err: any) => ({ statusCode: err.httpStatus, body: { errorCode: err.code, message: err.message, category: err.category } })),
+  StructuredLogger: class { constructor(_opts?: any) {} info() {} warn() {} error() {} debug() {} },
 }));
 
 import { executeInlineTools } from "./inlineToolExecutor";

@@ -34,6 +34,7 @@ export default function RetrievalLogDetailClient(props: { locale: string; id: st
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setData((json as RetrievalLogResp) ?? null);
+      setPage(0);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -47,6 +48,11 @@ export default function RetrievalLogDetailClient(props: { locale: string; id: st
     const v = rec ? rec.rankedEvidenceRefs : null;
     return pickArr(v);
   }, [log]);
+
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(ranked.length / pageSize));
+  const paged = useMemo(() => ranked.slice(page * pageSize, (page + 1) * pageSize), [ranked, page]);
 
   async function resolveEvidence(sourceRef: Record<string, unknown>) {
     setEvidenceError("");
@@ -105,7 +111,7 @@ export default function RetrievalLogDetailClient(props: { locale: string; id: st
             </tr>
           </thead>
           <tbody>
-            {ranked.map((e, idx) => {
+            {paged.map((e, idx) => {
               const rec = toRecord(e);
               const sr = rec && toRecord(rec.sourceRef);
               const key = sr ? `${String(sr.documentId ?? "")}:${String(sr.version ?? "")}:${String(sr.chunkId ?? "")}` : `${idx}`;
@@ -137,6 +143,19 @@ export default function RetrievalLogDetailClient(props: { locale: string; id: st
             })}
           </tbody>
         </Table>
+        {totalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, ranked.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(ranked.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+              <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );

@@ -159,6 +159,19 @@ export default function AdminRbacClient(props: {
     });
   }, [bindingFilterSubject, bindingItems, selectedRoleId]);
 
+  const rbacPageSize = 20;
+  const [rolePage, setRolePage] = useState(0);
+  const roleTotalPages = Math.max(1, Math.ceil(roleItems.length / rbacPageSize));
+  const pagedRoles = useMemo(() => roleItems.slice(rolePage * rbacPageSize, (rolePage + 1) * rbacPageSize), [roleItems, rolePage]);
+
+  const [permPage, setPermPage] = useState(0);
+  const permTotalPages = Math.max(1, Math.ceil(filteredPermissions.length / rbacPageSize));
+  const pagedPerms = useMemo(() => filteredPermissions.slice(permPage * rbacPageSize, (permPage + 1) * rbacPageSize), [filteredPermissions, permPage]);
+
+  const [bindPage, setBindPage] = useState(0);
+  const bindTotalPages = Math.max(1, Math.ceil(filteredBindings.length / rbacPageSize));
+  const pagedBindings = useMemo(() => filteredBindings.slice(bindPage * rbacPageSize, (bindPage + 1) * rbacPageSize), [filteredBindings, bindPage]);
+
   async function refreshRoles() {
     const res = await apiFetch(`/rbac/roles?limit=200`, { locale: props.locale, cache: "no-store" });
     setRolesStatus(res.status);
@@ -443,7 +456,7 @@ export default function AdminRbacClient(props: {
             <p style={{ color: "var(--sl-muted)", fontSize: 13, margin: 0 }}>{t(locale, "admin.rbac.noRoles")}</p>
           ) : (
             <ul style={{ paddingLeft: 0, margin: 0, display: "grid", gap: 4, listStyle: "none" }}>
-              {roleItems.map((r: RoleItem) => (
+              {pagedRoles.map((r: RoleItem) => (
                 <li key={String(r.id)} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   {renamingRoleId === String(r.id) ? (
                     <div style={{ display: "flex", gap: 4, flex: 1 }}>
@@ -474,6 +487,19 @@ export default function AdminRbacClient(props: {
                 </li>
               ))}
             </ul>
+          )}
+          {roleTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(locale, "pagination.showing").replace("{from}", String(rolePage * rbacPageSize + 1)).replace("{to}", String(Math.min((rolePage + 1) * rbacPageSize, roleItems.length)))}
+                {t(locale, "pagination.total").replace("{count}", String(roleItems.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={rolePage === 0} onClick={() => setRolePage((p) => Math.max(0, p - 1))}>{t(locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(locale, "pagination.page").replace("{page}", String(rolePage + 1))}</span>
+                <button disabled={rolePage >= roleTotalPages - 1} onClick={() => setRolePage((p) => p + 1)}>{t(locale, "pagination.next")}</button>
+              </div>
+            </div>
           )}
         </Card>
         <Card title={t(locale, "admin.rbac.detail")}>
@@ -548,14 +574,14 @@ export default function AdminRbacClient(props: {
       <Card>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13 }}>{t(locale, "admin.rbac.resourceTypeLabel")}:</span>
-          <select value={permFilterResource} onChange={(e) => setPermFilterResource(e.target.value)} style={{ width: 180, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--sl-border)" }}>
+          <select value={permFilterResource} onChange={(e) => { setPermFilterResource(e.target.value); setPermPage(0); }} style={{ width: 180, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--sl-border)" }}>
             <option value="">{t(locale, "admin.rbac.filter.allResources")}</option>
             {RESOURCE_TYPES.filter(rt => rt !== "*").map(rt => (
               <option key={rt} value={rt}>{t(locale, `admin.rbac.resourceType.${rt}`)}</option>
             ))}
           </select>
           <span style={{ fontSize: 13 }}>{t(locale, "admin.rbac.actionLabel")}:</span>
-          <select value={permFilterAction} onChange={(e) => setPermFilterAction(e.target.value)} style={{ width: 160, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--sl-border)" }}>
+          <select value={permFilterAction} onChange={(e) => { setPermFilterAction(e.target.value); setPermPage(0); }} style={{ width: 160, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--sl-border)" }}>
             <option value="">{t(locale, "admin.rbac.filter.allActions")}</option>
             {(permFilterResource && RESOURCE_ACTIONS[permFilterResource] ? RESOURCE_ACTIONS[permFilterResource] : [...new Set(Object.values(RESOURCE_ACTIONS).flat())]).map(a => (
               <option key={a} value={a}>{a}</option>
@@ -568,6 +594,7 @@ export default function AdminRbacClient(props: {
         {filteredPermissions.length === 0 ? (
           <p style={{ color: "var(--sl-muted)", fontSize: 13, margin: 0 }}>{t(locale, "admin.rbac.noPermissions")}</p>
         ) : (
+          <>
           <div style={{ maxHeight: 400, overflow: "auto" }}>
             <Table>
               <thead>
@@ -578,7 +605,7 @@ export default function AdminRbacClient(props: {
                 </tr>
               </thead>
               <tbody>
-                {filteredPermissions.map((p: PermissionItem) => (
+                {pagedPerms.map((p: PermissionItem) => (
                   <tr key={String(p.id)}>
                     <td>{String(p.id)}</td>
                     <td>{t(locale, `admin.rbac.resourceType.${p.resource_type ?? ""}`)}</td>
@@ -588,6 +615,20 @@ export default function AdminRbacClient(props: {
               </tbody>
             </Table>
           </div>
+          {permTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(locale, "pagination.showing").replace("{from}", String(permPage * rbacPageSize + 1)).replace("{to}", String(Math.min((permPage + 1) * rbacPageSize, filteredPermissions.length)))}
+                {t(locale, "pagination.total").replace("{count}", String(filteredPermissions.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={permPage === 0} onClick={() => setPermPage((p) => Math.max(0, p - 1))}>{t(locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(locale, "pagination.page").replace("{page}", String(permPage + 1))}</span>
+                <button disabled={permPage >= permTotalPages - 1} onClick={() => setPermPage((p) => p + 1)}>{t(locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
+          </>
         )}
       </Card>
     </div>
@@ -784,7 +825,7 @@ export default function AdminRbacClient(props: {
             <div style={{ fontWeight: 600, fontSize: 13 }}>{t(locale, "admin.rbac.bindingsCurrent")}</div>
             <input
               value={bindingFilterSubject}
-              onChange={(e) => setBindingFilterSubject(e.target.value)}
+              onChange={(e) => { setBindingFilterSubject(e.target.value); setBindPage(0); }}
               placeholder={t(locale, "admin.rbac.subjectIdPlaceholder")}
               style={{ width: 220, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--sl-border)" }}
             />
@@ -799,6 +840,7 @@ export default function AdminRbacClient(props: {
           {filteredBindings.length === 0 ? (
             <p style={{ color: "var(--sl-muted)", fontSize: 13, margin: 0 }}>{t(locale, "admin.rbac.noBindings")}</p>
           ) : (
+            <>
             <Table>
               <thead>
                 <tr>
@@ -810,7 +852,7 @@ export default function AdminRbacClient(props: {
                 </tr>
               </thead>
               <tbody>
-                {filteredBindings.map((item) => (
+                {pagedBindings.map((item) => (
                   <tr key={item.id}>
                     <td>{item.id}</td>
                     <td>{String(item.subject_id ?? "")}</td>
@@ -828,6 +870,20 @@ export default function AdminRbacClient(props: {
                 ))}
               </tbody>
             </Table>
+            {bindTotalPages > 1 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                <span style={{ opacity: 0.7, fontSize: 13 }}>
+                  {t(locale, "pagination.showing").replace("{from}", String(bindPage * rbacPageSize + 1)).replace("{to}", String(Math.min((bindPage + 1) * rbacPageSize, filteredBindings.length)))}
+                  {t(locale, "pagination.total").replace("{count}", String(filteredBindings.length))}
+                </span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button disabled={bindPage === 0} onClick={() => setBindPage((p) => Math.max(0, p - 1))}>{t(locale, "pagination.prev")}</button>
+                  <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(locale, "pagination.page").replace("{page}", String(bindPage + 1))}</span>
+                  <button disabled={bindPage >= bindTotalPages - 1} onClick={() => setBindPage((p) => p + 1)}>{t(locale, "pagination.next")}</button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </div>
       </Card>

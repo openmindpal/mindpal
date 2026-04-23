@@ -60,10 +60,20 @@ export default function OrganizationsClient(props: {
   const orgUnitItems = useMemo(() => (Array.isArray(orgUnits?.units) ? orgUnits.units : []), [orgUnits]);
   const spaceItems = useMemo(() => (Array.isArray(spaces?.spaces) ? spaces.spaces : []), [spaces]);
 
+  const pageSize = 20;
+  const [orgPage, setOrgPage] = useState(0);
+  const orgTotalPages = Math.max(1, Math.ceil(orgUnitItems.length / pageSize));
+  const pagedOrgUnits = useMemo(() => orgUnitItems.slice(orgPage * pageSize, (orgPage + 1) * pageSize), [orgUnitItems, orgPage]);
+
+  const [spacePage, setSpacePage] = useState(0);
+  const spaceTotalPages = Math.max(1, Math.ceil(spaceItems.length / pageSize));
+  const pagedSpaces = useMemo(() => spaceItems.slice(spacePage * pageSize, (spacePage + 1) * pageSize), [spaceItems, spacePage]);
+
   async function refreshOrgUnits() {
     const res = await apiFetch(`/org/units`, { locale: props.locale, cache: "no-store" });
     const json: unknown = await res.json().catch(() => null);
     setOrgUnits((json as OrgUnitsList) ?? null);
+    setOrgPage(0);
     if (!res.ok) throw toApiError(json);
   }
 
@@ -71,6 +81,7 @@ export default function OrganizationsClient(props: {
     const res = await apiFetch(`/spaces`, { locale: props.locale, cache: "no-store" });
     const json: unknown = await res.json().catch(() => null);
     setSpaces((json as SpacesList) ?? null);
+    setSpacePage(0);
     if (!res.ok) throw toApiError(json);
   }
 
@@ -103,6 +114,7 @@ export default function OrganizationsClient(props: {
       const res = await apiFetch(`/spaces/${encodeURIComponent(spaceId)}/members`, { locale: props.locale, cache: "no-store" });
       const json: unknown = await res.json().catch(() => null);
       setSpaceMembers((json as MembersList) ?? null);
+      setMemberPage(0);
       if (!res.ok) throw toApiError(json);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
@@ -148,6 +160,10 @@ export default function OrganizationsClient(props: {
   }
 
   const memberItems = useMemo(() => (Array.isArray(spaceMembers?.members) ? spaceMembers.members : []), [spaceMembers]);
+
+  const [memberPage, setMemberPage] = useState(0);
+  const memberTotalPages = Math.max(1, Math.ceil(memberItems.length / pageSize));
+  const pagedMembers = useMemo(() => memberItems.slice(memberPage * pageSize, (memberPage + 1) * pageSize), [memberItems, memberPage]);
 
   const unitsTab = (
     <div style={{ display: "grid", gap: 16 }}>
@@ -200,6 +216,7 @@ export default function OrganizationsClient(props: {
             {t(props.locale, "admin.org.units.noUnits")}
           </div>
         ) : (
+          <>
           <Table>
             <thead>
               <tr>
@@ -210,7 +227,7 @@ export default function OrganizationsClient(props: {
               </tr>
             </thead>
             <tbody>
-              {orgUnitItems.map((u) => (
+              {pagedOrgUnits.map((u) => (
                 <tr key={u.unitId}>
                   <td>{u.name}</td>
                   <td><code style={{ fontSize: 12 }}>{u.path || "/"}</code></td>
@@ -220,6 +237,20 @@ export default function OrganizationsClient(props: {
               ))}
             </tbody>
           </Table>
+          {orgTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(orgPage * pageSize + 1)).replace("{to}", String(Math.min((orgPage + 1) * pageSize, orgUnitItems.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(orgUnitItems.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={orgPage === 0} onClick={() => setOrgPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(orgPage + 1))}</span>
+                <button disabled={orgPage >= orgTotalPages - 1} onClick={() => setOrgPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
+          </>
         )}
       </Card>
     </div>
@@ -298,6 +329,7 @@ export default function OrganizationsClient(props: {
         {spaceItems.length === 0 ? (
           <div style={{ textAlign: "center", padding: "2rem", color: "var(--sl-muted)" }}>{t(props.locale, "admin.org.spaces.noSpacesHint")}</div>
         ) : (
+          <>
           <Table>
             <thead>
               <tr>
@@ -308,10 +340,10 @@ export default function OrganizationsClient(props: {
               </tr>
             </thead>
             <tbody>
-              {spaceItems.map((s) => (
+              {pagedSpaces.map((s) => (
                 <tr key={s.id}>
                   <td><code style={{ fontSize: 12 }}>{s.id}</code></td>
-                  <td>{s.name || "—"}</td>
+                  <td>{s.name || "\u2014"}</td>
                   <td>{fmtDateTime(s.createdAt, props.locale)}</td>
                   <td>
                     <button
@@ -325,6 +357,20 @@ export default function OrganizationsClient(props: {
               ))}
             </tbody>
           </Table>
+          {spaceTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(spacePage * pageSize + 1)).replace("{to}", String(Math.min((spacePage + 1) * pageSize, spaceItems.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(spaceItems.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={spacePage === 0} onClick={() => setSpacePage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(spacePage + 1))}</span>
+                <button disabled={spacePage >= spaceTotalPages - 1} onClick={() => setSpacePage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
+          </>
         )}
       </Card>
     </div>
@@ -412,6 +458,7 @@ export default function OrganizationsClient(props: {
                 {t(props.locale, "admin.org.members.noMembers")}
               </div>
             ) : (
+              <>
               <Table>
                 <thead>
                   <tr>
@@ -421,7 +468,7 @@ export default function OrganizationsClient(props: {
                   </tr>
                 </thead>
                 <tbody>
-                  {memberItems.map((m) => (
+                  {pagedMembers.map((m) => (
                     <tr key={m.memberId}>
                       <td><code style={{ fontSize: 12 }}>{m.subjectId}</code></td>
                       <td>
@@ -441,6 +488,20 @@ export default function OrganizationsClient(props: {
                   ))}
                 </tbody>
               </Table>
+              {memberTotalPages > 1 && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                  <span style={{ opacity: 0.7, fontSize: 13 }}>
+                    {t(props.locale, "pagination.showing").replace("{from}", String(memberPage * pageSize + 1)).replace("{to}", String(Math.min((memberPage + 1) * pageSize, memberItems.length)))}
+                    {t(props.locale, "pagination.total").replace("{count}", String(memberItems.length))}
+                  </span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button disabled={memberPage === 0} onClick={() => setMemberPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                    <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(memberPage + 1))}</span>
+                    <button disabled={memberPage >= memberTotalPages - 1} onClick={() => setMemberPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </>
         ) : (

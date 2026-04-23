@@ -16,11 +16,15 @@ export interface PoolLike {
 
 export interface SafeTransitionRunOpts {
   finishedAt?: boolean;
-  log?: { warn: (...a: any[]) => void };
+  log?: { info?: (...a: any[]) => void; warn: (...a: any[]) => void };
   /** 可选 tenantId — 传入时 WHERE 条件追加 tenant_id 过滤 */
   tenantId?: string;
   /** 可选：调用方已获取的当前状态，避免重复 SELECT */
   fromStatus?: RunStatus;
+  /** Event Sourcing: 触发方标识 */
+  triggeredBy?: string;
+  /** Event Sourcing: 附加元数据 */
+  eventMetadata?: Record<string, unknown>;
 }
 
 export async function safeTransitionRun(
@@ -65,5 +69,34 @@ export async function safeTransitionRun(
       [runId, toStatus],
     );
   }
+  // Event Sourcing: 尽力记录状态转换事件（best-effort，不阻塞主流程）
+  if (opts?.tenantId) {
+    try {
+      await pool.query(
+        `INSERT INTO state_events (event_id, run_id, tenant_id, from_status, to_status, triggered_by, metadata, created_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, now())`,
+        [runId, opts.tenantId, from, toStatus, opts?.triggeredBy ?? "system", JSON.stringify(opts?.eventMetadata ?? {})],
+      );
+    } catch (err) {
+      opts?.log?.warn?.("state_events insert failed (non-blocking)", err);
+    }
+  }
+
   return true;
+}
+
+/**
+ * 清理过期的状态转换事件记录
+ * 保留最近 retentionDays 天的数据，删除更旧的记录
+ * 建议由定时任务（如 Worker cron）定期调用
+ */
+export async function purgeStaleStateEvents(
+  pool: PoolLike,
+  retentionDays: number = 30,
+): Promise<number> {
+  const result = await pool.query(
+    `DELETE FROM state_events WHERE created_at < now() - make_interval(days => $1)`,
+    [retentionDays],
+  );
+  return result.rowCount ?? 0;
 }

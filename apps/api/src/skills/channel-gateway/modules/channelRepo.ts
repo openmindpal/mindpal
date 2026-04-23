@@ -615,6 +615,42 @@ export async function markOutboxAcked(params: { pool: Pool; tenantId: string; id
   return res.rows.map(toOutboxMessage);
 }
 
+/** 撤销渠道账户映射（软删除，设 status='revoked'） */
+export async function revokeChannelAccount(params: {
+  pool: Pool;
+  tenantId: string;
+  provider: string;
+  workspaceId: string;
+  channelUserId: string;
+}) {
+  const res = await params.pool.query(
+    `UPDATE channel_accounts
+     SET status = 'revoked', updated_at = now()
+     WHERE tenant_id = $1 AND provider = $2 AND workspace_id = $3 AND channel_user_id = $4 AND status = 'active'
+     RETURNING *`,
+    [params.tenantId, params.provider, params.workspaceId, params.channelUserId]
+  );
+  return res.rows[0] ? toAccount(res.rows[0]) : null;
+}
+
+/** 撤销渠道群组绑定（软删除，设 status='revoked'） */
+export async function revokeChannelChatBinding(params: {
+  pool: Pool;
+  tenantId: string;
+  provider: string;
+  workspaceId: string;
+  channelChatId: string;
+}) {
+  const res = await params.pool.query(
+    `UPDATE channel_chat_bindings
+     SET status = 'revoked', updated_at = now()
+     WHERE tenant_id = $1 AND provider = $2 AND workspace_id = $3 AND channel_chat_id = $4 AND status = 'active'
+     RETURNING *`,
+    [params.tenantId, params.provider, params.workspaceId, params.channelChatId]
+  );
+  return res.rows[0] ? toChatBinding(res.rows[0]) : null;
+}
+
 export async function getLatestOutboxByRequestId(params: { pool: Pool; tenantId: string; requestId: string }) {
   const res = await params.pool.query(
     `

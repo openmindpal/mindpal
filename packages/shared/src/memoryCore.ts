@@ -295,6 +295,8 @@ export interface MemoryRerankInput {
   sourcePriority: number;
   /** 记忆作用域（用于 global 加权） */
   scope?: MemoryScope;
+  /** 记忆类型，用于 profile 类加权 */
+  type?: string;
 }
 
 /** 记忆分类加权因子（均衡化：避免特定类型记忆因权重偏低被系统性排挤） */
@@ -365,10 +367,15 @@ export function computeMemoryRerankScore(
   const priorityBoost = (prio / 100) * 0.08;
   // 13. Global scope boost（全局记忆优先级微增）
   const globalBoost = c.scope === "global" ? 0.1 : 0;
+  // 14. Profile 类加权 (P2 fix: 短文本档案类记忆补偿)
+  const PROFILE_TYPES = new Set(["identity", "profile", "user_info", "contact"]);
+  const profileBoost = (c.type && PROFILE_TYPES.has(c.type)) ? 0.25 : 0;
+  // 15. 短文本补偿 (title非空且内容极短时加权)
+  const shortTextBoost = (c.title && c.contentText.length <= 50) ? 0.1 : 0;
 
   return sLex * 1.2 + sVec + sDense * 1.5 + recencyBoost * 0.05 + bothBonus
     + confidenceBoost + versionBoost + conflictPenalty + classBoost + decayBoost
-    + distilledPenalty + priorityBoost + globalBoost;
+    + distilledPenalty + priorityBoost + globalBoost + profileBoost + shortTextBoost;
 }
 
 /* ══════════════════════════════════════════════════════════════════

@@ -38,6 +38,7 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setData(json as any);
+      setTicketPage(0);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -129,6 +130,10 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
   }
 
   const tickets: any[] = Array.isArray(data?.tickets) ? data.tickets : [];
+  const ticketPageSize = 20;
+  const [ticketPage, setTicketPage] = useState(0);
+  const ticketTotalPages = Math.max(1, Math.ceil(tickets.length / ticketPageSize));
+  const pagedTickets = useMemo(() => tickets.slice(ticketPage * ticketPageSize, (ticketPage + 1) * ticketPageSize), [tickets, ticketPage]);
 
   return (
     <div>
@@ -161,7 +166,7 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
                 </tr>
               </thead>
               <tbody>
-                {tickets.map((tk, idx) => {
+                {pagedTickets.map((tk, idx) => {
                   const conflictCount = Array.isArray(tk.conflictsJson) ? tk.conflictsJson.length : Number(tk.conflictCount ?? 0);
                   return (
                     <tr key={`${tk.ticketId ?? idx}`}>
@@ -180,6 +185,19 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
               </tbody>
             </table>
           </div>
+          {ticketTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(ticketPage * ticketPageSize + 1)).replace("{to}", String(Math.min((ticketPage + 1) * ticketPageSize, tickets.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(tickets.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={ticketPage === 0} onClick={() => setTicketPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(ticketPage + 1))}</span>
+                <button disabled={ticketPage >= ticketTotalPages - 1} onClick={() => setTicketPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
         </Card>
 
         <Card title={t(props.locale, "gov.syncConflicts.detailTitle")}>

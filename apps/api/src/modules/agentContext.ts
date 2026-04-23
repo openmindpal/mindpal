@@ -69,6 +69,33 @@ function i18nText(v: unknown, locale: string): string {
   return String(v);
 }
 
+// ─── 查询分解 ─────────────────────────────────────────────────────
+
+/**
+ * 将复合消息分解为独立子查询。
+ * TODO: 接入 LLM 查询分解（需要 FastifyInstance 才能调用 invokeModelChat）
+ * 当前实现为纯标点分割降级方案。
+ * 超时或失败时返回 null，由调用方降级处理。
+ */
+async function decomposeQuery(message: string): Promise<string[] | null> {
+  try {
+    // TODO: 接入 LLM 查询分解
+    // 当 recallRelevantMemory 支持传入 app (FastifyInstance) 后，可使用 invokeModelChat：
+    // prompt: "将用户消息拆分为独立的信息检索子查询。每行一个子查询，不加编号，不解释。如果消息只有一个意图则原样返回。"
+    // 设置 2 秒超时 via AbortController
+
+    // 降级方案：标点分割
+    const parts = message
+      .split(/[？?。！!；;，,\n]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 2)
+      .slice(0, 4);
+    return parts.length > 1 ? parts : null;
+  } catch {
+    return null; // 超时或失败时返回 null
+  }
+}
+
 // ─── 记忆召回 ─────────────────────────────────────────────────────
 
 export async function recallRelevantMemory(params: {
@@ -80,7 +107,7 @@ export async function recallRelevantMemory(params: {
   auditContext?: { traceId?: string; requestId?: string };
   /** P1-3 Memory OS: 可选多查询维度（例如 GoalGraph 子目标描述） */
   additionalQueries?: string[];
-}): Promise<{ text: string; recallStats?: { evidenceCount: number; searchMode: string } }> {
+}): Promise<{ text: string; recallStats?: { evidenceCount: number; searchMode: string; retryTriggered?: boolean } }> {
   const limit = memoryRecallLimit();
   if (limit <= 0) return { text: "" };
   try {
@@ -121,6 +148,55 @@ export async function recallRelevantMemory(params: {
       }
     }
 
+    // ─── 二阶段检索：当第一阶段结果不足时触发重试 ───
+    const RETRY_THRESHOLD = 3;
+    const needsRetry = allEvidence.length < RETRY_THRESHOLD && params.message.length > 30;
+    let retryTriggered = false;
+
+    if (needsRetry) {
+      try {
+        let subQueries: string[] | null = null;
+        try {
+          subQueries = await decomposeQuery(params.message);
+        } catch {
+          subQueries = null;
+        }
+        // 降级到标点分割
+        if (!subQueries || subQueries.length === 0) {
+          subQueries = params.message
+            .split(/[？?。！!；;，,\n]+/)
+            .filter(s => s.trim().length > 2)
+            .map(s => s.trim())
+            .slice(0, 4);
+        }
+        if (subQueries.length > 0) {
+          const retryPromises = subQueries.map(q =>
+            searchMemory({
+              pool: params.pool,
+              tenantId: params.tenantId,
+              spaceId: params.spaceId,
+              subjectId: params.subjectId,
+              query: q.slice(0, 300),
+              limit: Math.ceil(limit / subQueries!.length) + 2,
+            }),
+          );
+          const retryResults = await Promise.all(retryPromises);
+          for (const sr of retryResults) {
+            if (sr.searchMode === "hybrid" || sr.searchMode === "hybrid_dense") searchMode = sr.searchMode;
+            for (const e of sr.evidence ?? []) {
+              if (!seen.has(e.id)) {
+                seen.add(e.id);
+                allEvidence.push(e);
+              }
+            }
+          }
+          retryTriggered = true;
+        }
+      } catch (retryErr) {
+        _logger.warn("recallRelevantMemory retry phase failed", { err: (retryErr as Error)?.message });
+      }
+    }
+
     // 元数据管线（minhash + 12因子 rerank）已完成语义召回与质量排序，直接截断
     const evidence = allEvidence.slice(0, limit);
     if (!evidence.length) return { text: "" };
@@ -132,7 +208,10 @@ export async function recallRelevantMemory(params: {
     let totalChars = 0;
     const lines: string[] = [];
     for (const e of evidence) {
-      const line = `- [记忆 #${e.id}] 类型: ${e.type ?? "memory"}${e.title ? ", 标题: " + e.title : ""}, 内容: ${e.snippet}`;
+      let line = `- [记忆 #${e.id}] 类型: ${e.type ?? "memory"}${e.title ? ", 标题: " + e.title : ""}, 内容: ${e.snippet}`;
+      if (e.conflictMarker && e.resolutionStatus === "pending") {
+        line += ` [⚠ 存在冲突，需用户确认]`;
+      }
       if (totalChars + line.length > MEMORY_RECALL_MAX_CHARS) break;
       lines.push(line);
       totalChars += line.length;
@@ -153,7 +232,7 @@ export async function recallRelevantMemory(params: {
       }).catch(() => {});
     }
 
-    return { text: lines.join("\n"), recallStats: { evidenceCount: evidence.length, searchMode } };
+    return { text: lines.join("\n"), recallStats: { evidenceCount: evidence.length, searchMode, retryTriggered } };
   } catch (err) {
     _logger.warn("recallRelevantMemory failed", { err: (err as Error)?.message });
     return { text: "" };

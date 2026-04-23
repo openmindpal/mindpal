@@ -2,6 +2,17 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // ── Mock 外部依赖 ──────────────────────────────────────────────
 
+vi.mock("@openslin/shared", () => ({
+  classifyError: vi.fn((err: any) => ({
+    category: "internal",
+    code: "INTERNAL",
+    httpStatus: 500,
+    message: err?.message ?? "unknown",
+  })),
+  createTraceContext: vi.fn(() => ({})),
+  injectTraceHeaders: vi.fn(() => ({})),
+}));
+
 vi.mock("../log", () => ({
   safeLog: vi.fn(),
   safeError: vi.fn(),

@@ -31,9 +31,25 @@ scrape_configs:
       - targets: ["host.docker.internal:3001"]
         labels:
           service: "openslin-api"
+          component: "api"
           env: "dev"
     # API 需要认证，开发环境跳过
     # bearer_token: "<your-token>"
+
+  # ── OpenSlin API Agent 指标（复用同一端点，添加 agent 组件标签） ──
+  - job_name: "openslin-api-agent"
+    metrics_path: "/metrics"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["host.docker.internal:3001"]
+        labels:
+          service: "openslin-api"
+          component: "agent"
+          env: "dev"
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "agent_.*"
+        action: keep
 
   # ── OpenSlin Worker ──
   - job_name: "openslin-worker"

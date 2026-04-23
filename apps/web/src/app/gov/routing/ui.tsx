@@ -59,6 +59,11 @@ export default function RoutingClient(props: { locale: string; initial: unknown;
 
   const policies = useMemo(() => (Array.isArray(data?.policies) ? data!.policies! : []), [data]);
 
+  const pageSize = 20;
+  const [policiesPage, setPoliciesPage] = useState(0);
+  const policiesTotalPages = Math.max(1, Math.ceil(policies.length / pageSize));
+  const policiesPaged = useMemo(() => policies.slice(policiesPage * pageSize, (policiesPage + 1) * pageSize), [policies, policiesPage]);
+
   /* Load model bindings on mount */
   useEffect(() => {
     (async () => {
@@ -74,6 +79,7 @@ export default function RoutingClient(props: { locale: string; initial: unknown;
 
   async function refresh() {
     setError("");
+    setPoliciesPage(0);
     const res = await fetch(`${API_BASE}/governance/model-gateway/routing?limit=200`, { headers: apiHeaders(props.locale), cache: "no-store" });
     setStatus(res.status);
     const json: unknown = await res.json().catch(() => null);
@@ -291,7 +297,7 @@ export default function RoutingClient(props: { locale: string; initial: unknown;
             </tr>
           </thead>
           <tbody>
-            {policies.map((p, idx) => (
+            {policiesPaged.map((p, idx) => (
               <tr key={`${p.purpose ?? "x"}:${idx}`}>
                 <td>
                   <span>{purposeLabel(props.locale, p.purpose ?? "")}</span>
@@ -326,6 +332,19 @@ export default function RoutingClient(props: { locale: string; initial: unknown;
             ))}
           </tbody>
         </Table>
+        {policiesTotalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(policiesPage * pageSize + 1)).replace("{to}", String(Math.min((policiesPage + 1) * pageSize, policies.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(policies.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={policiesPage === 0} onClick={() => setPoliciesPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(policiesPage + 1))}</span>
+              <button disabled={policiesPage >= policiesTotalPages - 1} onClick={() => setPoliciesPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

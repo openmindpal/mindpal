@@ -87,7 +87,8 @@ function computeBackoffMs(base: number, attemptCount: number) {
   const b = Math.max(0, Number(base) || 0);
   const exp = Math.max(0, attemptCount - 1);
   const ms = b * Math.pow(2, exp);
-  return Math.min(ms, 60_000);
+  const jitter = Math.floor(Math.random() * Math.min(ms * 0.3, 5000));
+  return Math.min(ms + jitter, 60_000);
 }
 
 async function claimOne(params: { pool: Pool }) {
@@ -249,8 +250,23 @@ export async function tickChannelOutboxDeliveries(params: { pool: Pool; masterKe
       const webhookUrl = pickSecret(secretObj, "webhookUrl");
       const slackBotToken = pickSecret(secretObj, "slackBotToken");
 
-      if (!webhookSecret && (provider === "qq.onebot" || provider === "imessage.bridge")) throw new Error("config_missing");
-      if (provider === "qq.onebot" || provider === "imessage.bridge") {
+      const feishuAppId = pickSecret(secretObj, "appId");
+      const feishuAppSecret = pickSecret(secretObj, "appSecret");
+
+      if (provider === "feishu" && feishuAppId && feishuAppSecret) {
+        await invokeFirstPartySkill({
+          skillDir: "bridge-send-skill",
+          input: {
+            provider: "feishu",
+            appId: feishuAppId,
+            appSecret: feishuAppSecret,
+            chatId: String(m.channel_chat_id ?? ""),
+            text,
+          },
+        });
+      } else if (!webhookSecret && (provider === "qq.onebot" || provider === "imessage.bridge")) {
+        throw new Error("config_missing");
+      } else if (provider === "qq.onebot" || provider === "imessage.bridge") {
         if (!bridgeBaseUrl) throw new Error("config_missing");
         await bridgeSend({
           baseUrl: bridgeBaseUrl,

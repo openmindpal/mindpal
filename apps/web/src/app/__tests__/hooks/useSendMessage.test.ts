@@ -1,4 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+/* ─── Mock path-aliased modules ─── */
+vi.mock("@/lib/apiError", () => ({
+  nextId: vi.fn(() => "mock-id-" + Math.random().toString(36).slice(2, 8)),
+  errorMessageText: vi.fn((err: any) => err?.message ?? "error"),
+}));
+vi.mock("@/lib/i18n", () => ({
+  t: vi.fn((key: string) => key),
+}));
+vi.mock("@/lib/types", () => ({}));
+
 import { handleSSEEvent, type SSEEventContext } from "../../sseEventHandler";
 
 /* ─── Helper: build a minimal SSEEventContext ─── */

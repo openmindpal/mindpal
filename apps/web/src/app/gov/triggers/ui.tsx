@@ -15,6 +15,10 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
   const [data, setData] = useState(props.initial);
 
   const items = useMemo(() => (Array.isArray(data?.json?.items) ? data.json.items : []), [data]);
+  const itemPageSize = 20;
+  const [itemPage, setItemPage] = useState(0);
+  const itemTotalPages = Math.max(1, Math.ceil(items.length / itemPageSize));
+  const pagedItems = useMemo(() => items.slice(itemPage * itemPageSize, (itemPage + 1) * itemPageSize), [items, itemPage]);
 
   const [type, setType] = useState<"cron" | "event">("cron");
   const [cronExpr, setCronExpr] = useState("*/5 * * * *");
@@ -29,6 +33,10 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
   const [editingId, setEditingId] = useState<string | null>(null);
   const [historyId, setHistoryId] = useState<string | null>(null);
   const [historyData, setHistoryData] = useState<any[]>([]);
+  const histPageSize = 20;
+  const [histPage, setHistPage] = useState(0);
+  const histTotalPages = Math.max(1, Math.ceil(historyData.length / histPageSize));
+  const pagedHistory = useMemo(() => historyData.slice(histPage * histPageSize, (histPage + 1) * histPageSize), [historyData, histPage]);
 
   const formRef = useRef<HTMLDivElement>(null);
 
@@ -36,6 +44,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
     const res = await apiFetch(`/governance/triggers?limit=50`, { locale: props.locale, cache: "no-store" });
     const json = await res.json().catch(() => null);
     setData({ status: res.status, json });
+    setItemPage(0);
     if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
   }, [props.locale]);
 
@@ -161,6 +170,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
         Array.isArray(json) ? json :
         [];
       setHistoryData(items);
+      setHistPage(0);
       setHistoryId(triggerId);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
@@ -287,7 +297,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
         <tbody>
           {items.length === 0 ? (
                   <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
-                ) : items.map((it: any) => {
+                ) : pagedItems.map((it: any) => {
             const tid = String(it.triggerId ?? it.trigger_id);
             const st = String(it.status ?? "");
             return (
@@ -327,6 +337,19 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
           })}
         </tbody>
       </Table>
+      {itemTotalPages > 1 && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+          <span style={{ opacity: 0.7, fontSize: 13 }}>
+            {t(props.locale, "pagination.showing").replace("{from}", String(itemPage * itemPageSize + 1)).replace("{to}", String(Math.min((itemPage + 1) * itemPageSize, items.length)))}
+            {t(props.locale, "pagination.total").replace("{count}", String(items.length))}
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button disabled={itemPage === 0} onClick={() => setItemPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+            <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(itemPage + 1))}</span>
+            <button disabled={itemPage >= itemTotalPages - 1} onClick={() => setItemPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+          </div>
+        </div>
+      )}
 
       {historyId ? (
         <Card title={`${t(props.locale, "gov.triggers.history.title")} — ${historyId}`}>
@@ -348,7 +371,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
             <tbody>
               {historyData.length === 0 ? (
                 <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
-              ) : historyData.map((run: any, idx: number) => (
+              ) : pagedHistory.map((run: any, idx: number) => (
                 <tr key={idx}>
                   <td><Badge>{statusLabel(String(run.status ?? "-"), props.locale)}</Badge></td>
                   <td>{String(run.scheduledAt ?? run.scheduled_at ?? "-")}</td>
@@ -359,6 +382,19 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
               ))}
             </tbody>
           </Table>
+          {histTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(histPage * histPageSize + 1)).replace("{to}", String(Math.min((histPage + 1) * histPageSize, historyData.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(historyData.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={histPage === 0} onClick={() => setHistPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(histPage + 1))}</span>
+                <button disabled={histPage >= histTotalPages - 1} onClick={() => setHistPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
         </Card>
       ) : null}
     </div>

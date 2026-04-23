@@ -1,3 +1,5 @@
+import { AGENT_METRICS, toPrometheusName, type MetricDefinition } from "@openslin/shared";
+
 type CounterKey = string;
 
 type HistogramKey = string;
@@ -445,6 +447,69 @@ export function createMetricsRegistry() {
     observeHistogram("openslin_output_quality_score", { dimension: params.dimension }, params.score, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
   }
 
+  /* ─── 标准化 Agent 指标方法（基于 AGENT_METRICS schema） ─── */
+
+  /** 获取指标定义的桶或默认桶 */
+  function bucketsFor(metricName: string): number[] {
+    return (AGENT_METRICS[metricName] as MetricDefinition | undefined)?.buckets ?? durationBucketsMs;
+  }
+
+  /** 记录 Agent Loop 开始/结束 */
+  function observeAgentLoop(params: { result: "ok" | "error"; durationMs: number }) {
+    const n = toPrometheusName;
+    incCounter(n("agent.loop.total"), {}, 1);
+    if (params.result === "error") {
+      incCounter(n("agent.loop.errors"), {}, 1);
+    }
+    observeHistogram(n("agent.loop.duration_ms"), {}, params.durationMs, bucketsFor("agent.loop.duration_ms"));
+  }
+
+  /** 记录单次迭代 */
+  function observeIteration(params: { durationMs: number }) {
+    incCounter(toPrometheusName("agent.iteration.total"), {}, 1);
+    observeHistogram(toPrometheusName("agent.iteration.duration_ms"), {}, params.durationMs, bucketsFor("agent.iteration.duration_ms"));
+  }
+
+  /** 记录单个 phase 耗时 */
+  function observePhase(params: { phase: string; durationMs: number }) {
+    observeHistogram(toPrometheusName("agent.phase.duration_ms"), { phase: params.phase }, params.durationMs, bucketsFor("agent.phase.duration_ms"));
+  }
+
+  /** 记录工具调用 */
+  function observeToolCall(params: { tool: string; result: "ok" | "error"; durationMs: number }) {
+    const n = toPrometheusName;
+    incCounter(n("agent.tool.calls"), { tool: params.tool }, 1);
+    if (params.result === "error") {
+      incCounter(n("agent.tool.errors"), { tool: params.tool }, 1);
+    }
+    observeHistogram(n("agent.tool.duration_ms"), { tool: params.tool }, params.durationMs, bucketsFor("agent.tool.duration_ms"));
+  }
+
+  /** 记录 Agent 决策 */
+  function observeStandardDecision(params: { decisionType: string }) {
+    incCounter(toPrometheusName("agent.decision.total"), { decision_type: params.decisionType }, 1);
+  }
+
+  /** 设置活跃 Loop 数量 */
+  function setActiveLoops(params: { count: number }) {
+    setGauge(toPrometheusName("agent.loop.active"), {}, params.count);
+  }
+
+  /** 记录缓存统计快照 */
+  function observeCacheStats(params: { tier: string; hits: number; misses: number; evictions: number; size: number }) {
+    const n = toPrometheusName;
+    const total = params.hits + params.misses;
+    const ratio = total > 0 ? params.hits / total : 0;
+    setGauge(n("agent.cache.hit_ratio"), {}, ratio);
+    setGauge(n("agent.cache.size"), { tier: params.tier }, params.size);
+    incCounter(n("agent.cache.evictions"), { tier: params.tier }, params.evictions);
+  }
+
+  /** 设置配置版本（监控热更新） */
+  function setConfigVersion(params: { key: string; version: number }) {
+    setGauge(toPrometheusName("agent.config.version"), { key: params.key }, params.version);
+  }
+
   function renderPrometheus() {
     const lines: string[] = [];
 
@@ -695,6 +760,13 @@ export function createMetricsRegistry() {
     lines.push("# HELP openslin_output_quality_score Output quality score distribution.");
     lines.push("# TYPE openslin_output_quality_score histogram");
 
+    // ── 标准化 Agent 指标 HELP/TYPE（基于 AGENT_METRICS schema） ──
+    for (const [dotName, def] of Object.entries(AGENT_METRICS)) {
+      const pName = toPrometheusName(dotName);
+      lines.push(`# HELP ${pName} ${def.desc}`);
+      lines.push(`# TYPE ${pName} ${def.type}`);
+    }
+
     for (const v of counters.values()) {
       const { __name__, ...labels } = v.labels as any;
       lines.push(`${__name__}${renderLabels(labels)} ${v.value}`);
@@ -791,6 +863,15 @@ export function createMetricsRegistry() {
     observeConflictBatch,
     // P3-13: Output Quality Metrics
     observeOutputQuality,
+    // ── 标准化 Agent 指标方法 ──
+    observeAgentLoop,
+    observeIteration,
+    observePhase,
+    observeToolCall,
+    observeStandardDecision,
+    setActiveLoops,
+    observeCacheStats,
+    setConfigVersion,
     renderPrometheus,
   };
 }

@@ -1310,6 +1310,7 @@ export async function searchMemory(params: {
       distilledTo: c.distilled_to ?? null,
       sourcePriority: src && typeof src.priority === "number" ? src.priority : 0,
       scope: c.scope ?? undefined,
+      type: c.type ?? undefined,
     };
     const score = computeMemoryRerankScore(input, params.query, qMinhash, nowMs);
     return { ...c, _score: score };
@@ -1319,7 +1320,7 @@ export async function searchMemory(params: {
   const topEntries = scored.slice(0, params.limit).map((r) => toEntry(r));
 
   // ── 正式解密：通过 API 侧 memoryEncryption 桥接层对密文透明解密 ──
-  const evidence: Array<{ id: string; type: string; scope: string; title: string | null; snippet: string; createdAt: string }> = [];
+  const evidence: Array<{ id: string; type: string; scope: string; title: string | null; snippet: string; createdAt: string; conflictMarker: string | null; resolutionStatus: string | null }> = [];
   for (const e of topEntries) {
     const decrypted = await decryptMemoryContent({
       pool: params.pool,
@@ -1337,6 +1338,8 @@ export async function searchMemory(params: {
       title: e.title,
       snippet: String(redacted.value ?? ""),
       createdAt: e.createdAt,
+      conflictMarker: e.conflictMarker != null ? String(e.conflictMarker) : null,
+      resolutionStatus: e.resolutionStatus != null ? String(e.resolutionStatus) : null,
     });
   }
 

@@ -11,6 +11,11 @@ import { orchestrateChatTurn } from "../orchestrator/modules/orchestrator";
 import { channelConversationId } from "./modules/conversationId";
 import { sha256Hex, stableStringify } from "../../lib/digest";
 import { getChannelProviderAdapter } from "./modules/providerAdapters";
+// 副作用导入：注册各 Provider 插件到 registry
+import "./modules/providerFeishu";
+import "./modules/providerSlack";
+import "./modules/providerDiscord";
+import "./modules/providerBridge";
 import { testFeishuConfig } from "./modules/providerFeishu";
 import { handleBridgeEvents } from "./modules/providerBridge";
 import { resolveChannelSecretPayload } from "./modules/channelSecret";
@@ -37,6 +42,8 @@ import {
   upsertChannelAccount,
   upsertChannelChatBinding,
   upsertWebhookConfig,
+  revokeChannelAccount,
+  revokeChannelChatBinding,
 } from "./modules/channelRepo";
 import {
   createBindingState,
@@ -137,6 +144,19 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     verifyBridgeSignature({ secret: webhookSecret, timestampMs: body.timestampMs, nonce: body.nonce, eventId: body.eventId, bodyDigest, signature });
 
     const ids = body.outboxIds;
+
+    // 验证 outboxIds 存在且属于该 tenant+provider+workspace
+    const existingRows = await app.db.query(
+      `SELECT id FROM channel_outbox_messages
+       WHERE tenant_id = $1 AND provider = $2 AND workspace_id = $3 AND id = ANY($4::uuid[])`,
+      [tenantId, body.provider, body.workspaceId, ids]
+    );
+    const validIdSet = new Set((existingRows.rows as any[]).map((r: any) => String(r.id)));
+    const invalidIds = ids.filter((id: string) => !validIdSet.has(id));
+    if (invalidIds.length > 0) {
+      throw Errors.badRequest(`outboxIds not found or not owned: ${invalidIds.join(",")}`);
+    }
+
     if (body.receiptType === "delivered") {
       const updated = await markOutboxDelivered({ pool: app.db, tenantId, ids });
       req.ctx.audit!.outputDigest = { provider: body.provider, workspaceId: body.workspaceId, receiptType: body.receiptType, updatedCount: updated.length };
@@ -1060,6 +1080,54 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
    * GET /governance/channels/binding/states
    * 查询绑定状态列表
    */
+  // 解绑渠道账户
+  app.post("/governance/channels/accounts/revoke", async (req) => {
+    const body = z.object({
+      provider: z.string().min(1),
+      workspaceId: z.string().min(1),
+      channelUserId: z.string().min(1),
+    }).parse(req.body);
+
+    setAuditContext(req, { resourceType: "governance", action: "channel.account.revoke" });
+    const tenantId = (req.headers["x-tenant-id"] as string | undefined) ?? "tenant_dev";
+    const decision = await requirePermission({ req, resourceType: "governance", action: "channel.account.revoke" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const revoked = await revokeChannelAccount({
+      pool: app.db, tenantId,
+      provider: body.provider,
+      workspaceId: body.workspaceId,
+      channelUserId: body.channelUserId,
+    });
+    if (!revoked) throw Errors.notFound("active account not found");
+    req.ctx.audit!.outputDigest = { provider: body.provider, workspaceId: body.workspaceId, channelUserId: body.channelUserId, status: "revoked" };
+    return { status: "revoked", account: revoked };
+  });
+
+  // 解绑渠道群组
+  app.post("/governance/channels/chat-bindings/revoke", async (req) => {
+    const body = z.object({
+      provider: z.string().min(1),
+      workspaceId: z.string().min(1),
+      channelChatId: z.string().min(1),
+    }).parse(req.body);
+
+    setAuditContext(req, { resourceType: "governance", action: "channel.chat_binding.revoke" });
+    const tenantId = (req.headers["x-tenant-id"] as string | undefined) ?? "tenant_dev";
+    const decision = await requirePermission({ req, resourceType: "governance", action: "channel.chat_binding.revoke" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const revoked = await revokeChannelChatBinding({
+      pool: app.db, tenantId,
+      provider: body.provider,
+      workspaceId: body.workspaceId,
+      channelChatId: body.channelChatId,
+    });
+    if (!revoked) throw Errors.notFound("active chat binding not found");
+    req.ctx.audit!.outputDigest = { provider: body.provider, workspaceId: body.workspaceId, channelChatId: body.channelChatId, status: "revoked" };
+    return { status: "revoked", binding: revoked };
+  });
+
   app.get("/governance/channels/binding/states", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "channel.binding.list" });

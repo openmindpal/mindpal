@@ -87,6 +87,7 @@ export default function BackupsClient(props: {
       const json = (await res.json().catch(() => null)) as BackupsResp;
       if (!res.ok) { setError(errText(props.locale, json)); return; }
       setBackups(json);
+      setBackupPage(0);
       const items = Array.isArray(json?.items) ? json.items : [];
       setSelectedBackupId((prev) => {
         if (prev && items.some((item) => item.backupId === prev)) return prev;
@@ -190,6 +191,10 @@ export default function BackupsClient(props: {
   }
 
   const backupItems = useMemo(() => Array.isArray(backups?.items) ? backups!.items! : [], [backups]);
+  const backupPageSize = 20;
+  const [backupPage, setBackupPage] = useState(0);
+  const backupTotalPages = Math.max(1, Math.ceil(backupItems.length / backupPageSize));
+  const pagedBackups = useMemo(() => backupItems.slice(backupPage * backupPageSize, (backupPage + 1) * backupPageSize), [backupItems, backupPage]);
   const selectedBackup = useMemo(
     () => backupItems.find((item) => item.backupId === selectedBackupId) ?? backupItems[0] ?? null,
     [backupItems, selectedBackupId],
@@ -334,7 +339,7 @@ export default function BackupsClient(props: {
             {backupItems.length === 0 && (
               <tr><td colSpan={7} style={{ textAlign: "center", padding: 24, color: "var(--sl-muted)" }}>{t(props.locale, "admin.backups.noRecords")}</td></tr>
             )}
-            {backupItems.map((b) => (
+            {pagedBackups.map((b) => (
               <tr
                 key={b.backupId}
                 onClick={() => setSelectedBackupId(b.backupId)}
@@ -380,6 +385,19 @@ export default function BackupsClient(props: {
             ))}
           </tbody>
         </Table>
+        {backupTotalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(backupPage * backupPageSize + 1)).replace("{to}", String(Math.min((backupPage + 1) * backupPageSize, backupItems.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(backupItems.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={backupPage === 0} onClick={() => setBackupPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(backupPage + 1))}</span>
+              <button disabled={backupPage >= backupTotalPages - 1} onClick={() => setBackupPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </Card>
 
       <div style={{ marginTop: 16 }}>

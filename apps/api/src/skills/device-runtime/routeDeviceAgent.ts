@@ -21,7 +21,7 @@ export const deviceAgentRoutes: FastifyPluginAsync = async (app) => {
     const body = z
       .object({
         pairingCode: z.string().min(10),
-        deviceType: z.enum(["desktop", "mobile"]),
+        deviceType: z.enum(["desktop", "mobile", "iot", "robot", "vehicle", "home", "gateway"]),
         os: z.string().min(1).max(100),
         agentVersion: z.string().min(1).max(100),
         // 端侧能力上报（可选）
@@ -99,6 +99,11 @@ export const deviceAgentRoutes: FastifyPluginAsync = async (app) => {
     const DEVICE_TYPE_PLUGIN_POLICY: Record<string, string[]> = {
       desktop: ["desktop"],
       mobile: [],
+      iot: [],
+      robot: [],
+      vehicle: [],
+      home: [],
+      gateway: [],
     };
     const pluginPolicy = {
       builtinPlugins: DEVICE_TYPE_PLUGIN_POLICY[body.deviceType] ?? [],

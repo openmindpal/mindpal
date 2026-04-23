@@ -29,12 +29,14 @@ import type {
   OrchestrationEvent,
   OrchestrationEventType,
 } from "@openslin/shared";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, tryTransitionAgent, mapOrchestrationToAgent } from "@openslin/shared";
+import type { AgentPhase } from "@openslin/shared";
 
 import { runAgentLoop, type AgentLoopParams, type AgentLoopResult } from "./agentLoop";
 import type { LoopState } from "./loopLifecycle";
 import { runPlanningPipeline } from "./planningKernel";
 import type { WorkflowQueue } from "../modules/workflow/queue";
+import { startSpan as otelStartSpan } from "../lib/tracing";
 
 const logger = new StructuredLogger({ module: "orchestrationKernel" });
 
@@ -134,6 +136,22 @@ export interface IOrchestrationKernel {
 const activeLoops = new Map<string, { controller: AbortController; phase: OrchestrationPhase }>();
 
 /**
+ * 校验编排阶段转换是否符合 Agent 状态机约束。
+ * 仅记录 warn 日志，不阻塞主流程。
+ */
+function validatePhaseTransition(fromPhase: string, toPhase: string): void {
+  const fromAgent = mapOrchestrationToAgent(fromPhase);
+  const toAgent = mapOrchestrationToAgent(toPhase);
+  const result = tryTransitionAgent(fromAgent, toAgent);
+  if (!result.ok) {
+    logger.warn("Agent state machine violation", {
+      fromPhase, toPhase, fromAgent, toAgent,
+      violation: result.violation?.message,
+    });
+  }
+}
+
+/**
  * 创建 Orchestration Kernel 实例。
  *
  * 将现有的 runAgentLoop、planningKernel 等模块组合为统一控制平面。
@@ -156,10 +174,16 @@ export function createOrchestrationKernel(deps: {
         : controller.signal;
 
       activeLoops.set(runId, { controller, phase: OrchestrationPhase.PLANNING });
+      validatePhaseTransition(OrchestrationPhase.IDLE, OrchestrationPhase.PLANNING);
 
       logger.info("orchestration loop starting", { runId, goal: params.goal.slice(0, 100) });
 
+      // ── 轻量级编排层 span（内部 agentLoop 已做细粒度 tracing） ──
+      const orchestrationSpan = otelStartSpan("orchestration.loop") as any;
+      try { orchestrationSpan.setAttribute?.("orchestration.run_id", runId); } catch { /* noop */ }
+
       try {
+        validatePhaseTransition(OrchestrationPhase.PLANNING, OrchestrationPhase.EXECUTING);
         activeLoops.get(runId)!.phase = OrchestrationPhase.EXECUTING;
 
         const result = await runAgentLoop({
@@ -175,7 +199,10 @@ export function createOrchestrationKernel(deps: {
             : OrchestrationPhase.FAILED;
 
         const entry = activeLoops.get(runId);
-        if (entry) entry.phase = finalPhase;
+        if (entry) {
+          validatePhaseTransition(entry.phase, finalPhase);
+          entry.phase = finalPhase;
+        }
 
         logger.info("orchestration loop completed", {
           runId,
@@ -188,10 +215,15 @@ export function createOrchestrationKernel(deps: {
         return result;
       } catch (err: any) {
         const entry = activeLoops.get(runId);
-        if (entry) entry.phase = OrchestrationPhase.FAILED;
+        if (entry) {
+          validatePhaseTransition(entry.phase, OrchestrationPhase.FAILED);
+          entry.phase = OrchestrationPhase.FAILED;
+        }
         logger.error("orchestration loop error", { runId, error: err?.message });
+        try { orchestrationSpan.setStatus?.({ code: 2, message: err?.message }); } catch { /* noop */ }
         throw err;
       } finally {
+        try { orchestrationSpan.end?.(); } catch { /* noop */ }
         // 终态循环延迟清理（给 handleStepResult 留余量）
         setTimeout(() => activeLoops.delete(runId), 30_000);
       }
@@ -275,6 +307,7 @@ export function createOrchestrationKernel(deps: {
       if (entry) {
         logger.info("cancelling orchestration loop", { runId });
         entry.controller.abort();
+        validatePhaseTransition(entry.phase, OrchestrationPhase.CANCELLED);
         entry.phase = OrchestrationPhase.CANCELLED;
       } else {
         // 尝试通过 DB 标记取消（针对非本进程的循环）

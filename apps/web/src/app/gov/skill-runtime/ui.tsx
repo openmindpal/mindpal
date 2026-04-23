@@ -27,9 +27,15 @@ export default function SkillRuntimeClient(props: { locale: string; initial?: In
 
   const runners = useMemo(() => (Array.isArray(data?.items) ? data!.items! : []), [data]);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(runners.length / pageSize));
+  const runnersPaged = useMemo(() => runners.slice(page * pageSize, (page + 1) * pageSize), [runners, page]);
+
   async function refresh() {
     setError("");
     setBusy(true);
+    setPage(0);
     try {
       const res = await apiFetch(`/governance/skill-runtime/runners`, { locale: props.locale, cache: "no-store" });
       setStatus(res.status);
@@ -139,7 +145,7 @@ export default function SkillRuntimeClient(props: { locale: string; initial?: In
             </tr>
           </thead>
           <tbody>
-            {runners.map((r) => (
+            {runnersPaged.map((r) => (
               <tr key={r.runnerId}>
                 <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{r.runnerId}</td>
                 <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{r.endpoint}</td>
@@ -161,6 +167,19 @@ export default function SkillRuntimeClient(props: { locale: string; initial?: In
             ))}
           </tbody>
         </Table>
+        {totalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, runners.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(runners.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+              <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </Card>
 
       <Card title={t(props.locale, "gov.skillRuntime.create")}>

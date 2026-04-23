@@ -71,9 +71,14 @@ export default function ApprovalsClient(props: { locale: string; initial: unknow
   const [error, setError] = useState<string>("");
 
   const items = useMemo(() => (Array.isArray(data?.items) ? data!.items! : []), [data]);
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const paged = useMemo(() => items.slice(page * pageSize, (page + 1) * pageSize), [items, page]);
 
   async function refresh() {
     setError("");
+    setPage(0);
     const q = new URLSearchParams();
     if (qStatus.trim()) q.set("status", qStatus.trim());
     const n = Number(limit);
@@ -160,7 +165,7 @@ export default function ApprovalsClient(props: { locale: string; initial: unknow
                 </td>
               </tr>
             ) : (
-              items.map((a, idx) => {
+              paged.map((a, idx) => {
                 const approvalId = safeStr(a.approvalId, "");
                 return (
                   <tr key={`${approvalId}:${idx}`}>
@@ -193,6 +198,19 @@ export default function ApprovalsClient(props: { locale: string; initial: unknow
             )}
           </tbody>
         </Table>
+        {totalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, items.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(items.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+              <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

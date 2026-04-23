@@ -39,9 +39,15 @@ export default function SyncDebugClient(props: { locale: string }) {
 
   const conflictOps = useMemo(() => ops.filter((o) => String(o.status ?? "") === "conflict"), [ops]);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(ops.length / pageSize));
+  const opsPaged = useMemo(() => ops.slice(page * pageSize, (page + 1) * pageSize), [ops, page]);
+
   async function refreshOps() {
     setError("");
     setBusy(true);
+    setPage(0);
     try {
       const rows = await listStoredOps();
       setOps(rows);
@@ -261,7 +267,7 @@ export default function SyncDebugClient(props: { locale: string }) {
           <tbody>
             {ops.length === 0 ? (
                   <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
-                ) : ops.map((o) => {
+                ) : opsPaged.map((o) => {
               const id = String(o.opId ?? "");
               const meta = asRecord(o.meta);
               return (
@@ -331,6 +337,19 @@ export default function SyncDebugClient(props: { locale: string }) {
             })}
           </tbody>
         </Table>
+        {totalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, ops.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(ops.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+              <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </Card>
 
       <Card title={t(props.locale, "gov.syncDebug.conflictsTitle")}>

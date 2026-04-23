@@ -1,0 +1,183 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "agent-loop-overview",
+    "title": "Agent Loop Overview",
+    "tags": ["agent", "openslin", "observability"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "version": 1,
+    "editable": true,
+    "time": { "from": "now-1h", "to": "now" },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Agent Loop 吞吐量与错误率",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "fieldConfig": {
+          "defaults": { "unit": "ops" },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "errors" },
+              "properties": [
+                { "id": "custom.axisPlacement", "value": "right" },
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+              ]
+            }
+          ]
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "rate(agent_loop_total[5m])",
+            "legendFormat": "throughput",
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          },
+          {
+            "refId": "B",
+            "expr": "rate(agent_loop_errors[5m])",
+            "legendFormat": "errors",
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          }
+        ],
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      },
+      {
+        "id": 2,
+        "title": "迭代延迟分布 (P50 / P95 / P99)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "fieldConfig": {
+          "defaults": { "unit": "ms" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "histogram_quantile(0.50, rate(agent_iteration_duration_ms_bucket[5m]))",
+            "legendFormat": "P50",
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          },
+          {
+            "refId": "B",
+            "expr": "histogram_quantile(0.95, rate(agent_iteration_duration_ms_bucket[5m]))",
+            "legendFormat": "P95",
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          },
+          {
+            "refId": "C",
+            "expr": "histogram_quantile(0.99, rate(agent_iteration_duration_ms_bucket[5m]))",
+            "legendFormat": "P99",
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          }
+        ],
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      },
+      {
+        "id": 3,
+        "title": "Phase 延迟对比",
+        "type": "barchart",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "fieldConfig": {
+          "defaults": { "unit": "ms" }
+        },
+        "options": {
+          "stacking": { "mode": "normal" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "rate(agent_phase_duration_ms_sum[5m]) / rate(agent_phase_duration_ms_count[5m])",
+            "legendFormat": "{{phase}}",
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          }
+        ],
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      },
+      {
+        "id": 4,
+        "title": "工具调用 Top-10",
+        "type": "table",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "topk(10, sum by (tool) (rate(agent_tool_calls[5m])))",
+            "legendFormat": "{{tool}}",
+            "format": "table",
+            "instant": true,
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          }
+        ],
+        "transformations": [
+          { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "tool": "Tool", "Value": "Calls/s" } } }
+        ],
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      },
+      {
+        "id": 5,
+        "title": "缓存命中率与大小趋势",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+        "fieldConfig": {
+          "defaults": { "unit": "percentunit" },
+          "overrides": [
+            {
+              "matcher": { "id": "byRegexp", "options": "size.*" },
+              "properties": [
+                { "id": "custom.axisPlacement", "value": "right" },
+                { "id": "unit", "value": "short" }
+              ]
+            }
+          ]
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "agent_cache_hit_ratio",
+            "legendFormat": "hit_ratio",
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          },
+          {
+            "refId": "B",
+            "expr": "agent_cache_size",
+            "legendFormat": "size ({{tier}})",
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          }
+        ],
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      },
+      {
+        "id": 6,
+        "title": "活跃 Agent Loop 数",
+        "type": "stat",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 5 },
+                { "color": "red", "value": 10 }
+              ]
+            }
+          }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "agent_loop_active",
+            "legendFormat": "active loops",
+            "datasource": { "type": "prometheus", "uid": "prometheus" }
+          }
+        ],
+        "datasource": { "type": "prometheus", "uid": "prometheus" }
+      }
+    ],
+    "templating": { "list": [] },
+    "annotations": { "list": [] }
+  }
+}

@@ -32,6 +32,11 @@ export default function IntegrationsClient(props: { locale: string; initial?: In
 
   const rows = useMemo(() => (Array.isArray(data?.items) ? data!.items! : []), [data]);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const paged = useMemo(() => rows.slice(page * pageSize, (page + 1) * pageSize), [rows, page]);
+
   async function refresh() {
     setError("");
     setBusy(true);
@@ -46,6 +51,7 @@ export default function IntegrationsClient(props: { locale: string; initial?: In
       if (!res.ok) throw toApiError(json);
       const out = (json as ListResp) ?? null;
       setData(out);
+      setPage(0);
       if (!selectedId && Array.isArray(out?.items) && out!.items!.length) {
         const first = out!.items![0];
         if (first && typeof first === "object") setSelectedId(String((first as any).integrationId ?? ""));
@@ -111,7 +117,7 @@ export default function IntegrationsClient(props: { locale: string; initial?: In
           <tbody>
             {rows.length === 0 ? (
                   <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
-                ) : rows.map((r, idx) => {
+                ) : paged.map((r, idx) => {
               const rec = asRecord(r);
               const integrationId = rec ? String(rec.integrationId ?? idx) : String(idx);
               const kind = rec ? String(rec.kind ?? "") : "";
@@ -149,6 +155,19 @@ export default function IntegrationsClient(props: { locale: string; initial?: In
             })}
           </tbody>
         </Table>
+        {totalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, rows.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(rows.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+              <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </Card>
 
       <Card

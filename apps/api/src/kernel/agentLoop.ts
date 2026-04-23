@@ -13,8 +13,9 @@
  * - loopAutoReflexion.ts — 自动反思
  */
 import crypto from "node:crypto";
-import type { GoalGraph, WorldState } from "@openslin/shared";
-import { ErrorCategory, resolveNumber } from "@openslin/shared";
+import type { GoalGraph, WorldState, AgentTracingContext } from "@openslin/shared";
+import { ErrorCategory, resolveNumber, startAgentTracing, startIteration, startPhase, endPhase, endAgentTracing } from "@openslin/shared";
+import { startSpan as otelStartSpan } from "../lib/tracing";
 import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, recallProceduralStrategies, type EnabledTool } from "../modules/agentContext";
 import { upsertTaskState } from "../modules/memory/repo";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
@@ -54,6 +55,24 @@ export { getCacheConfig, getLightIterationConfig, isLightIteration } from "./loo
 /* Observe/Think/Decide/Act/ModelRouter → 已提取到独立模块，见文件头注释 */
 
 /* 缓存配置和轻迭代配置已提取到 loopCacheConfig.ts，经 configRegistry 注册 */
+
+/**
+ * 将现有 OTel Span API 适配为 AgentTracing 依赖注入接口
+ * OTel 未启用时 startSpan 返回 noop span，天然兼容
+ */
+function createTracerAdapter(): import("@openslin/shared").TracingTracer {
+  return {
+    startSpan(name: string, options?: { attributes?: Record<string, string | number | boolean> }) {
+      const span = otelStartSpan(name) as any;
+      if (options?.attributes) {
+        for (const [k, v] of Object.entries(options.attributes)) {
+          try { span.setAttribute?.(k, v); } catch { /* noop */ }
+        }
+      }
+      return span;
+    },
+  };
+}
 
 export interface SettledResult<T> {
   index: number;
@@ -117,6 +136,17 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
 
   let _loopFinalResult: AgentLoopResult | null = null;
   const budget: LoopBudget = createDefaultBudget();
+
+  /* ── Agent Tracing 初始化（静默失败，不影响主流程） ── */
+  let tracingCtx: AgentTracingContext | null = null;
+  const loopTraceStartMs = Date.now();
+  let tracingToolCallCount = 0;
+  try {
+    tracingCtx = startAgentTracing(
+      createTracerAdapter(),
+      { runId, tenantId: subject.tenantId, spaceId: subject.spaceId },
+    );
+  } catch { /* tracing init failure is non-fatal */ }
 
   function buildResult(endReason: AgentLoopResult["endReason"], message: string, verification?: VerificationResult): AgentLoopResult {
     const r: AgentLoopResult = {
@@ -197,6 +227,9 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
 
       iterations++;
 
+      // ── Tracing: 迭代开始 ──
+      try { if (tracingCtx) startIteration(tracingCtx, iterations); } catch { /* noop */ }
+
       // ── 预算检查 ──
       const budgetCheck = isBudgetExhausted(budget);
       if (budgetCheck.exhausted) {
@@ -211,9 +244,12 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       }
 
       // ── Phase 1: Observe ──
+      try { if (tracingCtx) startPhase(tracingCtx, "observe", iterations); } catch { /* noop */ }
       const lastObs = observations.length > 0 ? observations[observations.length - 1] : null;
+      try { if (tracingCtx) endPhase(tracingCtx); } catch { /* noop */ }
 
       // ── Phase 2: Think ──
+      try { if (tracingCtx) startPhase(tracingCtx, "think", iterations); } catch { /* noop */ }
       const iterationStartMs = Date.now();
       // 构建迭代上下文（GoalGraph + WorldState + 环境状态 + 动态策略）
       const iterCtx = await buildIterationContext({
@@ -258,6 +294,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       const estimatedTokens = Math.ceil(modelOutputText.length / 4);
       recordTokenUsage(budget, estimatedTokens);
 
+      try { if (tracingCtx) endPhase(tracingCtx); } catch { /* noop */ }
+
       // 处理 Think 阶段意图漂移检测结果
       if (iterCtx.intentDrift?.drifted) {
         app.log.warn({
@@ -268,6 +306,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       }
 
       // ── Phase 3: Decide ──
+      try { if (tracingCtx) startPhase(tracingCtx, "decide", iterations); } catch { /* noop */ }
       const decideStartMs = Date.now();
       let decision = parseAgentDecision(modelOutputText);
 
@@ -358,7 +397,10 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         toolRef: decision.toolRef,
       }, "[AgentLoop] 决策");
 
+      try { if (tracingCtx) endPhase(tracingCtx, { "agent.decision": decision.action }); } catch { /* noop */ }
+
       // ── Phase 4: Act ──
+      try { if (tracingCtx) startPhase(tracingCtx, "act", iterations); } catch { /* noop */ }
       switch (decision.action) {
         case "done": {
           const doneResult = await handleDoneAction({
@@ -585,6 +627,17 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         }
       }
 
+      // ── Tracing: act phase 结束 ──
+      try {
+        if (tracingCtx) {
+          const actToolCount = decision.action === "parallel_tool_calls"
+            ? (decision.parallelCalls?.length ?? 0)
+            : (decision.action === "tool_call" ? 1 : 0);
+          endPhase(tracingCtx, { "agent.tool_count": actToolCount });
+          tracingToolCallCount += actToolCount;
+        }
+      } catch { /* noop */ }
+
       // P0-1: 每次迭代结束后写 checkpoint（幂等 UPSERT）
       await writeCheckpoint({
         pool, loopId,
@@ -627,6 +680,23 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     onLoopEnd?.(result);
     return result;
   } finally {
+    // ── Tracing: 结束 Agent Loop 追踪（静默失败） ──
+    try {
+      if (tracingCtx) {
+        const finalResult = _loopFinalResult as AgentLoopResult | null;
+        const tracingStatus = finalResult?.ok ? "completed"
+          : finalResult?.endReason === "max_wall_time" ? "timeout"
+          : "failed";
+        endAgentTracing(tracingCtx, {
+          totalIterations: iterations,
+          totalLatencyMs: Date.now() - loopTraceStartMs,
+          toolCallCount: tracingToolCallCount,
+          status: tracingStatus,
+          error: finalResult?.ok ? undefined : finalResult?.message,
+        });
+      }
+    } catch { /* tracing finalization failure is non-fatal */ }
+
     finalizeLoopProcess({
       pool, app, state: s, result: _loopFinalResult,
       releaseSlot, subject, runId, goal,

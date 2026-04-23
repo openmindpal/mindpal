@@ -38,6 +38,10 @@ export default function DeadlettersClient(props: { locale: string; initial: unkn
   const [selectedSteps, setSelectedSteps] = useState<Set<string>>(new Set());
 
   const items = useMemo(() => (Array.isArray(data?.deadletters) ? data!.deadletters! : []), [data]);
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const paged = useMemo(() => items.slice(page * pageSize, (page + 1) * pageSize), [items, page]);
 
   /** Diagnose error category and return i18n key */
   function diagnoseError(errorCat: string): string {
@@ -88,6 +92,7 @@ export default function DeadlettersClient(props: { locale: string; initial: unkn
 
   async function refresh() {
     setError("");
+    setPage(0);
     const q = new URLSearchParams();
     if (toolRef.trim()) q.set("toolRef", toolRef.trim());
     const n = Number(limit);
@@ -197,7 +202,7 @@ export default function DeadlettersClient(props: { locale: string; initial: unkn
             </tr>
           </thead>
           <tbody>
-            {items.map((d, idx) => {
+            {paged.map((d, idx) => {
               const stepId = safeStr(d.stepId, "");
               const runId = safeStr(d.runId, "");
               const disabled = busy && busy === stepId;
@@ -248,6 +253,19 @@ export default function DeadlettersClient(props: { locale: string; initial: unkn
             })}
           </tbody>
         </Table>
+        {totalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, items.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(items.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+              <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -13,6 +13,9 @@ vi.mock("@openslin/shared", async (importOriginal) => {
   return {
     ...actual,
     computeMinhash: vi.fn(() => new Array(16).fill(42)),
+    StructuredLogger: actual.StructuredLogger ?? vi.fn().mockImplementation(() => ({
+      debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn(),
+    })),
   };
 });
 

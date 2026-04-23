@@ -19,6 +19,11 @@ export default function GovNotificationsClient(props: { locale: string; initial?
   const [outbox, setOutbox] = useState<{ status: number; json: any }>(props.initial ?? { status: 0, json: null });
   const outboxItems = useMemo(() => (Array.isArray(outbox?.json?.outbox) ? (outbox.json.outbox as OutboxItem[]) : []), [outbox]);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(outboxItems.length / pageSize));
+  const pagedOutbox = useMemo(() => outboxItems.slice(page * pageSize, (page + 1) * pageSize), [outboxItems, page]);
+
   const [templateId, setTemplateId] = useState("email.default");
   const [channel, setChannel] = useState("email");
   const [createTemplateStatus, setCreateTemplateStatus] = useState(0);
@@ -47,6 +52,7 @@ export default function GovNotificationsClient(props: { locale: string; initial?
       const res = await apiFetch(`/governance/notifications/outbox?${q.toString()}`, { locale: props.locale, cache: "no-store" });
       const json: unknown = await res.json().catch(() => null);
       setOutbox({ status: res.status, json });
+      setPage(0);
       if (!res.ok) throw toApiError(json);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
@@ -231,7 +237,7 @@ export default function GovNotificationsClient(props: { locale: string; initial?
                 </tr>
               </thead>
               <tbody>
-                {outboxItems.map((o, idx) => (
+                {pagedOutbox.map((o, idx) => (
                   <tr key={String((o as any).outboxId ?? idx)}>
                     <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{String((o as any).outboxId ?? "")}</td>
                     <td>{String((o as any).channel ?? "")}</td>
@@ -256,6 +262,19 @@ export default function GovNotificationsClient(props: { locale: string; initial?
                 ))}
               </tbody>
             </Table>
+            {totalPages > 1 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                <span style={{ opacity: 0.7, fontSize: 13 }}>
+                  {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, outboxItems.length)))}
+                  {t(props.locale, "pagination.total").replace("{count}", String(outboxItems.length))}
+                </span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                  <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+                  <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                </div>
+              </div>
+            )}
           </Card>
         )},
         { key: "templates", label: t(props.locale, "gov.notifications.tab.templates"), content: (

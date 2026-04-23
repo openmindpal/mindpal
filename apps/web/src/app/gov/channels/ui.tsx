@@ -11,6 +11,17 @@ import { Badge, Card, PageHeader, Table, StatusBadge, TabNav, EmptyState } from 
 
 const PROVIDER_KEYS = ["feishu", "dingtalk", "wecom", "slack", "discord", "qq.onebot", "imessage.bridge"] as const;
 
+function formatApiError(err: any): string {
+  if (err?.response?.data) {
+    const d = err.response.data;
+    if (typeof d.message === "string") return d.message;
+    if (typeof d.errorCode === "string") return d.errorCode;
+    if (typeof d === "string") return d;
+  }
+  if (err?.message) return String(err.message);
+  return "操作失败，请重试";
+}
+
 export default function GovChannelsClient(props: { locale: string; initial: any }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -24,6 +35,19 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
   const cfgItems = useMemo(() => (Array.isArray(configs?.json?.configs) ? configs.json.configs : []), [configs]);
   const evItems = useMemo(() => (Array.isArray(events?.json?.events) ? events.json.events : []), [events]);
   const outboxItems = useMemo(() => (Array.isArray(outbox?.json?.messages) ? outbox.json.messages : []), [outbox]);
+
+  const pageSize = 20;
+  const [cfgPage, setCfgPage] = useState(0);
+  const cfgTotalPages = Math.max(1, Math.ceil(cfgItems.length / pageSize));
+  const cfgPaged = useMemo(() => cfgItems.slice(cfgPage * pageSize, (cfgPage + 1) * pageSize), [cfgItems, cfgPage]);
+
+  const [evPage, setEvPage] = useState(0);
+  const evTotalPages = Math.max(1, Math.ceil(evItems.length / pageSize));
+  const evPaged = useMemo(() => evItems.slice(evPage * pageSize, (evPage + 1) * pageSize), [evItems, evPage]);
+
+  const [outPage, setOutPage] = useState(0);
+  const outTotalPages = Math.max(1, Math.ceil(outboxItems.length / pageSize));
+  const outPaged = useMemo(() => outboxItems.slice(outPage * pageSize, (outPage + 1) * pageSize), [outboxItems, outPage]);
 
   const spacesList = useMemo<Array<{ id: string; name: string | null }>>(() => {
     const raw = props.initial?.spaces;
@@ -61,7 +85,9 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
     try {
       await fn();
     } catch (e: any) {
-      setError(errText(props.locale, toApiError(e)));
+      const apiErr = toApiError(e);
+      const msg = errText(props.locale, apiErr) || formatApiError(e);
+      setError(msg);
     } finally {
       setBusy(false);
     }
@@ -71,7 +97,8 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
     const res = await apiFetch(`/governance/channels/webhook/configs?limit=50`, { locale: props.locale, cache: "no-store" });
     const json = await res.json().catch(() => null);
     setConfigs({ status: res.status, json });
-    if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
+    setCfgPage(0);
+    if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }) || formatApiError({ message: `HTTP ${res.status}` }));
   }, [props.locale]);
 
   const [ingressStatus, setIngressStatus] = useState<string>("deadletter");
@@ -83,7 +110,8 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
     const res = await apiFetch(`/governance/channels/ingress-events?${q.toString()}`, { locale: props.locale, cache: "no-store" });
     const json = await res.json().catch(() => null);
     setEvents({ status: res.status, json });
-    if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
+    setEvPage(0);
+    if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }) || formatApiError({ message: `HTTP ${res.status}` }));
   }, [props.locale, ingressStatus]);
 
   const refreshOutbox = useCallback(async () => {
@@ -93,7 +121,8 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
     const res = await apiFetch(`/governance/channels/outbox?${q.toString()}`, { locale: props.locale, cache: "no-store" });
     const json = await res.json().catch(() => null);
     setOutbox({ status: res.status, json });
-    if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
+    setOutPage(0);
+    if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }) || formatApiError({ message: `HTTP ${res.status}` }));
   }, [props.locale, outboxStatus]);
 
   useEffect(() => {
@@ -247,6 +276,36 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
     });
   }
 
+  async function revokeAccount(p: string, wsId: string, cuId: string) {
+    if (!window.confirm("确认解绑？")) return;
+    await runAction(async () => {
+      const res = await apiFetch(`/governance/channels/accounts/revoke`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        locale: props.locale,
+        body: JSON.stringify({ provider: p, workspaceId: wsId, channelUserId: cuId }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw toApiError(json);
+      await refreshBindingStates();
+    });
+  }
+
+  async function revokeChatBinding(p: string, wsId: string, ccId: string) {
+    if (!window.confirm("确认解绑？")) return;
+    await runAction(async () => {
+      const res = await apiFetch(`/governance/channels/chat-bindings/revoke`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        locale: props.locale,
+        body: JSON.stringify({ provider: p, workspaceId: wsId, channelChatId: ccId }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw toApiError(json);
+      setInfo("群组解绑成功");
+    });
+  }
+
   return (
     <div>
       <PageHeader
@@ -380,9 +439,16 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                         <span style={{ fontSize: 13, color: "var(--sl-muted)" }}>{t(props.locale, "gov.channels.defaultSubjectId")}</span>
                         <input value={defaultSubjectId} onChange={(e) => setDefaultSubjectId(e.target.value)} disabled={busy} placeholder={t(props.locale, "gov.channels.defaultSubjectId.hint")} />
                       </label>
-                      <div>
+                      <div style={{ display: "flex", gap: 8 }}>
                         <button onClick={saveChatBinding} disabled={busy || !workspaceId.trim() || !spaceId.trim() || !channelChatId.trim()}>
                           {t(props.locale, "action.save")}
+                        </button>
+                        <button
+                          onClick={() => revokeChatBinding(provider.trim(), workspaceId.trim(), channelChatId.trim())}
+                          disabled={busy || !provider.trim() || !workspaceId.trim() || !channelChatId.trim()}
+                          style={{ background: "var(--sl-danger, #dc2626)", color: "#fff", border: "1px solid var(--sl-danger, #dc2626)", borderRadius: 4, padding: "4px 12px", fontSize: 13, cursor: "pointer", opacity: busy ? 0.5 : 1 }}
+                        >
+                          解绑
                         </button>
                       </div>
                     </div>
@@ -415,6 +481,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                 {cfgItems.length === 0 ? (
                   <EmptyState text={t(props.locale, "gov.channels.configEmpty")} />
                 ) : (
+                  <>
                   <Table>
                     <thead>
                       <tr>
@@ -426,7 +493,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                       </tr>
                     </thead>
                     <tbody>
-                      {cfgItems.map((c: any, idx: number) => (
+                      {cfgPaged.map((c: any, idx: number) => (
                         <tr key={String(c.workspaceId ?? idx)}>
                           <td>{String(c.provider ?? "")}</td>
                           <td>{String(c.workspaceId ?? "")}</td>
@@ -437,6 +504,20 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                       ))}
                     </tbody>
                   </Table>
+                  {cfgTotalPages > 1 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                      <span style={{ opacity: 0.7, fontSize: 13 }}>
+                        {t(props.locale, "pagination.showing").replace("{from}", String(cfgPage * pageSize + 1)).replace("{to}", String(Math.min((cfgPage + 1) * pageSize, cfgItems.length)))}
+                        {t(props.locale, "pagination.total").replace("{count}", String(cfgItems.length))}
+                      </span>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button disabled={cfgPage === 0} onClick={() => setCfgPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                        <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(cfgPage + 1))}</span>
+                        <button disabled={cfgPage >= cfgTotalPages - 1} onClick={() => setCfgPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                      </div>
+                    </div>
+                  )}
+                  </>
                 )}
               </Card>
             </div>
@@ -460,6 +541,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
             {evItems.length === 0 ? (
               <EmptyState text={t(props.locale, "gov.channels.ingressEmpty")} />
             ) : (
+              <>
               <Table>
                 <thead>
                   <tr>
@@ -471,7 +553,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                   </tr>
                 </thead>
                 <tbody>
-                  {evItems.map((e: any, idx: number) => (
+                  {evPaged.map((e: any, idx: number) => (
                     <tr key={String(e.id ?? e.eventId ?? idx)}>
                       <td>{String(e.provider ?? "")}</td>
                       <td>{String(e.workspaceId ?? "")}</td>
@@ -490,6 +572,20 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                   ))}
                 </tbody>
               </Table>
+              {evTotalPages > 1 && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                  <span style={{ opacity: 0.7, fontSize: 13 }}>
+                    {t(props.locale, "pagination.showing").replace("{from}", String(evPage * pageSize + 1)).replace("{to}", String(Math.min((evPage + 1) * pageSize, evItems.length)))}
+                    {t(props.locale, "pagination.total").replace("{count}", String(evItems.length))}
+                  </span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button disabled={evPage === 0} onClick={() => setEvPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                    <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(evPage + 1))}</span>
+                    <button disabled={evPage >= evTotalPages - 1} onClick={() => setEvPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </Card>
         )},
@@ -590,6 +686,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                         <th>{t(props.locale, "gov.channels.binding.col.channelUserId")}</th>
                         <th>{t(props.locale, "gov.channels.binding.col.createdAt")}</th>
                         <th>{t(props.locale, "gov.channels.binding.col.expiresAt")}</th>
+                        <th>{t(props.locale, "gov.changesets.actions")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -604,6 +701,17 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                           <td>{String(s.boundChannelUserId ?? "")}</td>
                           <td>{fmtDateTime(s.createdAt, props.locale)}</td>
                           <td>{fmtDateTime(s.expiresAt, props.locale)}</td>
+                          <td>
+                            {s.status === "consumed" && s.boundChannelUserId ? (
+                              <button
+                                disabled={busy}
+                                onClick={() => revokeAccount(String(s.provider ?? ""), String(s.workspaceId ?? ""), String(s.boundChannelUserId ?? ""))}
+                                style={{ background: "var(--sl-danger, #dc2626)", color: "#fff", border: "1px solid var(--sl-danger, #dc2626)", borderRadius: 4, padding: "2px 10px", fontSize: 12, cursor: "pointer", opacity: busy ? 0.5 : 1 }}
+                              >
+                                解绑
+                              </button>
+                            ) : null}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -634,6 +742,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
             {outboxItems.length === 0 ? (
               <EmptyState text={t(props.locale, "gov.channels.outboxEmpty")} />
             ) : (
+              <>
               <Table header={<span>{outboxItems.length}</span>}>
                 <thead>
                   <tr>
@@ -649,7 +758,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                   </tr>
                 </thead>
                 <tbody>
-                  {outboxItems.map((m: any, idx: number) => (
+                  {outPaged.map((m: any, idx: number) => (
                     <tr key={String(m.id ?? idx)}>
                       <td>{String(m.provider ?? "")}</td>
                       <td>{String(m.workspaceId ?? "")}</td>
@@ -677,6 +786,20 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                   ))}
                 </tbody>
               </Table>
+              {outTotalPages > 1 && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                  <span style={{ opacity: 0.7, fontSize: 13 }}>
+                    {t(props.locale, "pagination.showing").replace("{from}", String(outPage * pageSize + 1)).replace("{to}", String(Math.min((outPage + 1) * pageSize, outboxItems.length)))}
+                    {t(props.locale, "pagination.total").replace("{count}", String(outboxItems.length))}
+                  </span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button disabled={outPage === 0} onClick={() => setOutPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                    <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(outPage + 1))}</span>
+                    <button disabled={outPage >= outTotalPages - 1} onClick={() => setOutPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </Card>
         )},

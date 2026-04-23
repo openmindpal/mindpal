@@ -103,6 +103,9 @@ export default function GovObservabilityClient(props: { locale: string; initial:
   const refresh = useCallback(async (nextWindow?: string) => {
     setError("");
     setBusy(true);
+    setRoutesPage(0);
+    setSyncPage(0);
+    setErrorsPage(0);
     try {
       const w = nextWindow ?? window;
       const q = new URLSearchParams();
@@ -148,6 +151,19 @@ export default function GovObservabilityClient(props: { locale: string; initial:
   const sync = data?.sync ?? [];
   const topErrors = data?.topErrors ?? [];
   const knowledge = data?.knowledge ?? null;
+
+  const pageSize = 20;
+  const [routesPage, setRoutesPage] = useState(0);
+  const routesTotalPages = Math.max(1, Math.ceil(routes.length / pageSize));
+  const routesPaged = useMemo(() => routes.slice(routesPage * pageSize, (routesPage + 1) * pageSize), [routes, routesPage]);
+
+  const [syncPage, setSyncPage] = useState(0);
+  const syncTotalPages = Math.max(1, Math.ceil(sync.length / pageSize));
+  const syncPaged = useMemo(() => sync.slice(syncPage * pageSize, (syncPage + 1) * pageSize), [sync, syncPage]);
+
+  const [errorsPage, setErrorsPage] = useState(0);
+  const errorsTotalPages = Math.max(1, Math.ceil(topErrors.length / pageSize));
+  const errorsPaged = useMemo(() => topErrors.slice(errorsPage * pageSize, (errorsPage + 1) * pageSize), [topErrors, errorsPage]);
 
   return (
     <div>
@@ -244,7 +260,7 @@ export default function GovObservabilityClient(props: { locale: string; initial:
                 </tr>
               </thead>
               <tbody>
-                {routes.slice(0, 30).map((r, idx) => {
+                {routesPaged.map((r, idx) => {
                   const total = r.total;
                   const success = r.success;
                   const rate = total > 0 ? Math.round((success / total) * 10000) / 100 : 0;
@@ -261,6 +277,19 @@ export default function GovObservabilityClient(props: { locale: string; initial:
               </tbody>
             </table>
           </div>
+          {routesTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(routesPage * pageSize + 1)).replace("{to}", String(Math.min((routesPage + 1) * pageSize, routes.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(routes.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={routesPage === 0} onClick={() => setRoutesPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(routesPage + 1))}</span>
+                <button disabled={routesPage >= routesTotalPages - 1} onClick={() => setRoutesPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -278,7 +307,7 @@ export default function GovObservabilityClient(props: { locale: string; initial:
                 </tr>
               </thead>
               <tbody>
-                {sync.map((r, idx) => (
+                {syncPaged.map((r, idx) => (
                   <tr key={`${r.spaceId || idx}`}>
                     <td style={{ padding: "6px 4px" }}>{r.spaceId}</td>
                     <td style={{ padding: "6px 4px", textAlign: "right" }}>{r.pushes}</td>
@@ -290,6 +319,19 @@ export default function GovObservabilityClient(props: { locale: string; initial:
               </tbody>
             </table>
           </div>
+          {syncTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(syncPage * pageSize + 1)).replace("{to}", String(Math.min((syncPage + 1) * pageSize, sync.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(sync.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={syncPage === 0} onClick={() => setSyncPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(syncPage + 1))}</span>
+                <button disabled={syncPage >= syncTotalPages - 1} onClick={() => setSyncPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -328,7 +370,7 @@ export default function GovObservabilityClient(props: { locale: string; initial:
                 </tr>
               </thead>
               <tbody>
-                {topErrors.map((r, idx) => {
+                {errorsPaged.map((r, idx) => {
                   const traceId = r.sampleTraceId;
                   const href = traceId ? `/gov/audit?lang=${encodeURIComponent(props.locale)}&traceId=${encodeURIComponent(traceId)}&limit=50` : "";
                   return (
@@ -343,6 +385,19 @@ export default function GovObservabilityClient(props: { locale: string; initial:
               </tbody>
             </table>
           </div>
+          {errorsTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(errorsPage * pageSize + 1)).replace("{to}", String(Math.min((errorsPage + 1) * pageSize, topErrors.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(topErrors.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={errorsPage === 0} onClick={() => setErrorsPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(errorsPage + 1))}</span>
+                <button disabled={errorsPage >= errorsTotalPages - 1} onClick={() => setErrorsPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 

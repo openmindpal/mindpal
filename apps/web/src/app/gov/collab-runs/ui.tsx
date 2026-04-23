@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { t, statusLabel } from "@/lib/i18n";
 import { fmtDateTime } from "@/lib/fmtDateTime";
@@ -22,6 +22,11 @@ export default function CollabRunsClient(props: { locale: string; initialTaskId:
   const [detail, setDetail] = useState<CollabDetailSnapshot | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const paged = useMemo(() => items.slice(page * pageSize, (page + 1) * pageSize), [items, page]);
+
   async function search() {
     if (!taskId.trim()) return;
     setError("");
@@ -35,6 +40,7 @@ export default function CollabRunsClient(props: { locale: string; initialTaskId:
       if (!res.ok) throw toApiError(json);
       const data = json as ListResponse;
       setItems(data.items ?? []);
+      setPage(0);
     } catch (e: unknown) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -101,7 +107,7 @@ export default function CollabRunsClient(props: { locale: string; initialTaskId:
                 </td>
               </tr>
             ) : (
-              items.map((run) => {
+              paged.map((run) => {
                 const id = run.collabRunId;
                 const roles = Array.isArray(run.roles) ? run.roles : [];
                 const isSelected = selectedId === id;
@@ -122,6 +128,19 @@ export default function CollabRunsClient(props: { locale: string; initialTaskId:
             )}
           </tbody>
         </Table>
+        {totalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, items.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(items.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+              <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {selectedId && detail ? (

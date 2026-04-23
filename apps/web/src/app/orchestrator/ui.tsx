@@ -35,6 +35,10 @@ export default function OrchestratorPlaygroundClient(props: { locale: string }) 
   const [busyExec, setBusyExec] = useState<boolean>(false);
 
   const suggestions = useMemo(() => (Array.isArray(turn?.toolSuggestions) ? turn!.toolSuggestions! : []), [turn]);
+  const sugPageSize = 20;
+  const [sugPage, setSugPage] = useState(0);
+  const sugTotalPages = Math.max(1, Math.ceil(suggestions.length / sugPageSize));
+  const pagedSuggestions = useMemo(() => suggestions.slice(sugPage * sugPageSize, (sugPage + 1) * sugPageSize), [suggestions, sugPage]);
 
   const replyText = useMemo(() => {
     const rt = turn?.replyText;
@@ -64,6 +68,7 @@ export default function OrchestratorPlaygroundClient(props: { locale: string }) 
       const json: unknown = await res.json().catch(() => null);
       const turnData = (json as DispatchResponse) ?? null;
       setTurn(turnData);
+      setSugPage(0);
       if (turnData?.conversationId) setConversationId(turnData.conversationId);
       if (!res.ok) setTurnError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
     } finally {
@@ -202,7 +207,7 @@ export default function OrchestratorPlaygroundClient(props: { locale: string }) 
             </tr>
           </thead>
           <tbody>
-            {suggestions.map((s, idx) => {
+            {pagedSuggestions.map((s, idx) => {
               const toolRef = s.toolRef ?? "";
               const isActive = activeIdx === idx;
               return (
@@ -225,6 +230,19 @@ export default function OrchestratorPlaygroundClient(props: { locale: string }) 
             })}
           </tbody>
         </Table>
+        {sugTotalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(sugPage * sugPageSize + 1)).replace("{to}", String(Math.min((sugPage + 1) * sugPageSize, suggestions.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(suggestions.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={sugPage === 0} onClick={() => setSugPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(sugPage + 1))}</span>
+              <button disabled={sugPage >= sugTotalPages - 1} onClick={() => setSugPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {activeIdx !== null ? (

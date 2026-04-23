@@ -99,9 +99,20 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
   const setRows = useMemo(() => (Array.isArray(sets?.sets) ? sets!.sets! : []), [sets]);
   const runRows = useMemo(() => (Array.isArray(runs?.runs) ? runs!.runs! : []), [runs]);
 
+  const pageSize = 20;
+  const [setPage, setSetPage] = useState(0);
+  const setTotalPages = Math.max(1, Math.ceil(setRows.length / pageSize));
+  const setRowsPaged = useMemo(() => setRows.slice(setPage * pageSize, (setPage + 1) * pageSize), [setRows, setPage]);
+
+  const [runPage, setRunPage] = useState(0);
+  const runTotalPages = Math.max(1, Math.ceil(runRows.length / pageSize));
+  const runRowsPaged = useMemo(() => runRows.slice(runPage * pageSize, (runPage + 1) * pageSize), [runRows, runPage]);
+
   async function refresh(selectedEvalSetId?: string) {
     setError("");
     setBusy(true);
+    setSetPage(0);
+    setRunPage(0);
     try {
       const sRes = await apiFetch(`/governance/knowledge/quality/eval-sets?limit=50`, { locale: props.locale, cache: "no-store" });
       setStatus(sRes.status);
@@ -226,7 +237,7 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
           <tbody>
             {setRows.length === 0 ? (
                   <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
-                ) : setRows.map((s) => {
+                ) : setRowsPaged.map((s) => {
               const rec = toRecord(s);
               const id = rec ? toDisplayText(rec.id) : "";
               const name = rec ? toDisplayText(rec.name) : "";
@@ -253,6 +264,19 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
             })}
           </tbody>
         </Table>
+        {setTotalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(setPage * pageSize + 1)).replace("{to}", String(Math.min((setPage + 1) * pageSize, setRows.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(setRows.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={setPage === 0} onClick={() => setSetPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(setPage + 1))}</span>
+              <button disabled={setPage >= setTotalPages - 1} onClick={() => setSetPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* P1-3g: 最新评测运行的高级指标卡片组 */}
@@ -300,7 +324,7 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
           <tbody>
             {runRows.length === 0 ? (
                   <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
-                ) : runRows.map((r, idx) => {
+                ) : runRowsPaged.map((r, idx) => {
               const rec = toRecord(r);
               const id = rec ? toDisplayText(rec.id ?? idx) : String(idx);
               const adv = extractAdvancedMetrics(rec?.metrics);
@@ -332,6 +356,19 @@ export default function KnowledgeQualityClient(props: { locale: string; initial?
             })}
           </tbody>
         </Table>
+        {runTotalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(runPage * pageSize + 1)).replace("{to}", String(Math.min((runPage + 1) * pageSize, runRows.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(runRows.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={runPage === 0} onClick={() => setRunPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(runPage + 1))}</span>
+              <button disabled={runPage >= runTotalPages - 1} onClick={() => setRunPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );

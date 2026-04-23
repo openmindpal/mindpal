@@ -28,6 +28,9 @@ const {
   handleToolCallAction,
   executeToolCall,
   waitForStepCompletion,
+  getDecisionQualityConfig,
+  extractConfidenceFromOutput,
+  evaluateDecisionQuality,
 } = vi.hoisted(() => ({
   acquireLoopSlot: vi.fn(),
   discoverEnabledTools: vi.fn(),
@@ -56,6 +59,9 @@ const {
   handleToolCallAction: vi.fn(),
   executeToolCall: vi.fn(),
   waitForStepCompletion: vi.fn(),
+  getDecisionQualityConfig: vi.fn(),
+  extractConfidenceFromOutput: vi.fn(),
+  evaluateDecisionQuality: vi.fn(),
 }));
 
 vi.mock("./priorityScheduler", () => ({
@@ -90,6 +96,7 @@ vi.mock("./worldStateExtractor", () => ({
   extractFromObservation: vi.fn(),
   evaluateGoalConditions: vi.fn(),
   buildWorldStateFromObservations,
+  extractWorldState: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("./loopStateHelpers", () => ({
@@ -102,6 +109,9 @@ vi.mock("./loopThinkDecide", () => ({
   filterToolDiscoveryByConstraints,
   parseAgentDecision,
   buildThinkPrompt,
+  getDecisionQualityConfig,
+  extractConfidenceFromOutput,
+  evaluateDecisionQuality,
 }));
 
 vi.mock("./loopAutoReflexion", () => ({
@@ -209,9 +219,12 @@ describe("runAgentLoop initialization order", () => {
       summary: "done",
     });
     buildIterationContext.mockResolvedValue({ updatedWorldState: null });
-    invokeLlmForDecision.mockResolvedValue("agent_decision");
+    invokeLlmForDecision.mockResolvedValue({ outputText: "agent_decision", modelUsed: "test-model" });
     handleDoneAction.mockResolvedValue({ outcome: "done", message: "done", verification: null });
     triggerAutoReflexion.mockResolvedValue(null);
+    getDecisionQualityConfig.mockReturnValue({ retryThreshold: 0.3, upgradeThreshold: 0.2, maxRetries: 1 });
+    extractConfidenceFromOutput.mockReturnValue(0.9);
+    evaluateDecisionQuality.mockReturnValue({ action: "accept" });
   });
 
   it("writes the first checkpoint before inserting the GoalGraph", async () => {

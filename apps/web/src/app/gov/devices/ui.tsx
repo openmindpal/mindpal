@@ -22,14 +22,19 @@ export default function GovDevicesClient(props: { locale: string; initial?: Init
   const [devicesResp, setDevicesResp] = useState<{ status: number; json: any }>(props.initial ? { status: props.initial.status, json: props.initial.json } : { status: 0, json: null });
   const devices = useMemo(() => (Array.isArray(devicesResp?.json?.devices) ? (devicesResp.json.devices as Device[]) : []), [devicesResp]);
 
+  const pageSize = 20;
+  const [devPage, setDevPage] = useState(0);
+  const devTotalPages = Math.max(1, Math.ceil(devices.length / pageSize));
+  const devPaged = useMemo(() => devices.slice(devPage * pageSize, (devPage + 1) * pageSize), [devices, devPage]);
+
   const [selectedId, setSelectedId] = useState("");
   const [detailResp, setDetailResp] = useState<{ status: number; json: any }>({ status: 0, json: null });
   const device = useMemo(() => toRecord(detailResp?.json?.device), [detailResp]);
   const policy = useMemo(() => toRecord(detailResp?.json?.policy), [detailResp]);
 
-  const [createDeviceType, setCreateDeviceType] = useState<"desktop" | "mobile">("desktop");
-  const [createOs, setCreateOs] = useState("macOS");
-  const [createAgentVersion, setCreateAgentVersion] = useState("0.1.0");
+  const [createDeviceType, setCreateDeviceType] = useState<"desktop" | "mobile" | "iot" | "robot" | "vehicle" | "home" | "gateway">("desktop");
+  const [createOs, setCreateOs] = useState("win32");
+  const [createAgentVersion, setCreateAgentVersion] = useState("1.0.0");
   const [createStatus, setCreateStatus] = useState(0);
   const [createResult, setCreateResult] = useState<any>(null);
 
@@ -63,6 +68,7 @@ export default function GovDevicesClient(props: { locale: string; initial?: Init
       const res = await apiFetch(`/devices?${q.toString()}`, { locale: props.locale, cache: "no-store" });
       const json: unknown = await res.json().catch(() => null);
       setDevicesResp({ status: res.status, json });
+      setDevPage(0);
       if (!res.ok) throw toApiError(json);
       const list = toRecord(json)?.devices;
       if (!selectedId && Array.isArray(list) && list.length) setSelectedId(toDisplayText(toRecord(list[0])?.deviceId));
@@ -335,8 +341,17 @@ export default function GovDevicesClient(props: { locale: string; initial?: Init
           <select value={createDeviceType} onChange={(e) => setCreateDeviceType(e.target.value as any)} disabled={busy}>
             <option value="desktop">{t(props.locale, "gov.devices.deviceType.desktop")}</option>
             <option value="mobile">{t(props.locale, "gov.devices.deviceType.mobile")}</option>
+            <option value="iot">{t(props.locale, "gov.devices.deviceType.iot")}</option>
+            <option value="robot">{t(props.locale, "gov.devices.deviceType.robot")}</option>
+            <option value="vehicle">{t(props.locale, "gov.devices.deviceType.vehicle")}</option>
+            <option value="home">{t(props.locale, "gov.devices.deviceType.home")}</option>
+            <option value="gateway">{t(props.locale, "gov.devices.deviceType.gateway")}</option>
           </select>
-          <input value={createOs} onChange={(e) => setCreateOs(e.currentTarget.value)} placeholder={t(props.locale, "gov.devices.placeholder.os")} disabled={busy} />
+          <select value={createOs} onChange={(e) => setCreateOs(e.target.value)} disabled={busy}>
+            <option value="win32">{t(props.locale, "gov.devices.os.win32")}</option>
+            <option value="darwin">{t(props.locale, "gov.devices.os.darwin")}</option>
+            <option value="linux">{t(props.locale, "gov.devices.os.linux")}</option>
+          </select>
           <input value={createAgentVersion} onChange={(e) => setCreateAgentVersion(e.currentTarget.value)} placeholder={t(props.locale, "gov.devices.placeholder.agentVersion")} disabled={busy} />
           <button disabled={busy} onClick={createDevice}>
             {t(props.locale, "action.create")}
@@ -359,7 +374,7 @@ export default function GovDevicesClient(props: { locale: string; initial?: Init
             </tr>
           </thead>
           <tbody>
-            {devices.map((d, idx) => {
+            {devPaged.map((d, idx) => {
               const rec = toRecord(d);
               const id = rec ? toDisplayText(rec.deviceId ?? idx) : String(idx);
               return (
@@ -385,6 +400,19 @@ export default function GovDevicesClient(props: { locale: string; initial?: Init
             })}
           </tbody>
         </Table>
+        {devTotalPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <span style={{ opacity: 0.7, fontSize: 13 }}>
+              {t(props.locale, "pagination.showing").replace("{from}", String(devPage * pageSize + 1)).replace("{to}", String(Math.min((devPage + 1) * pageSize, devices.length)))}
+              {t(props.locale, "pagination.total").replace("{count}", String(devices.length))}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={devPage === 0} onClick={() => setDevPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+              <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(devPage + 1))}</span>
+              <button disabled={devPage >= devTotalPages - 1} onClick={() => setDevPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+            </div>
+          </div>
+        )}
       </Card>
 
       <Card

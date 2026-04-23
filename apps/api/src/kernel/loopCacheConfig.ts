@@ -9,18 +9,11 @@
  * - isLightIteration  — 轻迭代判断
  */
 
-import { resolveNumber, resolveBoolean } from "@openslin/shared";
+import { resolveNumber, resolveBoolean, createMemoryCacheManager, type CacheManager, type CacheStats } from "@openslin/shared";
 
 /* ================================================================== */
 /*  P1-8/P1-9: 准备阶段缓存分层 + 会话级缓存                              */
 /* ================================================================== */
-
-interface CacheEntry<T> {
-  value: T;
-  expiresAt: number;
-}
-
-const _prepareCache = new Map<string, CacheEntry<any>>();
 
 /** P1-8: 缓存配置（环境变量已注册到 configRegistry.data.json） */
 export function getCacheConfig() {
@@ -40,45 +33,31 @@ export function getCacheConfig() {
   };
 }
 
-/** P0-4: 定期清理过期条目 */
-let _purgeCacheTimer: ReturnType<typeof setInterval> | null = null;
-function _ensurePurgeCacheTimer(): void {
-  if (_purgeCacheTimer) return;
-  _purgeCacheTimer = setInterval(() => {
-    const now = Date.now();
-    for (const [k, v] of _prepareCache) {
-      if (now > v.expiresAt) _prepareCache.delete(k);
-    }
-  }, getCacheConfig().PURGE_INTERVAL_MS);
-  if (typeof _purgeCacheTimer === 'object' && 'unref' in _purgeCacheTimer) {
-    (_purgeCacheTimer as any).unref();
+/** 内部 CacheManager 单例（懒初始化） */
+let _cacheManager: CacheManager | null = null;
+function getCacheManager(): CacheManager {
+  if (!_cacheManager) {
+    const config = getCacheConfig();
+    _cacheManager = createMemoryCacheManager({
+      maxSize: config.MAX_SIZE,
+      defaultTtlMs: config.MEMORY_RECALL_TTL_MS,
+      purgeIntervalMs: config.PURGE_INTERVAL_MS,
+    });
   }
+  return _cacheManager;
 }
 
 export function cacheGet<T>(key: string): T | undefined {
-  const entry = _prepareCache.get(key);
-  if (!entry) return undefined;
-  if (Date.now() > entry.expiresAt) {
-    _prepareCache.delete(key);
-    return undefined;
-  }
-  // LRU touch: 重新插入使其排在 Map 迭代尾部（最近使用）
-  _prepareCache.delete(key);
-  _prepareCache.set(key, entry);
-  return entry.value as T;
+  return getCacheManager().get<T>("session", key);
 }
 
 export function cacheSet<T>(key: string, value: T, ttlMs: number): void {
-  _ensurePurgeCacheTimer();
-  // 如果已存在则先删除（保持 LRU 顺序）
-  _prepareCache.delete(key);
-  _prepareCache.set(key, { value, expiresAt: Date.now() + ttlMs });
-  // P0-4: 超过 maxSize 时淘汰最旧条目（Map 迭代顺序 = 插入顺序）
-  while (_prepareCache.size > getCacheConfig().MAX_SIZE) {
-    const oldest = _prepareCache.keys().next().value;
-    if (oldest !== undefined) _prepareCache.delete(oldest);
-    else break;
-  }
+  getCacheManager().set<T>("session", key, value, ttlMs);
+}
+
+/** 获取缓存统计信息 */
+export function getCacheStats(): CacheStats {
+  return getCacheManager().stats();
 }
 
 /** P1-9: 会话级缓存 key 生成（基于 tenant+space，短时间窗口复用） */
@@ -105,4 +84,35 @@ export function getLightIterationConfig() {
 export function isLightIteration(iteration: number): boolean {
   const cfg = getLightIterationConfig();
   return cfg.ENABLED && iteration <= cfg.LIGHT_ROUNDS;
+}
+
+/* ================================================================== */
+/*  配置热更新：缓存配置自动重载                                          */
+/* ================================================================== */
+
+/**
+ * 订阅缓存相关配置的热更新事件。
+ * 当 CACHE_* 或 AGENT_PREPARE_CACHE_* 配置变更时，自动重置缓存管理器，
+ * 下次调用 getCacheManager() 时使用新配置重新构建。
+ */
+export function subscribeCacheConfigUpdates(
+  subscribe: (channel: string, handler: (event: any) => void) => Promise<unknown>,
+  log?: { warn?: (...a: unknown[]) => void },
+): void {
+  subscribe("config.updated.*", (event) => {
+    const key = event?.payload?.key as string;
+    if (key && (key.startsWith("CACHE_") || key.startsWith("AGENT_PREPARE_CACHE_"))) {
+      resetCacheManager();
+    }
+  }).catch((err) => {
+    (log?.warn ?? console.warn)("[loopCacheConfig] subscribe config.updated.* failed (non-fatal)", err);
+  });
+}
+
+/** 重置缓存管理器，释放资源并置空单例 */
+function resetCacheManager(): void {
+  if (_cacheManager) {
+    _cacheManager.shutdown();
+    _cacheManager = null;
+  }
 }

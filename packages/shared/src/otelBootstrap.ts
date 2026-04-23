@@ -100,3 +100,38 @@ export function bootstrapOtel(params: {
     sdk.shutdown().catch(() => null);
   });
 }
+
+/* ─── 自适应采样器 ─────────────────────────────────── */
+
+/** 自适应采样器配置 */
+export interface AdaptiveSamplerOpts {
+  /** 默认采样率 (0.0-1.0)，默认 0.1 */
+  baseRate?: number;
+  /** 错误时采样率，默认 1.0 */
+  errorRate?: number;
+  /** 高延迟阈值（毫秒），默认 5000 */
+  highLatencyThresholdMs?: number;
+  /** 高延迟时采样率，默认 0.5 */
+  highLatencyRate?: number;
+}
+
+/**
+ * 创建自适应采样决策函数
+ * - 正常请求按 baseRate 随机采样
+ * - 错误请求按 errorRate 采样（通常 100%）
+ * - 高延迟请求按 highLatencyRate 采样
+ *
+ * 返回函数：(isError, latencyMs?) => boolean
+ */
+export function createAdaptiveSampler(opts?: AdaptiveSamplerOpts): (isError: boolean, latencyMs?: number) => boolean {
+  const baseRate = opts?.baseRate ?? 0.1;
+  const errorRate = opts?.errorRate ?? 1.0;
+  const highLatencyThresholdMs = opts?.highLatencyThresholdMs ?? 5000;
+  const highLatencyRate = opts?.highLatencyRate ?? 0.5;
+
+  return (isError: boolean, latencyMs?: number): boolean => {
+    if (isError) return Math.random() < errorRate;
+    if (latencyMs !== undefined && latencyMs > highLatencyThresholdMs) return Math.random() < highLatencyRate;
+    return Math.random() < baseRate;
+  };
+}

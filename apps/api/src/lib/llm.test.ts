@@ -27,6 +27,14 @@ vi.mock("@openslin/shared", () => ({
     error: vi.fn(),
     fatal: vi.fn(),
   })),
+  ServiceError: class ServiceError extends Error {
+    category; code; httpStatus; details;
+    constructor(p: any) { super(p.message); this.category = p.category; this.code = p.code; this.httpStatus = p.httpStatus; this.details = p.details; }
+  },
+  ServiceErrorCategory: { AUTH_FAILED: "auth_failed", POLICY_VIOLATION: "policy_violation", RESOURCE_EXHAUSTED: "resource_exhausted", INVALID_REQUEST: "invalid_request", NOT_FOUND: "not_found", INTERNAL: "internal", TIMEOUT: "timeout" },
+  ErrorCategory: { AUTH_FAILED: "auth_failed", POLICY_VIOLATION: "policy_violation", RESOURCE_EXHAUSTED: "resource_exhausted", INVALID_REQUEST: "invalid_request", NOT_FOUND: "not_found", INTERNAL: "internal", TIMEOUT: "timeout" },
+  classifyError: vi.fn((err: any) => ({ category: "internal", code: "INTERNAL", httpStatus: 500, message: err?.message ?? "unknown" })),
+  toHttpResponse: vi.fn((err: any) => ({ statusCode: err.httpStatus, body: { errorCode: err.code, message: err.message, category: err.category } })),
 }));
 
 vi.mock("./streamingPipeline", () => ({

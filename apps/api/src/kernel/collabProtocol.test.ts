@@ -1,7 +1,7 @@
 /**
  * P1-4 验证：多智能体协作协议 — 消息验证、共识投票、CollabBus
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /* ================================================================== */
 /*  CollabProtocol 验证函数                                             */

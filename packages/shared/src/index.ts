@@ -320,9 +320,12 @@ export {
   tryTransitionStep, tryTransitionRun, tryTransitionCollab,
   normalizeStepStatus, normalizeRunStatus, normalizeCollabPhase,
   checkStateInvariant,
+  AGENT_PHASES, AGENT_TRANSITIONS, AGENT_TERMINAL,
+  tryTransitionAgent, transitionAgent, isAgentTerminal,
+  mapOrchestrationToAgent, mapAgentToOrchestration,
 } from "./stateMachine";
 export type {
-  StepStatus, RunStatus, CollabPhase,
+  StepStatus, RunStatus, CollabPhase, AgentPhase,
   TransitionViolation, TransitionResult, StateInvariantViolation,
 } from "./stateMachine";
 
@@ -457,7 +460,24 @@ export type {
 } from "./worldState";
 
 // ─── OTel 初始化工具 ─────────────────────────────────────────────────
-export { bootstrapOtel, parseOtelHeaders, isOtelEnabled, getOtlpEndpoint } from "./otelBootstrap";
+export { bootstrapOtel, parseOtelHeaders, isOtelEnabled, getOtlpEndpoint, createAdaptiveSampler } from "./otelBootstrap";
+export type { AdaptiveSamplerOpts } from "./otelBootstrap";
+
+// ─── Agent Tracing ─────────────────────────────────────────────────
+export {
+  startAgentTracing,
+  startIteration,
+  startPhase,
+  endPhase,
+  traceToolCall,
+  endAgentTracing,
+} from "./agentTracing";
+export type {
+  AgentSpanAttrs,
+  AgentTracingContext,
+  TracingSpan,
+  TracingTracer,
+} from "./agentTracing";
 
 // ─── P0-02: 通用熔断器 ─────────────────────────────────────────────────
 export {
@@ -700,9 +720,58 @@ export type {
 } from "./streamEvents";
 
 // ── 安全状态转换（跨包统一） ──
-export { safeTransitionRun } from "./stateTransition";
+export { safeTransitionRun, purgeStaleStateEvents } from "./stateTransition";
 export type { PoolLike, SafeTransitionRunOpts } from "./stateTransition";
+
+// ── metadata registry ─────────────────────────────────────────────
+export {
+  registerMetadata,
+  resolveMetadata,
+  listMetadata,
+  deactivateMetadata,
+  isMetadataEnabled,
+} from "./metadataRegistry";
+export type {
+  MetadataEntry,
+  MetadataKind,
+  MetadataScopeType,
+  MetadataQuery,
+  MetadataResolveOpts,
+  MetadataRegistryDeps,
+  RolloutMode,
+} from "./metadataRegistry";
 
 // ── 统一审批判定（API / Worker 共用 Single Source of Truth） ──
 export { shouldRequireApproval } from "./approvalDecision.js";
+
+// ── cache manager ─────────────────────────────────────────────
+export {
+  createMemoryCacheManager,
+  createLayeredCacheManager,
+} from "./cacheManager";
+export type {
+  CacheManager,
+  CacheStats,
+  CacheTier,
+  MemoryCacheOpts,
+  LayeredCacheOpts,
+} from "./cacheManager";
+
+// ── config hot update ─────────────────────────────────────────
+export { createConfigHotUpdater } from "./configHotUpdate";
+export type {
+  ConfigChangeEvent,
+  ConfigApplyResult,
+  ConfigHotUpdater,
+  ConfigHotUpdaterDeps,
+} from "./configHotUpdate";
+
+// ── metrics schema ────────────────────────────────────────────
+export {
+  AGENT_METRICS,
+  toPrometheusName,
+  listMetricNames,
+  getMetricDefinition,
+} from "./metricsSchema";
+export type { MetricDefinition, MetricType } from "./metricsSchema";
 

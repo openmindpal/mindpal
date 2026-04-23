@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { apiFetch, getClientAuthToken, setClientAuthToken } from "@/lib/api";
 import { t } from "@/lib/i18n";
@@ -41,6 +41,10 @@ export default function SettingsClient(props: { locale: string }) {
 
   /* ─── PAT state ─── */
   const [patTokens, setPatTokens] = useState<PatToken[]>([]);
+  const patPageSize = 20;
+  const [patPage, setPatPage] = useState(0);
+  const patTotalPages = Math.max(1, Math.ceil(patTokens.length / patPageSize));
+  const pagedPatTokens = useMemo(() => patTokens.slice(patPage * patPageSize, (patPage + 1) * patPageSize), [patTokens, patPage]);
   const [patLoading, setPatLoading] = useState(false);
   const [patErr, setPatErr] = useState("");
   const [patCreateName, setPatCreateName] = useState("");
@@ -58,6 +62,10 @@ export default function SettingsClient(props: { locale: string }) {
 
   /* ─── SSO state ─── */
   const [ssoProviders, setSsoProviders] = useState<{ providerId: string; providerType: string; status: string }[]>([]);
+  const ssoPageSize = 20;
+  const [ssoPage, setSsoPage] = useState(0);
+  const ssoTotalPages = Math.max(1, Math.ceil(ssoProviders.length / ssoPageSize));
+  const pagedSsoProviders = useMemo(() => ssoProviders.slice(ssoPage * ssoPageSize, (ssoPage + 1) * ssoPageSize), [ssoProviders, ssoPage]);
   const [ssoLoading, setSsoLoading] = useState(false);
   const [ssoBusy, setSsoBusy] = useState<string | null>(null); // providerId being initiated
   const [ssoErr, setSsoErr] = useState("");
@@ -119,6 +127,7 @@ export default function SettingsClient(props: { locale: string }) {
       if (res.ok) {
         const data = await res.json() as { items: PatToken[] };
         setPatTokens(data.items ?? []);
+        setPatPage(0);
       } else {
         setPatErr(parseErr(await res.json().catch(() => null), props.locale));
       }
@@ -256,6 +265,7 @@ export default function SettingsClient(props: { locale: string }) {
       if (res.ok) {
         const json = await res.json() as { providers?: { providerId: string; providerType: string; status: string }[] };
         setSsoProviders((json.providers ?? []).filter(p => p.status === "active"));
+        setSsoPage(0);
       }
     } catch { /* ignore */ }
     setSsoLoading(false);
@@ -490,7 +500,7 @@ export default function SettingsClient(props: { locale: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {patTokens.map((tok) => {
+                  {pagedPatTokens.map((tok) => {
                     const st = patStatus(tok);
                     return (
                       <tr key={tok.id} style={{ borderBottom: "1px solid var(--sl-border, #eee)" }}>
@@ -515,6 +525,19 @@ export default function SettingsClient(props: { locale: string }) {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+          {patTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(patPage * patPageSize + 1)).replace("{to}", String(Math.min((patPage + 1) * patPageSize, patTokens.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(patTokens.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={patPage === 0} onClick={() => setPatPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(patPage + 1))}</span>
+                <button disabled={patPage >= patTotalPages - 1} onClick={() => setPatPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
             </div>
           )}
         </Card>
@@ -634,7 +657,7 @@ export default function SettingsClient(props: { locale: string }) {
             </div>
           ) : (
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              {ssoProviders.map((p) => {
+              {pagedSsoProviders.map((p) => {
                 const label = t(props.locale, `settings.sso.provider.${p.providerType}`);
                 const displayLabel = label.startsWith("settings.sso.provider.") ? p.providerType.toUpperCase() : label;
                 return (
@@ -659,6 +682,19 @@ export default function SettingsClient(props: { locale: string }) {
                   </button>
                 );
               })}
+            </div>
+          )}
+          {ssoTotalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(ssoPage * ssoPageSize + 1)).replace("{to}", String(Math.min((ssoPage + 1) * ssoPageSize, ssoProviders.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(ssoProviders.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={ssoPage === 0} onClick={() => setSsoPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(ssoPage + 1))}</span>
+                <button disabled={ssoPage >= ssoTotalPages - 1} onClick={() => setSsoPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
             </div>
           )}
         </Card>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api"
 import { fmtDateTime } from "@/lib/fmtDateTime";
 import { t, statusLabel } from "@/lib/i18n";
@@ -154,6 +154,32 @@ export default function FederationClient(props: { locale: string; initial?: Init
   const [auditFilterNode, setAuditFilterNode] = useState("");
   const [auditFilterDecision, setAuditFilterDecision] = useState("");
 
+  // Pagination state
+  const pageSize = 20;
+  const [nodePage, setNodePage] = useState(0);
+  const nodeTotalPages = Math.max(1, Math.ceil(nodes.length / pageSize));
+  const nodesPaged = useMemo(() => nodes.slice(nodePage * pageSize, (nodePage + 1) * pageSize), [nodes, nodePage]);
+
+  const [logPage, setLogPage] = useState(0);
+  const logTotalPages = Math.max(1, Math.ceil(logs.length / pageSize));
+  const logsPaged = useMemo(() => logs.slice(logPage * pageSize, (logPage + 1) * pageSize), [logs, logPage]);
+
+  const [permPage, setPermPage] = useState(0);
+  const permTotalPages = Math.max(1, Math.ceil(permGrants.length / pageSize));
+  const permPaged = useMemo(() => permGrants.slice(permPage * pageSize, (permPage + 1) * pageSize), [permGrants, permPage]);
+
+  const [ugPage, setUgPage] = useState(0);
+  const ugTotalPages = Math.max(1, Math.ceil(userGrants.length / pageSize));
+  const ugPaged = useMemo(() => userGrants.slice(ugPage * pageSize, (ugPage + 1) * pageSize), [userGrants, ugPage]);
+
+  const [polPage, setPolPage] = useState(0);
+  const polTotalPages = Math.max(1, Math.ceil(policies.length / pageSize));
+  const polPaged = useMemo(() => policies.slice(polPage * pageSize, (polPage + 1) * pageSize), [policies, polPage]);
+
+  const [auditPage, setAuditPage] = useState(0);
+  const auditTotalPages = Math.max(1, Math.ceil(auditLogs.length / pageSize));
+  const auditPaged = useMemo(() => auditLogs.slice(auditPage * pageSize, (auditPage + 1) * pageSize), [auditLogs, auditPage]);
+
   // Form state
   const [formName, setFormName] = useState("");
   const [formEndpoint, setFormEndpoint] = useState("");
@@ -196,6 +222,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setNodes((json?.nodes as FederationNode[]) ?? []);
+      setNodePage(0);
     } catch (e) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -211,6 +238,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setLogs((json?.logs as EnvelopeLog[]) ?? []);
+      setLogPage(0);
     } catch (e) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -366,6 +394,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setPermGrants((json?.grants as PermissionGrant[]) ?? []);
+      setPermPage(0);
     } catch (e) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -450,6 +479,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setUserGrants((json?.grants as UserGrant[]) ?? []);
+      setUgPage(0);
     } catch (e) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -531,6 +561,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setPolicies((json?.policies as ContentPolicy[]) ?? []);
+      setPolPage(0);
     } catch (e) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -641,6 +672,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
       setAuditLogs((json?.logs as AuditLog[]) ?? []);
+      setAuditPage(0);
     } catch (e) {
       setError(errText(props.locale, toApiError(e)));
     } finally {
@@ -743,6 +775,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                 {nodes.length === 0 ? (
                   <p style={{ color: "#888" }}>{t(props.locale, "gov.federation.noNodes")}</p>
                 ) : (
+                  <>
                   <Table header={<span>{t(props.locale, "gov.federation.nodeList")} <Badge>{nodes.length}</Badge></span>}>
                     <thead>
                       <tr>
@@ -756,7 +789,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       </tr>
                     </thead>
                     <tbody>
-                      {nodes.map((n) => (
+                      {nodesPaged.map((n) => (
                         <tr key={n.nodeId}>
                           <td>{n.name}</td>
                           <td style={{ fontSize: 12, wordBreak: "break-all", maxWidth: 200 }}>{n.endpoint}</td>
@@ -788,6 +821,20 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       ))}
                     </tbody>
                   </Table>
+                  {nodeTotalPages > 1 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                      <span style={{ opacity: 0.7, fontSize: 13 }}>
+                        {t(props.locale, "pagination.showing").replace("{from}", String(nodePage * pageSize + 1)).replace("{to}", String(Math.min((nodePage + 1) * pageSize, nodes.length)))}
+                        {t(props.locale, "pagination.total").replace("{count}", String(nodes.length))}
+                      </span>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button disabled={nodePage === 0} onClick={() => setNodePage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                        <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(nodePage + 1))}</span>
+                        <button disabled={nodePage >= nodeTotalPages - 1} onClick={() => setNodePage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                      </div>
+                    </div>
+                  )}
+                  </>
                 )}
               </Card>
 
@@ -815,6 +862,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
               {logs.length === 0 ? (
                 <p style={{ color: "#888" }}>{t(props.locale, "gov.federation.noLogs")}</p>
               ) : (
+                <>
                 <Table header={<span>{t(props.locale, "gov.federation.communicationLogs")} <Badge>{logs.length}</Badge></span>}>
                   <thead>
                     <tr>
@@ -826,7 +874,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                     </tr>
                   </thead>
                   <tbody>
-                    {logs.map((log) => (
+                    {logsPaged.map((log) => (
                       <tr key={log.logId}>
                         <td>{fmtDateTime(log.createdAt, props.locale)}</td>
                         <td>{log.direction === "inbound" ? t(props.locale, "gov.federation.log.inbound") : t(props.locale, "gov.federation.log.outbound")}</td>
@@ -837,6 +885,20 @@ export default function FederationClient(props: { locale: string; initial?: Init
                     ))}
                   </tbody>
                 </Table>
+                {logTotalPages > 1 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                    <span style={{ opacity: 0.7, fontSize: 13 }}>
+                      {t(props.locale, "pagination.showing").replace("{from}", String(logPage * pageSize + 1)).replace("{to}", String(Math.min((logPage + 1) * pageSize, logs.length)))}
+                      {t(props.locale, "pagination.total").replace("{count}", String(logs.length))}
+                    </span>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button disabled={logPage === 0} onClick={() => setLogPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                      <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(logPage + 1))}</span>
+                      <button disabled={logPage >= logTotalPages - 1} onClick={() => setLogPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                    </div>
+                  </div>
+                )}
+                </>
               )}
             </Card>
           ),
@@ -887,6 +949,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                 {permGrants.length === 0 ? (
                   <p style={{ color: "#888" }}>{t(props.locale, "gov.federation.perm.noGrants")}</p>
                 ) : (
+                  <>
                   <Table header={<span>{t(props.locale, "gov.federation.perm.title")} <Badge>{permGrants.length}</Badge></span>}>
                     <thead>
                       <tr>
@@ -899,7 +962,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       </tr>
                     </thead>
                     <tbody>
-                      {permGrants.map((g) => (
+                      {permPaged.map((g) => (
                         <tr key={g.grantId}>
                           <td>{nodes.find((n) => n.nodeId === g.nodeId)?.name ?? g.nodeId}</td>
                           <td style={{ fontSize: 12 }}>{g.capabilityId}</td>
@@ -919,6 +982,20 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       ))}
                     </tbody>
                   </Table>
+                  {permTotalPages > 1 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                      <span style={{ opacity: 0.7, fontSize: 13 }}>
+                        {t(props.locale, "pagination.showing").replace("{from}", String(permPage * pageSize + 1)).replace("{to}", String(Math.min((permPage + 1) * pageSize, permGrants.length)))}
+                        {t(props.locale, "pagination.total").replace("{count}", String(permGrants.length))}
+                      </span>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button disabled={permPage === 0} onClick={() => setPermPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                        <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(permPage + 1))}</span>
+                        <button disabled={permPage >= permTotalPages - 1} onClick={() => setPermPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                      </div>
+                    </div>
+                  )}
+                  </>
                 )}
               </Card>
             </>
@@ -977,6 +1054,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                 {userGrants.length === 0 ? (
                   <p style={{ color: "#888" }}>{t(props.locale, "gov.federation.userGrant.noGrants")}</p>
                 ) : (
+                  <>
                   <Table header={<span>{t(props.locale, "gov.federation.userGrant.title")} <Badge>{userGrants.length}</Badge></span>}>
                     <thead>
                       <tr>
@@ -990,7 +1068,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       </tr>
                     </thead>
                     <tbody>
-                      {userGrants.map((g) => (
+                      {ugPaged.map((g) => (
                         <tr key={g.userGrantId}>
                           <td>{nodes.find((n) => n.nodeId === g.granteeNodeId)?.name ?? g.granteeNodeId}</td>
                           <td style={{ fontSize: 12 }}>{g.granteeSubject}</td>
@@ -1011,6 +1089,20 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       ))}
                     </tbody>
                   </Table>
+                  {ugTotalPages > 1 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                      <span style={{ opacity: 0.7, fontSize: 13 }}>
+                        {t(props.locale, "pagination.showing").replace("{from}", String(ugPage * pageSize + 1)).replace("{to}", String(Math.min((ugPage + 1) * pageSize, userGrants.length)))}
+                        {t(props.locale, "pagination.total").replace("{count}", String(userGrants.length))}
+                      </span>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button disabled={ugPage === 0} onClick={() => setUgPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                        <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(ugPage + 1))}</span>
+                        <button disabled={ugPage >= ugTotalPages - 1} onClick={() => setUgPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                      </div>
+                    </div>
+                  )}
+                  </>
                 )}
               </Card>
             </>
@@ -1076,6 +1168,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                 {policies.length === 0 ? (
                   <p style={{ color: "#888" }}>{t(props.locale, "gov.federation.policy.noPolicies")}</p>
                 ) : (
+                  <>
                   <Table header={<span>{t(props.locale, "gov.federation.policy.title")} <Badge>{policies.length}</Badge></span>}>
                     <thead>
                       <tr>
@@ -1088,7 +1181,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       </tr>
                     </thead>
                     <tbody>
-                      {policies.map((p) => (
+                      {polPaged.map((p) => (
                         <tr key={p.policyId}>
                           <td>{p.name}</td>
                           <td><Badge>{policyTypeLabel(p.policyType)}</Badge></td>
@@ -1109,6 +1202,20 @@ export default function FederationClient(props: { locale: string; initial?: Init
                       ))}
                     </tbody>
                   </Table>
+                  {polTotalPages > 1 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                      <span style={{ opacity: 0.7, fontSize: 13 }}>
+                        {t(props.locale, "pagination.showing").replace("{from}", String(polPage * pageSize + 1)).replace("{to}", String(Math.min((polPage + 1) * pageSize, policies.length)))}
+                        {t(props.locale, "pagination.total").replace("{count}", String(policies.length))}
+                      </span>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button disabled={polPage === 0} onClick={() => setPolPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                        <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(polPage + 1))}</span>
+                        <button disabled={polPage >= polTotalPages - 1} onClick={() => setPolPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                      </div>
+                    </div>
+                  )}
+                  </>
                 )}
               </Card>
             </>
@@ -1142,6 +1249,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
               {auditLogs.length === 0 ? (
                 <p style={{ color: "#888" }}>{t(props.locale, "gov.federation.audit.noLogs")}</p>
               ) : (
+                <>
                 <Table header={<span>{t(props.locale, "gov.federation.audit.title")} <Badge>{auditLogs.length}</Badge></span>}>
                   <thead>
                     <tr>
@@ -1154,7 +1262,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
                     </tr>
                   </thead>
                   <tbody>
-                    {auditLogs.map((log) => (
+                    {auditPaged.map((log) => (
                       <tr key={log.logId}>
                         <td>{fmtDateTime(log.createdAt, props.locale)}</td>
                         <td><Badge>{directionLabelAudit(log.direction)}</Badge></td>
@@ -1166,6 +1274,20 @@ export default function FederationClient(props: { locale: string; initial?: Init
                     ))}
                   </tbody>
                 </Table>
+                {auditTotalPages > 1 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+                    <span style={{ opacity: 0.7, fontSize: 13 }}>
+                      {t(props.locale, "pagination.showing").replace("{from}", String(auditPage * pageSize + 1)).replace("{to}", String(Math.min((auditPage + 1) * pageSize, auditLogs.length)))}
+                      {t(props.locale, "pagination.total").replace("{count}", String(auditLogs.length))}
+                    </span>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button disabled={auditPage === 0} onClick={() => setAuditPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                      <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(auditPage + 1))}</span>
+                      <button disabled={auditPage >= auditTotalPages - 1} onClick={() => setAuditPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+                    </div>
+                  </div>
+                )}
+                </>
               )}
             </Card>
           ),

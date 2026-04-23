@@ -44,11 +44,17 @@ export default function GovWorkbenchesClient(props: { locale: string; initial: a
     });
   }, [items, q, props.locale]);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paged = useMemo(() => filtered.slice(page * pageSize, (page + 1) * pageSize), [filtered, page]);
+
   const refresh = useCallback(async () => {
     setError("");
     const res = await apiFetch(`/workbenches`, { locale: props.locale, cache: "no-store" });
     const json = await res.json().catch(() => null);
     setItemsRes({ status: res.status, json });
+    setPage(0);
     if (!res.ok) setError(errText(props.locale, (json as ApiError) ?? { errorCode: String(res.status) }));
   }, [props.locale]);
 
@@ -129,7 +135,7 @@ export default function GovWorkbenchesClient(props: { locale: string; initial: a
       <div style={{ marginTop: 16 }}>
         <Card title={t(props.locale, "gov.workbenches.listTitle")}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t(props.locale, "gov.workbenches.searchPlaceholder")} style={{ minWidth: 320 }} />
+            <input value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder={t(props.locale, "gov.workbenches.searchPlaceholder")} style={{ minWidth: 320 }} />
             <span className="muted">{t(props.locale, "gov.workbenches.countLabel")}: {filtered.length}</span>
           </div>
           <Table>
@@ -145,7 +151,7 @@ export default function GovWorkbenchesClient(props: { locale: string; initial: a
               </tr>
             </thead>
             <tbody>
-              {filtered.map((it, idx) => {
+              {paged.map((it, idx) => {
                 const p = it.plugin ?? {};
                 const key = String(p.workbenchKey ?? "");
                 const name = pickI18n(props.locale, p.displayName);
@@ -169,6 +175,19 @@ export default function GovWorkbenchesClient(props: { locale: string; initial: a
               })}
             </tbody>
           </Table>
+          {totalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 8 }}>
+              <span style={{ opacity: 0.7, fontSize: 13 }}>
+                {t(props.locale, "pagination.showing").replace("{from}", String(page * pageSize + 1)).replace("{to}", String(Math.min((page + 1) * pageSize, filtered.length)))}
+                {t(props.locale, "pagination.total").replace("{count}", String(filtered.length))}
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t(props.locale, "pagination.prev")}</button>
+                <span style={{ lineHeight: "32px", fontSize: 13 }}>{t(props.locale, "pagination.page").replace("{page}", String(page + 1))}</span>
+                <button disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>{t(props.locale, "pagination.next")}</button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
     </div>
