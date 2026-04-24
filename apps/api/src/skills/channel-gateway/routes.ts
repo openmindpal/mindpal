@@ -62,6 +62,33 @@ function hmacHex(secret: string, input: string) {
   return crypto.createHmac("sha256", secret).update(input, "utf8").digest("hex");
 }
 
+/** IM 渠道附件 schema（兼容不同渠道适配器的字段名） */
+const channelAttachmentSchema = z.array(z.object({
+  type: z.enum(["image", "document", "voice", "video"]).default("image"),
+  mimeType: z.string().min(1).max(200).optional(),
+  name: z.string().max(500).optional(),
+  url: z.string().max(20_000_000).optional(),
+  dataUrl: z.string().max(20_000_000).optional(),
+  textContent: z.string().max(500_000).optional(),
+})).max(10).optional();
+
+/** 将渠道消息中的附件转为 orchestrateChatTurn 期望的格式 */
+function parseChannelAttachments(
+  body: { attachments?: unknown; files?: unknown; images?: unknown },
+): Array<{ type: string; mimeType: string; name?: string; dataUrl: string }> {
+  const raw = body.attachments ?? body.files ?? body.images;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  return raw
+    .filter((a: any) => a && typeof a === "object")
+    .map((a: any) => ({
+      type: String(a.type ?? "image"),
+      mimeType: String(a.mimeType ?? a.mime_type ?? "application/octet-stream"),
+      ...(a.name ? { name: String(a.name) } : {}),
+      dataUrl: String(a.dataUrl ?? a.data_url ?? a.url ?? ""),
+    }))
+    .filter((a) => a.dataUrl);
+}
+
 export const channelRoutes: FastifyPluginAsync = async (app) => {
   app.post("/channels/feishu/events", async (req, reply) => {
     const adapter = getChannelProviderAdapter("feishu");
@@ -194,6 +221,9 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
         channelUserId: z.string().min(1).optional(),
         channelChatId: z.string().min(1).optional(),
         text: z.string().max(20000).optional(),
+        attachments: channelAttachmentSchema,
+        files: channelAttachmentSchema,
+        images: channelAttachmentSchema,
         payload: z.any().optional(),
       })
       .parse(req.body);
@@ -341,6 +371,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
       await app.db.query("UPDATE channel_ingress_events SET space_id = $2 WHERE id = $1", [inserted.id, spaceId]);
       const convChatId = (body.channelChatId ?? body.channelUserId ?? "").trim() || null;
       const conversationId = convChatId ? channelConversationId({ provider: body.provider, workspaceId: body.workspaceId, channelChatId: convChatId, threadId: null }) : null;
+      const channelAttachments = parseChannelAttachments(body);
       const out = await orchestrateChatTurn({
         app,
         pool: app.db,
@@ -350,6 +381,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
         conversationId,
         authorization: (req.headers.authorization as string | undefined) ?? null,
         traceId: req.ctx.traceId,
+        ...(channelAttachments.length > 0 ? { attachments: channelAttachments } : {}),
       });
       const resp = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId }, status: "succeeded", result: out };
       await finalizeIngressEvent({ pool: app.db, id: inserted.id, status: "succeeded", responseStatusCode: 200, responseJson: resp });
@@ -668,6 +700,9 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
         channelChatId: z.string().min(1).optional(),
         type: z.enum(["message", "command", "callback"]),
         text: z.string().max(20000).optional(),
+        attachments: channelAttachmentSchema,
+        files: channelAttachmentSchema,
+        images: channelAttachmentSchema,
         command: z.object({ name: z.string().min(1), args: z.record(z.string(), z.any()).optional() }).optional(),
         callback: z.object({ actionId: z.string().min(1), value: z.any().optional(), messageRef: z.string().min(1).optional() }).optional(),
       })
@@ -783,6 +818,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
           : `callback:${body.callback?.actionId ?? ""} ${stableStringify(body.callback?.value ?? null)}`;
 
     try {
+      const mockAttachments = parseChannelAttachments(body);
       const out = await orchestrateChatTurn({
         app,
         pool: app.db,
@@ -791,6 +827,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
         locale: req.ctx.locale,
         authorization: (req.headers.authorization as string | undefined) ?? null,
         traceId: req.ctx.traceId,
+        ...(mockAttachments.length > 0 ? { attachments: mockAttachments } : {}),
       });
       const resp = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId }, status: "succeeded", result: out };
       await finalizeIngressEvent({ pool: app.db, id: inserted.id, status: "succeeded", responseStatusCode: 200, responseJson: resp });

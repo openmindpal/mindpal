@@ -2,7 +2,7 @@ import type { Queue } from "bullmq";
 import type Redis from "ioredis";
 import type { Pool } from "pg";
 import crypto from "node:crypto";
-import { isToolAllowedForPolicy, tryTransitionRun, type RunStatus, StructuredLogger, resolveNumber } from "@openslin/shared";
+import { tryTransitionRun, type RunStatus, StructuredLogger } from "@openslin/shared";
 import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 
 const _logger = new StructuredLogger({ module: "worker:agentRunScheduler" });
@@ -165,13 +165,10 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
 
     const inputDigest = (runRes.rows[0].input_digest as any) ?? null;
     const limits = (inputDigest?.limits as any) ?? null;
-    const maxSteps = limits?.maxSteps ? Number(limits.maxSteps) : null;
-    const maxWallTimeMs = limits?.maxWallTimeMs ? Number(limits.maxWallTimeMs) : null;
-    const maxTokens = limits?.maxTokens ? Number(limits.maxTokens) : null;
-    const maxCostUsd = limits?.maxCostUsd ? Number(limits.maxCostUsd) : null;
     const collabRunId = typeof inputDigest?.collabRunId === "string" ? String(inputDigest.collabRunId) : "";
     const taskId = typeof inputDigest?.taskId === "string" ? String(inputDigest.taskId) : "";
     const isCollab = String(inputDigest?.kind ?? "") === "collab.run" && collabRunId && taskId;
+    const maxSteps = limits?.maxSteps ? Number(limits.maxSteps) : null;
 
     const candidatesRes = await pool.query(
       `
@@ -188,69 +185,81 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
 
     const spaceIdHint = (candidatesRes.rows[0]?.input as any)?.spaceId ? String((candidatesRes.rows[0].input as any).spaceId) : "";
 
-    if (maxSteps && candidatesRes.rows[0] && Number(candidatesRes.rows[0].seq ?? 0) > maxSteps) {
+    // --- 编排预检（已迁移至 API OrchestrationKernel.preflightCheck） ---
+    // Worker 从 step metadata 读取预检结果
+    const currentStepId = candidatesRes.rows[0]?.step_id ? String(candidatesRes.rows[0].step_id) : "";
+    const stepMetaRes = await pool.query(
+      `SELECT input_digest FROM steps WHERE step_id = $1`,
+      [currentStepId],
+    );
+    const preflight = (stepMetaRes.rows[0]?.input_digest as any)?.preflight_result ?? null;
+    if (preflight && !preflight.allowed) {
       await stopRunWithBudget({
         jobId: params.jobId,
         runId: params.runId,
-        phase: "stopped.limit_exceeded",
-        collab: isCollab && tenantId ? { tenantId, spaceIdHint: spaceIdHint || "", collabRunId, taskId, reason: "maxSteps" } : undefined,
+        phase: "stopped.preflight_rejected",
+        collab: isCollab && tenantId
+          ? { tenantId, spaceIdHint: spaceIdHint || "", collabRunId, taskId, reason: preflight.reason ?? "preflight_rejected" }
+          : undefined,
       });
       return;
     }
-
-    if (maxWallTimeMs) {
-      const startedAt = (runRes.rows[0].started_at as string | null) ?? (runRes.rows[0].created_at as string | null) ?? null;
-      if (startedAt && Date.now() - new Date(startedAt).getTime() > maxWallTimeMs) {
-        await stopRunWithBudget({
-          jobId: params.jobId,
-          runId: params.runId,
-          phase: "stopped.timeout",
-          collab: isCollab && tenantId ? { tenantId, spaceIdHint: spaceIdHint || "", collabRunId, taskId, reason: "timeout" } : undefined,
-        });
-        return;
-      }
-    }
-
-    if ((maxTokens || maxCostUsd) && isCollab && tenantId) {
-      const prefix = `collab:${collabRunId}:%`;
-      const usedRes = await pool.query(
-        `
-          SELECT COALESCE(SUM(COALESCE(total_tokens, 0)), 0)::bigint AS total
-          FROM model_usage_events
-          WHERE tenant_id = $1
-            AND ($2::text IS NULL OR space_id = $2)
-            AND purpose LIKE $3
-            AND created_at >= (now() - interval '14 days')
-        `,
-        [tenantId, spaceIdHint || null, prefix],
-      );
-      const usedTokens = Number(usedRes.rowCount ? usedRes.rows[0].total : 0) || 0;
-
-      if (maxTokens && usedTokens >= maxTokens) {
-        await stopRunWithBudget({
-          jobId: params.jobId,
-          runId: params.runId,
-          phase: "stopped.limit_exceeded",
-          collab: { tenantId, spaceIdHint: spaceIdHint || "", collabRunId, taskId, reason: "maxTokens" },
-        });
-        return;
-      }
-
-      if (maxCostUsd) {
-        const usdPer1kTokens = resolveNumber("MODEL_USD_PER_1K_TOKENS").value;
-        if (Number.isFinite(usdPer1kTokens) && usdPer1kTokens > 0) {
-          const usedCostUsd = (usedTokens / 1000) * usdPer1kTokens;
-          if (usedCostUsd >= maxCostUsd) {
-            await stopRunWithBudget({
-              jobId: params.jobId,
-              runId: params.runId,
-              phase: "stopped.limit_exceeded",
-              collab: { tenantId, spaceIdHint: spaceIdHint || "", collabRunId, taskId, reason: "maxCostUsd" },
-            });
-            return;
+    if (preflight?.requiresApproval) {
+      // 预检要求审批：转换 run/step 状态为 needs_approval 并停止入队
+      const runStatus = status as RunStatus;
+      const transResult = tryTransitionRun(runStatus, "needs_approval" as RunStatus);
+      if (transResult.ok) {
+        const apClient = await pool.connect();
+        try {
+          await apClient.query("BEGIN");
+          await apClient.query(
+            "UPDATE runs SET status = 'needs_approval', updated_at = now() WHERE run_id = $1 AND tenant_id = $2",
+            [params.runId, tenantId],
+          );
+          await apClient.query(
+            "UPDATE steps SET status = 'needs_approval', updated_at = now() WHERE step_id = $1",
+            [currentStepId],
+          );
+          await apClient.query(
+            "UPDATE jobs SET status = 'needs_approval', updated_at = now() WHERE job_id = $1",
+            [params.jobId],
+          );
+          if (isCollab && tenantId) {
+            await apClient.query(
+              "UPDATE collab_runs SET status = 'needs_approval', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2",
+              [tenantId, collabRunId],
+            );
           }
+          await apClient.query("COMMIT");
+        } catch (txErr: any) {
+          await apClient.query("ROLLBACK").catch(() => {});
+          _logger.error("preflight approval tx rollback", { runId: params.runId, stepId: currentStepId, error: txErr?.message ?? String(txErr) });
+          throw txErr;
+        } finally {
+          apClient.release();
         }
+        if (isCollab && tenantId) {
+          await syncWorkerCollabStateSafe({
+            pool, tenantId, collabRunId,
+            phase: "needs_approval",
+            setCurrentRole: true, currentRole: null,
+            updateType: "phase_change", sourceRole: "system",
+            payload: { reason: "preflight_requires_approval", runId: params.runId, stepId: currentStepId },
+          });
+          await appendCollabEventOnce({
+            pool, redis, tenantId,
+            spaceId: spaceIdHint || null,
+            collabRunId, taskId,
+            type: "collab.run.needs_approval",
+            actorRole: null,
+            runId: params.runId, stepId: currentStepId,
+            payloadDigest: { reason: "preflight_requires_approval" },
+          });
+        }
+      } else {
+        _logger.warn("preflight approval state transition rejected", { currentStatus: runStatus, target: "needs_approval", runId: params.runId });
       }
+      return; // 不继续入队，等待审批完成后恢复
     }
 
     const completedPlanStepIds = new Set<string>();
@@ -265,45 +274,9 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
       }
     }
 
-    let roleAllowed: Record<string, Set<string> | null> = {};
-    let roleBudget: Record<string, { maxSteps?: number }> = {};
-    if (isCollab && tenantId && spaceIdHint) {
-      const ts = await pool.query(
-        "SELECT plan FROM memory_task_states WHERE tenant_id = $1 AND space_id = $2 AND run_id = $3 AND deleted_at IS NULL LIMIT 1",
-        [tenantId, spaceIdHint, params.runId],
-      );
-      const plan = ts.rowCount ? ((ts.rows[0] as any).plan as any) : null;
-      const roles = Array.isArray(plan?.roles) ? plan.roles : [];
-      for (const r of roles) {
-        const rn = typeof r?.roleName === "string" ? String(r.roleName) : "";
-        const allowed = Array.isArray(r?.toolPolicy?.allowedTools) ? r.toolPolicy.allowedTools.map((x: any) => String(x)) : null;
-        if (rn) roleAllowed[rn] = allowed ? new Set<string>(allowed) : null;
-        const rbMaxSteps = r?.budget?.maxSteps ? Number(r.budget.maxSteps) : null;
-        if (rn && rbMaxSteps && Number.isFinite(rbMaxSteps) && rbMaxSteps > 0) {
-          roleBudget[rn] = { maxSteps: Math.max(1, Math.min(100, Math.floor(rbMaxSteps))) };
-        }
-      }
-    }
-
-    let usedStepsByRole: Record<string, number> | null = null;
-    const roleBudgetRoles = Object.keys(roleBudget);
-    if (isCollab && roleBudgetRoles.length) {
-      usedStepsByRole = {};
-      const usedRes = await pool.query(
-        `
-          SELECT (input->>'actorRole') AS role_name, COUNT(*)::int AS cnt
-          FROM steps
-          WHERE run_id = $1 AND status = 'succeeded'
-          GROUP BY (input->>'actorRole')
-        `,
-        [params.runId],
-      );
-      for (const r of usedRes.rows) {
-        const rn = r.role_name ? String(r.role_name) : "";
-        if (!rn) continue;
-        usedStepsByRole[rn] = Number(r.cnt ?? 0) || 0;
-      }
-    }
+    // 角色工具策略校验已迁移至 API OrchestrationKernel.preflightCheck
+    // Worker 从 preflight 结果中获取角色允许信息
+    const roleAllowed: Record<string, Set<string> | null> = {};
 
     const ready: Array<{ stepId: string; seq: number; toolRef: string | null; metaInput: any; policySnapshotRef: any; inputDigest: any }> = [];
     for (const row of candidatesRes.rows) {
@@ -317,34 +290,8 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
         const dependsOn = Array.isArray(metaInput?.dependsOn) ? metaInput.dependsOn.map((x: any) => String(x)) : [];
         const ok = dependsOn.every((d: string) => completedPlanStepIds.has(d));
         if (!ok) continue;
-        const actorRole = metaInput?.actorRole ? String(metaInput.actorRole) : "";
-        const allowedSet = actorRole ? roleAllowed[actorRole] ?? null : null;
-        if (allowedSet && toolRef && !isToolAllowedForPolicy(allowedSet, toolRef)) {
-          await stopRunWithBudget({
-            jobId: params.jobId,
-            runId: params.runId,
-            phase: "stopped.policy_denied",
-            tenantId,
-            collab: tenantId
-              ? { tenantId, spaceIdHint: spaceIdHint || "", collabRunId, taskId, reason: "tool_not_allowed", eventType: "collab.policy.denied" }
-              : undefined,
-          });
-          return;
-        }
-
-        const rb = actorRole ? roleBudget[actorRole] ?? null : null;
-        if (rb?.maxSteps && usedStepsByRole) {
-          const used = Number(usedStepsByRole[actorRole] ?? 0) || 0;
-          if (used + 1 > rb.maxSteps) {
-            await stopRunWithBudget({
-              jobId: params.jobId,
-              runId: params.runId,
-              phase: "stopped.limit_exceeded",
-              collab: tenantId ? { tenantId, spaceIdHint: spaceIdHint || "", collabRunId, taskId, reason: `role.maxSteps:${actorRole}` } : undefined,
-            });
-            return;
-          }
-        }
+        // 角色工具策略校验已迁移至 Kernel preflightCheck
+        // Worker 仅检查 preflight 拒绝标志（已在上方统一处理）
       }
       ready.push({
         stepId,

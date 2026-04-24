@@ -10,22 +10,13 @@
 import * as fs from "fs";
 import * as path from "path";
 
-/* ================================================================== */
-/*  0. 类型定义                                                         */
-/* ================================================================== */
-
-interface _InterventionEntry {
-  re: RegExp;
-  type: "cancel" | "pause" | "resume" | "modify_step" | "change_goal";
-}
-
-/** 多模态提示规则类型 */
-export interface MultimodalHintEntry {
-  attachmentType: "image" | "document" | "voice" | "video";
-  textPattern?: string;
-  boostIntent: string;
-  boostConfidence: number;
-}
+// 从 kernel 层导入类型定义（依赖方向：skills → kernel）
+export type { MultimodalHintEntry, ActiveVocab, InterventionPatternEntry } from "../../../kernel/intentVocabulary";
+import type { MultimodalHintEntry, ActiveVocab, InterventionPatternEntry } from "../../../kernel/intentVocabulary";
+import {
+  registerVocabProvider as _kernelRegisterVocabProvider,
+  registerInterventionProvider as _kernelRegisterInterventionProvider,
+} from "../../../kernel/intentVocabulary";
 
 /* ================================================================== */
 /*  1. 从 JSON 加载默认词表                                              */
@@ -79,7 +70,7 @@ export const DEFAULT_MULTIMODAL_HINTS: readonly MultimodalHintEntry[] = _default
 
 let _greetingWords: readonly string[] = _defaults.greetingWords ?? [..._FALLBACK_GREETING];
 let _collabKeywords: readonly string[] = _defaults.collabKeywords ?? [..._FALLBACK_COLLAB];
-let _interventionPatterns: readonly _InterventionEntry[] = [];
+let _interventionPatterns: readonly InterventionPatternEntry[] = [];
 let _highRiskKeywords: readonly string[] = [];
 let _executeRequestPrefixes: readonly string[] = _defaults.executeRequestPrefixes ?? [];
 let _executeActionVerbs: readonly string[] = _defaults.executeActionVerbs ?? [];
@@ -153,7 +144,7 @@ export function _initVocabData(data: {
   _highRiskKeywords = data.highRiskKeywords ?? [];
   _interventionPatterns = (data.interventionPatterns ?? []).map((p) => ({
     re: new RegExp(p.re),
-    type: p.type as _InterventionEntry["type"],
+    type: p.type as InterventionPatternEntry["type"],
   }));
   _executeRequestPrefixes = data.executeRequestPrefixes ?? _defaults.executeRequestPrefixes ?? [];
   _executeActionVerbs = data.executeActionVerbs ?? _defaults.executeActionVerbs ?? [];
@@ -180,6 +171,10 @@ export function _initVocabData(data: {
   UI_DISPLAY_VERBS = _uiDisplayVerbs;
   _multimodalHints = data.multimodalHints?.length ? data.multimodalHints : DEFAULT_MULTIMODAL_HINTS;
   _rebuildRegexes();
+
+  // 同步注册到 kernel 层，确保 kernel 的 getActiveVocab / getInterventionPatterns 可用
+  _kernelRegisterVocabProvider(() => getActiveVocab());
+  _kernelRegisterInterventionProvider(() => INTERVENTION_PATTERNS);
 }
 
 /* ================================================================== */
@@ -188,7 +183,7 @@ export function _initVocabData(data: {
 
 export let GREETING_WORDS: readonly string[] = _greetingWords;
 export let COLLAB_KEYWORDS: readonly string[] = _collabKeywords;
-export let INTERVENTION_PATTERNS: readonly { re: RegExp; type: "cancel" | "pause" | "resume" | "modify_step" | "change_goal" }[] = [];
+export let INTERVENTION_PATTERNS: readonly InterventionPatternEntry[] = [];
 export let HIGH_RISK_KEYWORDS: readonly string[] = _highRiskKeywords;
 export let EXECUTE_REQUEST_PREFIXES: readonly string[] = _executeRequestPrefixes;
 export let EXECUTE_ACTION_VERBS: readonly string[] = _executeActionVerbs;
@@ -215,6 +210,10 @@ export let FOLLOW_UP_RE: RegExp = /^$/;
 // 模块加载时用 JSON 数据编译一次正则
 _rebuildRegexes();
 
+// 模块加载时注册到 kernel 层，确保 kernel 可用
+_kernelRegisterVocabProvider(() => getActiveVocab());
+_kernelRegisterInterventionProvider(() => INTERVENTION_PATTERNS);
+
 /* ================================================================== */
 /*  7. 辅助函数                                                          */
 /* ================================================================== */
@@ -226,29 +225,17 @@ export function hasHighRiskKeyword(msg: string): boolean {
 }
 
 /* ================================================================== */
-/*  8. 动态词表桥接                                                      */
+/*  8. 动态词表桥接（委托给 kernel 层）                                   */
 /* ================================================================== */
 
-export interface ActiveVocab {
-  greetingWords: readonly string[];
-  collabKeywords: readonly string[];
-  highRiskKeywords: readonly string[];
-  executeRequestPrefixes: readonly string[];
-  executeActionVerbs: readonly string[];
-  questionIndicators: readonly string[];
-  opinionPrefixes: readonly string[];
-  followUpConfirms: readonly string[];
-  queryKeywords: readonly string[];
-  uiPatternVerbs: readonly string[];
-  uiPatternTargets: readonly string[];
-  uiDisplayVerbs: readonly string[];
-  multimodalHints: readonly MultimodalHintEntry[];
-}
+// ActiveVocab 已从 kernel 层重导出（见文件顶部 export type）
 
 let _getLoaderSnapshot: (() => ActiveVocab | null) | null = null;
 
 export function registerVocabProvider(fn: () => ActiveVocab | null): void {
   _getLoaderSnapshot = fn;
+  // 同步注册到 kernel 层
+  _kernelRegisterVocabProvider(fn);
 }
 
 export function getActiveVocab(): ActiveVocab {

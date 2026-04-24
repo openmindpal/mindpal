@@ -242,3 +242,79 @@ COMMENT ON COLUMN task_dependencies.source IS '依赖来源：auto(LLM推断)/ma
 
 COMMENT ON TABLE task_checkpoints IS '任务检查点持久化存储 — 记录任务执行的中间状态，用于宕机恢复';
 COMMENT ON COLUMN task_checkpoints.checkpoint_data IS '检查点数据 JSON — 包含当前步骤、中间结果、执行上下文等';
+
+-- (原026) Scheduler Metrics Snapshots
+-- P2-G7: 调度器指标定期快照持久化
+
+CREATE TABLE IF NOT EXISTS scheduler_metrics_snapshots (
+  snapshot_id    TEXT PRIMARY KEY DEFAULT 'singleton',
+  metrics        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  snapshot_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 历史快照（可选，按需启用 retention）
+CREATE TABLE IF NOT EXISTS scheduler_metrics_history (
+  id             BIGSERIAL PRIMARY KEY,
+  metrics        JSONB NOT NULL,
+  snapshot_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduler_metrics_history_at
+  ON scheduler_metrics_history (snapshot_at DESC);
+
+-- 保留最近 7 天快照（由应用层或 cron 清理）
+COMMENT ON TABLE scheduler_metrics_snapshots IS '调度器指标最新快照（单行 UPSERT）';
+COMMENT ON TABLE scheduler_metrics_history IS '调度器指标历史快照（定期追加，用于趋势分析）';
+
+-- (原034) Task Queue Index Optimization
+-- 补充 session_task_queue 的复合索引，覆盖高频并发调度查询模式，消除全表扫描风险
+
+-- ── 1. 活跃条目部分索引（排除终态，position DESC 优化 MAX 聚合）────
+-- 覆盖查询：insertQueueEntry(MAX(position))、listActiveEntries、
+--           listResumableEntries、cancelAllActive、reorderEntry
+-- position DESC 使 MAX(position) 直接取首行即返回，避免反向遍历
+CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_active_position_idx
+  ON session_task_queue (tenant_id, session_id, position DESC)
+  WHERE status NOT IN ('completed', 'failed', 'cancelled');
+
+-- ── 2. 执行中任务计数覆盖索引 ──────────────────────────────
+-- 覆盖查询：countExecuting（COUNT(*) WHERE status='executing'）
+-- INCLUDE(entry_id) 实现完全 Index-Only Scan，同时支持按 entry_id 快速定位
+CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_executing_idx
+  ON session_task_queue (tenant_id, session_id)
+  INCLUDE (entry_id)
+  WHERE status = 'executing';
+
+-- ── 3. 僵尸任务检测索引 ──────────────────────────────────
+-- 覆盖查询：listZombieExecutingEntries、listStaleExecutingEntries
+-- 这两个查询不带 tenant_id（全分区扫描），需独立索引
+CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_executing_started_idx
+  ON session_task_queue (started_at ASC)
+  WHERE status = 'executing';
+
+-- ── 4. 关闭恢复索引 ──────────────────────────────────────
+-- 覆盖查询：listShutdownPausedEntries（status='paused' AND checkpoint_ref LIKE 'shutdown:%'）
+CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_paused_checkpoint_idx
+  ON session_task_queue (status)
+  WHERE status = 'paused' AND checkpoint_ref IS NOT NULL;
+
+-- ── 5. 租户待处理任务聚合索引 ──────────────────────────────
+-- 覆盖查询：listSessionsWithPendingTasks（GROUP BY session_id）
+CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_tenant_active_session_idx
+  ON session_task_queue (tenant_id, session_id)
+  WHERE status NOT IN ('completed', 'failed', 'cancelled');
+
+-- ── 6. 历史分页查询索引 ──────────────────────────────────
+-- 覆盖查询：listHistoryEntries（ORDER BY enqueued_at DESC LIMIT/OFFSET）
+-- 现有 stq_session_enqueued_idx 为 ASC，补充 DESC 索引避免反向扫描
+CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_session_enqueued_desc_idx
+  ON session_task_queue (tenant_id, session_id, enqueued_at DESC);
+
+-- ── 7. 可调度任务选取复合索引（覆盖 listSchedulable 热路径）─────
+-- 查询模式：SELECT ... WHERE tenant_id=$1 AND session_id=$2
+--           AND status IN ('queued','ready') ORDER BY priority ASC, enqueued_at ASC
+-- 部分索引仅含 queued/ready 行，体积极小；排序列内嵌索引避免 filesort
+CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_schedulable_dispatch_idx
+  ON session_task_queue (tenant_id, session_id, priority ASC, enqueued_at ASC)
+  WHERE status IN ('queued', 'ready');

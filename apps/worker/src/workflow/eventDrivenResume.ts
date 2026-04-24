@@ -19,7 +19,9 @@
  *   - manual.resume       → 手动恢复
  */
 import type { Pool } from "pg";
+import type Redis from "ioredis";
 import { safeTransitionRun, type RunStatus, StructuredLogger } from "@openslin/shared";
+import { acquireLock } from "../lib/distributedLock";
 
 const _logger = new StructuredLogger({ module: 'worker:eventDrivenResume' });
 import { writeAudit } from "./processor/audit";
@@ -85,7 +87,7 @@ export interface ResumeResult {
 /* ================================================================== */
 
 const EVENT_STATUS_MAP: Record<ResumeEventType, string[]> = {
-  "approval.resolved": ["needs_approval"],
+  "approval.resolved": ["needs_approval", "paused"],
   "device.online": ["needs_device"],
   "arbiter.decided": ["needs_arbiter"],
   "webhook.callback": ["needs_approval", "needs_device", "needs_arbiter", "paused"],
@@ -109,19 +111,32 @@ export async function dispatchResumeEvent(
   event: ResumeEvent,
   pool: Pool,
   enqueueJob: (params: { runId: string; stepId: string; jobId: string }) => Promise<void>,
+  redis?: Redis,
 ): Promise<ResumeResult> {
   const { type, tenantId, spaceId, runId: explicitRunId, traceId } = event;
 
-  // 1. 定位目标 run
-  let targetRunId = explicitRunId ?? null;
-  if (!targetRunId) {
-    targetRunId = await findBlockedRunByEvent(pool, event);
-  }
+  // --- 幂等性检查 ---
+  const idempotencyKey = `${type}:${event.sourceId ?? "none"}:${explicitRunId ?? "auto"}`;
+  const targetRunId = explicitRunId ?? await findBlockedRunByEvent(pool, event);
   if (!targetRunId) {
     return {
       ok: false, type, runId: null,
-      previousStatus: "unknown", newStatus: "unknown",
-      message: `未找到可恢复的 run (event: ${type}, source: ${event.sourceId})`,
+      previousStatus: "", newStatus: "",
+      message: "no_matching_run",
+    };
+  }
+
+  const idempRes = await pool.query(
+    `INSERT INTO resume_events (tenant_id, run_id, event_type, idempotency_key)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT DO NOTHING`,
+    [tenantId, targetRunId, type, idempotencyKey],
+  );
+  if (idempRes.rowCount === 0) {
+    return {
+      ok: true, type, runId: targetRunId,
+      previousStatus: "", newStatus: "",
+      message: "duplicate_event_ignored",
     };
   }
 
@@ -183,6 +198,42 @@ export async function dispatchResumeEvent(
   if (type === "force.anomaly") {
     return handleForceAnomaly(pool, event, targetRunId, currentStatus);
   }
+
+  // --- 分布式锁 ---
+  const lockKey = `resume:${targetRunId}`;
+  const lockValue = traceId ?? idempotencyKey;
+
+  if (redis) {
+    const lock = await acquireLock(redis, { lockKey, ttlMs: 30_000, acquireTimeoutMs: 0 });
+    if (!lock) {
+      return {
+        ok: false, type, runId: targetRunId,
+        previousStatus: currentStatus, newStatus: "",
+        message: "concurrent_resume_blocked",
+      };
+    }
+    try {
+      return await executeResume(pool, event, targetRunId, currentStatus, enqueueJob);
+    } finally {
+      await lock.release();
+    }
+  }
+
+  // 无 redis 时直接执行（向后兼容）
+  return executeResume(pool, event, targetRunId, currentStatus, enqueueJob);
+}
+
+/**
+ * 状态转换 + step 恢复 + 入队（提取为内部函数以便锁包裹）
+ */
+async function executeResume(
+  pool: Pool,
+  event: ResumeEvent,
+  targetRunId: string,
+  currentStatus: string,
+  enqueueJob: (params: { runId: string; stepId: string; jobId: string }) => Promise<void>,
+): Promise<ResumeResult> {
+  const { type, tenantId } = event;
 
   // 5. P0-2 FIX: 恢复必须经过状态机校验，统一调用 safeTransitionRun
   const currentRunStatus = currentStatus as RunStatus;

@@ -126,6 +126,21 @@ export interface IOrchestrationKernel {
 
   /** 取消正在执行的循环 */
   cancelLoop(runId: string): Promise<void>;
+
+  /** 编排预检：预算 / 角色工具策略 / 审批需求评估 */
+  preflightCheck(params: {
+    pool: Pool;
+    runId: string;
+    stepId: string;
+    tenantId: string;
+    toolRef?: string;
+    subject?: { subjectId: string; roles?: string[] };
+  }): Promise<{
+    allowed: boolean;
+    reason?: string;
+    requiresApproval?: boolean;
+    assessmentContext?: unknown;
+  }>;
 }
 
 /* ================================================================== */
@@ -302,6 +317,18 @@ export function createOrchestrationKernel(deps: {
       };
     },
 
+    async preflightCheck(params: {
+      pool: Pool;
+      runId: string;
+      stepId: string;
+      tenantId: string;
+      toolRef?: string;
+      subject?: { subjectId: string; roles?: string[] };
+    }) {
+      // 委托给独立导出的 preflightCheck 函数
+      return preflightCheck(params);
+    },
+
     async cancelLoop(runId: string): Promise<void> {
       const entry = activeLoops.get(runId);
       if (entry) {
@@ -348,6 +375,92 @@ function mapRunStatusToPhase(status: string): OrchestrationPhase {
     default:
       return OrchestrationPhase.IDLE;
   }
+}
+
+/**
+ * 独立导出的 preflightCheck 函数，供 executionKernel 等模块在
+ * step 入队前调用，无需持有 OrchestrationKernel 实例。
+ */
+export async function preflightCheck(params: {
+  pool: Pool;
+  runId: string;
+  stepId: string;
+  tenantId: string;
+  toolRef?: string;
+  subject?: { subjectId: string; roles?: string[] };
+}): Promise<{ allowed: boolean; reason?: string; requiresApproval?: boolean; assessmentContext?: unknown }> {
+  const { pool, runId, stepId, tenantId, toolRef, subject } = params;
+
+  // 1. 预算检查
+  const runMeta = await pool.query(
+    `SELECT r.max_steps, r.max_wall_time_ms, r.max_tokens, r.max_cost_usd,
+            r.started_at, COUNT(s2.step_id) AS step_count
+     FROM runs r
+     LEFT JOIN steps s2 ON s2.run_id = r.run_id AND s2.status NOT IN ('canceled')
+     WHERE r.run_id = $1 AND r.tenant_id = $2
+     GROUP BY r.run_id`,
+    [runId, tenantId],
+  );
+
+  if (runMeta.rowCount === 0) return { allowed: false, reason: "run_not_found" };
+  const meta = runMeta.rows[0];
+
+  if (meta.max_steps && Number(meta.step_count) >= Number(meta.max_steps)) {
+    return { allowed: false, reason: "budget_exceeded_max_steps" };
+  }
+  if (meta.max_wall_time_ms && meta.started_at) {
+    const elapsed = Date.now() - new Date(meta.started_at).getTime();
+    if (elapsed > Number(meta.max_wall_time_ms)) {
+      return { allowed: false, reason: "budget_exceeded_wall_time" };
+    }
+  }
+  if (meta.max_tokens || meta.max_cost_usd) {
+    const usage = await pool.query(
+      `SELECT COALESCE(SUM(total_tokens), 0) AS tokens, COALESCE(SUM(cost_usd), 0) AS cost
+       FROM model_usage_events WHERE run_id = $1 AND tenant_id = $2`,
+      [runId, tenantId],
+    );
+    const u = usage.rows[0];
+    if (meta.max_tokens && Number(u.tokens) >= Number(meta.max_tokens)) {
+      return { allowed: false, reason: "budget_exceeded_tokens" };
+    }
+    if (meta.max_cost_usd && Number(u.cost) >= Number(meta.max_cost_usd)) {
+      return { allowed: false, reason: "budget_exceeded_cost" };
+    }
+  }
+
+  // 2. 角色工具策略校验
+  if (toolRef && subject?.roles) {
+    const roleRows = await pool.query(
+      `SELECT role_name, tool_policy FROM collab_roles
+       WHERE run_id = $1 AND tenant_id = $2 AND role_name = ANY($3)`,
+      [runId, tenantId, subject.roles],
+    );
+    if (roleRows.rowCount) {
+      const allowedTools = new Set<string>();
+      for (const r of roleRows.rows) {
+        for (const t of (r.tool_policy?.allowedTools ?? [])) allowedTools.add(t);
+      }
+      if (allowedTools.size > 0 && !allowedTools.has(toolRef) && !allowedTools.has("*")) {
+        return { allowed: false, reason: `tool_not_allowed_for_roles: ${toolRef}` };
+      }
+    }
+  }
+
+  // 3. 审批需求评估
+  if (toolRef) {
+    try {
+      const { assessToolExecutionRisk } = await import("./approvalRuleEngine");
+      const assessment = await assessToolExecutionRisk({
+        pool, tenantId, toolRef, inputDraft: {},
+      });
+      if (assessment.approvalRequired) {
+        return { allowed: true, requiresApproval: true, assessmentContext: assessment };
+      }
+    } catch { /* 评估失败不阻断 */ }
+  }
+
+  return { allowed: true };
 }
 
 /** 合并两个 AbortSignal（任一触发即 abort） */

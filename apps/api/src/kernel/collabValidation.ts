@@ -19,6 +19,9 @@ import { collabConfig } from "@openslin/shared";
 /** 最大纠错轮次限制，超过后返回当前最佳结果而非继续重试 */
 const MAX_CORRECTION_ROUNDS = 3;
 
+/** 交叉验证选择策略：adjacent=相邻互验，round_robin=随机非自身验证 */
+const CROSS_VALIDATION_STRATEGY = (process.env.COLLAB_CROSS_VALIDATION_STRATEGY ?? "adjacent") as "adjacent" | "round_robin";
+
 // ── 交叉验证执行阶段 ──────────────────────────────────────────
 
 /**
@@ -36,11 +39,23 @@ export async function runCrossValidationPhase(params: {
 
   const results: Array<{ validatedAgent: string; validatorAgent: string; verdict: string; reasoning: string }> = [];
 
-  // 相邻 Agent 两两互验
-  for (let i = 0; i < doneStates.length - 1; i++) {
-    const validated = doneStates[i]!;
-    const validator = doneStates[i + 1]!;
+  // 构建交叉验证配对
+  const pairs: Array<{ validated: AgentState; validator: AgentState }> = [];
+  if (CROSS_VALIDATION_STRATEGY === "round_robin") {
+    for (const validated of doneStates) {
+      const candidates = doneStates.filter(s => s.agentId !== validated.agentId);
+      if (candidates.length === 0) continue;
+      const validator = candidates[Math.floor(Math.random() * candidates.length)]!;
+      pairs.push({ validated, validator });
+    }
+  } else {
+    // adjacent：相邻 Agent 两两互验
+    for (let i = 0; i < doneStates.length - 1; i++) {
+      pairs.push({ validated: doneStates[i]!, validator: doneStates[i + 1]! });
+    }
+  }
 
+  for (const { validated, validator } of pairs) {
     try {
       // 为验证者创建临时 run
       const validatorRunId = crypto.randomUUID();

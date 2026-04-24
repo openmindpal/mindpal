@@ -724,11 +724,13 @@ function normalizeAudioAttachmentFormat(mimeType?: string, name?: string) {
   const mime = String(mimeType ?? "").toLowerCase();
   if (mime.includes("wav")) return "wav";
   if (mime.includes("mpeg") || mime.includes("mp3")) return "mp3";
+  if (mime.includes("opus")) return "opus";
   if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("aac")) return "aac";
   if (mime.includes("webm")) return "webm";
   if (mime.includes("flac")) return "flac";
   const ext = String(name ?? "").split(".").pop()?.toLowerCase();
-  if (ext === "wav" || ext === "mp3" || ext === "ogg" || ext === "webm" || ext === "flac") return ext;
+  if (ext === "wav" || ext === "mp3" || ext === "ogg" || ext === "webm" || ext === "flac" || ext === "aac" || ext === "opus") return ext;
   return "wav";
 }
 

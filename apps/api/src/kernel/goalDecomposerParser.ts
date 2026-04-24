@@ -83,13 +83,26 @@ export function parseDecompositionOutput(
           graph.subGoals.map((g) => ({ id: g.goalId, dependsOn: g.dependsOn }) as DagNode),
         );
         if (cycleNodes.size > 0) {
-          let weakest: SubGoal | null = null;
-          for (const g of graph.subGoals) {
-            if (cycleNodes.has(g.goalId)) {
-              if (!weakest || g.priority > weakest.priority) weakest = g;
+          let maxCycleBreaks = 3;
+          while (maxCycleBreaks-- > 0) {
+            const recheck = validateGoalGraphDAG(graph);
+            if (recheck.valid) break;
+            // 从循环路径中找优先级最高（priority值最大）的节点，剪裁其循环入边
+            const cyclePath: string[] = [...cycleNodes];
+            if (!cyclePath.length) break;
+            let weakest: SubGoal | null = null;
+            for (const g of graph.subGoals) {
+              if (cyclePath.includes(g.goalId)) {
+                if (!weakest || g.priority > weakest.priority) weakest = g;
+              }
+            }
+            if (weakest) {
+              const cycleSet = new Set(cyclePath);
+              weakest.dependsOn = weakest.dependsOn.filter((d) => !cycleSet.has(d));
+            } else {
+              break;
             }
           }
-          if (weakest) weakest.dependsOn = [];
 
           const finalValidation = validateGoalGraphDAG(graph);
           if (!finalValidation.valid) {

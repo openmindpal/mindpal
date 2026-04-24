@@ -7,6 +7,23 @@
 import { runAgentLoop } from "./agentLoop";
 import type { CollabAgentRole, AgentState, CollabOrchestratorParams } from "./collabTypes";
 import { readCollabEnvelopes, buildEnvelopeContext, writeCollabEnvelope } from "./collabEnvelope";
+import { StructuredLogger } from "@openslin/shared";
+
+const logger = new StructuredLogger({ module: "collabStrategies" });
+
+// ── 结果注入校验 ────────────────────────────────────────────────
+
+const MAX_ENVELOPE_SIZE = 1_048_576; // 1MB default, metadata-driven
+
+function validateEnvelope(envelope: unknown): { valid: boolean; reason?: string } {
+  if (!envelope || typeof envelope !== "object") return { valid: false, reason: "envelope_null_or_invalid" };
+  const e = envelope as Record<string, unknown>;
+  if (!e.agentId || typeof e.agentId !== "string") return { valid: false, reason: "missing_agentId" };
+  if (e.result === undefined) return { valid: false, reason: "missing_result" };
+  const size = JSON.stringify(e.result).length;
+  if (size > MAX_ENVELOPE_SIZE) return { valid: false, reason: `result_too_large(${size}>${MAX_ENVELOPE_SIZE})` };
+  return { valid: true };
+}
 
 // ── 顺序执行 ─────────────────────────────────────────────────────
 
@@ -254,6 +271,47 @@ export async function executePipeline(
     if (ready.length === 0) {
       // 死锁检测：有剩余 Agent 但没有可执行的
       const remainingIds = Array.from(remaining);
+
+      // 死锁恢复：检查未满足的依赖是否为 optional
+      const optionalRecoverable: string[] = [];
+      for (const id of remainingIds) {
+        const agent = agents.find(a => a.agentId === id);
+        const optDeps = new Set(agent?.optionalDependencies ?? []);
+        const unresolved = (agent?.dependencies ?? []).filter(d => !completed.has(d));
+        if (unresolved.every(d => optDeps.has(d))) {
+          // 所有未满足依赖均为 optional，可跳过继续执行
+          for (const d of unresolved) {
+            const dState = states.find(x => x.agentId === d);
+            if (dState && dState.status === "pending") {
+              dState.status = "failed";
+              dState.result = {
+                ok: false,
+                endReason: "error",
+                message: `optional dependency skipped during deadlock recovery`,
+                iterations: 0,
+                succeededSteps: 0,
+                failedSteps: 0,
+                observations: [],
+                lastDecision: null,
+              };
+            }
+            completed.add(d);
+            remaining.delete(d);
+          }
+          optionalRecoverable.push(id);
+        }
+      }
+
+      if (optionalRecoverable.length > 0) {
+        params.app.log.info(
+          { recovered: optionalRecoverable },
+          "[CollabOrchestrator] 死锁恢复：跳过 optional 依赖后继续",
+        );
+        // 恢复成功，继续循环
+        continue;
+      }
+
+      // 真正的死锁：不可恢复
       const deadlockInfo = {
         remainingAgents: remainingIds,
         unresolvedDeps: remainingIds.map((id) => {
@@ -276,6 +334,7 @@ export async function executePipeline(
             endReason: "pipeline_deadlock",
             message: `流水线死锁：等待未完成的依赖 ${JSON.stringify(deadlockInfo.unresolvedDeps.find((d) => d.agentId === id)?.waitingFor)}`,
             iterations: 0,
+            metadata: { deadlock_info: deadlockInfo },
           } as any;
         }
       }
@@ -289,11 +348,30 @@ export async function executePipeline(
       // 注入依赖 Agent 的结构化结果（包含已完成的和已失败但被绕过的）
       const agent = agents.find((a) => a.agentId === state.agentId);
       const envelopes = await readCollabEnvelopes({ pool: params.pool, collabRunId: params.collabRunId, toRole: state.role });
+
+      // 结果注入校验：校验每个 envelope 的合法性
+      for (const env of envelopes) {
+        const validation = validateEnvelope({ agentId: env.fromRole, result: env.payloadDigest });
+        if (!validation.valid) {
+          logger.warn("envelope validation failed, using empty result", { agentId: env.fromRole, reason: validation.reason });
+          env.payloadDigest = { ok: false, message: "", totalSteps: 0, totalIterations: 0, observations: [] };
+        }
+      }
+
       const structuredContext = buildEnvelopeContext(envelopes);
       const depResults = (agent?.dependencies ?? [])
-        .map((depId) => states.find((s) => s.agentId === depId))
-        .filter((s): s is AgentState => !!s && s.status === "done" && !!s.result)
-        .map((s) => `[${s.role}]: ${s.result!.message}`)
+        .map((depId) => {
+          const depState = states.find((s) => s.agentId === depId);
+          if (!depState || !depState.result) return null;
+          // 校验依赖 Agent 结果
+          const depValidation = validateEnvelope({ agentId: depId, result: depState.result });
+          if (!depValidation.valid) {
+            logger.warn("envelope validation failed, using empty result", { agentId: depId, reason: depValidation.reason });
+            return null;
+          }
+          return depState.status === "done" ? `[${depState.role}]: ${depState.result.message}` : null;
+        })
+        .filter((s): s is string => !!s)
         .join("\n");
       const enhancedGoal = depResults
         ? `${state.goal}\n\n## Input from Dependent Agents\n${depResults}${structuredContext}`

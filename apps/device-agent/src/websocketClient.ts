@@ -23,6 +23,11 @@ import {
   DEVICE_PROTOCOL_VERSION,
   type ProtocolHandshake,
   type ProtocolHandshakeAck,
+  type DeviceMultimodalQuery,
+  type DeviceMultimodalResponse,
+  type DeviceAttachment,
+  type DeviceMultimodalCapabilities,
+  type DeviceMultimodalPolicy,
 } from '@openslin/shared';
 
 // ────────────────────────────────────────────────────────────────
@@ -33,6 +38,7 @@ export interface WebSocketMessage {
   type: 'task_pending' | 'task_result' | 'heartbeat' | 'status_update' | 'device_message'
     | 'streaming_start' | 'streaming_stop' | 'streaming_step' | 'streaming_pause' | 'streaming_resume'
     | 'streaming_status' | 'streaming_progress'
+    | 'device_query' | 'device_response'
     | 'error';
   payload?: Record<string, unknown>;
 }
@@ -72,6 +78,17 @@ export class WebSocketDeviceAgent {
 
   /** P1: 流式执行器状态（委托给 wsStreamingHandlers） */
   private streamingState: StreamingState = { executor: null, sessionId: null };
+
+  /** P2: 服务端下发的多模态策略 */
+  private _multimodalPolicy: DeviceMultimodalPolicy | null = null;
+  /** P2: 设备声明的多模态能力 */
+  private _multimodalCapabilities: DeviceMultimodalCapabilities | null = null;
+  /** P2: 流式 AI 响应回调 */
+  private _deviceResponseCallbacks = new Map<string, {
+    onChunk: (chunk: string) => void;
+    onDone: () => void;
+    onError: (error: string) => void;
+  }>();
 
   /** 降级/恢复回调（由 agent.ts runLoop 注册，用于通信模式切换） */
   private _onDisconnectCb: (() => void) | null = null;
@@ -270,6 +287,116 @@ export class WebSocketDeviceAgent {
   }
 
   // ────────────────────────────────────────────────────────────────
+  // P2: 多模态查询
+  // ────────────────────────────────────────────────────────────────
+
+  /** 设置设备多模态能力（在握手前调用） */
+  setMultimodalCapabilities(caps: DeviceMultimodalCapabilities): void {
+    this._multimodalCapabilities = caps;
+  }
+
+  /** 获取服务端下发的多模态策略 */
+  get multimodalPolicy(): DeviceMultimodalPolicy | null {
+    return this._multimodalPolicy;
+  }
+
+  /**
+   * 发送多模态查询到云端，接收流式 AI 响应
+   *
+   * @param message 文本消息
+   * @param attachments 多模态附件（图片/音频/视频）
+   * @param callbacks 流式响应回调
+   * @returns sessionId
+   */
+  async sendMultimodalQuery(
+    message: string,
+    attachments?: DeviceAttachment[],
+    callbacks?: {
+      onChunk?: (chunk: string) => void;
+      onDone?: () => void;
+      onError?: (error: string) => void;
+    },
+  ): Promise<string> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket 未连接');
+    }
+
+    const sessionId = `dq_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    // 注册响应回调
+    if (callbacks) {
+      this._deviceResponseCallbacks.set(sessionId, {
+        onChunk: callbacks.onChunk ?? (() => {}),
+        onDone: callbacks.onDone ?? (() => {}),
+        onError: callbacks.onError ?? (() => {}),
+      });
+    }
+
+    // 附件预处理：本地文件路径 → base64 dataUrl（如有需要）
+    const processedAttachments = attachments ? await this.preprocessAttachments(attachments) : undefined;
+
+    const query: DeviceMultimodalQuery = {
+      type: 'device_query',
+      sessionId,
+      message,
+      attachments: processedAttachments,
+    };
+
+    this.ws.send(JSON.stringify(query));
+    safeLog(`[WebSocketDeviceAgent] 多模态查询已发送: sessionId=${sessionId}, attachments=${processedAttachments?.length ?? 0}`);
+
+    return sessionId;
+  }
+
+  /** 处理设备响应消息 */
+  private handleDeviceResponse(resp: DeviceMultimodalResponse): void {
+    const callbacks = this._deviceResponseCallbacks.get(resp.sessionId);
+    if (!callbacks) {
+      safeLog(`[WebSocketDeviceAgent] 收到未知 sessionId 的 device_response: ${resp.sessionId}`);
+      return;
+    }
+
+    if (resp.error) {
+      callbacks.onError(resp.error);
+      this._deviceResponseCallbacks.delete(resp.sessionId);
+      return;
+    }
+
+    if (resp.chunk) {
+      callbacks.onChunk(resp.chunk);
+    }
+
+    if (resp.done) {
+      callbacks.onDone();
+      this._deviceResponseCallbacks.delete(resp.sessionId);
+    }
+  }
+
+  /** 预处理附件：确保 dataUrl 已就绪 */
+  private async preprocessAttachments(attachments: DeviceAttachment[]): Promise<DeviceAttachment[]> {
+    const result: DeviceAttachment[] = [];
+    for (const att of attachments) {
+      if (att.dataUrl) {
+        result.push(att);
+      } else if (att.name) {
+        // 本地文件 → base64 dataUrl
+        try {
+          const fs = await import('node:fs/promises');
+          const data = await fs.readFile(att.name);
+          const base64 = data.toString('base64');
+          result.push({
+            ...att,
+            dataUrl: `data:${att.mimeType};base64,${base64}`,
+          });
+        } catch (err: any) {
+          safeError(`[WebSocketDeviceAgent] 附件读取失败: ${att.name} - ${err?.message}`);
+        }
+      }
+    }
+    return result;
+  }
+
+  // ────────────────────────────────────────────────────────────────
   // 私有方法
   // ────────────────────────────────────────────────────────────────
 
@@ -300,6 +427,9 @@ export class WebSocketDeviceAgent {
           break;
         case 'streaming_resume':
           handleStreamingResume(this.streamingState);
+          break;
+        case 'device_response':
+          this.handleDeviceResponse(message as any);
           break;
         case 'heartbeat':
           // 心跳响应，无需处理
@@ -337,12 +467,16 @@ export class WebSocketDeviceAgent {
 
   private sendProtocolHandshake(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    const handshake: ProtocolHandshake = {
+    const handshake: ProtocolHandshake & { multimodalCapabilities?: DeviceMultimodalCapabilities } = {
       type: "protocol.handshake",
       protocolVersion: DEVICE_PROTOCOL_VERSION,
       agentVersion: resolveDeviceAgentEnv().agentVersion,
       capabilities: ["desktop.control", "browser.automation", "file.ops"],
     };
+    // P2: 附加多模态能力声明
+    if (this._multimodalCapabilities) {
+      handshake.multimodalCapabilities = this._multimodalCapabilities;
+    }
     try {
       this.ws.send(JSON.stringify(handshake));
       safeLog(`[WebSocketDeviceAgent] 协议握手已发送: v${DEVICE_PROTOCOL_VERSION}`);
@@ -356,6 +490,11 @@ export class WebSocketDeviceAgent {
       safeLog(`[WebSocketDeviceAgent] 协议握手成功: negotiated=${ack.negotiatedVersion} server=${ack.serverVersion}`);
       if (ack.deprecationWarning) {
         safeLog(`[WebSocketDeviceAgent] 版本废弃警告: ${ack.deprecationWarning}`);
+      }
+      // P2: 存储服务端下发的多模态策略
+      if (ack.multimodalPolicy) {
+        this._multimodalPolicy = ack.multimodalPolicy;
+        safeLog(`[WebSocketDeviceAgent] 多模态策略已接收: modalities=${ack.multimodalPolicy.allowedModalities.join(',')}`);
       }
     } else {
       safeError(`[WebSocketDeviceAgent] 协议不兼容: server=${ack.serverVersion} negotiated=${ack.negotiatedVersion}，请升级 Device Agent`);

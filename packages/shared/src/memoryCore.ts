@@ -15,7 +15,8 @@ import crypto from "node:crypto";
  * 1. Minhash 语义向量工具（minhash:16@1 标准）
  * ══════════════════════════════════════════════════════════════════ */
 
-export const MINHASH_K = 16;
+export const MINHASH_K = parseInt(process.env.MINHASH_K ?? "16", 10);
+export const MEMORY_CONFLICT_PENALTY = parseFloat(process.env.MEMORY_CONFLICT_PENALTY ?? "-0.2");
 export const MINHASH_MODEL_REF = "minhash:16@1";
 
 /** 简易分词器：CJK 单字 + Latin 连续子串，最多 512 个 token */
@@ -354,7 +355,7 @@ export function computeMemoryRerankScore(
   const versionBoost = Math.min(fv / 10, 0.1);
   // 8. Conflict penalty
   const hasConflict = c.conflictMarker && c.resolutionStatus !== "resolved" && c.resolutionStatus !== "superseded";
-  const conflictPenalty = hasConflict ? -0.2 : 0;
+  const conflictPenalty = hasConflict ? MEMORY_CONFLICT_PENALTY : 0;
   // 9. Class boost
   const classBoost = MEMORY_CLASS_WEIGHT[c.memoryClass ?? "semantic"] ?? 0;
   // 10. Decay boost

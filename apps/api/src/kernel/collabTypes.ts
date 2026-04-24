@@ -21,6 +21,8 @@ export interface CollabAgentRole {
   goal: string;
   /** 依赖哪些其他 Agent 的输出（agentId 列表） */
   dependencies: string[];
+  /** 可选依赖（死锁时可跳过的依赖 agentId 列表） */
+  optionalDependencies?: string[];
   /** P1-4: 允许使用的工具列表（空=不限制） */
   allowedTools?: string[];
   /** P1-4: 允许访问的资源类型 */

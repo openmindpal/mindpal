@@ -301,3 +301,33 @@ CREATE TABLE IF NOT EXISTS workflow_step_compensations (
 
 CREATE INDEX IF NOT EXISTS workflow_step_compensations_step_time_idx
   ON workflow_step_compensations (tenant_id, step_id, created_at DESC);
+
+-- (原033) Workflow Hardening
+-- resume_events 幂等表、approvals 补充字段与过期扫描索引
+
+-- ── resume_events（幂等恢复事件） ──────────────────────────────
+CREATE TABLE IF NOT EXISTS resume_events (
+  tenant_id TEXT NOT NULL,
+  run_id UUID NOT NULL,
+  event_type TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (tenant_id, run_id, event_type, idempotency_key)
+);
+
+-- ── approvals 补充字段 ────────────────────────────────────────
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS approval_type TEXT DEFAULT 'tool_execution';
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS status_reason TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS escalation_minutes INT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS escalation_target TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS auto_reject_on_expiry BOOLEAN DEFAULT true;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS input_signature TEXT;
+
+-- ── approvals 过期扫描索引 ────────────────────────────────────
+CREATE INDEX IF NOT EXISTS approvals_expiry_scan_idx
+  ON approvals (expires_at ASC)
+  WHERE status = 'pending' AND expires_at IS NOT NULL;
+
+-- ── resume_events 清理索引 ────────────────────────────────────
+CREATE INDEX IF NOT EXISTS resume_events_created_idx
+  ON resume_events (created_at ASC);

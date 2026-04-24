@@ -24,10 +24,12 @@ export async function buildApiAttachments(currentAttachments: ChatAttachment[]):
         console.warn("[attach] Failed to convert image to base64:", att.name, err);
       }
     } else if (att.type === "document" && att.file) {
-      const isTextFile = /\.(txt|csv|md|json|xml|log|yml|yaml|ini|conf|toml)$/i.test(att.name);
+      // 纯文本格式：前端可直接提取 textContent，同时保留 dataUrl
+      const isPlainText = /\.(txt|csv|md|json|xml|log|yml|yaml|ini|conf|toml|html|htm|rtf)$/i.test(att.name);
+      // 二进制文档（pdf/docx/xlsx/pptx 等）只传 dataUrl，由后端 parseDocument 解析
       try {
         const dataUrl = await readFileAsDataUrl(att.file);
-        if (isTextFile) {
+        if (isPlainText) {
           const textContent = await readFileAsText(att.file);
           apiAttachments.push({ type: "document", mimeType: att.mimeType, name: att.name, dataUrl, textContent });
         } else {

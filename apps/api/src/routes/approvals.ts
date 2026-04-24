@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import type { Pool } from "pg";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { Errors } from "../lib/errors";
 import { setAuditContext } from "../modules/audit/context";
@@ -10,6 +11,28 @@ import { upsertTaskState } from "../modules/memory/repo";
 import { getRunForSpace, listSteps } from "../modules/workflow/jobRepo";
 import { addDecision, getApproval, listApprovals } from "../modules/workflow/approvalRepo";
 import { enqueueWorkflowStep } from "../modules/workflow/queue";
+
+/* ---- HMAC Binding 签名工具 ---- */
+const HMAC_ALGO = "sha256";
+
+let _signingKeyWarnEmitted = false;
+function warnIfDefaultSigningKey() {
+  if (!_signingKeyWarnEmitted && !process.env.APPROVAL_SIGNING_KEY) {
+    console.warn("[SECURITY] APPROVAL_SIGNING_KEY not set, using insecure default. Set this in production!");
+    _signingKeyWarnEmitted = true;
+  }
+}
+
+function computeInputSignature(inputDigest: unknown, secretKey: string): string {
+  const payload = typeof inputDigest === "string" ? inputDigest : JSON.stringify(inputDigest ?? {});
+  return createHmac(HMAC_ALGO, secretKey).update(payload).digest("hex");
+}
+
+function verifyInputSignature(inputDigest: unknown, signature: string, secretKey: string): boolean {
+  const expected = computeInputSignature(inputDigest, secretKey);
+  if (expected.length !== signature.length) return false;
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+}
 
 async function resolveApprovalStep(pool: Pool, runId: string, stepId: string | null) {
   if (stepId) {
@@ -122,6 +145,35 @@ export const approvalRoutes: FastifyPluginAsync = async (app) => {
           traceId: req.ctx.traceId,
           requestId: req.ctx.requestId,
         });
+      }
+
+      // --- HMAC Binding 验证 ---
+      if (existing.inputSignature) {
+        warnIfDefaultSigningKey();
+        const signingKey = (app as any).config?.approvalSigningKey ?? process.env.APPROVAL_SIGNING_KEY;
+          if (!signingKey) { return reply.status(500).send({ error: "approval_signing_key_missing", message: "APPROVAL_SIGNING_KEY not configured" }); }
+        if (!verifyInputSignature(existing.inputDigest, existing.inputSignature, signingKey)) {
+          await insertAuditEvent(app.db, {
+            subjectId: subject.subjectId,
+            tenantId: subject.tenantId,
+            spaceId: subject.spaceId,
+            resourceType: "approval",
+            action: "approval:binding_tampered",
+            policyDecision: req.ctx.audit!.policyDecision,
+            inputDigest: { approvalId: existing.approvalId, runId: existing.runId },
+            outputDigest: { status: "rejected", reason: "binding_tampered" },
+            result: "error",
+            traceId: req.ctx.traceId,
+            requestId: req.ctx.requestId,
+            runId: existing.runId,
+            stepId: existing.stepId ?? undefined,
+          });
+          req.ctx.audit!.errorCategory = "policy_violation";
+          return reply.status(403).send({
+            error: "approval_binding_tampered",
+            message: "Input digest signature verification failed",
+          });
+        }
       }
 
       const stepInput = binding.step?.input as any;

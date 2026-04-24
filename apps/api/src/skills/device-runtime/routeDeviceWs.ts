@@ -17,6 +17,8 @@ import {
   isVersionCompatible,
   type ProtocolHandshake,
   type ProtocolHandshakeAck,
+  type DeviceMultimodalQuery,
+  type DeviceMultimodalCapabilities,
 } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "api:deviceWs" });
@@ -41,6 +43,7 @@ import {
   dynamicUnsubscribeTopicChannel,
   type D2DEnvelope,
 } from "./modules/crossDeviceBus";
+import { processDeviceQuery } from "./deviceMultimodalHandler";
 
 function requireDeviceFromReq(req: any) {
   const device = req.ctx?.device;
@@ -62,6 +65,8 @@ interface DeviceWsProtocolContext {
   negotiatedVersion: string;
   agentVersion: string;
   handshakeCompleted: boolean;
+  /** 设备声明的多模态能力（元数据驱动） */
+  multimodalCapabilities?: DeviceMultimodalCapabilities;
 }
 
 export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
@@ -209,16 +214,29 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
             const negotiated = negotiateVersion(clientVersion, PROTOCOL_VERSIONS);
             const compatible = negotiated !== null && isVersionCompatible(clientVersion, MIN_SUPPORTED_PROTOCOL_VERSION);
 
+            // P2: 先解析设备声明的多模态能力，再构造 ack
+            const rawCaps = (handshake as any).multimodalCapabilities as DeviceMultimodalCapabilities | undefined;
+            if (rawCaps && Array.isArray(rawCaps.modalities) && rawCaps.modalities.length > 0) {
+              protocolCtx.multimodalCapabilities = rawCaps;
+            }
+
             const ack: ProtocolHandshakeAck = {
               type: "protocol.handshake.ack",
               negotiatedVersion: negotiated ?? DEVICE_PROTOCOL_VERSION,
               serverVersion: DEVICE_PROTOCOL_VERSION,
               compatible,
+              // P2: 下发多模态策略（元数据驱动，仅当设备声明了多模态能力时才返回）
+              multimodalPolicy: protocolCtx.multimodalCapabilities ? {
+                allowedModalities: protocolCtx.multimodalCapabilities.modalities,
+                maxFileSizeBytes: protocolCtx.multimodalCapabilities.multimodalConfig?.maxFileSize ?? 5_000_000,
+                supportedFormats: protocolCtx.multimodalCapabilities.multimodalConfig?.supportedFormats ?? {},
+              } : null,
             };
 
             if (compatible && negotiated) {
               protocolCtx.negotiatedVersion = negotiated;
               protocolCtx.handshakeCompleted = true;
+
               _logger.info("protocol handshake ok", {
                 deviceId,
                 clientVersion,
@@ -425,6 +443,40 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
                 _logger.warn("unsubscribe_topic failed", { error: err?.message });
               });
             }
+            break;
+          }
+
+          // P2: 设备多模态查询（device_query → orchestrateChatTurn → device_response 流式推送）
+          case "device_query": {
+            touchDeviceHeartbeat(deviceId);
+            const queryPayload = msg as unknown as DeviceMultimodalQuery;
+            processDeviceQuery({
+              ws: socket as any,
+              payload: queryPayload,
+              deviceRecord: {
+                deviceId,
+                tenantId: device.tenantId,
+                spaceId: device.spaceId,
+                ownerScope: device.ownerScope,
+                ownerSubjectId: device.ownerSubjectId,
+                metadata: {
+                  ...((device as any).metadata ?? {}),
+                  multimodalCapabilities: protocolCtx.multimodalCapabilities ?? undefined,
+                },
+              },
+              pool: app.db,
+              app,
+            }).catch((err) => {
+              _logger.error("device_query processing failed", { deviceId, error: err?.message });
+              try {
+                socket.send(JSON.stringify({
+                  type: "device_response",
+                  sessionId: queryPayload?.sessionId ?? "",
+                  error: err?.message ?? "处理失败",
+                  done: true,
+                }));
+              } catch { /* ignore */ }
+            });
             break;
           }
 

@@ -10,11 +10,15 @@
  */
 import type { CapabilityDescriptor, RiskLevel, DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult, DeviceMessageContext } from "./types";
 import { DEFAULT_TOOL_ALIASES, DEFAULT_PREFIX_RULES } from "@openslin/shared";
+import type { DeviceModality, DeviceMultimodalCapabilities } from "@openslin/shared";
 
 // ── 内部注册表 ──────────────────────────────────────────────
 
 const _capabilities = new Map<string, CapabilityDescriptor>();
 const _plugins = new Map<string, DeviceToolPlugin>();
+
+// ── P2: 多模态能力注册表 ────────────────────────────────────
+let _multimodalCapabilities: DeviceMultimodalCapabilities | null = null;
 
 // ── 动态别名注册表（替代硬编码 TOOL_ALIAS_MAP） ─────────────
 // alias → canonical name，如 "browser.navigate" → "device.browser.open"
@@ -353,12 +357,72 @@ export function listPlugins(): DeviceToolPlugin[] {
   return Array.from(_plugins.values());
 }
 
+// ── P2: 多模态能力注册与查询 ───────────────────────────────
+
+/**
+ * 注册设备多模态能力（元数据驱动）。
+ * 根据设备硬件自动检测可用模态，或由调用方显式传入。
+ */
+export function registerMultimodalCapabilities(caps: DeviceMultimodalCapabilities): void {
+  _multimodalCapabilities = caps;
+  // 同步注册到能力标签中
+  for (const modality of caps.modalities) {
+    const tag = `modality:${modality}`;
+    const toolRef = `device.multimodal.${modality}`;
+    if (!_capabilities.has(toolRef)) {
+      _capabilities.set(toolRef, {
+        toolRef,
+        riskLevel: "low",
+        tags: [tag, "multimodal"],
+        description: `Device ${modality} modality capability`,
+      });
+    }
+  }
+}
+
+/** 获取已注册的多模态能力 */
+export function getMultimodalCapabilities(): DeviceMultimodalCapabilities | null {
+  return _multimodalCapabilities;
+}
+
+/**
+ * 根据设备硬件自动探测可用模态。
+ * 返回 DeviceMultimodalCapabilities，调用方可直接传入 registerMultimodalCapabilities。
+ */
+export function probeDeviceModalities(hardware?: {
+  hasCamera?: boolean;
+  hasMicrophone?: boolean;
+  hasDisplay?: boolean;
+}): DeviceMultimodalCapabilities {
+  const modalities: DeviceModality[] = [];
+  const supportedFormats: Partial<Record<DeviceModality, string[]>> = {};
+
+  if (hardware?.hasCamera) {
+    modalities.push("image");
+    supportedFormats.image = ["image/jpeg", "image/png"];
+  }
+  if (hardware?.hasMicrophone) {
+    modalities.push("audio");
+    supportedFormats.audio = ["audio/wav", "audio/mp3"];
+  }
+  // video 需同时有摄像头和足够算力（默认不自动启用，需显式声明）
+
+  return {
+    modalities,
+    multimodalConfig: {
+      maxFileSize: 5_000_000,
+      supportedFormats,
+    },
+  };
+}
+
 /** 清空所有插件、能力和别名（仅用于测试） */
 export function clearAll(): void {
   _plugins.clear();
   _capabilities.clear();
   _toolAliases.clear();
   _prefixRules.clear();
+  _multimodalCapabilities = null;
 }
 
 // ── 消息分发 ────────────────────────────────────────────────

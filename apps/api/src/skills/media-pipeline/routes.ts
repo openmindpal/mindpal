@@ -10,6 +10,8 @@ import { createMediaObject, getMediaContent, getMediaObject } from "./modules/me
 import { fsCompose, fsDelete, fsGet, fsPut } from "./modules/blobStore";
 import { createUpload, getUpload, listParts, setUploadStatus, upsertPart } from "./modules/uploadRepo";
 
+const MAX_INLINE_BYTES = parseInt(process.env.MEDIA_MAX_INLINE_BYTES ?? String(5 * 1024 * 1024), 10);
+
 export const mediaRoutes: FastifyPluginAsync = async (app) => {
   try {
     app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_req, body, done) => {
@@ -50,7 +52,7 @@ export const mediaRoutes: FastifyPluginAsync = async (app) => {
       throw Errors.badRequest("contentBase64 无效");
     }
     if (!bytes.length) throw Errors.badRequest("内容为空");
-    if (bytes.length > 5 * 1024 * 1024) throw Errors.badRequest("文件过大");
+    if (bytes.length > MAX_INLINE_BYTES) throw Errors.badRequest("文件过大");
 
     const storageKey = `objects/${subject.tenantId}/${crypto.randomUUID()}`;
     const stored = await fsPut({ rootDir: app.cfg.media.fsRootDir, storageKey, bytes });

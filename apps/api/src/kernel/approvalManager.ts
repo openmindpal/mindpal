@@ -190,7 +190,11 @@ export async function processBatchApproval(params: {
 }
 
 /**
- * 处理过期的审批请求
+ * 处理过期的审批请求（元数据驱动）
+ *
+ * 分级处理流程：
+ * 1. 升级检测：根据各行 escalation_minutes 字段判断是否需要升级
+ * 2. 过期自动拒绝：根据各行 auto_reject_on_expiry + expires_at 判断是否自动拒绝
  */
 export async function processExpiredApprovals(params: {
   pool: Pool;
@@ -198,77 +202,109 @@ export async function processExpiredApprovals(params: {
   limit?: number;
 }): Promise<{ processed: number; expired: number; escalated: number }> {
   const { pool, limit = 100 } = params;
-  const policy = { ...DEFAULT_APPROVAL_POLICY, ...params.policy };
   
   let processed = 0;
   let expired = 0;
   let escalated = 0;
   
-  // 查找过期的审批请求
-  const now = new Date();
-  const expirationThreshold = new Date(now.getTime() - policy.expirationMinutes * 60 * 1000);
-  const escalationThreshold = new Date(now.getTime() - policy.escalationMinutes * 60 * 1000);
-  
-  // 先处理需要升级的
-  if (policy.escalationMinutes > 0 && policy.escalationTarget) {
-    const toEscalate = await pool.query<{ approval_id: string; tenant_id: string; run_id: string }>(
-      `SELECT approval_id, tenant_id, run_id FROM approvals
+  // ── Step 1: 升级检测（元数据驱动） ─────────────────────────
+  // 查询单行 escalation_minutes 已过、尚未升级的审批
+  try {
+    const toEscalate = await pool.query<{
+      approval_id: string;
+      tenant_id: string;
+      run_id: string;
+      step_id: string | null;
+      space_id: string | null;
+      tool_ref: string | null;
+      escalation_target: string | null;
+    }>(
+      `SELECT approval_id, tenant_id, run_id, step_id, space_id, tool_ref, escalation_target
+       FROM approvals
        WHERE status = 'pending'
+         AND escalation_minutes IS NOT NULL
          AND escalated_at IS NULL
-         AND created_at < $1
+         AND created_at + interval '1 minute' * escalation_minutes < now()
        ORDER BY created_at ASC
-       LIMIT $2`,
-      [escalationThreshold.toISOString(), limit]
+       LIMIT $1`,
+      [limit],
     );
-    
+
     for (const row of toEscalate.rows) {
       await pool.query(
         "UPDATE approvals SET escalated_at = now(), updated_at = now() WHERE approval_id = $1",
-        [row.approval_id]
+        [row.approval_id],
       );
+      // 如果配置了升级目标，发送通知
+      if (row.escalation_target) {
+        try {
+          await notifyApprovalRequired({
+            pool,
+            tenantId: row.tenant_id,
+            spaceId: row.space_id ?? null,
+            subjectId: row.escalation_target,
+            runId: row.run_id,
+            stepId: row.step_id ?? "",
+            toolRef: row.tool_ref ?? "unknown",
+            approvalId: row.approval_id,
+          });
+        } catch (notifyErr: any) {
+          // 通知失败不阻塞升级流程
+        }
+      }
       escalated++;
       processed++;
     }
+  } catch (e: any) {
+    // 升级查询失败不应影响后续过期处理
   }
-  
-  // 处理过期的
-  if (policy.expirationMinutes > 0 && policy.autoRejectOnExpiry) {
-    const toExpire = await pool.query<{ approval_id: string; tenant_id: string; run_id: string }>(
-      `SELECT approval_id, tenant_id, run_id FROM approvals
+
+  // ── Step 2: 过期自动拒绝（元数据驱动） ───────────────────
+  // 查询单行 auto_reject_on_expiry = true 且 expires_at 已过的审批
+  try {
+    const toExpire = await pool.query<{ approval_id: string; tenant_id: string; run_id: string; step_id: string | null }>(
+      `SELECT approval_id, tenant_id, run_id, step_id
+       FROM approvals
        WHERE status = 'pending'
-         AND created_at < $1
+         AND auto_reject_on_expiry = true
+         AND expires_at IS NOT NULL
+         AND expires_at < now()
        ORDER BY created_at ASC
-       LIMIT $2`,
-      [expirationThreshold.toISOString(), limit - processed]
+       LIMIT $1`,
+      [Math.max(limit - processed, 1)],
     );
-    
+
     for (const row of toExpire.rows) {
       await pool.query(
-        `UPDATE approvals 
-         SET status = 'expired', decision = 'reject', reason = 'auto_expired', decided_at = now(), updated_at = now()
-         WHERE approval_id = $1`,
-        [row.approval_id]
+        `UPDATE approvals
+         SET status = 'rejected', reason = 'auto_expired', decided_at = now(), updated_at = now()
+         WHERE approval_id = $1 AND status = 'pending'`,
+        [row.approval_id],
       );
-      
+
       // 取消对应的运行
       await pool.query(
-        "UPDATE runs SET status = 'canceled', finished_at = now(), updated_at = now() WHERE run_id = $1 AND status = 'needs_approval'",
-        [row.run_id]
+        "UPDATE runs SET status = 'canceled', finished_at = COALESCE(finished_at, now()), updated_at = now() WHERE run_id = $1 AND status = 'needs_approval'",
+        [row.run_id],
       );
       await pool.query(
         "UPDATE jobs SET status = 'canceled', updated_at = now() WHERE run_id = $1 AND status IN ('needs_approval', 'queued', 'pending', 'running')",
-        [row.run_id]
+        [row.run_id],
       );
-      await pool.query(
-        "UPDATE steps SET status = 'canceled', finished_at = now(), updated_at = now() WHERE run_id = $1 AND status IN ('needs_approval', 'pending', 'running')",
-        [row.run_id]
-      );
-      
+      if (row.step_id) {
+        await pool.query(
+          "UPDATE steps SET status = 'canceled', finished_at = COALESCE(finished_at, now()), updated_at = now() WHERE step_id = $1 AND status IN ('needs_approval', 'pending', 'running')",
+          [row.step_id],
+        );
+      }
+
       expired++;
       processed++;
     }
+  } catch (e: any) {
+    // 过期查询失败记录但不抛异常
   }
-  
+
   return { processed, expired, escalated };
 }
 

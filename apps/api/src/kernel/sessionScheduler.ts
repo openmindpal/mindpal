@@ -379,6 +379,19 @@ export class SessionScheduler {
     if (boosted.length > 0) {
       recordStarvationBoost(boosted.length);
       log("info", `Boosted ${boosted.length} starved tasks`, { tenantId, sessionId, boosted });
+
+      // 同步生成运行时GlobalPriorityBoost，双通道生效
+      const newBoosts: GlobalPriorityBoost[] = starved.map((e) => ({
+        sessionId,
+        taskId: e.taskId ?? e.entryId,
+        boostAmount: boost,
+        reason: "starvation" as const,
+      }));
+      // 合并：清除该会话旧的starvation boost，注入新的
+      this.setGlobalBoosts([
+        ...this.globalBoosts.filter((b) => b.reason !== "starvation" || b.sessionId !== sessionId),
+        ...newBoosts,
+      ]);
     }
 
     return { boosted };

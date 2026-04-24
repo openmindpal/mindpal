@@ -17,8 +17,9 @@
 
 import {
   getActiveVocab,
+  getInterventionPatterns,
   type ActiveVocab,
-} from "../skills/orchestrator/modules/intentVocabulary";
+} from "./intentVocabulary";
 
 /* ================================================================== */
 /*  0. 类型定义                                                        */
@@ -145,18 +146,12 @@ export function buildStandardRules(
   // ── P30: 干预意图（正则匹配） ──
   {
     let interventionRegex: RegExp = NEVER_MATCH;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const vocabModule = require("../skills/orchestrator/modules/intentVocabulary");
-      const patterns: Array<{ re: RegExp }> = vocabModule.INTERVENTION_PATTERNS;
-      if (patterns && patterns.length > 0) {
-        interventionRegex = new RegExp(
-          patterns.map((p) => `(${p.re.source})`).join("|"),
-          "i",
-        );
-      }
-    } catch {
-      // 模块不可用时静默降级
+    const patterns = getInterventionPatterns();
+    if (patterns && patterns.length > 0) {
+      interventionRegex = new RegExp(
+        patterns.map((p) => `(${p.re.source})`).join("|"),
+        "i",
+      );
     }
     rules.push({
       id: "std_intervention",

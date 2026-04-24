@@ -40,7 +40,7 @@ export async function createDeviceRecord(params: {
   ownerScope: "user" | "space";
   ownerSubjectId?: string | null;
   spaceId?: string | null;
-  deviceType: "desktop" | "mobile";
+  deviceType: "desktop" | "mobile" | "iot" | "robot" | "vehicle" | "home" | "gateway";
   os: string;
   agentVersion: string;
 }) {
@@ -101,7 +101,7 @@ export async function listDeviceRecords(params: { pool: Pool; tenantId: string; 
   return res.rows.map(toRow);
 }
 
-export async function activateDeviceWithToken(params: { pool: Pool; tenantId: string; deviceId: string; deviceTokenHash: string; deviceType: "desktop" | "mobile"; os: string; agentVersion: string }) {
+export async function activateDeviceWithToken(params: { pool: Pool; tenantId: string; deviceId: string; deviceTokenHash: string; deviceType: "desktop" | "mobile" | "iot" | "robot" | "vehicle" | "home" | "gateway"; os: string; agentVersion: string }) {
   const res = await params.pool.query(
     `
       UPDATE device_records

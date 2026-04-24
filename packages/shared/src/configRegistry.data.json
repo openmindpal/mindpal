@@ -214,5 +214,12 @@
   { "envKey": "COLLAB_AUTO_DEBATE_MAX_PARTIES", "level": "runtime", "valueType": "number", "defaultValue": "6", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "自动辩论最大参与方" },
   { "envKey": "COLLAB_CORRECTION_FEEDBACK_MAX_LEN", "level": "runtime", "valueType": "number", "defaultValue": "800", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "纠错建议截断长度" },
   { "envKey": "COLLAB_CORRECTION_PREV_OUTPUT_MAX_LEN", "level": "runtime", "valueType": "number", "defaultValue": "500", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "上一轮输出截断长度" },
-  { "envKey": "COLLAB_ENVELOPE_OBSERVATION_LIMIT", "level": "runtime", "valueType": "number", "defaultValue": "5", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Envelope 包含的前述结果数" }
+  { "envKey": "COLLAB_ENVELOPE_OBSERVATION_LIMIT", "level": "runtime", "valueType": "number", "defaultValue": "5", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Envelope 包含的前述结果数" },
+
+  { "envKey": "AGENT_LOOP_RESUME_LOCK_RETRIES", "level": "runtime", "valueType": "number", "defaultValue": "3", "scopes": ["worker"], "sensitive": false, "runtimeMutable": true, "description": "Agent Loop CAS resume-lock max retry attempts with exponential backoff" },
+  { "envKey": "COLLAB_CAS_MAX_RETRIES", "level": "runtime", "valueType": "number", "defaultValue": "5", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Collaboration shared-state CAS update max retry attempts" },
+  { "envKey": "SCHEDULER_MAX_CONCURRENT_PER_TENANT", "level": "runtime", "valueType": "number", "defaultValue": "20", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Maximum concurrent agent loops per tenant" },
+  { "envKey": "SCHEDULER_MAX_CONCURRENT_PER_SPACE", "level": "runtime", "valueType": "number", "defaultValue": "10", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Maximum concurrent agent loops per space" },
+  { "envKey": "SCHEDULER_PREEMPTION_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "3", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Priority gap threshold to allow task preemption" },
+  { "envKey": "INTENT_CN_COMPOUND_WORDS", "level": "runtime", "valueType": "string", "defaultValue": "", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Comma-separated extra Chinese compound words for intent keyword extraction" }
 ]

@@ -6,9 +6,11 @@ import { nextId } from "@/lib/apiError";
 import { t } from "@/lib/i18n";
 
 export const IMAGE_ACCEPT = "image/jpeg,image/png,image/gif,image/webp";
-export const DOC_ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv";
-export const AUDIO_ACCEPT = "audio/wav,audio/mpeg,audio/mp3,audio/ogg,audio/webm,audio/flac";
+export const DOC_ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.pptx,.txt,.csv,.md,.json,.xml,.html,.htm,.rtf,.log,.yml,.yaml,.ini,.conf,.toml";
+export const AUDIO_ACCEPT = "audio/wav,audio/mpeg,audio/mp3,audio/ogg,audio/webm,audio/flac,audio/aac,audio/mp4,audio/x-m4a";
 export const VIDEO_ACCEPT = "video/mp4,video/webm,video/ogg,video/quicktime";
+// Backend config: MEDIA_MAX_INLINE_BYTES (default 5MB for inline base64)
+// These frontend limits are independent client-side guards
 export const MAX_FILE_MB = 20;
 export const MAX_TOTAL_ATTACHMENTS_MB = 20;
 

@@ -348,20 +348,27 @@ export async function acquireResumeLock(
   loopId: string,
   expectedStatus: CheckpointStatus = "running",
 ): Promise<boolean> {
+  const maxRetries = Math.max(1, resolveNumber("AGENT_LOOP_RESUME_LOCK_RETRIES", undefined, undefined, 3).value);
   const nodeId = currentNodeId();
-  const res = await pool.query(
-    `UPDATE agent_loop_checkpoints
-     SET status = 'resuming',
-         node_id = $2,
-         resume_count = resume_count + 1,
-         heartbeat_at = now(),
-         updated_at = now()
-     WHERE loop_id = $1
-       AND status = $3
-     RETURNING loop_id`,
-    [loopId, nodeId, expectedStatus],
-  );
-  return (res.rowCount ?? 0) > 0;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, Math.min(500 * Math.pow(2, attempt - 1), 4000)));
+    }
+    const res = await pool.query(
+      `UPDATE agent_loop_checkpoints
+       SET status = 'resuming',
+           node_id = $2,
+           resume_count = resume_count + 1,
+           heartbeat_at = now(),
+           updated_at = now()
+       WHERE loop_id = $1
+         AND status = $3
+       RETURNING loop_id`,
+      [loopId, nodeId, expectedStatus],
+    );
+    if ((res.rowCount ?? 0) > 0) return true;
+  }
+  return false;
 }
 
 /**

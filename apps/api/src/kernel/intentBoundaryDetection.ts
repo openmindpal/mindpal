@@ -398,11 +398,60 @@ Does the proposed action conflict with or violate the user's instruction?`;
 /*  Helper Functions                                                   */
 /* ================================================================== */
 
+/** 内置高频复合词词典（意图检测域），运行时可通过 INTENT_CN_COMPOUND_WORDS 扩展 */
+const BUILTIN_CN_COMPOUNDS = new Set([
+  "执行查询", "创建文件", "删除文件", "修改文件", "读取文件", "发送消息", "接收消息",
+  "数据库", "数据表", "数据源", "数据集", "文件系统", "文件夹", "文件名",
+  "用户名", "密码", "权限", "角色", "身份验证", "访问控制", "安全策略",
+  "工作流", "任务队列", "执行计划", "调度策略", "优先级", "并发控制",
+  "知识库", "向量存储", "语义搜索", "文档摘要", "内容检索",
+  "模型调用", "模型选择", "提示词", "上下文窗口", "生成回复",
+  "网络请求", "接口调用", "返回结果", "错误处理", "异常捕获",
+  "系统配置", "环境变量", "运行环境", "部署方案", "监控告警",
+  "智能体", "技能执行", "工具调用", "意图识别", "目标分解",
+  "协作编排", "交叉验证", "共识决策", "辩论仲裁", "权限委派",
+  "检查点", "心跳检测", "状态恢复", "并行执行", "串行执行",
+  "审批流程", "治理策略", "合规检查", "审计日志", "变更集",
+]);
+
+function getCompoundWordDict(): Set<string> {
+  const extra = (process.env.INTENT_CN_COMPOUND_WORDS ?? "").split(",").filter(Boolean);
+  if (extra.length === 0) return BUILTIN_CN_COMPOUNDS;
+  return new Set([...BUILTIN_CN_COMPOUNDS, ...extra]);
+}
+
+/** 正向最大匹配分词（轻量，无外部依赖） */
+function forwardMaxMatch(text: string, dict: Set<string>): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  const maxLen = 5; // 词典最大词长
+  while (i < text.length) {
+    let matched = false;
+    for (let len = Math.min(maxLen, text.length - i); len >= 2; len--) {
+      const candidate = text.slice(i, i + len);
+      if (dict.has(candidate)) {
+        tokens.push(candidate);
+        i += len;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      // 未匹配词典：取2字作为token（兜底bigram）
+      if (i + 1 < text.length) {
+        tokens.push(text.slice(i, i + 2));
+      }
+      i++;
+    }
+  }
+  return tokens;
+}
+
 /**
  * 提取指令中的关键词（中英文混合分词）
  *
  * 英文：按空白拆词 + 停用词过滤
- * 中文：连续汉字片段按 2-gram 滑动窗口切分，再过滤停用词
+ * 中文：正向最大匹配词典词 + 未命中兜底bigram
  */
 export function extractKeywords(instruction: string): string[] {
   const EN_STOP_WORDS = new Set([
@@ -417,6 +466,8 @@ export function extractKeywords(instruction: string): string[] {
     "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你", "会",
     "着", "没有", "看", "好", "自己", "这", "他", "她", "它", "们",
     "那", "些", "什么", "怎么", "如何", "请", "把", "被", "让", "给",
+    "然后", "如果", "因为", "所以", "但是", "虽然", "或者", "应该", "可以", "已经",
+    "而且", "不过", "只是", "还是", "以及", "对于", "关于", "通过", "进行", "之后",
   ]);
 
   const lower = instruction.toLowerCase();
@@ -428,20 +479,14 @@ export function extractKeywords(instruction: string): string[] {
     if (!EN_STOP_WORDS.has(w)) keywords.push(w);
   }
 
-  // 中文片段 — 连续汉字按 2/3-gram 切分
+  // 中文片段 — 正向最大匹配词典词 + 未命中兜底bigram
   const cnSegments = lower.match(/[\u4e00-\u9fff]+/g) ?? [];
+  const compoundDict = getCompoundWordDict();
   for (const seg of cnSegments) {
-    if (seg.length <= 3) {
-      if (!CN_STOP_WORDS.has(seg)) keywords.push(seg);
-    } else {
-      for (let i = 0; i < seg.length - 1; i++) {
-        const bigram = seg.slice(i, i + 2);
-        if (!CN_STOP_WORDS.has(bigram)) keywords.push(bigram);
-      }
-      for (let i = 0; i < seg.length - 2; i++) {
-        const trigram = seg.slice(i, i + 3);
-        if (!CN_STOP_WORDS.has(trigram)) keywords.push(trigram);
-      }
+    if (seg.length <= 1) continue;
+    const tokens = forwardMaxMatch(seg, compoundDict);
+    for (const token of tokens) {
+      if (!CN_STOP_WORDS.has(token) && token.length >= 2) keywords.push(token);
     }
   }
 

@@ -36,6 +36,7 @@ import { resolveConfig } from "../modules/governance/configGovernanceRepo";
 import { runPreExecutionChecks, type CheckpointContext, type GovernanceCheckpoint } from "./governanceCheckpoint";
 import { assessToolExecutionRisk } from "./approvalRuleEngine";
 import { markStepNeedsApproval, updateInputDigest } from "./stepRepo";
+import { preflightCheck } from "./orchestrationKernel";
 import { authorizeToolExecution, type AuthorizationResult } from "./loopPermissionUnified";
 
 /* ================================================================== */
@@ -482,6 +483,43 @@ async function _handleApprovalOrEnqueue(params: {
   const jobId = job.jobId ?? job.job_id;
   const stepId = step.stepId ?? step.step_id;
 
+  // ── 编排预检：预算 / 角色工具策略 / 审批需求评估 ──
+  let preflightResult: { allowed: boolean; reason?: string; requiresApproval?: boolean; assessmentContext?: unknown } | null = null;
+  try {
+    preflightResult = await preflightCheck({
+      pool, runId, stepId, tenantId,
+      toolRef: resolved.toolRef,
+      subject: subjectId ? { subjectId } : undefined,
+    });
+
+    // 将预检结果写入 step metadata，供 Worker 侧读取
+    await pool.query(
+      `UPDATE steps SET input_digest = jsonb_set(
+         COALESCE(input_digest, '{}'::jsonb),
+         '{preflight_result}',
+         $1::jsonb,
+         true
+       ) WHERE step_id = $2`,
+      [JSON.stringify(preflightResult), stepId],
+    );
+
+    // 预检不通过：停止 run 并标记 step 失败
+    if (!preflightResult.allowed) {
+      _kernelLogger.warn("preflight rejected", { runId, stepId, reason: preflightResult.reason });
+      await pool.query(
+        "UPDATE steps SET status = 'failed', updated_at = now(), finished_at = now() WHERE step_id = $1",
+        [stepId],
+      );
+      await setRunAndJobStatus({ pool, tenantId, runId, jobId, runStatus: "stopped", jobStatus: "stopped" });
+      return { outcome: "queued", jobId, runId, stepId, idempotencyKey } as SubmitResult;
+    }
+  } catch (preflightErr: any) {
+    // 预检失败不阻断主流程，记录日志后继续
+    _kernelLogger.warn("preflightCheck failed (degraded, continuing)", {
+      runId, stepId, error: preflightErr?.message ?? String(preflightErr),
+    });
+  }
+
   const approvalRequired = shouldRequireApproval(resolved.definition ?? {});
   const requireDualApprovalForHighRisk = approvalRequired
     ? await shouldRequireDualApprovalForHighRisk({ pool, tenantId })
@@ -492,7 +530,8 @@ async function _handleApprovalOrEnqueue(params: {
     requireDualApprovalForHighRisk,
   });
 
-  if (approvalRequired) {
+  // 预检要求审批时，强制进入审批流程
+  if (preflightResult?.requiresApproval || approvalRequired) {
     await markStepNeedsApproval(pool, stepId);
     if (JSON.stringify(step.inputDigest ?? null) !== JSON.stringify(approvalInputDigest ?? null)) {
       await updateInputDigest(pool, { stepId, runId, inputDigest: approvalInputDigest });

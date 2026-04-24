@@ -7,7 +7,7 @@
 import type { Pool } from "pg";
 import type { AgentLoopResult } from "./agentLoop";
 import { publishAgentResult } from "./collabBus";
-import { StructuredLogger, collabConfig } from "@openslin/shared";
+import { StructuredLogger, collabConfig, resolveNumber } from "@openslin/shared";
 
 const logger = new StructuredLogger({ module: "collabEnvelope" });
 
@@ -198,6 +198,62 @@ export async function upsertCollabSharedState(params: {
   );
   const r = res.rows[0] as any;
   return { ok: true, currentVersion: r.version, currentValue: r.value };
+}
+
+/** 查询单个共享状态条目的版本和值（供CAS重试使用） */
+export async function queryCollabSharedState(
+  pool: Pool,
+  tenantId: string,
+  collabRunId: string,
+  key: string,
+): Promise<{ version: number; value: any } | null> {
+  const res = await pool.query(
+    `SELECT version, value FROM collab_shared_state WHERE tenant_id = $1 AND collab_run_id = $2 AND key = $3`,
+    [tenantId, collabRunId, key],
+  );
+  if (!res.rowCount) return null;
+  const r = res.rows[0] as any;
+  return { version: r.version, value: r.value };
+}
+
+/**
+ * 函数式CAS更新协作共享状态（内置重试循环）。
+ * updater 接收当前值，返回新值；版本冲突时自动重读并重试。
+ */
+export async function casUpdateCollabSharedState(params: {
+  pool: Pool;
+  tenantId: string;
+  collabRunId: string;
+  key: string;
+  updater: (currentValue: any) => any;
+  updatedByAgent: string;
+  updatedByRole?: string;
+}): Promise<{ ok: boolean; finalVersion: number; finalValue: any }> {
+  const { pool, tenantId, collabRunId, key, updater, updatedByAgent, updatedByRole } = params;
+  const maxRetries = Math.max(1, resolveNumber("COLLAB_CAS_MAX_RETRIES", undefined, undefined, 5).value);
+
+  for (let i = 0; i < maxRetries; i++) {
+    const current = await queryCollabSharedState(pool, tenantId, collabRunId, key);
+    const newValue = updater(current?.value ?? null);
+    const result = await upsertCollabSharedState({
+      pool, tenantId, collabRunId, key,
+      value: newValue,
+      updatedByAgent,
+      updatedByRole,
+      expectedVersion: current?.version,
+    });
+    if (result.ok) {
+      return { ok: true, finalVersion: result.currentVersion, finalValue: result.currentValue };
+    }
+  }
+
+  // 所有重试耗尽
+  const fallback = await queryCollabSharedState(pool, tenantId, collabRunId, key);
+  return {
+    ok: false,
+    finalVersion: fallback?.version ?? 0,
+    finalValue: fallback?.value ?? null,
+  };
 }
 
 /** P1-4: 读取共享信念状态 */

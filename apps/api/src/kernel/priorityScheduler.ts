@@ -67,9 +67,12 @@ export async function tryScheduleProcess(params: {
 }): Promise<ScheduleResult> {
   const { pool, processId, tenantId, spaceId, priority } = params;
   const cfg = params.config ?? {};
-  const maxPerTenant = cfg.maxConcurrentPerTenant ?? 20;
-  const maxPerSpace = cfg.maxConcurrentPerSpace ?? 10;
-  const preemptThreshold = cfg.preemptionThreshold ?? 3;
+  const maxPerTenant = cfg.maxConcurrentPerTenant
+    ?? resolveNumber("SCHEDULER_MAX_CONCURRENT_PER_TENANT", undefined, undefined, 20).value;
+  const maxPerSpace = cfg.maxConcurrentPerSpace
+    ?? resolveNumber("SCHEDULER_MAX_CONCURRENT_PER_SPACE", undefined, undefined, 10).value;
+  const preemptThreshold = cfg.preemptionThreshold
+    ?? resolveNumber("SCHEDULER_PREEMPTION_THRESHOLD", undefined, undefined, 3).value;
   const maxGlobal = cfg.maxGlobalConcurrent ?? getMaxConcurrentAgentLoops();
 
   // 1. 检查租户级并发

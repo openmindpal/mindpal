@@ -16,7 +16,7 @@ export type ImageContentPart = {
 /** 音频内容片段 */
 export type AudioContentPart = {
   type: "input_audio";
-  input_audio: { data: string; format: "wav" | "mp3" | "ogg" | "webm" };
+  input_audio: { data: string; format: "wav" | "mp3" | "ogg" | "webm" | "m4a" | "flac" | "aac" };
 };
 
 /** 视频内容片段 */
@@ -601,6 +601,8 @@ export {
 } from "./skillRpcProtocol";
 export type {
   ProtocolVersion, ProtocolHandshake, ProtocolHandshakeAck,
+  DeviceModality, DeviceMultimodalCapabilities, DeviceMultimodalPolicy,
+  DeviceAttachment, DeviceMultimodalQuery, DeviceMultimodalResponse,
   SkillRpcRequest, SkillRpcSuccess, SkillRpcError, SkillRpcNotification,
   SkillRpcResponse, SkillRpcMessage,
   SkillInitializeParams, SkillInitializeResult,

@@ -5,8 +5,27 @@
  * （即时动作、规划失败、执行完成）统一为本函数。
  */
 import { redactValue, resolveNumber } from "@openslin/shared";
-import { upsertSessionContext, type SessionMessage, type SessionState } from "../../modules/memory/sessionContextRepo";
+import { upsertSessionContext, type SessionMessage, type SessionContext, type SessionState } from "../../modules/memory/sessionContextRepo";
 import type { Pool } from "pg";
+
+const SUMMARY_TRIGGER_TURNS = parseInt(process.env.SESSION_SUMMARY_TRIGGER_TURNS ?? "20", 10);
+
+/**
+ * 骨架：根据早期消息生成会话摘要。
+ * TODO: 接入模型网关（invokeModelChatUpstreamStream）生成真实摘要。
+ */
+async function generateSessionSummary(messages: SessionMessage[]): Promise<string | null> {
+  if (messages.length === 0) return null;
+
+  // TODO: 复用 invokeModelChatUpstreamStream 调用 LLM 生成摘要
+  // const prompt = messages
+  //   .map(m => `${m.role}: ${typeof m.content === "string" ? m.content : JSON.stringify(m.content)}`)
+  //   .join("\n");
+  // const result = await invokeModelChatUpstreamStream({ ... system: "请用3-5句话概括以下对话的关键信息", user: prompt });
+  // return result;
+
+  return null; // 骨架阶段返回 null，不阻塞主流程
+}
 
 function coerceRole(v: any): "user" | "assistant" | "system" {
   const r = String(v ?? "");
@@ -60,10 +79,28 @@ export async function persistStreamSessionContext(params: {
   const ttlDays = Math.max(1, Math.min(30, resolveNumber("ORCHESTRATOR_CONVERSATION_TTL_DAYS").value));
   const expiresAt = new Date(Date.now() + ttlDays * 86400000).toISOString();
 
+  const ctx: SessionContext = { v: 2, messages: trimmed, sessionState: params.sessionState, totalTurnCount: nextMsgs.length };
+
+  // 摘要触发：轮次超过阈值且尚无摘要时，尝试压缩早期消息
+  if ((ctx.totalTurnCount ?? 0) > SUMMARY_TRIGGER_TURNS && !ctx.summary) {
+    const halfIdx = Math.floor(ctx.messages.length / 2);
+    const earlyMessages = ctx.messages.slice(0, halfIdx);
+    try {
+      const summaryText = await generateSessionSummary(earlyMessages);
+      if (summaryText) {
+        ctx.summary = summaryText;
+        ctx.messages = ctx.messages.slice(halfIdx);
+      }
+    } catch (err) {
+      // 摘要生成失败不阻塞持久化
+      console.warn("[session-summary] generation failed, skipping:", err);
+    }
+  }
+
   await upsertSessionContext({
     pool, tenantId, spaceId,
     subjectId, sessionId,
-    context: { v: 2, messages: trimmed, sessionState: params.sessionState, totalTurnCount: nextMsgs.length },
+    context: ctx,
     expiresAt,
   });
 }

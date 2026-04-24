@@ -12,6 +12,41 @@
 import type { Pool } from "pg";
 
 /* ================================================================== */
+/*  Regex DoS Guard                                                     */
+/* ================================================================== */
+
+const MAX_PATTERN_LENGTH = 500;
+const REGEX_TIMEOUT_MS = 100;
+
+function safeRegex(pattern: string, flags?: string): RegExp | null {
+  if (pattern.length > MAX_PATTERN_LENGTH) return null;
+  try {
+    const re = new RegExp(pattern, flags ?? "i");
+    // 简单预测试防止灾难性回溯
+    const testStr = "a".repeat(50);
+    const start = Date.now();
+    re.test(testStr);
+    if (Date.now() - start > REGEX_TIMEOUT_MS) return null;
+    return re;
+  } catch { return null; }
+}
+
+/* ================================================================== */
+/*  Rule Cache                                                          */
+/* ================================================================== */
+
+const RULE_CACHE_TTL_MS = 60_000; // 60s, metadata-driven fallback
+const ruleCache = new Map<string, { rules: ApprovalRule[]; ts: number }>();
+
+export function invalidateRuleCache(tenantId?: string, ruleType?: string): void {
+  if (tenantId && ruleType) {
+    ruleCache.delete(`${tenantId}:${ruleType}`);
+  } else {
+    ruleCache.clear();
+  }
+}
+
+/* ================================================================== */
 /*  Types                                                               */
 /* ================================================================== */
 
@@ -112,6 +147,12 @@ export async function loadApprovalRules(params: {
   ruleType: ApprovalRuleType;
 }): Promise<ApprovalRule[]> {
   const { pool, tenantId, ruleType } = params;
+
+  // ── 缓存命中检查
+  const cacheKey = `${tenantId}:${ruleType}`;
+  const cached = ruleCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < RULE_CACHE_TTL_MS) return cached.rules;
+
   const res = await pool.query(
     `SELECT * FROM approval_rules
      WHERE rule_type = $1 AND enabled = true
@@ -121,7 +162,9 @@ export async function loadApprovalRules(params: {
        priority ASC`,
     [ruleType, tenantId],
   );
-  return res.rows.map(toRule);
+  const rules = res.rows.map(toRule);
+  ruleCache.set(cacheKey, { rules, ts: Date.now() });
+  return rules;
 }
 
 function toRule(r: any): ApprovalRule {
@@ -157,7 +200,7 @@ function matchToolExecutionRule(
 function evaluateCondition(
   rule: ApprovalRule,
   mc: MatchCondition,
-  ctx: { toolName: string; inputStr: string; inputDraft: Record<string, unknown>; batchSize: number; toolScope?: string },
+  ctx: { toolName: string; inputStr: string; inputDraft: Record<string, unknown>; batchSize: number; toolScope?: string; tenantTimezoneOffsetMin?: number },
 ): RuleMatchResult {
   // ── AND 组合：所有子条件均匹配
   if (mc.match === "and") {
@@ -179,22 +222,24 @@ function evaluateCondition(
   }
 
   if (mc.match === "tool_name_regex") {
+    const re = safeRegex(mc.pattern, mc.flags);
+    if (!re) return { matched: false, rule, explanation: `Regex pattern rejected (too long or unsafe): ${rule.name}` };
     try {
-      const re = new RegExp(mc.pattern, mc.flags ?? "i");
       if (re.test(ctx.toolName)) {
         return { matched: true, rule, explanation: `工具名称「${ctx.toolName}」匹配了规则「${rule.name}」` };
       }
-    } catch { /* invalid regex, skip */ }
+    } catch { /* runtime error, skip */ }
     return { matched: false, rule, explanation: "" };
   }
 
   if (mc.match === "input_content_regex") {
+    const re = safeRegex(mc.pattern, mc.flags);
+    if (!re) return { matched: false, rule, explanation: `Regex pattern rejected (too long or unsafe): ${rule.name}` };
     try {
-      const re = new RegExp(mc.pattern, mc.flags ?? "i");
       if (re.test(ctx.inputStr)) {
         return { matched: true, rule, explanation: `输入内容触发了规则「${rule.name}」：${rule.description}` };
       }
-    } catch { /* invalid regex, skip */ }
+    } catch { /* runtime error, skip */ }
     return { matched: false, rule, explanation: "" };
   }
 
@@ -216,12 +261,13 @@ function evaluateCondition(
   if (mc.match === "input_field_regex") {
     const val = getNestedField(ctx.inputDraft, mc.field);
     if (typeof val === "string") {
+      const re = safeRegex(mc.pattern, mc.flags);
+      if (!re) return { matched: false, rule, explanation: `Regex pattern rejected (too long or unsafe): ${rule.name}` };
       try {
-        const re = new RegExp(mc.pattern, mc.flags ?? "i");
         if (re.test(val)) {
           return { matched: true, rule, explanation: `字段「${mc.field}」匹配规则「${rule.name}」` };
         }
-      } catch { /* skip */ }
+      } catch { /* runtime error, skip */ }
     }
     return { matched: false, rule, explanation: "" };
   }
@@ -234,9 +280,13 @@ function evaluateCondition(
   }
 
   if (mc.match === "time_range") {
+    // 从上下文获取租户时区偏移（分钟），fallback UTC
+    const tzOffsetMin = ctx.tenantTimezoneOffsetMin ?? 0;
     const now = new Date();
-    const hour = now.getHours();
-    const day = now.getDay(); // 0=Sun
+    const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
+    const tenantNow = new Date(utcMs + tzOffsetMin * 60_000);
+    const hour = tenantNow.getHours();
+    const day = tenantNow.getDay(); // 0=Sun
     let triggered = false;
     let reason = "";
     if (mc.outsideHours) {
@@ -510,4 +560,123 @@ function getNestedField(obj: Record<string, unknown>, path: string): unknown {
     cur = (cur as Record<string, unknown>)[key];
   }
   return cur;
+}
+
+/* ================================================================== */
+/*  Audit helper                                                        */
+/* ================================================================== */
+
+async function insertAudit(
+  pool: Pool,
+  ruleId: string,
+  tenantId: string,
+  action: string,
+  prevSnapshot: Record<string, unknown> | null,
+  newSnapshot: Record<string, unknown> | null,
+  changedBy: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO approval_rule_audit (rule_id, tenant_id, action, prev_snapshot, new_snapshot, changed_by)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [ruleId, tenantId, action, prevSnapshot ? JSON.stringify(prevSnapshot) : null, newSnapshot ? JSON.stringify(newSnapshot) : null, changedBy],
+  );
+}
+
+/* ================================================================== */
+/*  Rule CRUD with audit                                                */
+/* ================================================================== */
+
+/** 创建审批规则 */
+export async function createApprovalRule(params: {
+  pool: Pool;
+  tenantId: string;
+  ruleType: ApprovalRuleType;
+  name: string;
+  description?: string;
+  priority?: number;
+  matchCondition: MatchCondition;
+  effect: RuleEffect;
+  changedBy?: string;
+}): Promise<ApprovalRule> {
+  const { pool, tenantId, ruleType, name, description, priority, matchCondition, effect, changedBy } = params;
+  const res = await pool.query(
+    `INSERT INTO approval_rules (tenant_id, rule_type, name, description, priority, match_condition, effect)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [tenantId, ruleType, name, description ?? "", priority ?? 100, JSON.stringify(matchCondition), JSON.stringify(effect)],
+  );
+  const rule = toRule(res.rows[0]);
+  await insertAudit(pool, rule.ruleId, tenantId, "create", null, res.rows[0], changedBy ?? "system");
+  invalidateRuleCache(tenantId, ruleType);
+  return rule;
+}
+
+/** 更新审批规则 */
+export async function updateApprovalRule(params: {
+  pool: Pool;
+  ruleId: string;
+  tenantId: string;
+  updates: Partial<Pick<ApprovalRule, "name" | "description" | "priority" | "matchCondition" | "effect" | "enabled">>;
+  changedBy?: string;
+}): Promise<ApprovalRule | null> {
+  const { pool, ruleId, tenantId, updates, changedBy } = params;
+  // snapshot before
+  const prev = await pool.query(`SELECT * FROM approval_rules WHERE rule_id = $1 AND tenant_id = $2`, [ruleId, tenantId]);
+  if (prev.rows.length === 0) return null;
+  const prevRow = prev.rows[0];
+
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  let idx = 1;
+  if (updates.name !== undefined) { sets.push(`name = $${idx++}`); vals.push(updates.name); }
+  if (updates.description !== undefined) { sets.push(`description = $${idx++}`); vals.push(updates.description); }
+  if (updates.priority !== undefined) { sets.push(`priority = $${idx++}`); vals.push(updates.priority); }
+  if (updates.matchCondition !== undefined) { sets.push(`match_condition = $${idx++}`); vals.push(JSON.stringify(updates.matchCondition)); }
+  if (updates.effect !== undefined) { sets.push(`effect = $${idx++}`); vals.push(JSON.stringify(updates.effect)); }
+  if (updates.enabled !== undefined) { sets.push(`enabled = $${idx++}`); vals.push(updates.enabled); }
+  if (sets.length === 0) return toRule(prevRow);
+
+  sets.push(`updated_at = now()`);
+  vals.push(ruleId, tenantId);
+  const res = await pool.query(
+    `UPDATE approval_rules SET ${sets.join(", ")} WHERE rule_id = $${idx++} AND tenant_id = $${idx++} RETURNING *`,
+    vals,
+  );
+  if (res.rows.length === 0) return null;
+  await insertAudit(pool, ruleId, tenantId, "update", prevRow, res.rows[0], changedBy ?? "system");
+  invalidateRuleCache(tenantId);
+  return toRule(res.rows[0]);
+}
+
+/** 删除审批规则 */
+export async function deleteApprovalRule(params: {
+  pool: Pool;
+  ruleId: string;
+  tenantId: string;
+  changedBy?: string;
+}): Promise<boolean> {
+  const { pool, ruleId, tenantId, changedBy } = params;
+  const prev = await pool.query(`SELECT * FROM approval_rules WHERE rule_id = $1 AND tenant_id = $2`, [ruleId, tenantId]);
+  if (prev.rows.length === 0) return false;
+  await pool.query(`DELETE FROM approval_rules WHERE rule_id = $1 AND tenant_id = $2`, [ruleId, tenantId]);
+  await insertAudit(pool, ruleId, tenantId, "delete", prev.rows[0], null, changedBy ?? "system");
+  invalidateRuleCache(tenantId);
+  return true;
+}
+
+/** 启用/禁用审批规则 */
+export async function toggleApprovalRule(params: {
+  pool: Pool;
+  ruleId: string;
+  tenantId: string;
+  enabled: boolean;
+  changedBy?: string;
+}): Promise<ApprovalRule | null> {
+  return updateApprovalRule({
+    pool: params.pool,
+    ruleId: params.ruleId,
+    tenantId: params.tenantId,
+    updates: { enabled: params.enabled },
+    changedBy: params.changedBy,
+  });
 }

@@ -51,6 +51,58 @@ export interface ProtocolHandshakeAck {
   serverVersion: string;
   compatible: boolean;
   deprecationWarning?: string;
+  /** 服务端下发的多模态策略（元数据驱动） */
+  multimodalPolicy?: DeviceMultimodalPolicy | null;
+}
+
+/* ================================================================== */
+/*  设备多模态协议类型                                                    */
+/* ================================================================== */
+
+/** 设备支持的模态类型 */
+export type DeviceModality = "image" | "audio" | "video";
+
+/** 设备多模态能力声明（设备注册/握手时上报） */
+export interface DeviceMultimodalCapabilities {
+  modalities: DeviceModality[];
+  multimodalConfig?: {
+    maxFileSize?: number;
+    supportedFormats?: Partial<Record<DeviceModality, string[]>>;
+  };
+}
+
+/** 服务端下发的多模态策略 */
+export interface DeviceMultimodalPolicy {
+  allowedModalities: DeviceModality[];
+  maxFileSizeBytes: number;
+  supportedFormats: Partial<Record<DeviceModality, string[]>>;
+}
+
+/** 设备多模态附件 */
+export interface DeviceAttachment {
+  type: "image" | "document" | "voice" | "video";
+  mimeType: string;
+  name?: string;
+  /** base64 data URL */
+  dataUrl?: string;
+}
+
+/** 设备 → 云端：多模态查询消息 */
+export interface DeviceMultimodalQuery {
+  type: "device_query";
+  sessionId: string;
+  conversationId?: string;
+  message: string;
+  attachments?: DeviceAttachment[];
+}
+
+/** 云端 → 设备：流式 AI 响应消息 */
+export interface DeviceMultimodalResponse {
+  type: "device_response";
+  sessionId: string;
+  chunk?: string;
+  done?: boolean;
+  error?: string;
 }
 
 /**

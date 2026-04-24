@@ -10,6 +10,9 @@ describe("eventDrivenResume", () => {
       if (sql.includes("SELECT s.step_id, j.job_id")) {
         return { rowCount: 1, rows: [{ step_id: "step-1", job_id: "job-1" }] };
       }
+      if (sql.includes("INSERT INTO resume_events")) {
+        return { rowCount: 1, rows: [] };
+      }
       if (sql.includes("INSERT INTO audit_events")) {
         return { rowCount: 1, rows: [] };
       }
