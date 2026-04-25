@@ -14,6 +14,8 @@ export type PluginConfig = {
   builtinPlugins: string[];
   /** 外部插件目录列表（可选） */
   pluginDirs?: string[];
+  /** 本地 Skill 目录列表（可选） */
+  skillDirs?: string[];
   /** 插件配置最后更新时间 */
   updatedAt?: string;
   /** 配置来源：local=本地默认 | cloud=云端策略下发 */

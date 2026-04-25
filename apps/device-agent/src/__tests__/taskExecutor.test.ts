@@ -8,10 +8,6 @@ vi.mock("../log", () => ({
   sha256_8: vi.fn((s: string) => s.slice(0, 8).padEnd(8, "0")),
 }));
 
-vi.mock("../tray", () => ({
-  isToolLocallyDisabled: vi.fn(() => false),
-}));
-
 vi.mock("./capabilityRegistry", () => ({
   findPluginForTool: vi.fn(() => null),
   getToolRiskLevel: vi.fn(() => "low"),

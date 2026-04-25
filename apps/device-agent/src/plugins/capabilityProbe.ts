@@ -8,7 +8,10 @@
  */
 import os from "node:os";
 import fs from "node:fs/promises";
-import { execSync } from "node:child_process";
+import { execSync, exec } from "node:child_process";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 
 // ── 能力报告类型 ──────────────────────────────────────────
 
@@ -40,6 +43,12 @@ export interface DeviceCapabilityReport {
     hasMicrophone: boolean;
     /** 是否有触摸屏 */
     hasTouchscreen: boolean;
+    /** 是否有可用串口 */
+    hasSerial: boolean;
+    /** 检测到的串口列表（可选） */
+    serialPorts?: string[];
+    /** 是否有蓝牙 */
+    hasBluetooth: boolean;
   };
 
   /** 软件能力标记 */
@@ -83,6 +92,10 @@ export const CAPABILITY_TOOL_PREFIX_MAP: Record<string, (report: DeviceCapabilit
   "device.gpu.": (r) => r.hardware.hasGpu,
   "device.audio.": (r) => r.hardware.hasMicrophone,
   "device.screen.": (r) => r.hardware.screen !== null,
+  "device.sensor.*": (r) => r.hardware.hasSerial || r.network.hasNetwork,
+  "device.input.*":  () => true,  // stdin 总是可用
+  "device.bluetooth.*": (r) => r.hardware.hasBluetooth,
+  "device.dialog.*":    (r) => r.hardware.hasMicrophone,
 };
 
 /**
@@ -153,6 +166,40 @@ export async function probeDeviceCapabilities(forceRefresh = false): Promise<Dev
   // 触摸屏探测（简化）
   const hasTouchscreen = false; // 需要更底层的探测，暂默认 false
 
+  // 串口探测
+  let hasSerial = false;
+  let serialPorts: string[] = [];
+  try {
+    if (platform === "linux") {
+      const stdout = execSync("ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true", { encoding: "utf8", timeout: 5000 });
+      serialPorts = stdout.trim().split("\n").filter(Boolean);
+      hasSerial = serialPorts.length > 0;
+    } else if (platform === "win32") {
+      const stdout = execSync('powershell -Command "Get-CimInstance Win32_SerialPort | Select-Object -ExpandProperty DeviceID"', { encoding: "utf8", timeout: 5000, windowsHide: true });
+      serialPorts = stdout.trim().split("\n").filter(Boolean);
+      hasSerial = serialPorts.length > 0;
+    } else if (platform === "darwin") {
+      const stdout = execSync("ls /dev/tty.usb* 2>/dev/null || true", { encoding: "utf8", timeout: 5000 });
+      serialPorts = stdout.trim().split("\n").filter(Boolean);
+      hasSerial = serialPorts.length > 0;
+    }
+  } catch { /* 静默 */ }
+
+  // 蓝牙探测
+  let hasBluetooth = false;
+  try {
+    if (platform === "linux") {
+      const { stdout } = await execAsync("which bluetoothctl 2>/dev/null && hciconfig hci0 2>/dev/null | head -1 || true");
+      hasBluetooth = stdout.trim().length > 0 && !stdout.includes("No such device");
+    } else if (platform === "darwin") {
+      const { stdout } = await execAsync("system_profiler SPBluetoothDataType 2>/dev/null | head -5 || true");
+      hasBluetooth = stdout.includes("Bluetooth");
+    } else if (platform === "win32") {
+      const { stdout } = await execAsync('powershell -Command "Get-PnpDevice -Class Bluetooth -PresentOnly -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Status"');
+      hasBluetooth = stdout.trim() === "OK";
+    }
+  } catch { /* 静默 */ }
+
   const report: DeviceCapabilityReport = {
     probedAt: new Date().toISOString(),
     platform,
@@ -167,6 +214,9 @@ export async function probeDeviceCapabilities(forceRefresh = false): Promise<Dev
       screen,
       hasMicrophone,
       hasTouchscreen,
+      hasSerial,
+      serialPorts: serialPorts.length > 0 ? serialPorts : undefined,
+      hasBluetooth,
     },
     software: {
       hasBrowser: browserInfo.hasBrowser,

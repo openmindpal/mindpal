@@ -525,7 +525,7 @@ export const Errors = {
       },
       cause,
     }),
-  schemaChangesetRequired: (action?: "set_active" | "rollback", cause?: unknown) =>
+  schemaChangesetRequired: (action?: "set_active" | "rollback" | "publish", cause?: unknown) =>
     new AppError({
       errorCode: "SCHEMA_CHANGESET_REQUIRED",
       httpStatus: 409,

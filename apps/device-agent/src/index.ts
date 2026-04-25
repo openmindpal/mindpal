@@ -10,7 +10,6 @@ import { safeError, safeLog, sha256_8 } from "./log";
 import { resolveDeviceAgentEnv } from "./deviceAgentEnv";
 import { listPlugins } from "./kernel/capabilityRegistry";
 import { loadPluginsFromDir } from "./pluginRegistry";
-import { startTray } from "./tray";
 import { initAudit, cleanupOldAuditLogs } from "./kernel/audit";
 import { initPlugin } from "./kernel/pluginLifecycle";
 import { initSessionManager, shutdownSessionManager } from "./kernel/session";
@@ -23,7 +22,7 @@ function resolveApiBase(opts: Record<string, string | boolean>) {
 
 /**
  * 共享的设备运行时初始化逻辑（审计、访问控制、任务队列、会话管理、策略缓存）。
- * cmdRun 和 cmdTray 共用，消除重复初始化代码。
+ * 设备运行时初始化逻辑（审计、访问控制、任务队列、会话管理、策略缓存）。
  */
 async function initDeviceRuntime(cfg: { deviceId: string; deviceToken: string; apiBase?: string; os?: string; agentVersion?: string }, apiBase: string) {
   assertKernelManifest();
@@ -129,8 +128,8 @@ async function cmdPair(opts: Record<string, string | boolean>) {
   // 优先使用云端下发的 pluginPolicy，否则使用设备类型默认值
   const cloudPluginPolicy = (r.json as any).pluginPolicy;
   const pluginConfig = cloudPluginPolicy
-    ? { builtinPlugins: cloudPluginPolicy.builtinPlugins ?? [], pluginDirs: cloudPluginPolicy.pluginDirs ?? [], updatedAt: new Date().toISOString(), source: "cloud" as const }
-    : { builtinPlugins: getDefaultPluginsForDeviceType(deviceType), updatedAt: new Date().toISOString(), source: "local" as const };
+    ? { builtinPlugins: cloudPluginPolicy.builtinPlugins ?? [], pluginDirs: cloudPluginPolicy.pluginDirs ?? [], skillDirs: cloudPluginPolicy.skillDirs ?? [], updatedAt: new Date().toISOString(), source: "cloud" as const }
+    : { builtinPlugins: getDefaultPluginsForDeviceType(deviceType), skillDirs: [], updatedAt: new Date().toISOString(), source: "local" as const };
 
   await saveConfigFile(cfgPath, { apiBase, deviceId, deviceToken, enrolledAt: new Date().toISOString(), deviceType, os: osName, agentVersion: v, pluginConfig });
   safeLog(`paired: deviceId=${deviceId} tokenSha256_8=${sha256_8(deviceToken)} config=${cfgPath} capabilities=${capabilities.length} pluginSource=${pluginConfig.source}`);
@@ -147,6 +146,12 @@ const BUILTIN_PLUGIN_MAP: Record<string, () => Promise<any>> = {
   clipboard: () => import("./plugins/clipboardPlugin"),
   evidence: () => import("./plugins/evidencePlugin"),
   "gui-automation": () => import("./plugins/guiAutomationPlugin"),
+  "audio":        () => import("./plugins/audioPlugin"),
+  "camera":       () => import("./plugins/cameraPlugin"),
+  "sensorBridge": () => import("./plugins/sensorBridgePlugin"),
+  "localInput":   () => import("./plugins/localInputPlugin"),
+  "dialogEngine": () => import("./plugins/dialogEnginePlugin"),
+  "bluetooth":    () => import("./plugins/bluetoothPlugin"),
 };
 
 /**
@@ -162,13 +167,13 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
  * 新增设备类型只需在此添加映射，无需修改加载逻辑。
  */
 const DEVICE_TYPE_DEFAULT_PLUGINS: Record<string, string[]> = {
-  desktop: ["desktop"],
-  mobile: [],
-  iot: [],
-  robot: [],
-  vehicle: [],
-  home: [],
-  gateway: [],
+  desktop: ["desktop", "audio", "localInput", "dialogEngine"],
+  mobile: ["audio", "camera", "localInput", "dialogEngine", "bluetooth"],
+  iot: ["sensorBridge", "localInput", "bluetooth"],
+  robot: ["audio", "camera", "sensorBridge", "localInput", "dialogEngine", "bluetooth"],
+  vehicle: ["audio", "camera", "sensorBridge", "localInput", "dialogEngine", "bluetooth"],
+  home: ["audio", "sensorBridge", "localInput", "dialogEngine", "bluetooth"],
+  gateway: ["sensorBridge", "localInput"],
 };
 
 /** 根据设备类型获取默认插件列表 */
@@ -184,7 +189,7 @@ export function getDefaultPluginsForDeviceType(deviceType: string): string[] {
  * @param builtinNames - 要加载的内置插件名称（支持别名如 "desktop"）
  * @param pluginDirs  - 外部插件目录列表
  */
-async function initPlugins(builtinNames: string[] = [], pluginDirs: string[] = []) {
+async function initPlugins(builtinNames: string[] = [], pluginDirs: string[] = [], skillDirs: string[] = []) {
   // 1. 展开别名（如 "desktop" → 5个子插件），去重
   const builtinList = Array.from(new Set(builtinNames.flatMap((name) => BUILTIN_ALIASES[name] ?? [name])));
 
@@ -217,6 +222,26 @@ async function initPlugins(builtinNames: string[] = [], pluginDirs: string[] = [
       if (loaded.length) safeLog(`plugins_loaded: dir=${dir} plugins=${loaded.join(",")}`);
     } catch (e: any) {
       safeError(`plugin_dir_error: ${dir} - ${e?.message ?? "unknown"}`);
+    }
+  }
+
+  // 3. 从配置文件指定的目录加载本地 Skill（子进程隔离 + 标准 manifest）
+  if (skillDirs.length > 0) {
+    try {
+      const { loadLocalSkills } = await import("./localSkill/loader");
+      const result = await loadLocalSkills(skillDirs);
+      if (result.loaded.length) safeLog(`local_skills_loaded: ${result.loaded.join(", ")}`);
+      if (result.errors.length) safeError(`local_skills_errors: ${result.errors.join("; ")}`);
+    } catch (e: any) {
+      safeError(`local_skill_loader_error: ${e?.message ?? "unknown"}`);
+    }
+
+    try {
+      const { startSkillWatcher } = await import("./localSkill/watcher");
+      startSkillWatcher(skillDirs);
+      safeLog(`local_skill_watcher: watching ${skillDirs.length} dirs`);
+    } catch (e: any) {
+      safeError(`local_skill_watcher_error: ${e?.message ?? "unknown"}`);
     }
   }
 
@@ -258,29 +283,11 @@ async function cmdRun(opts: Record<string, string | boolean>) {
   safeLog(`device-agent exited: ${result.stopReason}`);
 }
 
-async function cmdTray() {
-  safeLog("启动托盘模式...");
-  // 尝试加载配置以初始化审计和访问控制
-  try {
-    const cfg = await loadConfigFile(defaultConfigPath());
-    if (cfg) {
-      const apiBase = cfg.apiBase ?? "http://localhost:3001";
-      await initDeviceRuntime(cfg, apiBase);
-    }
-  } catch {
-    // 配置不存在时使用默认值
-    initAudit({ deviceId: "unknown", enabled: resolveDeviceAgentEnv().auditEnabled });
-  }
-  await startTray();
-  // 托盘模式下保持进程运行
-  await new Promise(() => {});
-}
-
 async function main() {
   const { command, options } = parseCli(process.argv);
 
-  // run 和 tray 命令需要单实例：自动杀死旧实例，启动新实例
-  if (command === "run" || command === "tray") {
+  // run 命令需要单实例：自动杀死旧实例，启动新实例
+  if (command === "run") {
     const killed = await killExistingInstance();
     if (killed) safeLog("已关闭旧的 device-agent 实例");
     await acquireLock();
@@ -292,9 +299,10 @@ async function main() {
   // ── 元数据驱动：从配置文件/设备类型推断插件列表，不依赖环境变量 ──
   let builtinPlugins: string[] = [];
   let pluginDirs: string[] = [];
+  let skillDirs: string[] = [];
 
-  if (command === "run" || command === "tray") {
-    // 运行/托盘模式：从配置文件读取插件元数据
+  if (command === "run") {
+    // 运行模式：从配置文件读取插件元数据
     const cfgPath = getStringOpt(options, "config") || defaultConfigPath();
     try {
       const cfg = await loadConfigFile(cfgPath);
@@ -302,6 +310,7 @@ async function main() {
         // 配置文件中有明确的 pluginConfig → 使用它（可能来自云端策略下发）
         builtinPlugins = cfg.pluginConfig.builtinPlugins ?? [];
         pluginDirs = cfg.pluginConfig.pluginDirs ?? [];
+        skillDirs = cfg.pluginConfig.skillDirs ?? [];
         safeLog(`[plugin-config] 来源: ${cfg.pluginConfig.source ?? "local"}, 插件: [${builtinPlugins.join(",")}]`);
       } else if (cfg?.deviceType) {
         // 配置文件存在但无 pluginConfig → 使用设备类型默认值
@@ -321,25 +330,34 @@ async function main() {
   }
   // else: help 命令不加载插件
 
-  await initPlugins(builtinPlugins, pluginDirs);
+  // 默认端侧 Skill 目录：当配置文件未指定 skillDirs 时，自动扫描 ./skills/
+  if (skillDirs.length === 0) {
+    const nodePath = await import("node:path");
+    const nodeFs = await import("node:fs");
+    const defaultSkillDir = nodePath.default.resolve(process.cwd(), "skills");
+    if (nodeFs.default.existsSync(defaultSkillDir)) {
+      skillDirs = [defaultSkillDir];
+      safeLog(`[skill-config] 来源: 默认目录 ${defaultSkillDir}`);
+    }
+  }
+
+  await initPlugins(builtinPlugins, pluginDirs, skillDirs);
 
   try {
     if (command === "pair") await cmdPair(options);
     else if (command === "run") await cmdRun(options);
-    else if (command === "tray") await cmdTray();
     else {
       safeLog("openslin-device-agent 命令：");
       safeLog("  pair --pairingCode <配对码> [--apiBase <地址>] [--config <路径>] [--deviceType desktop|mobile]");
       safeLog("        配对设备到服务器（自动根据设备类型加载对应插件）");
       safeLog("  run [--config <路径>] [--heartbeatMs <毫秒>] [--pollMs <毫秒>] [--idleTimeoutMs <毫秒>]");
-      safeLog("        命令行模式运行（从配置文件元数据加载插件策略）");
-      safeLog("  tray");
-      safeLog("        托盘模式运行（常驻后台，右键菜单控制）");
+      safeLog("        守护进程模式运行（从配置文件元数据加载插件策略）");
       safeLog("");
       safeLog("插件治理（元数据驱动，无需手动设置环境变量）：");
       safeLog("  配对时根据设备类型自动确定内置插件 → 写入配置文件");
       safeLog("  运行时从配置文件读取 pluginConfig，支持云端策略动态下发");
       safeLog("  设备类型默认插件: desktop→[desktop] | mobile/iot/robot→[]");
+      safeLog("  本地 Skill: 从 pluginConfig.skillDirs 加载（子进程隔离 + 标准 manifest）");
       safeLog(`  别名展开: desktop → file,browser,desktop-control,clipboard,evidence`);
       safeLog(`已加载插件：${listPlugins().map((p) => p.name).join(", ")} (${listPlugins().length} 个)`);
     }

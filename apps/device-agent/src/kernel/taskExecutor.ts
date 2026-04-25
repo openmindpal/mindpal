@@ -17,7 +17,6 @@ import { resolveToolAlias } from "./capabilityRegistry";
 import { isToolFeatureEnabled, getDegradationRule, recordToolSuccess, recordToolFailure } from "./toolFeatureFlags";
 import { auditToolStart, auditToolSuccess, auditToolFailed, auditToolDenied } from "./audit";
 import { sha256_8, safeError, safeLog } from "../log";
-import { isToolLocallyDisabled } from "../tray";
 import builtinToolPlugin from "../plugins/builtinToolPlugin";
 import { getDefaultExecutionSession } from "./session";
 
@@ -55,17 +54,6 @@ export async function executeDeviceTool(params: { cfg: { apiBase: string; device
     return { status: "failed", errorCategory: "access_denied", outputDigest: { reason: "caller_unverified" } };
   }
   const callerId = caller?.callerId ?? `device:${sha256_8(params.cfg.deviceToken).padEnd(8, "0")}`;
-
-  // 本地禁用检查（托盘用户禁用的工具）
-  try {
-    if (isToolLocallyDisabled(name) || isToolLocallyDisabled(exec.toolRef)) {
-      safeLog(`[taskExecutor] 工具被本地禁用: ${name}`);
-      await auditToolDenied({ toolRef: exec.toolRef, toolName: name, executionId, reason: "locally_disabled" });
-      return { status: "failed", errorCategory: "locally_disabled", outputDigest: { reason: "locally_disabled", tool: name } };
-    }
-  } catch {
-    // tray 未初始化时忽略
-  }
 
   if (!isClaimedByTrustedDevice) {
     if (!isCallerAllowed(callerId)) { await auditToolDenied({ toolRef: exec.toolRef, toolName: name, executionId, reason: "caller_not_allowed" }); return { status: "failed", errorCategory: "access_denied" }; }

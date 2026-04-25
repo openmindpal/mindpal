@@ -1,0 +1,40 @@
+{
+  "identity": {
+    "name": "device.example.echo",
+    "version": "1.0.0"
+  },
+  "displayName": {
+    "zh-CN": "端侧示例技能",
+    "en-US": "Device Example Skill"
+  },
+  "description": {
+    "zh-CN": "端侧 Skill 示例模板：将输入原样返回，用于验证本地 Skill 运行时是否正常工作",
+    "en-US": "Device-side Skill example template: echoes input back, used to verify local Skill runtime"
+  },
+  "category": "testing",
+  "tags": ["example", "testing", "device"],
+  "contract": {
+    "scope": "read",
+    "resourceType": "tool",
+    "action": "execute",
+    "riskLevel": "low",
+    "idempotencyRequired": false,
+    "approvalRequired": false
+  },
+  "io": {
+    "inputSchema": {
+      "fields": {
+        "text": { "type": "string", "required": true }
+      }
+    },
+    "outputSchema": {
+      "fields": {
+        "echo": { "type": "string", "required": true },
+        "source": { "type": "string", "required": true }
+      }
+    }
+  },
+  "engines": { "node": ">=18.0.0" },
+  "entry": "dist/index.js",
+  "isolation": "process"
+}

@@ -10,7 +10,7 @@ import { buildEffectiveEntitySchema } from "../../modules/metadata/effectiveSche
 import { getEffectiveSchema, resolveSchemaNameForEntity } from "../../modules/metadata/schemaRepo";
 import { pageDraftSchema, pageViewPrefsSchema } from "./modules/pageModel";
 import { validateUiAgainstRegistry } from "./modules/componentRegistry";
-import { deletePage, getDraft, getLatestReleased, listPages, publishFromDraft, rollbackToPreviousReleased, upsertDraft } from "./modules/pageRepo";
+import { deletePage, getDraft, getLatestReleased, listPages, upsertDraft } from "./modules/pageRepo";
 import { getUserPageViewPrefs, resetUserPageViewPrefs, setUserPageViewPrefs } from "../../modules/memory/userPreferencesRepo";
 import { getLatestReleasedUiComponentRegistry } from "../../modules/governance/uiComponentRegistryRepo";
 
@@ -386,50 +386,24 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
     return { scope, draft: saved };
   });
 
-  app.post("/ui/pages/:name/publish", async (req, reply) => {
-    const params = z.object({ name: z.string().min(1) }).parse(req.params);
-    setAuditContext(req, { resourceType: "ui_config", action: "publish" });
-    const decision = await requirePermission({ req, resourceType: "ui_config", action: "publish" });
-    req.ctx.audit!.policyDecision = decision;
-
-    const subject = req.ctx.subject!;
-    const scope = resolveScope(subject);
-    const key = { tenantId: subject.tenantId, scopeType: scope.scopeType, scopeId: scope.scopeId, name: params.name };
-    const draft = await getDraft(app.db, key);
-    if (!draft) throw Errors.uiConfigDenied("不存在 draft");
-
-    await validateDraft(subject, scope, {
-      pageType: draft.pageType,
-      params: draft.params,
-      dataBindings: draft.dataBindings ?? [],
-      actionBindings: draft.actionBindings ?? [],
-      ui: draft.ui ?? null,
+  app.post("/ui/pages/:name/publish", async (_req, reply) => {
+    return reply.status(409).send({
+      ok: false,
+      error: "UI_PAGE_CHANGESET_REQUIRED",
+      message: "直接发布已禁用，请使用 Changeset 工作流",
+      requiredFlow: "changeset.release",
+      supportedKind: "ui_page.publish",
     });
-
-    reply.header("x-openslin-deprecated", "use-governance-changeset");
-    reply.header("x-openslin-deprecation-doc", "/governance/changesets");
-    const released = await publishFromDraft(app.db, key);
-    if (!released) throw Errors.uiConfigDenied("不存在 draft");
-    req.ctx.audit!.outputDigest = { name: released.name, pageType: released.pageType, version: released.version };
-    return { scope, released };
   });
 
-  app.post("/ui/pages/:name/rollback", async (req, reply) => {
-    const params = z.object({ name: z.string().min(1) }).parse(req.params);
-    setAuditContext(req, { resourceType: "ui_config", action: "rollback" });
-    const decision = await requirePermission({ req, resourceType: "ui_config", action: "rollback" });
-    req.ctx.audit!.policyDecision = decision;
-
-    const subject = req.ctx.subject!;
-    const scope = resolveScope(subject);
-    const key = { tenantId: subject.tenantId, scopeType: scope.scopeType, scopeId: scope.scopeId, name: params.name };
-
-    reply.header("x-openslin-deprecated", "use-governance-changeset");
-    reply.header("x-openslin-deprecation-doc", "/governance/changesets");
-    const released = await rollbackToPreviousReleased(app.db, key);
-    if (!released) throw Errors.uiConfigDenied("没有可回滚版本");
-    req.ctx.audit!.outputDigest = { name: released.name, pageType: released.pageType, version: released.version };
-    return { scope, released };
+  app.post("/ui/pages/:name/rollback", async (_req, reply) => {
+    return reply.status(409).send({
+      ok: false,
+      error: "UI_PAGE_CHANGESET_REQUIRED",
+      message: "直接回滚已禁用，请使用 Changeset 工作流",
+      requiredFlow: "changeset.release",
+      supportedKind: "ui_page.rollback",
+    });
   });
 
   app.delete("/ui/pages/:name", async (req) => {

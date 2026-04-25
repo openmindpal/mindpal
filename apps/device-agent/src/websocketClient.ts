@@ -13,6 +13,7 @@ import { WebSocket } from 'ws';
 import type { DeviceAgentConfig } from './config';
 import { safeLog, safeError } from './log';
 import { resolveDeviceAgentEnv } from './deviceAgentEnv';
+import { listPlugins } from './kernel/capabilityRegistry';
 import { handleTaskPending, handleDeviceMessage, sendTaskResult, type WsTaskContext } from './wsMessageHandlers';
 import {
   handleStreamingStart, handleStreamingStep, handleStreamingStop,
@@ -467,11 +468,15 @@ export class WebSocketDeviceAgent {
 
   private sendProtocolHandshake(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const loadedCapabilities = listPlugins().flatMap(p => p.toolPrefixes ?? []);
+    const capabilities = loadedCapabilities.length > 0
+      ? loadedCapabilities
+      : ["desktop.control", "browser.automation", "file.ops"]; // fallback
     const handshake: ProtocolHandshake & { multimodalCapabilities?: DeviceMultimodalCapabilities } = {
       type: "protocol.handshake",
       protocolVersion: DEVICE_PROTOCOL_VERSION,
       agentVersion: resolveDeviceAgentEnv().agentVersion,
-      capabilities: ["desktop.control", "browser.automation", "file.ops"],
+      capabilities,
     };
     // P2: 附加多模态能力声明
     if (this._multimodalCapabilities) {

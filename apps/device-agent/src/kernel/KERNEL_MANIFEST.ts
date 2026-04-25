@@ -117,7 +117,7 @@ export const KERNEL_MODULE_DESCRIPTORS: Record<KernelModule, KernelModuleDescrip
 
 export const NON_KERNEL_KEYWORDS = [
   "browser", "desktop", "gui", "vision", "robot", "plc",
-  "sensor", "camera", "vehicle", "tray", "streaming",
+  "sensor", "camera", "vehicle", "streaming",
   "edge", "inference", "ocr", "perception", "localVision",
   "home", "appliance", "traffic", "energy", "elevator",
 ] as const;

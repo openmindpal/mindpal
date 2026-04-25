@@ -12,7 +12,6 @@ import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 import { registerPlugin, findPluginForTool, listPlugins, unregisterPlugin, dispatchMessageToPlugins, exportCapabilityManifest } from "./capabilityRegistry";
 import { getCachedCapabilityReport, isToolAvailableOnDevice } from "../plugins/capabilityProbe";
 import type { DeviceCapabilityReport } from "../plugins/capabilityProbe";
-import { invalidateTrayState } from "../trayState";
 
 // ── 内部状态 ──────────────────────────────────────────────
 
@@ -169,8 +168,6 @@ export async function initPlugin(plugin: DeviceToolPlugin): Promise<{ success: b
     pluginStates.set(plugin.name, "ready");
     // 通知云端能力变更（热插拔同步）
     try { _onCapabilityChanged?.(exportCapabilityManifest()); } catch { /* 非致命 */ }
-    // 通知托盘缓存失效，触发事件驱动更新
-    try { invalidateTrayState(); } catch { /* 非致命 */ }
     return { success: true, filteredCapabilities: filtered.length > 0 ? filtered : undefined };
   } catch (e: any) {
     pluginStates.set(plugin.name, "error");

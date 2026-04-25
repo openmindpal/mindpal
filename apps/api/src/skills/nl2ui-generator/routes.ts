@@ -8,7 +8,7 @@ import { requirePermission } from "../../modules/auth/guard";
 import { setAuditContext } from "../../modules/audit/context";
 import { generateUiFromNaturalLanguage } from "./modules/generator";
 import { nl2uiRequestSchema, type Nl2UiGeneratedConfig } from "./modules/types";
-import { upsertDraft, publishFromDraft } from "../ui-page-config/modules/pageRepo";
+import { upsertDraft } from "../ui-page-config/modules/pageRepo";
 import type { PageDraft } from "../ui-page-config/modules/pageModel";
 
 
@@ -243,24 +243,16 @@ export const nl2uiRoutes: FastifyPluginAsync = async (app) => {
     // Save draft
     const saved = await upsertDraft(app.db, key, draft);
 
-    // Auto-publish if requested
-    let released = null;
-    if (body.autoPublish !== false) {
-      try {
-        released = await publishFromDraft(app.db, key);
-      } catch {
-        // publish failure is non-fatal
-      }
-    }
-
-    req.ctx.audit!.outputDigest = { pageName, pageType, primaryEntity, published: !!released };
+    req.ctx.audit!.outputDigest = { pageName, pageType, primaryEntity, published: false };
 
     return {
       success: true,
       pageName,
       pageUrl: `/p/${encodeURIComponent(pageName)}`,
       draft: saved,
-      released,
+      released: null,
+      changesetRequired: true,
+      message: "草稿已保存，发布请使用 Changeset 工作流",
     };
   });
 

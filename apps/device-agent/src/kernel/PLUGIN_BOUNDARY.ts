@@ -34,9 +34,6 @@ export const PLUGIN_DOMAINS = [
   "gui",          // device.gui.* — GUI 自动化（视觉闭环、动作计划执行）
   "vision",       // device.vision.* — 本地视觉原语（截图、OCR、鼠标键盘）
 
-  // 系统 UI
-  "tray",         // 系统托盘 UI（Windows/Mac/Linux）
-
   // 流式执行
   "streaming",    // 流式控制执行器（连续操作流）
 
@@ -70,10 +67,19 @@ export const PLUGIN_DOMAINS = [
   "home",         // device.home.* — 智能家居
   "appliance",    // device.appliance.* — 家电控制
 
+  // 对话引擎
+  "dialogEngine", // device.dialog.* — 对话引擎（语音对话/意图识别）
+
+  // 蓝牙
+  "bluetooth",    // device.bluetooth.* — 蓝牙通信
+
   // 城市
   "traffic",      // device.traffic.* — 交通控制
   "environment",  // device.environment.* — 环境监测
   "energy",       // device.energy.* — 能源管理
+
+  // 本地 Skill 运行时
+  "localSkill",  // device.localSkill.* — 本地 Skill 运行时（子进程隔离执行）
 ] as const;
 
 export type PluginDomain = (typeof PLUGIN_DOMAINS)[number];
@@ -152,11 +158,41 @@ export const CURRENT_PLUGIN_FILES: Record<string, {
     layer: "plugin",
     description: "流式控制本地闭环执行器",
   },
-  tray: {
-    file: "tray.ts",
-    domain: "tray",
+  audioPlugin: {
+    file: "plugins/audioPlugin.ts",
+    domain: "sensor",
     layer: "plugin",
-    description: "系统托盘 UI",
+    description: "音频采集与播放能力",
+  },
+  cameraPlugin: {
+    file: "plugins/cameraPlugin.ts",
+    domain: "camera",
+    layer: "plugin",
+    description: "摄像头采集与视频流能力",
+  },
+  sensorBridgePlugin: {
+    file: "plugins/sensorBridgePlugin.ts",
+    domain: "sensor",
+    layer: "plugin",
+    description: "传感器桥接（串口/网络传感器数据采集）",
+  },
+  localInputPlugin: {
+    file: "plugins/localInputPlugin.ts",
+    domain: "desktop",
+    layer: "plugin",
+    description: "本地输入采集（键盘/鼠标/触摸/stdin）",
+  },
+  dialogEnginePlugin: {
+    file: "plugins/dialogEnginePlugin.ts",
+    domain: "dialogEngine",
+    layer: "plugin",
+    description: "对话引擎（语音对话/意图识别）",
+  },
+  bluetoothPlugin: {
+    file: "plugins/bluetoothPlugin.ts",
+    domain: "bluetooth",
+    layer: "plugin",
+    description: "蓝牙通信能力",
   },
 };
 
