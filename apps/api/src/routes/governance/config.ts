@@ -12,6 +12,8 @@
  */
 
 import type { FastifyPluginAsync } from "fastify";
+import { setAuditContext } from "../../modules/audit/context";
+import { requirePermission } from "../../modules/auth/guard";
 import {
   getRegistryInfo,
   listConfigOverrides,
@@ -27,6 +29,9 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
   // 注册表查询（所有 runtime-mutable 配置元信息）
   // -----------------------------------------------------------------------
   app.get("/governance/config/registry", async (req, reply) => {
+    setAuditContext(req, { resourceType: "governance", action: "config.registry.read" });
+    const decision = await requirePermission({ req, resourceType: "governance", action: "read" });
+    req.ctx.audit!.policyDecision = decision;
     const items = getRegistryInfo();
     return reply.send({ items, total: items.length });
   });
@@ -35,7 +40,10 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
   // 列出 governance 覆盖
   // -----------------------------------------------------------------------
   app.get("/governance/config/overrides", async (req, reply) => {
-    const subject = (req as any).subject ?? {};
+    setAuditContext(req, { resourceType: "governance", action: "config.overrides.read" });
+    const decision = await requirePermission({ req, resourceType: "governance", action: "read" });
+    req.ctx.audit!.policyDecision = decision;
+    const subject = req.ctx.subject!;
     const tenantId = String(subject.tenantId ?? "");
     if (!tenantId) return reply.status(400).send({ error: "missing_tenant_id" });
 
@@ -48,7 +56,10 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
   // 解析所有 runtime 配置有效值
   // -----------------------------------------------------------------------
   app.get("/governance/config/resolved", async (req, reply) => {
-    const subject = (req as any).subject ?? {};
+    setAuditContext(req, { resourceType: "governance", action: "config.resolved.read" });
+    const decision = await requirePermission({ req, resourceType: "governance", action: "read" });
+    req.ctx.audit!.policyDecision = decision;
+    const subject = req.ctx.subject!;
     const tenantId = String(subject.tenantId ?? "");
     if (!tenantId) return reply.status(400).send({ error: "missing_tenant_id" });
 
@@ -66,7 +77,10 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
   // 解析单个配置
   // -----------------------------------------------------------------------
   app.get("/governance/config/resolve/:key", async (req, reply) => {
-    const subject = (req as any).subject ?? {};
+    setAuditContext(req, { resourceType: "governance", action: "config.resolve.read" });
+    const decision = await requirePermission({ req, resourceType: "governance", action: "read" });
+    req.ctx.audit!.policyDecision = decision;
+    const subject = req.ctx.subject!;
     const tenantId = String(subject.tenantId ?? "");
     if (!tenantId) return reply.status(400).send({ error: "missing_tenant_id" });
 
@@ -82,7 +96,10 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
   // 设置覆盖
   // -----------------------------------------------------------------------
   app.put("/governance/config/overrides/:key", async (req, reply) => {
-    const subject = (req as any).subject ?? {};
+    setAuditContext(req, { resourceType: "governance", action: "config.override.write" });
+    const decision = await requirePermission({ req, resourceType: "governance", action: "write" });
+    req.ctx.audit!.policyDecision = decision;
+    const subject = req.ctx.subject!;
     const tenantId = String(subject.tenantId ?? "");
     if (!tenantId) return reply.status(400).send({ error: "missing_tenant_id" });
 
@@ -92,6 +109,8 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
     const description = String(body.description ?? "");
 
     if (!configKey) return reply.status(400).send({ error: "missing_config_key" });
+
+    req.ctx.audit!.inputDigest = { configKey, configValue, description, changedBy: String(subject.subjectId ?? "") };
 
     const pool = (req.server as any).pg;
     try {
@@ -103,6 +122,7 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
         description,
         changedBy: String(subject.subjectId ?? ""),
       });
+      req.ctx.audit!.outputDigest = { ok: true, configKey };
       return reply.send(result);
     } catch (err: any) {
       const msg = String(err?.message ?? "");
@@ -117,7 +137,10 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
   // 删除覆盖
   // -----------------------------------------------------------------------
   app.delete("/governance/config/overrides/:key", async (req, reply) => {
-    const subject = (req as any).subject ?? {};
+    setAuditContext(req, { resourceType: "governance", action: "config.override.delete" });
+    const decision = await requirePermission({ req, resourceType: "governance", action: "write" });
+    req.ctx.audit!.policyDecision = decision;
+    const subject = req.ctx.subject!;
     const tenantId = String(subject.tenantId ?? "");
     if (!tenantId) return reply.status(400).send({ error: "missing_tenant_id" });
 
@@ -125,12 +148,16 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
     if (!configKey) return reply.status(400).send({ error: "missing_config_key" });
 
     const pool = (req.server as any).pg;
+    const beforeValue = await resolveConfig({ pool, tenantId, configKey });
+    req.ctx.audit!.inputDigest = { configKey, changedBy: String(subject.subjectId ?? ""), beforeValue };
+
     const result = await deleteConfigOverrideWithNotify({
       pool,
       tenantId,
       configKey,
       changedBy: String(subject.subjectId ?? ""),
     });
+    req.ctx.audit!.outputDigest = { ok: true, configKey, snapshot: beforeValue };
     return reply.send(result);
   });
 
@@ -138,7 +165,10 @@ export const governanceConfigRoutes: FastifyPluginAsync = async (app) => {
   // 变更审计日志
   // -----------------------------------------------------------------------
   app.get("/governance/config/audit-log", async (req, reply) => {
-    const subject = (req as any).subject ?? {};
+    setAuditContext(req, { resourceType: "governance", action: "config.audit-log.read" });
+    const decision = await requirePermission({ req, resourceType: "governance", action: "read" });
+    req.ctx.audit!.policyDecision = decision;
+    const subject = req.ctx.subject!;
     const tenantId = String(subject.tenantId ?? "");
     if (!tenantId) return reply.status(400).send({ error: "missing_tenant_id" });
 

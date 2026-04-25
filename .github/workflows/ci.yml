@@ -50,21 +50,22 @@ jobs:
       EVAL_ADMISSION_REQUIRED_KINDS: ""
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
-      - run: npm ci
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
       - run: node scripts/secret-scan.mjs
       - name: Lint (root-level)
-        run: npm run lint
+        run: pnpm run lint
       - name: Architecture boundary scan
-        run: npm run boundary-scan
-      - run: npm run build
+        run: pnpm run boundary-scan
+      - run: pnpm run build
       - name: Run all tests
-        run: npm test
+        run: pnpm test
       - name: Run eval regression gate
-        run: npm -w apps/api run eval:ci
+        run: pnpm --filter apps/api run eval:ci
 
   web-e2e:
     if: >-
@@ -110,26 +111,27 @@ jobs:
       WEB_BASE: "http://127.0.0.1:3000"
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
-      - run: npm ci
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
       - run: node scripts/secret-scan.mjs
-      - run: npm run build
-      - run: npm -w apps/api db:seed
+      - run: pnpm run build
+      - run: pnpm --filter apps/api run db:seed
       - name: start api
         run: |
-          npm -w apps/api start &
+          pnpm --filter apps/api start &
           for i in {1..60}; do
             curl -sf http://127.0.0.1:3001/healthz >/dev/null && break
             sleep 1
           done
       - name: start web
         run: |
-          npm -w apps/web start -p 3000 &
+          pnpm --filter apps/web start -p 3000 &
           for i in {1..60}; do
             curl -sf http://127.0.0.1:3000/ >/dev/null && break
             sleep 1
           done
-      - run: npm -w apps/web test
+      - run: pnpm --filter apps/web test

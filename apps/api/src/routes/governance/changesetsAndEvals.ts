@@ -117,8 +117,17 @@ export const governanceChangesetsAndEvalsRoutes: FastifyPluginAsync = async (app
     const decision = await requirePermission({ req, ...PERM.GOVERNANCE_EVALSUITE_WRITE });
     req.ctx.audit!.policyDecision = decision;
 
+    const existing = await getEvalSuite({ pool: app.db, tenantId: subject.tenantId, id: params.id });
+    if (!existing) throw Errors.badRequest("suite 不存在");
+
     try {
       const suite = await updateEvalSuite({ pool: app.db, tenantId: subject.tenantId, id: params.id, description: body.description, casesJson: body.cases, thresholds: body.thresholds });
+      req.ctx.audit!.inputDigest = {
+        suiteId: params.id,
+        before: { description: existing.description, cases: existing.casesJson, thresholds: existing.thresholds },
+        after: { description: suite.description, cases: suite.casesJson, thresholds: suite.thresholds },
+      };
+      req.ctx.audit!.outputDigest = { suiteId: suite.id, name: suite.name };
       return { suite };
     } catch (e: any) {
       throw Errors.badRequest(String(e?.message ?? e));

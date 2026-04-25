@@ -624,14 +624,75 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
                                 {Object.entries(ev)
                                   .filter(([k]) => !["event_id", "timestamp", "subject_id", "resource_type", "action", "result", "trace_id"].includes(k))
-                                  .map(([k, v]) => (
-                                    <div key={k} style={{ fontSize: 13 }}>
-                                      <span style={{ fontWeight: 600, color: "var(--sl-muted)", marginRight: 6 }}>{k}:</span>
-                                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", wordBreak: "break-all" }}>
-                                        {typeof v === "object" && v !== null ? JSON.stringify(v, null, 2) : String(v ?? "-")}
-                                      </span>
-                                    </div>
-                                  ))}
+                                  .map(([k, v]) => {
+                                    const obj = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null;
+                                    const hasDiff = obj && "before" in obj && "after" in obj;
+                                    const hasSnapshot = obj && "snapshot" in obj && typeof obj.snapshot === "object" && obj.snapshot !== null;
+
+                                    if (hasDiff) {
+                                      const before = (obj.before && typeof obj.before === "object" ? obj.before : {}) as Record<string, unknown>;
+                                      const after = (obj.after && typeof obj.after === "object" ? obj.after : {}) as Record<string, unknown>;
+                                      const allKeys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+                                      return (
+                                        <div key={k} style={{ fontSize: 13, gridColumn: "1 / -1" }}>
+                                          <div style={{ fontWeight: 600, color: "var(--sl-muted)", marginBottom: 6 }}>{k} — 变更对比</div>
+                                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+                                            <thead>
+                                              <tr style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+                                                <th style={{ textAlign: "left", padding: "4px 8px", width: "20%" }}>字段</th>
+                                                <th style={{ textAlign: "left", padding: "4px 8px", width: "40%", background: "rgba(239,68,68,0.06)" }}>变更前</th>
+                                                <th style={{ textAlign: "left", padding: "4px 8px", width: "40%", background: "rgba(34,197,94,0.06)" }}>变更后</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {allKeys.map((field) => {
+                                                const bVal = before[field];
+                                                const aVal = after[field];
+                                                const changed = JSON.stringify(bVal) !== JSON.stringify(aVal);
+                                                return (
+                                                  <tr key={field} style={{ borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
+                                                    <td style={{ padding: "3px 8px", fontWeight: 600, color: "var(--sl-muted)" }}>{field}</td>
+                                                    <td style={{ padding: "3px 8px", wordBreak: "break-all", ...(changed ? { background: "rgba(239,68,68,0.08)", textDecoration: "line-through", color: "#b91c1c" } : {}) }}>
+                                                      {bVal !== undefined ? (typeof bVal === "object" && bVal !== null ? JSON.stringify(bVal) : String(bVal)) : "-"}
+                                                    </td>
+                                                    <td style={{ padding: "3px 8px", wordBreak: "break-all", ...(changed ? { background: "rgba(34,197,94,0.08)", color: "#15803d" } : {}) }}>
+                                                      {aVal !== undefined ? (typeof aVal === "object" && aVal !== null ? JSON.stringify(aVal) : String(aVal)) : "-"}
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      );
+                                    }
+
+                                    if (hasSnapshot) {
+                                      const snap = obj.snapshot as Record<string, unknown>;
+                                      return (
+                                        <div key={k} style={{ fontSize: 13, gridColumn: "1 / -1" }}>
+                                          <div style={{ fontWeight: 600, color: "var(--sl-muted)", marginBottom: 6 }}>{k} — 已删除对象快照</div>
+                                          <div style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 4, padding: "8px 12px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12 }}>
+                                            {Object.entries(snap).map(([sk, sv]) => (
+                                              <div key={sk} style={{ padding: "2px 0", color: "#6b7280" }}>
+                                                <span style={{ fontWeight: 600, marginRight: 6 }}>{sk}:</span>
+                                                <span style={{ wordBreak: "break-all" }}>{typeof sv === "object" && sv !== null ? JSON.stringify(sv) : String(sv ?? "-")}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <div key={k} style={{ fontSize: 13 }}>
+                                        <span style={{ fontWeight: 600, color: "var(--sl-muted)", marginRight: 6 }}>{k}:</span>
+                                        <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", wordBreak: "break-all" }}>
+                                          {typeof v === "object" && v !== null ? JSON.stringify(v, null, 2) : String(v ?? "-")}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
                               </div>
                             </td>
                           </tr>

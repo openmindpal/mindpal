@@ -264,6 +264,8 @@ export const scimRoutes: FastifyPluginAsync = async (app) => {
       return buildScimError(404, `User ${id} not found`, "invalidValue");
     }
 
+    req.ctx.audit!.inputDigest = { ...(req.ctx.audit!.inputDigest as any ?? {}), before: { userName: existing.subjectId, displayName: existing.displayName, emails: existing.email ? [{ value: existing.email }] : [], active: existing.active } };
+
     const email = body.emails?.find((e: { value: string; primary?: boolean }) => e.primary)?.value || body.emails?.[0]?.value;
 
     try {
@@ -315,6 +317,8 @@ export const scimRoutes: FastifyPluginAsync = async (app) => {
       reply.status(404);
       return buildScimError(404, `User ${id} not found`, "invalidValue");
     }
+
+    req.ctx.audit!.outputDigest = { ...(req.ctx.audit!.outputDigest as any ?? {}), snapshot: { userName: existing.subjectId, displayName: existing.displayName, emails: existing.email ? [{ value: existing.email }] : [], active: existing.active, groups: (existing as any).groups ?? [] } };
 
     try {
       await deleteScimUser({ pool: app.db, tenantId, scimUserId: id });
@@ -451,6 +455,8 @@ export const scimRoutes: FastifyPluginAsync = async (app) => {
       return buildScimError(404, `Group ${id} not found`, "invalidValue");
     }
 
+    req.ctx.audit!.inputDigest = { ...(req.ctx.audit!.inputDigest as any ?? {}), before: { displayName: existing.displayName, memberCount: (existing as any).memberCount ?? 0 } };
+
     try {
       const group = await updateScimGroup({
         pool: app.db,
@@ -499,6 +505,8 @@ export const scimRoutes: FastifyPluginAsync = async (app) => {
       reply.status(404);
       return buildScimError(404, `Group ${id} not found`, "invalidValue");
     }
+
+    req.ctx.audit!.outputDigest = { ...(req.ctx.audit!.outputDigest as any ?? {}), snapshot: { displayName: existing.displayName, memberCount: (existing as any).memberCount ?? 0, members: (existing as any).members ?? [] } };
 
     try {
       await deleteScimGroup({ pool: app.db, tenantId, scimGroupId: id });

@@ -185,6 +185,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     });
     if (!node) throw Errors.notFound("federation_node");
 
+    req.ctx.audit!.inputDigest = { ...(req.ctx.audit!.inputDigest as Record<string,unknown> ?? {}), before: { name: current.name, endpoint: current.endpoint, direction: current.direction, status: current.status, trustLevel: current.trustLevel } };
     req.ctx.audit!.outputDigest = { nodeId: node.nodeId, status: node.status };
     return { node };
   });
@@ -197,10 +198,14 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     setAuditContext(req, { resourceType: "governance", action: "federation.node.delete" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
 
+    const snapshot = await getFederationNode({ pool: app.db, tenantId: subject.tenantId, nodeId: params.nodeId });
+    if (!snapshot) throw Errors.notFound("federation_node");
+    const capabilities = await listNodeCapabilities({ pool: app.db, tenantId: subject.tenantId, nodeId: params.nodeId });
+
     const deleted = await deleteFederationNode({ pool: app.db, tenantId: subject.tenantId, nodeId: params.nodeId });
     if (!deleted) throw Errors.notFound("federation_node");
 
-    req.ctx.audit!.outputDigest = { nodeId: params.nodeId, deleted: true };
+    req.ctx.audit!.outputDigest = { nodeId: params.nodeId, deleted: true, snapshot: { name: snapshot.name, endpoint: snapshot.endpoint, direction: snapshot.direction, status: snapshot.status, trustLevel: snapshot.trustLevel, capabilities } };
     return { ok: true };
   });
 
@@ -666,6 +671,9 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     setAuditContext(req, { resourceType: "governance", action: "federation.content-policy.update" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
 
+    const oldPolicy = await getContentPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.policyId });
+    if (!oldPolicy) throw Errors.notFound("content_policy");
+
     const policy = await updateContentPolicy({
       pool: app.db,
       tenantId: subject.tenantId,
@@ -677,6 +685,7 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!policy) throw Errors.notFound("content_policy");
+    req.ctx.audit!.inputDigest = { ...(req.ctx.audit!.inputDigest as Record<string,unknown> ?? {}), before: oldPolicy };
     req.ctx.audit!.outputDigest = { policyId: policy.policyId };
     return { policy };
   });
@@ -689,10 +698,13 @@ export const governanceFederationRoutes: FastifyPluginAsync = async (app) => {
     setAuditContext(req, { resourceType: "governance", action: "federation.content-policy.delete" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "federation.write" });
 
+    const policySnapshot = await getContentPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.policyId });
+    if (!policySnapshot) throw Errors.notFound("content_policy");
+
     const ok = await deleteContentPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.policyId });
     if (!ok) throw Errors.notFound("content_policy");
 
-    req.ctx.audit!.outputDigest = { policyId: params.policyId, deleted: true };
+    req.ctx.audit!.outputDigest = { policyId: params.policyId, deleted: true, snapshot: { name: policySnapshot.name, rules: policySnapshot.rules, createdAt: policySnapshot.createdAt } };
     return { ok: true };
   });
 

@@ -112,7 +112,10 @@ export const governanceToolsRoutes: FastifyPluginAsync = async (app) => {
     const digest = sha256Hex(canon.join("\n")).slice(0, 8);
     const rules = body.rules ?? [];
     const rulesDigest = sha256Hex(JSON.stringify(rules)).slice(0, 8);
-    req.ctx.audit!.inputDigest = { scopeType, scopeId, toolRef: params.toolRef, allowedDomainsCount: canon.length, sha256_8: digest, rulesCount: rules.length, rulesSha256_8: rulesDigest };
+
+    const oldPolicy = await getToolNetworkPolicy({ pool: app.db, tenantId: subject.tenantId, scopeType, scopeId, toolRef: params.toolRef });
+    const before = oldPolicy ? { allowedDomains: oldPolicy.allowedDomains, rules: oldPolicy.rules } : null;
+    req.ctx.audit!.inputDigest = { scopeType, scopeId, toolRef: params.toolRef, allowedDomainsCount: canon.length, sha256_8: digest, rulesCount: rules.length, rulesSha256_8: rulesDigest, before };
     await upsertToolNetworkPolicy({ pool: app.db, tenantId: subject.tenantId, scopeType, scopeId, toolRef: params.toolRef, allowedDomains: canon, rules });
     req.ctx.audit!.outputDigest = { ok: true };
     return { ok: true };

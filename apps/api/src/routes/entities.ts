@@ -515,6 +515,16 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
     const client = await app.db.connect();
     try {
       await client.query("BEGIN");
+      const oldRecord = await getRecord({
+        pool: client,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId,
+        entityName: params.entity,
+        id: params.id,
+        subjectId: subject.subjectId,
+        rowFilters: decision.rowFilters ?? null,
+        policyContext,
+      });
       const updatedTx = await updateRecord({
         pool: client,
         tenantId: subject.tenantId,
@@ -541,6 +551,7 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
         recordId: updatedTx.id,
       });
 
+      req.ctx.audit!.inputDigest = { ...(req.ctx.audit!.inputDigest as Record<string, unknown>), before: oldRecord?.payload ?? null, after: updatedTx.payload ?? null };
       req.ctx.audit!.outputDigest = { recordId: updatedTx.id };
       await enqueueAuditOutboxForRequest({ client, req });
       await client.query("COMMIT");
@@ -593,6 +604,16 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
     const client = await app.db.connect();
     try {
       await client.query("BEGIN");
+      const oldRecord = await getRecord({
+        pool: client,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId,
+        entityName: params.entity,
+        id: params.id,
+        subjectId: subject.subjectId,
+        rowFilters: decision.rowFilters ?? null,
+        policyContext,
+      });
       const deletedTx = await deleteRecord({
         pool: client,
         tenantId: subject.tenantId,
@@ -627,7 +648,7 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
         recordId: deletedTx.id,
       });
 
-      req.ctx.audit!.outputDigest = { recordId: deletedTx.id, deleted: true };
+      req.ctx.audit!.outputDigest = { recordId: deletedTx.id, deleted: true, snapshot: { schema: oldRecord?.schemaName ?? params.entity, payload: oldRecord?.payload ?? null, createdAt: oldRecord?.createdAt ?? null } };
       await enqueueAuditOutboxForRequest({ client, req });
       await client.query("COMMIT");
       return { ...deletedTx, payload: applyReadFieldRules(deletedTx.payload ?? {}, decision), deleted: true };

@@ -385,10 +385,27 @@ export const knowledgeRoutes: FastifyPluginAsync = async (app) => {
     if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
 
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
+
+    // 删除前查询完整对象，用于审计快照
+    const existing = await getDocument({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, id: params.id });
+    if (!existing) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "文档不存在", "en-US": "Document not found" }, traceId: req.ctx.traceId });
+    const chunkCount = await getDocumentChunkCount({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, documentId: params.id });
+
     const deleted = await deleteDocument({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, id: params.id });
     if (!deleted) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "文档不存在", "en-US": "Document not found" }, traceId: req.ctx.traceId });
 
-    req.ctx.audit!.outputDigest = { documentId: params.id, deleted: true };
+    req.ctx.audit!.outputDigest = {
+      documentId: params.id,
+      deleted: true,
+      snapshot: {
+        title: existing.title ?? null,
+        sourceType: existing.sourceType ?? null,
+        tags: existing.tags ?? null,
+        contentDigest: existing.contentDigest ?? null,
+        createdAt: existing.createdAt ?? null,
+        chunkCount,
+      },
+    };
     return { ok: true };
   });
 

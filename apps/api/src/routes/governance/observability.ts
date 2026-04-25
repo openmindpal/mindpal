@@ -100,8 +100,11 @@ export const governanceObservabilityRoutes: FastifyPluginAsync = async (app) => 
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "vocab.tenant_override.set" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "observability.write" });
+    const before = getTenantVocabSnapshot(subject.tenantId);
     const body = req.body as Partial<IntentVocabJson>;
     setTenantVocabOverride(subject.tenantId, body);
+    const after = getTenantVocabSnapshot(subject.tenantId);
+    req.ctx.audit!.inputDigest = { tenantId: subject.tenantId, before, after };
     req.ctx.audit!.outputDigest = { tenantId: subject.tenantId };
     return { ok: true, tenantId: subject.tenantId };
   });
@@ -111,8 +114,9 @@ export const governanceObservabilityRoutes: FastifyPluginAsync = async (app) => 
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "vocab.tenant_override.clear" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "observability.write" });
+    const snapshot = getTenantVocabSnapshot(subject.tenantId);
     clearTenantVocabOverride(subject.tenantId);
-    req.ctx.audit!.outputDigest = { tenantId: subject.tenantId };
+    req.ctx.audit!.outputDigest = { tenantId: subject.tenantId, snapshot };
     return { ok: true, tenantId: subject.tenantId };
   });
 };

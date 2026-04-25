@@ -217,15 +217,18 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     setAuditContext(req, { resourceType: "rbac", action: "role.delete" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
-    const role = await app.db.query("SELECT 1 FROM roles WHERE tenant_id = $1 AND id = $2 LIMIT 1", [subject.tenantId, params.roleId]);
+    const role = await app.db.query("SELECT id, name, description FROM roles WHERE tenant_id = $1 AND id = $2 LIMIT 1", [subject.tenantId, params.roleId]);
     if (!role.rowCount) throw Errors.badRequest("Role 不存在");
+    const permCountRes = await app.db.query("SELECT COUNT(*)::int AS cnt FROM role_permissions WHERE role_id = $1", [params.roleId]);
+    const bindCountRes = await app.db.query("SELECT COUNT(*)::int AS cnt FROM role_bindings WHERE role_id = $1", [params.roleId]);
+    const snapshot = { roleName: role.rows[0].name, description: role.rows[0].description ?? null, permissionCount: permCountRes.rows[0].cnt, bindingCount: bindCountRes.rows[0].cnt };
     // 级联删除: role_permissions → role_bindings → roles
     await app.db.query("DELETE FROM role_permissions WHERE role_id = $1", [params.roleId]);
     await app.db.query("DELETE FROM role_bindings WHERE role_id = $1", [params.roleId]);
     await app.db.query("DELETE FROM roles WHERE tenant_id = $1 AND id = $2", [subject.tenantId, params.roleId]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
     await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "role_deleted" });
-    req.ctx.audit!.outputDigest = { roleId: params.roleId, policyCacheEpochBumped: true, ...epoch };
+    req.ctx.audit!.outputDigest = { roleId: params.roleId, policyCacheEpochBumped: true, ...epoch, snapshot };
     return { ok: true };
   });
 
@@ -346,12 +349,17 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     const body = z.object({ resourceType: z.string().min(1), action: z.string().min(1) }).parse(req.body);
     const role = await app.db.query("SELECT 1 FROM roles WHERE tenant_id = $1 AND id = $2 LIMIT 1", [subject.tenantId, params.roleId]);
     if (!role.rowCount) throw Errors.badRequest("Role 不存在");
-    const perm = await app.db.query("SELECT id FROM permissions WHERE resource_type = $1 AND action = $2 LIMIT 1", [body.resourceType, body.action]);
+    const perm = await app.db.query("SELECT id, resource_type, action FROM permissions WHERE resource_type = $1 AND action = $2 LIMIT 1", [body.resourceType, body.action]);
     if (!perm.rowCount) return { ok: true };
+    const removedPermsRes = await app.db.query(
+      "SELECT p.resource_type, p.action FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = $1 AND rp.permission_id = $2",
+      [params.roleId, perm.rows[0].id],
+    );
+    const removedPermissions = removedPermsRes.rows.map((r: any) => ({ resourceType: r.resource_type, action: r.action }));
     await app.db.query("DELETE FROM role_permissions WHERE role_id = $1 AND permission_id = $2", [params.roleId, perm.rows[0].id]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
     await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "permission_revoked" });
-    req.ctx.audit!.outputDigest = { roleId: params.roleId, permissionId: perm.rows[0].id, policyCacheEpochBumped: true, ...epoch };
+    req.ctx.audit!.outputDigest = { roleId: params.roleId, permissionId: perm.rows[0].id, policyCacheEpochBumped: true, ...epoch, snapshot: { removedPermissions } };
     return { ok: true };
   });
 
@@ -451,7 +459,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
     const existing = await app.db.query(
       `
-        SELECT rb.id, rb.scope_type, rb.scope_id, s.tenant_id
+        SELECT rb.id, rb.subject_id, rb.role_id, rb.scope_type, rb.scope_id, s.tenant_id
         FROM role_bindings rb
         JOIN subjects s ON s.id = rb.subject_id
         WHERE rb.id = $1
@@ -464,13 +472,14 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
       req.ctx.audit!.errorCategory = "policy_violation";
       throw Errors.forbidden();
     }
+    const bindingSnapshot = { subjectId: existing.rows[0].subject_id, roleId: existing.rows[0].role_id, scopeType: existing.rows[0].scope_type, scopeId: existing.rows[0].scope_id };
 
     await app.db.query("DELETE FROM role_bindings WHERE id = $1", [params.bindingId]);
     const scopeType = String(existing.rows[0].scope_type ?? "");
     const scopeId = String(existing.rows[0].scope_id ?? "");
     const epoch = scopeType === "tenant" || scopeType === "space" ? await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: actor.tenantId, scopeType: scopeType as any, scopeId }) : null;
     await invalidateRbacCache({ tenantId: actor.tenantId, scope: "tenant", reason: "binding_deleted" });
-    req.ctx.audit!.outputDigest = { bindingId: params.bindingId, policyCacheEpochBumped: Boolean(epoch), ...(epoch ?? {}) };
+    req.ctx.audit!.outputDigest = { bindingId: params.bindingId, policyCacheEpochBumped: Boolean(epoch), ...(epoch ?? {}), snapshot: bindingSnapshot };
     return { ok: true };
   });
 
@@ -636,8 +645,10 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
       status: z.enum(["draft", "active", "deprecated"]).optional(),
     }).parse(req.body);
 
-    const existing = await app.db.query("SELECT 1 FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2 LIMIT 1", [subject.tenantId, params.policySetId]);
+    const existing = await app.db.query("SELECT combining_algorithm, description, status FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2 LIMIT 1", [subject.tenantId, params.policySetId]);
     if (!existing.rowCount) throw Errors.badRequest("ABAC 策略集不存在");
+    const before = { combiningAlgorithm: existing.rows[0].combining_algorithm, description: existing.rows[0].description, status: existing.rows[0].status };
+    req.ctx.audit!.inputDigest = { policySetId: params.policySetId, before, after: body };
 
     const sets: string[] = ["updated_at = now()"];
     const args: any[] = [subject.tenantId, params.policySetId];
@@ -658,10 +669,13 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     setAuditContext(req, { resourceType: "rbac", action: "abac.delete" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
+    const psSnap = await app.db.query("SELECT name, combining_algorithm, description, status FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2 LIMIT 1", [subject.tenantId, params.policySetId]);
+    const ruleCountRes = psSnap.rowCount ? await app.db.query("SELECT COUNT(*)::int AS cnt FROM abac_policy_rules WHERE policy_set_id = $1 AND tenant_id = $2", [params.policySetId, subject.tenantId]) : null;
+    const psSnapshot = psSnap.rowCount ? { name: psSnap.rows[0].name, combiningAlgorithm: psSnap.rows[0].combining_algorithm, description: psSnap.rows[0].description, status: psSnap.rows[0].status, ruleCount: ruleCountRes!.rows[0].cnt } : null;
     await app.db.query("DELETE FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2", [subject.tenantId, params.policySetId]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
     await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "abac_policy_set_deleted" });
-    req.ctx.audit!.outputDigest = { policySetId: params.policySetId, policyCacheEpochBumped: true, ...epoch };
+    req.ctx.audit!.outputDigest = { policySetId: params.policySetId, policyCacheEpochBumped: true, ...epoch, snapshot: psSnapshot };
     return { ok: true };
   });
 
@@ -723,8 +737,9 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
       if (!exprValidation.ok) throw Errors.badRequest(`条件表达式无效: ${(exprValidation as any).message}`);
     }
 
-    const existing = await app.db.query("SELECT 1 FROM abac_policy_rules WHERE tenant_id = $1 AND rule_id = $2 LIMIT 1", [subject.tenantId, params.ruleId]);
+    const existing = await app.db.query("SELECT name, effect, priority, condition_expr FROM abac_policy_rules WHERE tenant_id = $1 AND rule_id = $2 LIMIT 1", [subject.tenantId, params.ruleId]);
     if (!existing.rowCount) throw Errors.badRequest("ABAC 规则不存在");
+    req.ctx.audit!.inputDigest = { ruleId: params.ruleId, before: { name: existing.rows[0].name, effect: existing.rows[0].effect, priority: existing.rows[0].priority, conditionExpr: existing.rows[0].condition_expr }, after: body };
 
     const sets: string[] = ["updated_at = now()"];
     const args: any[] = [subject.tenantId, params.ruleId];
@@ -749,10 +764,12 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
     setAuditContext(req, { resourceType: "rbac", action: "abac.rule.delete" });
     req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
     const subject = req.ctx.subject!;
+    const ruleSnap = await app.db.query("SELECT name, effect, priority, condition_expr, policy_set_id FROM abac_policy_rules WHERE tenant_id = $1 AND rule_id = $2 LIMIT 1", [subject.tenantId, params.ruleId]);
+    const ruleSnapshot = ruleSnap.rowCount ? { name: ruleSnap.rows[0].name, effect: ruleSnap.rows[0].effect, priority: ruleSnap.rows[0].priority, conditionExpr: ruleSnap.rows[0].condition_expr, policySetId: ruleSnap.rows[0].policy_set_id } : null;
     await app.db.query("DELETE FROM abac_policy_rules WHERE tenant_id = $1 AND rule_id = $2", [subject.tenantId, params.ruleId]);
     const epoch = await bumpPolicyCacheEpoch({ pool: app.db as any, tenantId: subject.tenantId, scopeType: "tenant", scopeId: subject.tenantId });
     await invalidateRbacCache({ tenantId: subject.tenantId, scope: "tenant", reason: "abac_rule_deleted" });
-    req.ctx.audit!.outputDigest = { ruleId: params.ruleId, policyCacheEpochBumped: true, ...epoch };
+    req.ctx.audit!.outputDigest = { ruleId: params.ruleId, policyCacheEpochBumped: true, ...epoch, snapshot: ruleSnapshot };
     return { ok: true };
   });
 

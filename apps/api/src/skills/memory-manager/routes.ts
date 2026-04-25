@@ -227,7 +227,14 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
       .refine((d) => d.title !== undefined || d.contentText || d.type, { message: "至少需要提供一个可编辑字段" })
       .parse(req.body);
 
-    req.ctx.audit!.inputDigest = { id: params.id, hasTitle: body.title !== undefined, hasContent: Boolean(body.contentText), hasType: Boolean(body.type), hasMediaRefs: Boolean(body.mediaRefs?.length) };
+    // 变更前查询当前值，用于审计 before/after
+    const existingEntry = await getMemoryEntry({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, id: params.id });
+    if (!existingEntry) throw Errors.badRequest("记忆条目不存在或无权编辑");
+
+    req.ctx.audit!.inputDigest = {
+      id: params.id, hasTitle: body.title !== undefined, hasContent: Boolean(body.contentText), hasType: Boolean(body.type), hasMediaRefs: Boolean(body.mediaRefs?.length),
+      before: { scope: existingEntry.scope, type: existingEntry.type, content: existingEntry.contentText },
+    };
 
     const result = await updateMemoryEntry({
       pool: app.db,
@@ -241,6 +248,13 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!result) throw Errors.badRequest("记忆条目不存在或无权编辑");
+
+    // 补记 after 到 inputDigest
+    const prevDigest = req.ctx.audit!.inputDigest as Record<string, unknown> ?? {};
+    req.ctx.audit!.inputDigest = {
+      ...prevDigest,
+      after: { scope: result.entry.scope, type: result.entry.type, content: result.entry.contentText },
+    };
 
     // 处理附件更新：如果提供了 mediaRefs，先追加新的附件
     let newAttachments: any[] = [];
@@ -276,9 +290,16 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
     if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
 
     const params = z.object({ id: z.string().min(1) }).parse(req.params);
+
+    // 删除前查询完整对象，用于审计快照
+    const existingForDelete = await getMemoryEntry({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, id: params.id });
+
     const ok = await deleteMemoryEntry({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, id: params.id });
 
-    req.ctx.audit!.outputDigest = { id: params.id, deleted: ok };
+    req.ctx.audit!.outputDigest = {
+      id: params.id, deleted: ok,
+      ...(existingForDelete ? { snapshot: { scope: existingForDelete.scope, type: existingForDelete.type, content: existingForDelete.contentText, createdAt: existingForDelete.createdAt } } : {}),
+    };
     return { deleted: ok };
   });
 
@@ -358,7 +379,17 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body);
 
-    req.ctx.audit!.inputDigest = { scope: body.scope, typeCount: body.types?.length ?? 0, limit: body.limit ?? 1000, redacted: true };
+    // 清除前查询条目总数和类型分布
+    const preEntries = await listMemoryEntries({
+      pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId,
+      scope: body.scope, type: undefined, limit: body.limit ?? 1000, offset: 0,
+    });
+    const typeDistribution: Record<string, number> = {};
+    for (const e of preEntries) { typeDistribution[e.type] = (typeDistribution[e.type] ?? 0) + 1; }
+    req.ctx.audit!.inputDigest = {
+      scope: body.scope, typeCount: body.types?.length ?? 0, limit: body.limit ?? 1000, redacted: true,
+      before: { totalEntries: preEntries.length, typeDistribution },
+    };
     const out = await exportAndClearMemory({
       pool: app.db,
       tenantId: subject.tenantId,
