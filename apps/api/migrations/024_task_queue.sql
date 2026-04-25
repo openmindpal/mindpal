@@ -129,7 +129,7 @@ CREATE INDEX IF NOT EXISTS stq_tenant_status_idx
 
 -- entry_id 唯一索引：用于不携带 tenant_id 的单条查询
 -- 注意：分区表上的 UNIQUE INDEX 必须包含分区键
-CREATE UNIQUE INDEX stq_entry_id_tenant_idx
+CREATE UNIQUE INDEX IF NOT EXISTS stq_entry_id_tenant_idx
   ON session_task_queue (entry_id, tenant_id);
 
 -- ── task_dependencies ────────────────────────────────────────
@@ -274,14 +274,14 @@ COMMENT ON TABLE scheduler_metrics_history IS '调度器指标历史快照（定
 -- 覆盖查询：insertQueueEntry(MAX(position))、listActiveEntries、
 --           listResumableEntries、cancelAllActive、reorderEntry
 -- position DESC 使 MAX(position) 直接取首行即返回，避免反向遍历
-CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_active_position_idx
+CREATE INDEX IF NOT EXISTS stq_active_position_idx
   ON session_task_queue (tenant_id, session_id, position DESC)
   WHERE status NOT IN ('completed', 'failed', 'cancelled');
 
 -- ── 2. 执行中任务计数覆盖索引 ──────────────────────────────
 -- 覆盖查询：countExecuting（COUNT(*) WHERE status='executing'）
 -- INCLUDE(entry_id) 实现完全 Index-Only Scan，同时支持按 entry_id 快速定位
-CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_executing_idx
+CREATE INDEX IF NOT EXISTS stq_executing_idx
   ON session_task_queue (tenant_id, session_id)
   INCLUDE (entry_id)
   WHERE status = 'executing';
@@ -289,32 +289,32 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_executing_idx
 -- ── 3. 僵尸任务检测索引 ──────────────────────────────────
 -- 覆盖查询：listZombieExecutingEntries、listStaleExecutingEntries
 -- 这两个查询不带 tenant_id（全分区扫描），需独立索引
-CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_executing_started_idx
+CREATE INDEX IF NOT EXISTS stq_executing_started_idx
   ON session_task_queue (started_at ASC)
   WHERE status = 'executing';
 
 -- ── 4. 关闭恢复索引 ──────────────────────────────────────
 -- 覆盖查询：listShutdownPausedEntries（status='paused' AND checkpoint_ref LIKE 'shutdown:%'）
-CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_paused_checkpoint_idx
+CREATE INDEX IF NOT EXISTS stq_paused_checkpoint_idx
   ON session_task_queue (status)
   WHERE status = 'paused' AND checkpoint_ref IS NOT NULL;
 
 -- ── 5. 租户待处理任务聚合索引 ──────────────────────────────
 -- 覆盖查询：listSessionsWithPendingTasks（GROUP BY session_id）
-CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_tenant_active_session_idx
+CREATE INDEX IF NOT EXISTS stq_tenant_active_session_idx
   ON session_task_queue (tenant_id, session_id)
   WHERE status NOT IN ('completed', 'failed', 'cancelled');
 
 -- ── 6. 历史分页查询索引 ──────────────────────────────────
 -- 覆盖查询：listHistoryEntries（ORDER BY enqueued_at DESC LIMIT/OFFSET）
 -- 现有 stq_session_enqueued_idx 为 ASC，补充 DESC 索引避免反向扫描
-CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_session_enqueued_desc_idx
+CREATE INDEX IF NOT EXISTS stq_session_enqueued_desc_idx
   ON session_task_queue (tenant_id, session_id, enqueued_at DESC);
 
 -- ── 7. 可调度任务选取复合索引（覆盖 listSchedulable 热路径）─────
 -- 查询模式：SELECT ... WHERE tenant_id=$1 AND session_id=$2
 --           AND status IN ('queued','ready') ORDER BY priority ASC, enqueued_at ASC
 -- 部分索引仅含 queued/ready 行，体积极小；排序列内嵌索引避免 filesort
-CREATE INDEX CONCURRENTLY IF NOT EXISTS stq_schedulable_dispatch_idx
+CREATE INDEX IF NOT EXISTS stq_schedulable_dispatch_idx
   ON session_task_queue (tenant_id, session_id, priority ASC, enqueued_at ASC)
   WHERE status IN ('queued', 'ready');
