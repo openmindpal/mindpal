@@ -8,12 +8,12 @@
 import { apiFetch } from "@/lib/api";
 
 interface ToolDisplayNameEntry {
-  displayName: Record<string, string>; // 多语言 { "zh-CN": "xx", "en-US": "xx" }
+  displayName: Record<string, string>; // multi-lang { "zh-CN": "xx", "en-US": "xx" }
 }
 
 const cache = new Map<string, ToolDisplayNameEntry>();
 let lastFullLoad = 0;
-const FULL_LOAD_TTL = 5 * 60 * 1000; // 5分钟
+const FULL_LOAD_TTL = 5 * 60 * 1000; // 5 min TTL
 let loadingPromise: Promise<void> | null = null;
 
 /**
@@ -32,8 +32,8 @@ export function getToolDisplayName(toolName: string, locale: string = "zh-CN"): 
  */
 export async function preloadToolNames(): Promise<void> {
   const now = Date.now();
-  if (now - lastFullLoad < FULL_LOAD_TTL) return; // TTL 内不重复加载
-  if (loadingPromise) return loadingPromise; // 防止并发加载
+  if (now - lastFullLoad < FULL_LOAD_TTL) return; // skip reload within TTL
+  if (loadingPromise) return loadingPromise; // prevent concurrent loads
 
   loadingPromise = (async () => {
     try {

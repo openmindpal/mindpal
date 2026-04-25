@@ -6,7 +6,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@openslin/shared": "*"
+    "@openslin/shared": "workspace:*"
   },
   "license": "Apache-2.0"
 }

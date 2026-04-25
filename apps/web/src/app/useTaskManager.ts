@@ -10,14 +10,14 @@ import type { ChatFlowItem, TaskProgress, TaskStepEntry } from "./homeHelpers";
 /* ─── Poll Backoff Config ─── */
 
 const POLL_CONFIG = {
-  ACTIVE_INTERVAL_MS: 500,     // 活跃执行时：500ms
-  BASE_INTERVAL_MS: 1000,      // 退避基础间隔
-  MAX_INTERVAL_MS: 10000,      // 最大间隔 10s
-  MULTIPLIER: 2,               // 退避倍率
-  ERROR_INTERVAL_MS: 4000,     // 错误重试间隔
+  ACTIVE_INTERVAL_MS: 500,     // active execution: 500ms
+  BASE_INTERVAL_MS: 1000,      // backoff base interval
+  MAX_INTERVAL_MS: 10000,      // max interval 10s
+  MULTIPLIER: 2,               // backoff multiplier
+  ERROR_INTERVAL_MS: 4000,     // error retry interval
 } as const;
 
-/** 根据任务阶段和连续无变化次数计算下次轮询间隔 */
+/** Compute next poll interval based on task phase and consecutive no-change count */
 function computePollInterval(phase: string, consecutiveNoChange: number): number {
   // 活跃执行阶段：固定短间隔
   if (phase === "executing" || phase === "planning" || phase === "running") {

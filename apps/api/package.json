@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@fastify/websocket": "^11.2.0",
-    "@openslin/shared": "*",
+    "@openslin/shared": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/auto-instrumentations-node": "^0.50.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",

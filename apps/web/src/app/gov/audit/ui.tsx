@@ -635,13 +635,13 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                                       const allKeys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
                                       return (
                                         <div key={k} style={{ fontSize: 13, gridColumn: "1 / -1" }}>
-                                          <div style={{ fontWeight: 600, color: "var(--sl-muted)", marginBottom: 6 }}>{k} — 变更对比</div>
+                                          <div style={{ fontWeight: 600, color: "var(--sl-muted)", marginBottom: 6 }}>{k} — {t(props.locale, "gov.audit.diffCompare")}</div>
                                           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
                                             <thead>
                                               <tr style={{ borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
-                                                <th style={{ textAlign: "left", padding: "4px 8px", width: "20%" }}>字段</th>
-                                                <th style={{ textAlign: "left", padding: "4px 8px", width: "40%", background: "rgba(239,68,68,0.06)" }}>变更前</th>
-                                                <th style={{ textAlign: "left", padding: "4px 8px", width: "40%", background: "rgba(34,197,94,0.06)" }}>变更后</th>
+                                                <th style={{ textAlign: "left", padding: "4px 8px", width: "20%" }}>{t(props.locale, "gov.audit.field")}</th>
+                                                <th style={{ textAlign: "left", padding: "4px 8px", width: "40%", background: "rgba(239,68,68,0.06)" }}>{t(props.locale, "gov.audit.before")}</th>
+                                                <th style={{ textAlign: "left", padding: "4px 8px", width: "40%", background: "rgba(34,197,94,0.06)" }}>{t(props.locale, "gov.audit.after")}</th>
                                               </tr>
                                             </thead>
                                             <tbody>
@@ -671,7 +671,7 @@ export default function AuditClient(props: { locale: string; initial?: InitialDa
                                       const snap = obj.snapshot as Record<string, unknown>;
                                       return (
                                         <div key={k} style={{ fontSize: 13, gridColumn: "1 / -1" }}>
-                                          <div style={{ fontWeight: 600, color: "var(--sl-muted)", marginBottom: 6 }}>{k} — 已删除对象快照</div>
+                                          <div style={{ fontWeight: 600, color: "var(--sl-muted)", marginBottom: 6 }}>{k} — {t(props.locale, "gov.audit.deletedSnapshot")}</div>
                                           <div style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 4, padding: "8px 12px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12 }}>
                                             {Object.entries(snap).map(([sk, sv]) => (
                                               <div key={sk} style={{ padding: "2px 0", color: "#6b7280" }}>

@@ -143,11 +143,11 @@ export function handleSSEEvent(evtName: string, data: any, ctx: SSEEventContext)
     case "done": {
       const doneConvId = data.conversationId;
       if (doneConvId) ctx.setConversationId(doneConvId);
-      // 模型自动切换检测：当后端实际使用的模型与用户选定的不同时，在助手消息上添加轻量通知
+      // Model auto-switch detection: when actual model differs from user selection, add lightweight notification
       const actualModelRef = data.actualModelRef ? String(data.actualModelRef) : null;
       if (actualModelRef && ctx.selectedModelRef && actualModelRef !== ctx.selectedModelRef) {
         const displayName = actualModelRef.replace(/@.*$/, "");
-        const note = `⚡ 已自动切换至 ${displayName}`;
+        const note = `\u26A1 ${t(locale, "model.autoSwitchNote").replace("{name}", displayName)}`;
         ctx.setFlow((prev) => prev.map((it) =>
           it.id === replyId && it.kind === "message" ? { ...it, modelSwitchNote: note } : it
         ));

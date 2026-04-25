@@ -89,7 +89,7 @@ export function ApprovalNodeRenderer(props: { item: FlowApprovalNode; locale: st
             : item.riskLevel === "medium" ? styles.approvalRiskMedium
             : styles.approvalRiskLow
           }`}>
-            {item.riskLevel === "high" ? "高风险" : item.riskLevel === "medium" ? "中风险" : "低风险"}
+            {item.riskLevel === "high" ? t(locale, "flowItem.approval.riskHigh") : item.riskLevel === "medium" ? t(locale, "flowItem.approval.riskMedium") : t(locale, "flowItem.approval.riskLow")}
           </span>
         )}
       </div>
@@ -114,7 +114,7 @@ export function ApprovalNodeRenderer(props: { item: FlowApprovalNode; locale: st
         )}
         {item.inputDigest && Object.keys(item.inputDigest).length > 0 && (
           <details className={styles.approvalInputDigest}>
-            <summary>参数摘要</summary>
+            <summary>{t(locale, "flowItem.approval.paramSummary")}</summary>
             <pre>{JSON.stringify(item.inputDigest, null, 2)}</pre>
           </details>
         )}
@@ -123,12 +123,12 @@ export function ApprovalNodeRenderer(props: { item: FlowApprovalNode; locale: st
       {item.status === "pending" && (
         <div className={styles.approvalNodeActions}>
           {onApprove && (
-            <button className={styles.approvalBtnApprove} onClick={onApprove} aria-label="批准">
+            <button className={styles.approvalBtnApprove} onClick={onApprove} aria-label={t(locale, "aria.approve")}>
               <IconCheck /> {t(locale, "flowItem.approval.approve")}
             </button>
           )}
           {onReject && (
-            <button className={styles.approvalBtnReject} onClick={onReject} aria-label="拒绝">
+            <button className={styles.approvalBtnReject} onClick={onReject} aria-label={t(locale, "aria.reject")}>
               <IconX /> {t(locale, "flowItem.approval.reject")}
             </button>
           )}

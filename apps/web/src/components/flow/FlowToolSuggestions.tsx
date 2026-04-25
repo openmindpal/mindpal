@@ -48,7 +48,7 @@ export function FlowToolSuggestions({ locale, it, toolExecStates, executeToolInl
             )}
             <div className={styles.toolSuggestionActions}>
               {execState.status === "idle" && toolRef && (
-                <button className={styles.toolExecBtn} onClick={() => void executeToolInline(it.id, idx, s)} aria-label={`执行工具: ${friendlyToolName(locale, toolRef)}`}>
+                <button className={styles.toolExecBtn} onClick={() => void executeToolInline(it.id, idx, s)} aria-label={t(locale, "aria.executeTool").replace("{name}", friendlyToolName(locale, toolRef))}>
                   {approval ? t(locale, "chat.toolSuggestion.executeAndApprove") : t(locale, "chat.toolSuggestion.execute")}
                 </button>
               )}

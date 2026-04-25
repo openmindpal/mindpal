@@ -16,7 +16,7 @@
     "lint": "node -e \"process.exit(0)\""
   },
   "dependencies": {
-    "@openslin/shared": "*",
+    "@openslin/shared": "workspace:*",
     "commander": "^14.0.3"
   },
   "devDependencies": {

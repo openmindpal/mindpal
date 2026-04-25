@@ -21,6 +21,8 @@ import {
   CONFIDENCE_THRESHOLDS,
 } from "./types";
 import { buildStandardRules, matchStandardRules } from "../../../kernel/intentRuleStandard";
+// 触发词表提供者注册到 kernel，确保 buildStandardRules 可获取动态词表
+import "../../orchestrator/modules/intentVocabulary";
 
 // ─── LLM Configuration ─────────────────────────────────────────────────
 
@@ -234,6 +236,63 @@ export function detectIntentByRules(message: string, dbStandaloneRules?: IntentR
       confidence: standardResult.confidence,
       matchedKeywords: kw,
     };
+  }
+
+  // Fallback: 内联关键词优先级匹配（当词表系统不可用时兜底）
+  {
+    const lower = trimmed.toLowerCase();
+
+    // P20: 协作关键词
+    const _collabKw = ["协作", "讨论", "辩论", "多智能体", "团队", "分配", "分工", "合作",
+      "collaborate", "discuss", "debate", "assign", "team"];
+    const mCollab = _collabKw.find(k => lower.includes(k.toLowerCase()));
+    if (mCollab) {
+      return { intent: "collab", confidence: 0.78, matchedKeywords: [mCollab] };
+    }
+
+    // P50: 执行动作词（task）
+    const _taskKw = ["执行", "运行", "启动", "停止", "创建", "更新", "修改", "删除",
+      "审批", "提交", "发布", "部署", "改为", "设为", "帮忙",
+      "发送", "分析", "计算", "下载", "上传",
+      "execute", "run", "create", "update", "delete", "submit", "approve", "deploy"];
+    const mTask = _taskKw.find(k => lower.includes(k.toLowerCase()));
+    if (mTask) {
+      return { intent: "task", confidence: 0.82, matchedKeywords: [mTask] };
+    }
+
+    // P55: UI 生成模式（动词 + 目标词组合）
+    const _uiVerbs = ["显示", "展示", "生成", "弄", "做", "设计", "show me", "design"];
+    const _uiTargets = ["页面", "界面", "面板", "看板", "dashboard", "图表",
+      "仪表盘", "布局", "表单", "报表"];
+    const mVerb = _uiVerbs.find(v => lower.includes(v.toLowerCase()));
+    const mTarget = _uiTargets.find(t => lower.includes(t.toLowerCase()));
+    if (mVerb && mTarget) {
+      return { intent: "ui", confidence: 0.82, matchedKeywords: [mVerb, mTarget] };
+    }
+
+    // P60: 查询特征词
+    const _queryKw = ["查询", "查找", "搜索", "查看", "列出", "统计", "汇总", "报表",
+      "筛选", "query", "search", "find", "list"];
+    const mQuery = _queryKw.find(k => lower.includes(k.toLowerCase()));
+    if (mQuery) {
+      return { intent: "query", confidence: 0.72, matchedKeywords: [mQuery] };
+    }
+
+    // P68: UI 展示动词独立匹配
+    const _uiDisplayVerbs = ["显示", "展示", "show me", "show", "display", "open"];
+    const mDisplay = _uiDisplayVerbs.find(v => lower.includes(v.toLowerCase()));
+    if (mDisplay) {
+      return { intent: "ui", confidence: 0.72, matchedKeywords: [mDisplay] };
+    }
+
+    // P100: 问句指示词 → chat
+    const _questionKw = ["什么是", "怎么", "为什么", "如何", "是否", "能不能",
+      "可以吗", "有没有", "有哪些", "多少",
+      "what is", "how to", "why", "which", "what", "how", "when", "where"];
+    const mQuestion = _questionKw.find(k => lower.includes(k.toLowerCase()));
+    if (mQuestion) {
+      return { intent: "chat", confidence: 0.72, matchedKeywords: [mQuestion] };
+    }
   }
 
   // 所有规则均未命中 → 默认 chat

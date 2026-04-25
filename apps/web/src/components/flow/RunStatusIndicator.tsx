@@ -364,7 +364,7 @@ export function ModeSelector({ mode, onChange, locale, disabled }: ModeSelectorP
   ] as const;
 
   return (
-    <div className={styles.modeSelector} role="radiogroup" aria-label="执行模式">
+    <div className={styles.modeSelector} role="radiogroup" aria-label={t(locale, "aria.executionMode")}>
       {modes.map((m) => (
         <button
           key={m.value}

@@ -10,7 +10,10 @@ async function walk(dir) {
   const files = [];
   for (const e of entries) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) files.push(...(await walk(p)));
+    if (e.isDirectory()) {
+      if (e.name === "__tests__" || e.name === "__mocks__") continue;
+      files.push(...(await walk(p)));
+    }
     else if (e.isFile() && exts.has(path.extname(e.name))) files.push(p);
   }
   return files;

@@ -371,7 +371,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
     return (
       <div style={{ padding: 16, marginBottom: 12, border: "1px solid var(--sl-border, #e2e8f0)", borderRadius: 8, background: "var(--sl-surface-alt, #f8fafc)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-          <strong>变更集操作</strong>
+          <strong>{t(props.locale, "gov.safetyPolicies.changesetOps")}</strong>
           <Badge>{changesetStatus || "draft"}</Badge>
           <span style={{ fontSize: 12, color: "var(--sl-muted, #64748b)", fontFamily: "monospace" }}>{activeChangesetId.slice(0, 8)}</span>
         </div>
@@ -381,16 +381,16 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
           <button onClick={submitChangeset} disabled={busy || changesetStatus !== "draft"}>
-            提交审批
+            {t(props.locale, "gov.safetyPolicies.submitReview")}
           </button>
           <button onClick={approveChangeset} disabled={busy || changesetStatus !== "submitted"}>
-            审批通过
+            {t(props.locale, "gov.safetyPolicies.approveReview")}
           </button>
           <button onClick={releaseChangeset} disabled={busy || changesetStatus !== "approved"}>
-            发布生效
+            {t(props.locale, "gov.safetyPolicies.publishRelease")}
           </button>
           <button onClick={cancelChangeset} disabled={busy}>
-            取消
+            {t(props.locale, "gov.safetyPolicies.cancelChangeset")}
           </button>
         </div>
       </div>
@@ -453,7 +453,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
             <input
               value={searchText}
               onChange={(e) => { setSearchText(e.target.value); setPage(0); }}
-              placeholder="搜索策略名称..."
+              placeholder={t(props.locale, "gov.safetyPolicies.searchPlaceholder")}
               disabled={busy}
               style={{ width: 200 }}
             />
@@ -614,15 +614,15 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
 
               {diff ? (
                 <div style={{ marginTop: 12 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 8 }}>版本对比结果</div>
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>{t(props.locale, "gov.safetyPolicies.diffResult")}</div>
                   {(() => {
                     const summary = (diff as any)?.summary;
                     const fields = Array.isArray(summary?.fields) ? summary.fields : [];
                     if (!summary?.changed) {
-                      return <div style={{ color: "var(--sl-muted, #64748b)", fontStyle: "italic" }}>两个版本内容完全相同</div>;
+                      return <div style={{ color: "var(--sl-muted, #64748b)", fontStyle: "italic" }}>{t(props.locale, "gov.safetyPolicies.diffIdentical")}</div>;
                     }
                     if (fields.length === 0) {
-                      return <div style={{ color: "var(--sl-muted, #64748b)" }}>内容有变化（大小: {summary.aSize} → {summary.bSize} 字节），但无法解析字段级差异</div>;
+                      return <div style={{ color: "var(--sl-muted, #64748b)" }}>{t(props.locale, "gov.safetyPolicies.diffSizeChange").replace("{aSize}", String(summary.aSize)).replace("{bSize}", String(summary.bSize))}</div>;
                     }
                     return (
                       <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
@@ -638,7 +638,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
                           >
                             <span style={{ fontWeight: 600, fontFamily: "monospace" }}>{f.key}</span>
                             <span style={{ marginLeft: 8, fontSize: 11, color: f.type === "added" ? "#16a34a" : f.type === "removed" ? "#dc2626" : "#ca8a04" }}>
-                              {f.type === "added" ? "[新增]" : f.type === "removed" ? "[删除]" : "[修改]"}
+                              {f.type === "added" ? t(props.locale, "gov.safetyPolicies.diffAdded") : f.type === "removed" ? t(props.locale, "gov.safetyPolicies.diffRemoved") : t(props.locale, "gov.safetyPolicies.diffModified")}
                             </span>
                             {f.type === "changed" && (
                               <div style={{ marginTop: 4, fontSize: 12, fontFamily: "monospace" }}>
@@ -668,7 +668,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
 
       {activeChangesetId && !selectedPolicyId && (
         <div style={{ marginTop: 16 }}>
-          <Card title="变更集操作">
+          <Card title={t(props.locale, "gov.safetyPolicies.changesetOps")}>
             <ChangesetPanel />
           </Card>
         </div>

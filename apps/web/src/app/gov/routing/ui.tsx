@@ -131,7 +131,7 @@ export default function RoutingClient(props: { locale: string; initial: unknown;
   }
 
   async function deletePol(p: string) {
-    if (!confirm(t(props.locale, "gov.routing.confirmDelete") !== "gov.routing.confirmDelete" ? t(props.locale, "gov.routing.confirmDelete") : `确认删除路由策略 "${p}"？`)) return;
+    if (!confirm(t(props.locale, "gov.routing.confirmDelete") !== "gov.routing.confirmDelete" ? t(props.locale, "gov.routing.confirmDelete") : `${t(props.locale, "gov.routing.confirmDeleteFallback")} "${p}"?`)) return;
     setError("");
     setBusy(true);
     try {

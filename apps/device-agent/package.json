@@ -17,7 +17,7 @@
     "tray": "tsx src/index.ts tray"
   },
   "dependencies": {
-    "@openslin/shared": "*",
+    "@openslin/shared": "workspace:*",
     "playwright-core": "^1.52.0",
     "systray2": "^2.1.4"
   },

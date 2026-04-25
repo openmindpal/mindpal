@@ -11,7 +11,7 @@ import { Badge, Card, PageHeader, Table, StatusBadge, TabNav, EmptyState } from 
 
 const PROVIDER_KEYS = ["feishu", "dingtalk", "wecom", "slack", "discord", "qq.onebot", "imessage.bridge"] as const;
 
-function formatApiError(err: any): string {
+function formatApiError(err: any, locale?: string): string {
   if (err?.response?.data) {
     const d = err.response.data;
     if (typeof d.message === "string") return d.message;
@@ -19,7 +19,7 @@ function formatApiError(err: any): string {
     if (typeof d === "string") return d;
   }
   if (err?.message) return String(err.message);
-  return "操作失败，请重试";
+  return t(locale, "gov.channels.operationFailed");
 }
 
 export default function GovChannelsClient(props: { locale: string; initial: any }) {
@@ -277,7 +277,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
   }
 
   async function revokeAccount(p: string, wsId: string, cuId: string) {
-    if (!window.confirm("确认解绑？")) return;
+    if (!window.confirm(t(props.locale, "gov.channels.confirmRevoke"))) return;
     await runAction(async () => {
       const res = await apiFetch(`/governance/channels/accounts/revoke`, {
         method: "POST",
@@ -292,7 +292,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
   }
 
   async function revokeChatBinding(p: string, wsId: string, ccId: string) {
-    if (!window.confirm("确认解绑？")) return;
+    if (!window.confirm(t(props.locale, "gov.channels.confirmRevoke"))) return;
     await runAction(async () => {
       const res = await apiFetch(`/governance/channels/chat-bindings/revoke`, {
         method: "POST",
@@ -302,7 +302,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) throw toApiError(json);
-      setInfo("群组解绑成功");
+      setInfo(t(props.locale, "gov.channels.groupUnbindSuccess"));
     });
   }
 
@@ -448,7 +448,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                           disabled={busy || !provider.trim() || !workspaceId.trim() || !channelChatId.trim()}
                           style={{ background: "var(--sl-danger, #dc2626)", color: "#fff", border: "1px solid var(--sl-danger, #dc2626)", borderRadius: 4, padding: "4px 12px", fontSize: 13, cursor: "pointer", opacity: busy ? 0.5 : 1 }}
                         >
-                          解绑
+                          {t(props.locale, "gov.channels.unbind")}
                         </button>
                       </div>
                     </div>
@@ -708,7 +708,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                                 onClick={() => revokeAccount(String(s.provider ?? ""), String(s.workspaceId ?? ""), String(s.boundChannelUserId ?? ""))}
                                 style={{ background: "var(--sl-danger, #dc2626)", color: "#fff", border: "1px solid var(--sl-danger, #dc2626)", borderRadius: 4, padding: "2px 10px", fontSize: 12, cursor: "pointer", opacity: busy ? 0.5 : 1 }}
                               >
-                                解绑
+                                {t(props.locale, "gov.channels.unbind")}
                               </button>
                             ) : null}
                           </td>

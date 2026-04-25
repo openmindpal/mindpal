@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { t } from "@/lib/i18n";
 
 /* Web Speech API type shims — avoids (window as any) */
 interface SpeechRecognitionEvent {
@@ -186,7 +187,7 @@ export default function useVoiceInput(opts: {
               console.info(
                 "[VoiceInput] Falling back to browser SpeechRecognition",
               );
-              setVoiceInterim("语音识别超时，已切换到本地识别");
+              setVoiceInterim(t(locale, "voice.fallbackNotice"));
               const fallback = new SRFallback();
               fallback.lang = locale.startsWith("en") ? "en-US" : "zh-CN";
               fallback.continuous = false;
