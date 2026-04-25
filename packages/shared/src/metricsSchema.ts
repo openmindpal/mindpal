@@ -121,6 +121,41 @@ export const AGENT_METRICS: Record<string, MetricDefinition> = {
     desc: "Current config version (for monitoring hot updates)",
     labels: ["key"],
   },
+
+  // ── 阶段内细粒度指标 ──────────────────────────────
+  "agent.think.llm_duration_ms": {
+    type: "histogram",
+    unit: "ms",
+    desc: "LLM single call latency",
+    buckets: [50, 100, 250, 500, 1000, 2000, 5000, 10000],
+  },
+  "agent.think.retry_count": {
+    type: "counter",
+    unit: "1",
+    desc: "Decision quality retry total",
+  },
+  "agent.think.confidence": {
+    type: "gauge",
+    unit: "1",
+    desc: "Decision confidence score",
+  },
+  "agent.observe.db_duration_ms": {
+    type: "histogram",
+    unit: "ms",
+    desc: "Observe phase DB query latency",
+    buckets: [1, 5, 10, 25, 50, 100, 250],
+  },
+  "agent.drift.score": {
+    type: "gauge",
+    unit: "1",
+    desc: "Intent drift score",
+  },
+  "agent.drift.detection_method": {
+    type: "counter",
+    unit: "1",
+    desc: "Drift detection method distribution",
+    labels: ["method"],
+  },
 } as const;
 
 /**

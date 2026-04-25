@@ -279,6 +279,7 @@ function InlineRecordForm({
   React.useEffect(() => {
     fieldKeys.forEach((k) => {
       if (fields[k]?.type === "reference" && values[k]) {
+        // eslint-disable-next-line react-hooks/immutability -- loadReferenceLabel hoisted function used in effect
         loadReferenceLabel(k, fields[k], values[k]);
       }
     });

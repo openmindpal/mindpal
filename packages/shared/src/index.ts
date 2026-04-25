@@ -452,6 +452,7 @@ export {
   getValidFacts, getEntityRelations, getEntitiesByCategory,
   worldStateToPromptText,
   detectWorldStateConflicts, mergeWorldStates,
+  findEntityByName, findFactByKey, ensureIndexes,
 } from "./worldState";
 export type {
   EntityCategory, WorldEntity, RelationType, WorldRelation,
@@ -563,7 +564,8 @@ export {
 export type {
   AgentDecisionAction, AgentDecision, StepObservation,
   ExecutionConstraints, TokenBudget, CostBudget, LoopBudget,
-  AgentLoopResult, DecisionQualityScore,
+  AgentLoopResult, DecisionQualityScore, SimilarityStrategy,
+  WorldStateLimits,
 } from "./agentLoopTypes";
 
 // ── Runner 协议统一类型 ──

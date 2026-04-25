@@ -47,7 +47,9 @@ export function useSSEConnection(params: UseSSEConnectionParams) {
   const gaveUpRef = useRef(false);
   const onMessageRef = useRef(onMessage);
   const onCommentRef = useRef(onComment);
+  // eslint-disable-next-line react-hooks/refs -- keep callback refs in sync
   onMessageRef.current = onMessage;
+  // eslint-disable-next-line react-hooks/refs -- keep callback refs in sync
   onCommentRef.current = onComment;
 
   const connect = useCallback(() => {
@@ -131,6 +133,7 @@ export function useSSEConnection(params: UseSSEConnectionParams) {
         setReconnectAttempt(attempt);
 
         if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+        // eslint-disable-next-line react-hooks/immutability -- recursive reconnect reference
         reconnectTimerRef.current = setTimeout(() => connect(), delay);
       }
     })();
@@ -159,6 +162,7 @@ export function useSSEConnection(params: UseSSEConnectionParams) {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- trigger connect/disconnect on param change
     if (enabled && sessionId) connect(); else disconnect();
     return () => { disconnect(); };
   }, [sessionId, enabled, connect, disconnect]);

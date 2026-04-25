@@ -16,6 +16,7 @@ export function FlowArtifactCard({ it, locale, openInWorkspace }: {
   locale: string;
   openInWorkspace: (tab: { kind: WorkspaceTab["kind"]; name: string; url: string; meta?: WorkspaceTab["meta"] }) => void;
 }) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [downloading, setDownloading] = useState(false);
   const icon = ARTIFACT_ICONS[it.artifactType] ?? "📦";
   const canPreview = it.data != null && ["json", "table", "markdown", "text"].includes(it.artifactType);

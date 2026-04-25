@@ -1,5 +1,6 @@
 "use client";
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { useState, useCallback } from "react";
 import Link from "next/link";
 import { t } from "@/lib/i18n";

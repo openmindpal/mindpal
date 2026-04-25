@@ -185,8 +185,6 @@ export default function EntityEditForm(props: {
           const cascadeFilter = dep && values[dep.field]
             ? { field: dep.filterField, value: String(values[dep.field]) }
             : null;
-          const refDisplayField = uiExt?.reference?.displayField ?? "name";
-          const refSearchFields = uiExt?.reference?.searchFields;
           return (
             <label key={k} style={{ display: "grid", gap: 6, marginBottom: 12 }}>
               <div style={{ fontWeight: 600 }}>{text(fields[k]?.displayName ?? k, props.locale) || k}</div>

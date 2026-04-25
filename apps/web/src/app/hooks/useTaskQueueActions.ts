@@ -20,6 +20,7 @@ export function useTaskQueueActions(params: {
   const { locale, applySnapshot } = params;
   const [operating, setOperating] = useState(false);
   const sessionIdRef = useRef(params.sessionId);
+  // eslint-disable-next-line react-hooks/refs -- keep sessionId ref in sync
   sessionIdRef.current = params.sessionId;
 
   const apiAction = useCallback(async (path: string, body: Record<string, unknown>): Promise<boolean> => {

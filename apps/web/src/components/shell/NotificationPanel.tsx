@@ -5,6 +5,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { IconBell, IconShield, IconAlert, IconCheckLg, IconInfo, IconRefresh, IconCheckAll } from "./ShellIcons";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { formatErrorCategory } from "./shellUtils";
 import { useBottomPanel } from "./useBottomPanel";
 import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
@@ -62,6 +63,7 @@ export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: s
   const [localItems, setLocalItems] = useState<NotificationItem[] | null>(null);
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const badgeRef = useRef(onBadgeUpdate);
+  // eslint-disable-next-line react-hooks/refs -- keep callback ref in sync
   badgeRef.current = onBadgeUpdate;
 
   const fetchNotifications = useCallback(async (): Promise<NotificationItem[]> => {
@@ -87,7 +89,9 @@ export default function NotificationPanel({ locale, onBadgeUpdate }: { locale: s
   // Sync localItems back to null when fetchedItems changes (after reload)
   // so that fresh data from server takes precedence
   const prevFetchedRef = useRef(fetchedItems);
+  // eslint-disable-next-line react-hooks/refs -- sync ref during render for comparison pattern
   if (prevFetchedRef.current !== fetchedItems) {
+    // eslint-disable-next-line react-hooks/refs -- sync ref during render for comparison
     prevFetchedRef.current = fetchedItems;
     if (localItems !== null) setLocalItems(null);
   }

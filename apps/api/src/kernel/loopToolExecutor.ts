@@ -17,7 +17,7 @@ import {
 import { isToolAllowedByConstraints } from "./loopThinkDecide";
 import { getSharedSubClient } from "./loopRedisClient";
 import { ErrorCategory, StructuredLogger } from "@openslin/shared";
-import { authorizeToolExecution } from "./loopPermissionUnified";
+import { authorizeToolExecution, findFallbackTool, AGENT_LOOP_PERMISSION_FALLBACK } from "./loopPermissionUnified";
 
 const _logger = new StructuredLogger({ module: "loopToolExecutor" });
 
@@ -38,8 +38,10 @@ export async function executeToolCall(params: {
   decision: AgentDecision;
   seq: number;
   executionConstraints?: ExecutionConstraints;
+  /** 可选：工具目录元数据，用于权限降级查找同 category 替代 */
+  toolCatalog?: Array<{ ref: string; category?: string; requiredAction?: string }>;
 }): Promise<{ stepId: string; ok: boolean; error?: string; executionTimeoutMs?: number }> {
-  const { app, pool, queue, tenantId, spaceId, subjectId, traceId, runId, jobId, decision, seq, executionConstraints } = params;
+  const { app, pool, queue, tenantId, spaceId, subjectId, traceId, runId, jobId, decision, seq, executionConstraints, toolCatalog } = params;
   const rawToolRef = decision.toolRef ?? "";
   if (!rawToolRef) return { stepId: "", ok: false, error: "missing_tool_ref" };
   const inputDraft = decision.inputDraft ?? {};
@@ -55,7 +57,7 @@ export async function executeToolCall(params: {
       return { stepId: "", ok: false, error: allowed.reason };
     }
     // ── 统一权限检查（合并 ABAC + 治理检查） ──
-    const authResult = await authorizeToolExecution({
+    let authResult = await authorizeToolExecution({
       pool, subjectId, tenantId, spaceId, traceId, runId, jobId,
       resourceType: resolved.resourceType,
       action: resolved.action,
@@ -63,7 +65,34 @@ export async function executeToolCall(params: {
       limits: executionConstraints as Record<string, unknown> | undefined,
     });
     if (!authResult.authorized) {
-      return { stepId: "", ok: false, error: authResult.errorMessage ?? "权限检查未通过" };
+      // ── 权限降级尝试：在工具目录中查找同 category 的低权限替代 ──
+      if (AGENT_LOOP_PERMISSION_FALLBACK && toolCatalog?.length) {
+        const fallbackRef = findFallbackTool(
+          resolved.toolRef,
+          toolCatalog,
+          resolved.action,
+        );
+        if (fallbackRef) {
+          _logger.info("permission-fallback", { toolRef: resolved.toolRef, fallbackRef, runId });
+          const fallbackResolved = await resolveAndValidateTool({ tenantId, pool, spaceId, rawToolRef: fallbackRef });
+          const fallbackAuth = await authorizeToolExecution({
+            pool, subjectId, tenantId, spaceId, traceId, runId, jobId,
+            resourceType: fallbackResolved.resourceType,
+            action: fallbackResolved.action,
+            toolRef: fallbackResolved.toolRef,
+            limits: executionConstraints as Record<string, unknown> | undefined,
+          });
+          if (fallbackAuth.authorized) {
+            // 降级成功：用替代工具继续执行
+            Object.assign(resolved, fallbackResolved);
+            Object.assign(decision, { toolRef: fallbackRef });
+            authResult = fallbackAuth;
+          }
+        }
+      }
+      if (!authResult.authorized) {
+        return { stepId: "", ok: false, error: authResult.errorMessage ?? "权限检查未通过" };
+      }
     }
     const opDecision = authResult.opDecision!;
     // 权限通过后再做 schema 校验，避免权限拒绝时浪费 schema 解析

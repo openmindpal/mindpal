@@ -17,19 +17,141 @@ import { resolveBoolean } from "@openslin/shared";
 import type {
   WorldState, WorldEntity, WorldRelation, WorldFact,
   GoalGraph, GoalCondition, SuccessCriterion,
-  WorldStateEntry,
+  WorldStateEntry, RelationType, WorldStateLimits,
 } from "@openslin/shared";
 import {
   createWorldState, upsertEntity, addRelation, upsertFact,
   batchUpsertEntities, batchAddRelations,
   mergeWorldStates,
+  findEntityByName, findFactByKey, ensureIndexes,
 } from "@openslin/shared";
 import type { StepObservation } from "./agentLoop";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
 
 /* ================================================================== */
+/*  WorldState 大小限制配置                                              */
+/* ================================================================== */
+
+const WORLD_STATE_LIMITS: WorldStateLimits = {
+  maxEntities: parseInt(process.env.WORLD_STATE_MAX_ENTITIES || "200", 10) || 200,
+  maxFacts: parseInt(process.env.WORLD_STATE_MAX_FACTS || "500", 10) || 500,
+  maxRelations: parseInt(process.env.WORLD_STATE_MAX_RELATIONS || "300", 10) || 300,
+};
+
+/* ================================================================== */
+/*  通用规则：根据工具动作推断 agent→entity 关系类型                         */
+/* ================================================================== */
+
+const actionToRelation: Record<string, RelationType> = {
+  create: 'produces',
+  update: 'modifies',
+  delete: 'modifies',
+  read: 'references',
+  get: 'references',
+  list: 'references',
+  search: 'references',
+};
+
+/** 从 toolRef 中解析动作部分（如 entity.create@1.0 → create） */
+function parseActionFromToolRef(toolRef: string): string | undefined {
+  const toolName = (toolRef.split('@')[0] ?? '').toLowerCase();
+  const parts = toolName.split('.');
+  return parts.length >= 2 ? parts[parts.length - 1] : undefined;
+}
+
+/** 为 agent→entity 自动添加一条关系 */
+function addAgentRelation(
+  state: WorldState,
+  obs: StepObservation,
+  targetEntityId: string,
+  now: string,
+): WorldState {
+  const action = parseActionFromToolRef(obs.toolRef);
+  const relType: RelationType = (action && actionToRelation[action]) || 'references';
+  const agentEntity = findEntityByName(state, 'Agent');
+  if (!agentEntity) return state;
+  return addRelation(state, {
+    relationId: crypto.randomUUID(),
+    fromEntityId: agentEntity.entityId,
+    toEntityId: targetEntityId,
+    type: relType,
+    description: `Agent ${action ?? 'accessed'} entity via ${obs.toolRef}`,
+    sourceStepSeq: obs.seq,
+    confidence: 1.0,
+    establishedAt: now,
+  });
+}
+
+/* ================================================================== */
 /*  规则提取器 — 从结构化工具输出直接提取                                  */
 /* ================================================================== */
+
+/* ================================================================== */
+/*  WorldState 淘汰：按时间戳淘汰最旧条目                                   */
+/* ================================================================== */
+
+/**
+ * 淘汰 WorldState 中超限的最旧条目。
+ * entities 按 updatedAt 排序淘汰最旧，但保留 pinnedEntityIds 中的实体不淘汰。
+ * facts 按 recordedAt 排序淘汰最旧。
+ * relations 淘汰引用已删除实体的关系，超限时按 establishedAt 淘汰最旧。
+ */
+function pruneWorldState(
+  ws: WorldState,
+  limits: WorldStateLimits,
+  pinnedEntityIds?: Set<string>,
+): WorldState {
+  let entities = ws.entities;
+  let facts = ws.facts;
+  let relations = ws.relations;
+
+  // 1. entities 淘汰（Record<string, WorldEntity>）
+  const entityEntries = Object.entries(entities);
+  if (entityEntries.length > limits.maxEntities) {
+    const pinned = pinnedEntityIds ?? new Set<string>();
+    // 分为 pinned 和 unpinned
+    const pinnedEntries: [string, WorldEntity][] = [];
+    const unpinnedEntries: [string, WorldEntity][] = [];
+    for (const entry of entityEntries) {
+      if (pinned.has(entry[0])) pinnedEntries.push(entry);
+      else unpinnedEntries.push(entry);
+    }
+    // unpinned 按 updatedAt 降序（最新在前），保留最新的
+    unpinnedEntries.sort((a, b) => (b[1].updatedAt || "").localeCompare(a[1].updatedAt || ""));
+    const keepCount = Math.max(0, limits.maxEntities - pinnedEntries.length);
+    const kept = [...pinnedEntries, ...unpinnedEntries.slice(0, keepCount)];
+    entities = Object.fromEntries(kept);
+  }
+
+  // 2. facts 淘汰（按 recordedAt 排序，保留最新的 maxFacts 条）
+  if (facts.length > limits.maxFacts) {
+    const sorted = [...facts].sort((a, b) => (b.recordedAt || "").localeCompare(a.recordedAt || ""));
+    facts = sorted.slice(0, limits.maxFacts);
+  }
+
+  // 3. relations 清理：先删除引用已不存在实体的关系
+  const entityIdSet = new Set(Object.keys(entities));
+  relations = relations.filter(
+    (r) => entityIdSet.has(r.fromEntityId) && entityIdSet.has(r.toEntityId),
+  );
+  // 超限时按 establishedAt 淘汰最旧
+  if (relations.length > limits.maxRelations) {
+    const sorted = [...relations].sort((a, b) => (b.establishedAt || "").localeCompare(a.establishedAt || ""));
+    relations = sorted.slice(0, limits.maxRelations);
+  }
+
+  // 4. 重建索引
+  const _entityNameIdx: Record<string, string> = {};
+  for (const [id, e] of Object.entries(entities)) {
+    if (e.name) _entityNameIdx[e.name] = id;
+  }
+  const _factKeyIdx: Record<string, number> = {};
+  for (let i = 0; i < facts.length; i++) {
+    _factKeyIdx[facts[i].key] = i;
+  }
+
+  return { ...ws, entities, facts, relations, _entityNameIdx, _factKeyIdx };
+}
 
 /**
  * 从 StepObservation 的结构化输出中提取实体、关系、事实
@@ -94,6 +216,9 @@ export function extractFromObservation(
     updatedAt: now,
   };
 
+  // 淘汰超限条目
+  state = pruneWorldState(state, WORLD_STATE_LIMITS);
+
   return state;
 }
 
@@ -135,6 +260,9 @@ function extractEntityToolOutput(
 
   state = upsertEntity(state, entity);
 
+  // 自动添加 agent→entity 关系
+  state = addAgentRelation(state, obs, entityId, now);
+
   // 事实
   state = upsertFact(state, {
     factId: crypto.randomUUID(),
@@ -165,8 +293,9 @@ function extractMemoryToolOutput(
   if (toolName.includes("write")) {
     const memoryId = String(output.memoryId ?? output.memory_id ?? output.id ?? "");
     if (memoryId) {
+      const memEntityId = `memory:${memoryId}`;
       state = upsertEntity(state, {
-        entityId: `memory:${memoryId}`,
+        entityId: memEntityId,
         name: String(output.title ?? `memory:${memoryId.slice(0, 8)}`),
         category: "artifact",
         properties: { type: output.type, scope: output.scope },
@@ -177,6 +306,8 @@ function extractMemoryToolOutput(
         discoveredAt: now,
         updatedAt: now,
       });
+      // 自动添加 agent→memory 关系
+      state = addAgentRelation(state, obs, memEntityId, now);
     }
   }
 
@@ -218,8 +349,9 @@ function extractKnowledgeToolOutput(
 
   for (const result of results.slice(0, 5)) {
     const r = result as Record<string, unknown>;
+    const knowledgeFactId = crypto.randomUUID();
     state = upsertFact(state, {
-      factId: crypto.randomUUID(),
+      factId: knowledgeFactId,
       category: "observation",
       key: `knowledge:${r.chunkId ?? r.id ?? crypto.randomUUID()}`,
       statement: `Knowledge found: ${String(r.snippet ?? r.text ?? "").slice(0, 200)}`,
@@ -230,6 +362,24 @@ function extractKnowledgeToolOutput(
       valid: true,
       recordedAt: now,
     });
+  }
+
+  // 自动添加 agent→knowledge 关系（以整体知识检索结果为目标）
+  if (results.length > 0) {
+    const knowledgeEntityId = `knowledge:search:${obs.seq}`;
+    state = upsertEntity(state, {
+      entityId: knowledgeEntityId,
+      name: `KnowledgeSearch:${obs.seq}`,
+      category: "artifact",
+      properties: { resultCount: results.length },
+      state: "observed",
+      sourceStepSeq: obs.seq,
+      sourceToolRef: obs.toolRef,
+      confidence: 0.9,
+      discoveredAt: now,
+      updatedAt: now,
+    });
+    state = addAgentRelation(state, obs, knowledgeEntityId, now);
   }
 
   return state;
@@ -488,20 +638,18 @@ function evaluateCondition(condition: GoalCondition, state: WorldState): boolean
   switch (condition.assertionType) {
     case "entity_exists": {
       const entityName = String(params.entityName ?? "");
-      return Object.values(state.entities).some(
-        (e) => e.name === entityName && e.state !== "deleted",
-      );
+      const found = findEntityByName(state, entityName);
+      return found !== undefined && found.state !== "deleted";
     }
     case "entity_state": {
       const entityName = String(params.entityName ?? "");
       const expectedState = String(params.state ?? "");
-      return Object.values(state.entities).some(
-        (e) => e.name === entityName && e.state === expectedState,
-      );
+      const found = findEntityByName(state, entityName);
+      return found !== undefined && found.state === expectedState;
     }
     case "fact_true": {
       const factKey = String(params.factKey ?? "");
-      return state.facts.some((f) => f.key === factKey && f.valid);
+      return findFactByKey(state, factKey) !== undefined;
     }
     case "output_contains": {
       const pattern = String(params.pattern ?? "");
@@ -518,8 +666,11 @@ function evaluateCondition(condition: GoalCondition, state: WorldState): boolean
 function evaluateSuccessCriterion(criterion: SuccessCriterion, state: WorldState): boolean {
   if (criterion.met) return true; // 已满足的不回退
 
-  // 基于证据引用
+  // 基于证据引用（优先使用索引查找）
   if (criterion.evidenceRef) {
+    const factByKey = findFactByKey(state, criterion.evidenceRef);
+    if (factByKey) return true;
+    // 回退：按 factId 查找
     return state.facts.some((f) => f.factId === criterion.evidenceRef && f.valid);
   }
 
@@ -544,9 +695,12 @@ function evaluateSuccessCriterion(criterion: SuccessCriterion, state: WorldState
 export function buildWorldStateFromObservations(
   runId: string,
   observations: StepObservation[],
+  existingState?: WorldState,
 ): WorldState {
-  let state = createWorldState(runId);
+  let state = existingState ?? createWorldState(runId);
   for (const obs of observations) {
+    // 跳过已处理的 observation（checkpoint 恢复时避免重复处理）
+    if (obs.seq <= state.afterStepSeq) continue;
     state = extractFromObservation(obs, state);
   }
   return state;
@@ -671,7 +825,7 @@ export function extractWorldState(params: {
     for (const conflict of conflicts.filter((c: { resolved: boolean }) => !c.resolved)) {
       state = upsertFact(state, {
         factId: crypto.randomUUID(),
-        category: 'observation',
+        category: 'conflict',
         key: `conflict:${conflict.key}`,
         statement: `Conflict detected on "${conflict.key}": ${conflict.entries.length} sources disagree`,
         value: { conflictKey: conflict.key, sourceCount: conflict.entries.length },
@@ -683,6 +837,10 @@ export function extractWorldState(params: {
   }
 
   state = { ...state, updatedAt: now };
+
+  // 淘汰超限条目
+  state = pruneWorldState(state, WORLD_STATE_LIMITS);
+
   return state;
 }
 

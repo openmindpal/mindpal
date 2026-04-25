@@ -5,41 +5,31 @@ import type { Pool } from "pg";
 import type { StepObservation } from "./loopTypes";
 import { errorActionHint, resolveNumber, resolveBoolean } from "@openslin/shared";
 
+export const AGENT_LOOP_BATCH_OBSERVE = process.env.AGENT_LOOP_BATCH_OBSERVE !== "false";
+
 /* ================================================================== */
 /*  Observe — 收集上一步执行结果                                         */
 /* ================================================================== */
 
-export async function buildObservation(
-  pool: Pool,
-  runId: string,
-  lastStepSeq?: number,
-): Promise<StepObservation | null> {
-  if (lastStepSeq === undefined || lastStepSeq < 1) return null;
+type StepRow = {
+  step_id: string;
+  seq: number;
+  tool_ref: string | null;
+  status: string;
+  output_digest: any;
+  output: any;
+  error_category: string | null;
+  created_at: string | null;
+  finished_at: string | null;
+};
 
-  const res = await pool.query<{
-    step_id: string;
-    seq: number;
-    tool_ref: string | null;
-    status: string;
-    output_digest: any;
-    output: any;
-    error_category: string | null;
-    created_at: string | null;
-    finished_at: string | null;
-  }>(
-    `SELECT step_id, seq, tool_ref, status, output_digest, output, error_category, created_at, finished_at
-     FROM steps WHERE run_id = $1 AND seq = $2 LIMIT 1`,
-    [runId, lastStepSeq],
-  );
+const STEP_COLUMNS = `step_id, seq, tool_ref, status, output_digest, output, error_category, created_at, finished_at`;
 
-  if (!res.rowCount) return null;
-  const row = res.rows[0];
-
+function mapRow(row: StepRow): StepObservation {
   let durationMs: number | null = null;
   if (row.created_at && row.finished_at) {
     durationMs = Date.parse(row.finished_at) - Date.parse(row.created_at);
   }
-
   return {
     stepId: row.step_id,
     seq: row.seq,
@@ -50,6 +40,37 @@ export async function buildObservation(
     errorCategory: row.error_category ?? null,
     durationMs,
   };
+}
+
+export async function buildObservation(
+  pool: Pool,
+  runId: string,
+  lastStepSeq?: number,
+): Promise<{ observation: StepObservation | null; dbDurationMs: number }> {
+  if (lastStepSeq === undefined || lastStepSeq < 1) return { observation: null, dbDurationMs: 0 };
+
+  const dbStart = Date.now();
+  const res = await pool.query<StepRow>(
+    `SELECT ${STEP_COLUMNS} FROM steps WHERE run_id = $1 AND seq = $2 LIMIT 1`,
+    [runId, lastStepSeq],
+  );
+  const dbDurationMs = Date.now() - dbStart;
+  if (!res.rowCount) return { observation: null, dbDurationMs };
+  return { observation: mapRow(res.rows[0]), dbDurationMs };
+}
+
+export async function buildObservationsBatch(
+  pool: Pool,
+  runId: string,
+  afterSeq?: number,
+): Promise<{ observations: StepObservation[]; dbDurationMs: number }> {
+  const dbStart = Date.now();
+  const res = await pool.query<StepRow>(
+    `SELECT ${STEP_COLUMNS} FROM steps WHERE run_id = $1 AND seq > $2 ORDER BY seq ASC`,
+    [runId, afterSeq ?? 0],
+  );
+  const dbDurationMs = Date.now() - dbStart;
+  return { observations: res.rows.map(mapRow), dbDurationMs };
 }
 
 /* ================================================================== */

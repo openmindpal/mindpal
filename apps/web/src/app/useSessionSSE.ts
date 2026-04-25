@@ -39,6 +39,7 @@ export interface UseSessionSSEParams {
 export default function useSessionSSE(params: UseSessionSSEParams) {
   const { sessionId, tenantId, locale = "zh-CN", enabled = true, onEvent, onSnapshot } = params;
 
+  // eslint-disable-next-line react-hooks/purity -- Date.now() needed for initial heartbeat timestamp
   const [lastHeartbeat, setLastHeartbeat] = useState<number>(Date.now());
 
   // Sub-hooks
@@ -52,6 +53,7 @@ export default function useSessionSSE(params: UseSessionSSEParams) {
 
   // Heartbeat — on timeout, abort the SSE connection
   const heartbeat = useHeartbeat(() => {
+    // eslint-disable-next-line react-hooks/immutability -- connection declared after heartbeat hook
     connection.abortForHeartbeat();
   });
 
@@ -78,6 +80,7 @@ export default function useSessionSSE(params: UseSessionSSEParams) {
       if (evtName === "queueSnapshot") onSnapshotRef.current?.(data);
       if (evtName === "heartbeat") setLastHeartbeat(Date.now());
     } catch { /* JSON parse failure */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- onEventRef/onSnapshotRef are mutable refs, not reactive deps
   }, [eventBus, heartbeat]);
 
   const connection = useSSEConnection({

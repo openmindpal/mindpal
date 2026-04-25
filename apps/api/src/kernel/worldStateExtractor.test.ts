@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { createWorldState, createGoalGraph } from "@openslin/shared";
-import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations } from "./worldStateExtractor";
+import {
+  createWorldState, createGoalGraph,
+  upsertEntity, addRelation, upsertFact,
+  batchUpsertEntities, batchAddRelations,
+  findEntityByName, findFactByKey, ensureIndexes,
+  detectWorldStateConflicts,
+  type WorldEntity, type WorldRelation, type WorldFact,
+} from "@openslin/shared";
+import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations, extractWorldState } from "./worldStateExtractor";
 import type { StepObservation } from "./loopTypes";
 
 /* ── Helpers ──────────────────────────────────────────────────── */
@@ -187,5 +194,355 @@ describe("evaluateGoalConditions", () => {
     // Should return a goal graph (possibly with updated conditions)
     expect(result).toBeDefined();
     expect(result.subGoals.length).toBe(1);
+  });
+});
+
+/* ================================================================== */
+/*  relation auto-extraction                                            */
+/* ================================================================== */
+
+describe("relation auto-extraction", () => {
+  /** 构建包含 Agent 实体的初始状态（extractFromObservation 中 addAgentRelation 需要） */
+  function stateWithAgent(): ReturnType<typeof createWorldState> {
+    const s = createWorldState(TEST_RUN_ID);
+    return upsertEntity(s, {
+      entityId: "actor:agent",
+      name: "Agent",
+      category: "actor",
+      properties: {},
+      state: "active",
+      confidence: 1.0,
+      discoveredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  it("entity.create should produce a 'produces' relation from Agent", () => {
+    const state = stateWithAgent();
+    const obs = makeObs({
+      seq: 1,
+      toolRef: "entity.create@1.0",
+      status: "succeeded",
+      output: { id: "ent-1", name: "NewEntity", type: "resource" },
+    });
+    const next = extractFromObservation(obs, state);
+
+    const rel = next.relations.find(
+      (r) => r.fromEntityId === "actor:agent" && r.toEntityId === "ent-1",
+    );
+    expect(rel).toBeDefined();
+    expect(rel!.type).toBe("produces");
+  });
+
+  it("entity.update should produce a 'modifies' relation from Agent", () => {
+    const state = stateWithAgent();
+    const obs = makeObs({
+      seq: 2,
+      toolRef: "entity.update@1.0",
+      status: "succeeded",
+      output: { id: "ent-2", name: "UpdatedEntity" },
+    });
+    const next = extractFromObservation(obs, state);
+
+    const rel = next.relations.find(
+      (r) => r.fromEntityId === "actor:agent" && r.toEntityId === "ent-2",
+    );
+    expect(rel).toBeDefined();
+    expect(rel!.type).toBe("modifies");
+  });
+
+  it("memory.write should produce a relation from Agent to memory entity", () => {
+    const state = stateWithAgent();
+    const obs = makeObs({
+      seq: 3,
+      toolRef: "memory.write@1.0",
+      status: "succeeded",
+      output: { memoryId: "mem-100", content: "saved" },
+    });
+    const next = extractFromObservation(obs, state);
+
+    const rel = next.relations.find(
+      (r) =>
+        r.fromEntityId === "actor:agent" && r.toEntityId === "memory:mem-100",
+    );
+    expect(rel).toBeDefined();
+  });
+});
+
+/* ================================================================== */
+/*  evaluateCondition - relation_holds                                  */
+/* ================================================================== */
+
+describe("evaluateCondition - relation_holds", () => {
+  // NOTE: evaluateCondition 当前未实现 relation_holds 分支，
+  // 会走 default 返回 condition.satisfied ?? false。
+  // 以下测试验证的是当前行为（未来实现后应更新）。
+
+  function buildStateWithRelation(): ReturnType<typeof createWorldState> {
+    let s = createWorldState(TEST_RUN_ID);
+    s = upsertEntity(s, {
+      entityId: "e-a", name: "A", category: "resource", properties: {},
+      state: "active", confidence: 1, discoveredAt: "", updatedAt: "",
+    });
+    s = upsertEntity(s, {
+      entityId: "e-b", name: "B", category: "resource", properties: {},
+      state: "active", confidence: 1, discoveredAt: "", updatedAt: "",
+    });
+    s = addRelation(s, {
+      relationId: "rel-1", fromEntityId: "e-a", toEntityId: "e-b",
+      type: "produces", confidence: 1, establishedAt: "",
+    });
+    return s;
+  }
+
+  it("should return satisfied value when relation_holds (not yet implemented)", () => {
+    const state = buildStateWithRelation();
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g1", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [{
+        description: "A produces B",
+        assertionType: "relation_holds" as const,
+        assertionParams: { fromEntity: "A", toEntity: "B", type: "produces" },
+        satisfied: true,
+      }],
+      postconditions: [],
+      successCriteria: [],
+      completionEvidence: [],
+      priority: 5,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    // relation_holds 走 default 分支，返回 condition.satisfied ?? false
+    expect(result.subGoals[0].preconditions[0].satisfied).toBe(true);
+  });
+
+  it("should return false when relation_holds satisfied is undefined", () => {
+    const state = buildStateWithRelation();
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g2", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [{
+        description: "X produces Y",
+        assertionType: "relation_holds" as const,
+        assertionParams: { fromEntity: "X", toEntity: "Y", type: "produces" },
+        // satisfied 未设置 → undefined → false
+      }],
+      postconditions: [],
+      successCriteria: [],
+      completionEvidence: [],
+      priority: 5,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    expect(result.subGoals[0].preconditions[0].satisfied).toBe(false);
+  });
+});
+
+/* ================================================================== */
+/*  batch operations                                                    */
+/* ================================================================== */
+
+describe("batch operations", () => {
+  const now = new Date().toISOString();
+  const makeEntity = (id: string, name: string): WorldEntity => ({
+    entityId: id, name, category: "resource", properties: {},
+    state: "active", confidence: 1, discoveredAt: now, updatedAt: now,
+  });
+  const makeRelation = (id: string, from: string, to: string, type: "produces" | "modifies"): WorldRelation => ({
+    relationId: id, fromEntityId: from, toEntityId: to, type,
+    confidence: 1, establishedAt: now,
+  });
+
+  it("batchUpsertEntities should insert multiple entities at once", () => {
+    const state = createWorldState(TEST_RUN_ID);
+    const entities = [makeEntity("e1", "Ent1"), makeEntity("e2", "Ent2"), makeEntity("e3", "Ent3")];
+    const next = batchUpsertEntities(state, entities);
+
+    expect(Object.keys(next.entities).length).toBe(3);
+    expect(next.entities["e1"]?.name).toBe("Ent1");
+    expect(next.entities["e3"]?.name).toBe("Ent3");
+  });
+
+  it("batchAddRelations should deduplicate and add in bulk", () => {
+    let state = createWorldState(TEST_RUN_ID);
+    state = batchUpsertEntities(state, [makeEntity("a", "A"), makeEntity("b", "B")]);
+    // 添加两条相同的关系 + 一条不同的关系
+    const rels = [
+      makeRelation("r1", "a", "b", "produces"),
+      makeRelation("r2", "a", "b", "produces"), // duplicate
+      makeRelation("r3", "b", "a", "modifies"),  // unique
+    ];
+    const next = batchAddRelations(state, rels);
+
+    expect(next.relations.length).toBe(2);
+  });
+
+  it("batchUpsertEntities should maintain _entityNameIdx", () => {
+    const state = createWorldState(TEST_RUN_ID);
+    const entities = [makeEntity("e1", "Alpha"), makeEntity("e2", "Beta")];
+    const next = batchUpsertEntities(state, entities);
+
+    expect(next._entityNameIdx).toBeDefined();
+    expect(next._entityNameIdx!["Alpha"]).toBe("e1");
+    expect(next._entityNameIdx!["Beta"]).toBe("e2");
+  });
+});
+
+/* ================================================================== */
+/*  buildWorldStateFromObservations skip logic                          */
+/* ================================================================== */
+
+describe("buildWorldStateFromObservations skip logic", () => {
+  it("should only process observations with seq > existingState.afterStepSeq", () => {
+    // 构建 existingState，afterStepSeq=5
+    let existing = createWorldState(TEST_RUN_ID);
+    existing = { ...existing, afterStepSeq: 5 };
+
+    const observations = [
+      makeObs({ seq: 3, toolRef: "echo@1.0" }),
+      makeObs({ seq: 5, toolRef: "echo@1.0" }),
+      makeObs({ seq: 7, toolRef: "echo@1.0" }),
+      makeObs({ seq: 9, toolRef: "echo@1.0" }),
+    ];
+
+    const state = buildWorldStateFromObservations(TEST_RUN_ID, observations, existing);
+
+    // seq 3 和 5 应被跳过，只处理 7 和 9
+    // 每个 obs 至少产生一个 step:N:result 事实
+    const processedFacts = state.facts.filter((f) => f.key.startsWith("step:"));
+    const processedSeqs = processedFacts.map((f) => {
+      const m = f.key.match(/^step:(\d+):result$/);
+      return m ? Number(m[1]) : 0;
+    }).filter(Boolean);
+
+    expect(processedSeqs).not.toContain(3);
+    expect(processedSeqs).not.toContain(5);
+    expect(processedSeqs).toContain(7);
+    expect(processedSeqs).toContain(9);
+  });
+
+  it("should set afterStepSeq to the max seq of processed observations", () => {
+    let existing = createWorldState(TEST_RUN_ID);
+    existing = { ...existing, afterStepSeq: 5 };
+
+    const observations = [
+      makeObs({ seq: 3, toolRef: "echo@1.0" }),
+      makeObs({ seq: 7, toolRef: "echo@1.0" }),
+      makeObs({ seq: 9, toolRef: "echo@1.0" }),
+    ];
+
+    const state = buildWorldStateFromObservations(TEST_RUN_ID, observations, existing);
+    expect(state.afterStepSeq).toBe(9);
+  });
+});
+
+/* ================================================================== */
+/*  conflict fact category                                              */
+/* ================================================================== */
+
+describe("conflict fact category", () => {
+  it("detectWorldStateConflicts should identify disagreeing sources", () => {
+    const entries = [
+      { key: "temperature", value: 25, source: "sensor" as const, confidence: 0.8, timestamp: Date.now() },
+      { key: "temperature", value: 30, source: "user_input" as const, confidence: 0.9, timestamp: Date.now() },
+      { key: "humidity", value: 60, source: "sensor" as const, confidence: 1, timestamp: Date.now() },
+    ];
+    const conflicts = detectWorldStateConflicts(entries);
+
+    expect(conflicts.length).toBe(1);
+    expect(conflicts[0].key).toBe("temperature");
+    expect(conflicts[0].resolved).toBe(false);
+    expect(conflicts[0].entries.length).toBe(2);
+  });
+
+  it("FactCategory 'conflict' should be assignable via upsertFact", () => {
+    let state = createWorldState(TEST_RUN_ID);
+    state = upsertFact(state, {
+      factId: "cf-1",
+      category: "conflict",
+      key: "conflict:temp",
+      statement: "Conflict on temperature",
+      confidence: 1,
+      valid: true,
+      recordedAt: new Date().toISOString(),
+    });
+
+    const cf = state.facts.find((f) => f.category === "conflict");
+    expect(cf).toBeDefined();
+    expect(cf!.category).toBe("conflict");
+  });
+});
+
+/* ================================================================== */
+/*  index functions                                                     */
+/* ================================================================== */
+
+describe("index functions", () => {
+  const now = new Date().toISOString();
+
+  function buildPopulatedState() {
+    let s = createWorldState(TEST_RUN_ID);
+    s = upsertEntity(s, {
+      entityId: "e-x", name: "Xray", category: "resource", properties: {},
+      state: "active", confidence: 1, discoveredAt: now, updatedAt: now,
+    });
+    s = upsertEntity(s, {
+      entityId: "e-y", name: "Yankee", category: "artifact", properties: {},
+      state: "active", confidence: 1, discoveredAt: now, updatedAt: now,
+    });
+    s = upsertFact(s, {
+      factId: "f1", category: "observation", key: "temp:high",
+      statement: "Temperature is high", confidence: 1, valid: true, recordedAt: now,
+    });
+    s = upsertFact(s, {
+      factId: "f2", category: "observation", key: "status:ok",
+      statement: "Status is OK", confidence: 1, valid: true, recordedAt: now,
+    });
+    return s;
+  }
+
+  it("findEntityByName should find entity via index (O(1))", () => {
+    const state = buildPopulatedState();
+    expect(state._entityNameIdx).toBeDefined();
+    const found = findEntityByName(state, "Xray");
+    expect(found).toBeDefined();
+    expect(found!.entityId).toBe("e-x");
+  });
+
+  it("findEntityByName should fallback to linear scan without index", () => {
+    const state = buildPopulatedState();
+    // 移除索引
+    const noIdx = { ...state, _entityNameIdx: undefined };
+    const found = findEntityByName(noIdx, "Yankee");
+    expect(found).toBeDefined();
+    expect(found!.entityId).toBe("e-y");
+  });
+
+  it("findFactByKey should return correct fact via index", () => {
+    const state = buildPopulatedState();
+    const fact = findFactByKey(state, "temp:high");
+    expect(fact).toBeDefined();
+    expect(fact!.statement).toBe("Temperature is high");
+  });
+
+  it("findFactByKey should return undefined for non-existent key", () => {
+    const state = buildPopulatedState();
+    const fact = findFactByKey(state, "does:not:exist");
+    expect(fact).toBeUndefined();
+  });
+
+  it("ensureIndexes should build complete indexes", () => {
+    const state = buildPopulatedState();
+    // 先去掉索引
+    const noIdx = { ...state, _entityNameIdx: undefined, _factKeyIdx: undefined };
+    const indexed = ensureIndexes(noIdx);
+
+    expect(indexed._entityNameIdx).toBeDefined();
+    expect(indexed._entityNameIdx!["Xray"]).toBe("e-x");
+    expect(indexed._entityNameIdx!["Yankee"]).toBe("e-y");
+    expect(indexed._factKeyIdx).toBeDefined();
+    expect(typeof indexed._factKeyIdx!["temp:high"]).toBe("number");
+    expect(typeof indexed._factKeyIdx!["status:ok"]).toBe("number");
   });
 });

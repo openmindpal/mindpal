@@ -10,6 +10,7 @@ const SESSION_KEY = "openslin_chat_session";
 const TASK_QUEUE_KEY = "openslin_task_queue_state";
 const MODEL_KEY = "openslin_selected_model";
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const EMPTY_SESSION = { conversationId: "", flow: [] as ChatFlowItem[], toolExecStates: {} as Record<string, ToolExecState> };
 const EMPTY_TASK_QUEUE = { pendingEntries: [] as FrontendTaskQueueEntry[], dependencies: [] as FrontendTaskDependency[] };
 

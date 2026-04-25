@@ -13,6 +13,7 @@ const HEARTBEAT_TIMEOUT_MS = 45000;
 export function useHeartbeat(onTimeout: () => void) {
   const heartbeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onTimeoutRef = useRef(onTimeout);
+  // eslint-disable-next-line react-hooks/refs -- keep callback ref in sync
   onTimeoutRef.current = onTimeout;
 
   const reset = useCallback(() => {

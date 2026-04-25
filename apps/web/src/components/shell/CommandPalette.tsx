@@ -58,6 +58,7 @@ export function CommandPalette(props: {
   // Focus input when opened
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset state when palette opens
       setQuery("");
       setActiveIdx(0);
       requestAnimationFrame(() => inputRef.current?.focus());
@@ -113,6 +114,7 @@ export function CommandPalette(props: {
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset index when query changes
     setActiveIdx(0);
   }, [query]);
 

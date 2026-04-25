@@ -244,6 +244,7 @@ function InlineApprovalCard({
     }
   }, [approval, locale, reason]);
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization -- optional chaining on approval breaks compiler memoization
   const toolName = useMemo(() => {
     if (!approval?.toolRef) return null;
     const at = approval.toolRef.lastIndexOf("@");

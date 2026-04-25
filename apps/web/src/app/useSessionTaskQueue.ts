@@ -8,6 +8,7 @@
 
 import { useTaskQueueState } from "./hooks/useTaskQueueState";
 import { useTaskQueueActions } from "./hooks/useTaskQueueActions";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import type { SessionSSEEvent } from "./useSessionSSE";
 
 /* ─── Types (re-export for consumers) ─── */

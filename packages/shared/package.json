@@ -70,8 +70,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -b --force",
-    "test": "vitest run --passWithNoTests",
-    "lint": "node -e \"process.exit(0)\""
+    "test": "vitest run --passWithNoTests"
   },
   "typesVersions": {
     "*": {

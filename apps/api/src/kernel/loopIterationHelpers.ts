@@ -173,7 +173,7 @@ export async function invokeLlmForDecision(params: {
   defaultModelRef: string | undefined;
   /** 决策质量重试时，强制使用指定的 purpose tier（为升级模型） */
   forcePurpose?: string;
-}): Promise<{ outputText: string; modelUsed: string }> {
+}): Promise<{ outputText: string; modelUsed: string; llmDurationMs: number }> {
   const {
     app, pool, subject, locale, authorization, traceId, runId, goal,
     iterations, observations, lastObs, userIntervention, resumeState,
@@ -209,6 +209,8 @@ export async function invokeLlmForDecision(params: {
   const parallelLlmEnabled = resolveBoolean("AGENT_LOOP_PARALLEL_LLM").value;
   const isSimpleProgress = parallelLlmEnabled && lastObs && lastObs.status === "succeeded" && observations.length <= 5 && iterations > 1;
 
+  const llmCallStart = Date.now();
+
   if (isSimpleProgress) {
     app.log.info({ runId, iteration: iterations, strategy: "parallel_fast_standard" }, "[AgentLoop] 并行调用 fast/standard 模型");
     const modelConstraints = defaultModelRef ? { candidates: [defaultModelRef] } : dynamicModelRef ? { candidates: [dynamicModelRef] } : undefined;
@@ -220,7 +222,7 @@ export async function invokeLlmForDecision(params: {
     const standardOutput = standardResult.status === "fulfilled" && standardResult.value ? standardResult.value.outputText : null;
     const fastOutput = fastResult.status === "fulfilled" && fastResult.value ? fastResult.value.outputText : null;
     app.log.info({ runId, iteration: iterations, standardOk: !!standardOutput, fastOk: !!fastOutput }, "[AgentLoop] 并行调用完成");
-    return { outputText: (typeof standardOutput === "string" ? standardOutput : "") || (typeof fastOutput === "string" ? fastOutput : ""), modelUsed: primaryPurpose };
+    return { outputText: (typeof standardOutput === "string" ? standardOutput : "") || (typeof fastOutput === "string" ? fastOutput : ""), modelUsed: primaryPurpose, llmDurationMs: Date.now() - llmCallStart };
   }
 
   // 串行调用
@@ -229,5 +231,5 @@ export async function invokeLlmForDecision(params: {
     messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
     ...(defaultModelRef ? { constraints: { candidates: [defaultModelRef] } } : dynamicModelRef ? { constraints: { candidates: [dynamicModelRef] } } : {}),
   });
-  return { outputText: llmResult?.outputText ?? "", modelUsed: primaryPurpose };
+  return { outputText: llmResult?.outputText ?? "", modelUsed: primaryPurpose, llmDurationMs: Date.now() - llmCallStart };
 }

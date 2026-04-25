@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { t, statusLabel } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import { fmtDateTime } from "@/lib/fmtDateTime";
-import { Badge, Card, Table } from "@/components/ui";
+import { Badge, Card } from "@/components/ui";
 import { toApiError, errText } from "@/lib/apiError";
 
 type ChangeLogRow = {
@@ -48,6 +48,7 @@ export default function ChangeLog(props: { locale: string }) {
     }
   }
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

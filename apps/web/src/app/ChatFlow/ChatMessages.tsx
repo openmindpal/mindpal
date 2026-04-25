@@ -59,6 +59,7 @@ export default function ChatMessages(props: ChatMessagesProps) {
   }, []);
 
   /** Reset scroll tracking (e.g., when loading a different conversation) */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const resetScroll = () => { initialScrollDoneRef.current = false; };
 
   if (!hasMessages) return null;

@@ -330,6 +330,7 @@ export default function PendingActionsQueue(props: {
 
       {!loading && !error && items.length > 0 && (
         <div className={styles.paqActionList}>
+          {/* eslint-disable-next-line react-hooks/refs -- read errorMsgs ref for display */}
           {displayItems.map((item, idx) => {
             const id = getItemId(item);
             return (

@@ -49,6 +49,7 @@ export default function GovTriggersClient(props: { locale: string; initial: { st
   }, [props.locale]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch
     refresh();
   }, [refresh]);
 

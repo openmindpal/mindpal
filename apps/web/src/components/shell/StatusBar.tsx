@@ -84,6 +84,7 @@ export default function StatusBar(props: { locale: string }) {
 
   // Initial fetch
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount
     fetchStatus();
   }, [fetchStatus]);
 

@@ -5,7 +5,7 @@ import { API_BASE, apiHeaders } from "@/lib/api";
 import { t, boolLabel } from "@/lib/i18n";
 import { fmtDateTime } from "@/lib/fmtDateTime";
 import { Badge, Card, PageHeader, Table } from "@/components/ui";
-import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { toApiError, errText } from "@/lib/apiError";
 
 /* ═══ Types ═══ */
 type RerankConfigRow = { id?: string; spaceId?: string; enabled?: boolean; provider?: string; endpoint?: string; model?: string; topN?: number; timeoutMs?: number; fallbackMode?: string; crossEncoderModelPath?: string | null; crossEncoderModelType?: string; updatedAt?: string };
@@ -24,6 +24,26 @@ type Props = {
   rerankInitial?: unknown; embeddingInitial?: unknown; chunkInitial?: unknown;
   vectorStoreInitial?: unknown; retrievalInitial?: unknown; retentionInitial?: unknown;
 };
+
+/* ── Extracted helper components (outside render to satisfy react-hooks/static-components) ── */
+function F({ label, help, children }: { label: string; help?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <div style={{ fontWeight: 500 }}>{label}</div>
+      {help && <div style={{ color: "var(--sl-muted)", fontSize: 13 }}>{help}</div>}
+      {children}
+    </div>
+  );
+}
+function Err({ msg }: { msg: string }) {
+  return msg ? <pre style={{ color: "crimson", whiteSpace: "pre-wrap", marginTop: 8 }}>{msg}</pre> : null;
+}
+function SaveBtn({ onClick, disabled, busy: b, locale }: { onClick: () => void; disabled: boolean; busy: boolean; locale: string }) {
+  return <div><button onClick={onClick} disabled={disabled}>{b ? t(locale, "action.loading") : t(locale, "action.save")}</button></div>;
+}
+function NoData({ cols, locale }: { cols: number; locale: string }) {
+  return <tr><td colSpan={cols} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(locale, "widget.noData")}</td></tr>;
+}
 
 const PAGE_SIZE = 20;
 function usePagination<T>(items: T[]) {
@@ -137,20 +157,6 @@ export default function KnowledgeEngineClient(props: Props) {
   async function upsertRet() { setRetError(""); setRetBusy(true); try { await apiCall("PUT", "/governance/knowledge/retention-policy", { spaceId: retSpaceId.trim(), allowSnippet: retAllowSnippet, retentionDays: retDays, maxSnippetLen: retMaxLen }); setRetSpaceId(""); setRetAllowSnippet(true); setRetDays(30); setRetMaxLen(600); await refreshRet(); } catch (e: unknown) { setRetError(errText(L, toApiError(e))); } finally { setRetBusy(false); } }
   async function deleteRet(spaceId: string) { setRetError(""); setRetBusy(true); try { await apiCall("DELETE", `/governance/knowledge/retention-policy/${encodeURIComponent(spaceId)}`); await refreshRet(); } catch (e: unknown) { setRetError(errText(L, toApiError(e))); } finally { setRetBusy(false); } }
 
-  /* ── Helper: form field ── */
-  const F = ({ label, help, children }: { label: string; help?: string; children: React.ReactNode }) => (
-    <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ fontWeight: 500 }}>{label}</div>
-      {help && <div style={{ color: "var(--sl-muted)", fontSize: 13 }}>{help}</div>}
-      {children}
-    </div>
-  );
-  const Err = ({ msg }: { msg: string }) => msg ? <pre style={{ color: "crimson", whiteSpace: "pre-wrap", marginTop: 8 }}>{msg}</pre> : null;
-  const SaveBtn = ({ onClick, disabled, busy: b }: { onClick: () => void; disabled: boolean; busy: boolean }) => (
-    <div><button onClick={onClick} disabled={disabled}>{b ? t(L, "action.loading") : t(L, "action.save")}</button></div>
-  );
-  const NoData = ({ cols }: { cols: number }) => <tr><td colSpan={cols} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(L, "widget.noData")}</td></tr>;
-
   /* ── Tab config ── */
   const TABS: { id: TabId; label: string }[] = [
     { id: "rerank", label: t(L, "gov.tab.rerank") },
@@ -206,13 +212,13 @@ export default function KnowledgeEngineClient(props: Props) {
               </div>
             )}
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={rkEnabled} onChange={e => setRkEnabled(e.target.checked)} disabled={rkBusy} /><span>{t(L, "gov.rerank.enabled")}</span></label>
-            <SaveBtn onClick={upsertRerank} disabled={rkBusy || !rkSpaceId.trim()} busy={rkBusy} />
+            <SaveBtn onClick={upsertRerank} disabled={rkBusy || !rkSpaceId.trim()} busy={rkBusy} locale={L} />
           </div>
         </Card>
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.rerank.listTitle")}</span> <Badge>{rerankConfigs.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.rerank.spaceId")}</th><th align="left">{t(L, "gov.rerank.provider")}</th><th align="left">{t(L, "gov.rerank.model")}</th><th align="left">{t(L, "gov.rerank.endpoint")}</th><th align="left">{t(L, "gov.rerank.fallbackMode")}</th><th align="left">{t(L, "gov.rerank.enabled")}</th><th align="left">{t(L, "gov.rerank.updatedAt")}</th><th align="left">{t(L, "gov.rerank.actions")}</th></tr></thead>
-            <tbody>{rerankConfigs.length === 0 ? <NoData cols={8} /> : rkPg.paged.map((c, i) => (
+            <tbody>{rerankConfigs.length === 0 ? <NoData cols={8} locale={L} /> : rkPg.paged.map((c, i) => (
               <tr key={c.id ?? i}><td style={monoStyle}>{c.spaceId ?? "-"}</td><td>{c.provider ?? "external"}</td><td style={monoStyle}>{c.model ?? "-"}</td><td style={{ ...monoStyle, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{c.endpoint || "-"}</td><td>{c.fallbackMode ?? "-"}</td><td>{boolLabel(Boolean(c.enabled), L)}</td><td>{fmtDateTime(c.updatedAt, L)}</td><td>{c.spaceId ? <button onClick={() => deleteRerank(c.spaceId!)} disabled={rkBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
@@ -247,13 +253,13 @@ export default function KnowledgeEngineClient(props: Props) {
               <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={embDefault} onChange={e => setEmbDefault(e.target.checked)} disabled={embBusy} /><span>{t(L, "gov.embedding.isDefault")}</span></label>
               <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={embActive} onChange={e => setEmbActive(e.target.checked)} disabled={embBusy} /><span>{t(L, "gov.embedding.isActive")}</span></label>
             </div>
-            <SaveBtn onClick={upsertEmb} disabled={embBusy || !embModelName.trim()} busy={embBusy} />
+            <SaveBtn onClick={upsertEmb} disabled={embBusy || !embModelName.trim()} busy={embBusy} locale={L} />
           </div>
         </Card>
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.embedding.title")}</span> <Badge>{embConfigs.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.embedding.spaceId")}</th><th align="left">{t(L, "gov.embedding.provider")}</th><th align="left">{t(L, "gov.embedding.modelName")}</th><th align="left">{t(L, "gov.embedding.dimensions")}</th><th align="left">{t(L, "gov.embedding.endpoint")}</th><th align="left">{t(L, "gov.embedding.isActive")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{embConfigs.length === 0 ? <NoData cols={8} /> : embPg.paged.map((c, i) => (
+            <tbody>{embConfigs.length === 0 ? <NoData cols={8} locale={L} /> : embPg.paged.map((c, i) => (
               <tr key={c.id ?? i}><td style={monoStyle}>{c.spaceId || t(L, "gov.embedding.noData")}</td><td>{c.provider ?? "openai"}</td><td style={monoStyle}>{c.modelName ?? "-"}</td><td>{c.dimensions ?? 1536}</td><td style={{ ...monoStyle, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{c.endpoint || "-"}</td><td>{boolLabel(Boolean(c.isActive), L)}</td><td>{fmtDateTime(c.updatedAt, L)}</td><td>{c.id ? <button onClick={() => deleteEmb(c.id!)} disabled={embBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
@@ -294,13 +300,13 @@ export default function KnowledgeEngineClient(props: Props) {
                 <F label={t(L, "gov.chunk.childMaxLen")}><input type="number" min={50} max={5000} value={ckChildMax} onChange={e => setCkChildMax(Number(e.target.value) || 300)} disabled={ckBusy} /></F>
               </div>
             )}
-            <SaveBtn onClick={upsertChunk} disabled={ckBusy || !ckSpaceId.trim()} busy={ckBusy} />
+            <SaveBtn onClick={upsertChunk} disabled={ckBusy || !ckSpaceId.trim()} busy={ckBusy} locale={L} />
           </div>
         </Card>
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.chunk.title")}</span> <Badge>{chunkConfigs.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.chunk.spaceId")}</th><th align="left">{t(L, "gov.chunk.strategy")}</th><th align="left">{t(L, "gov.chunk.maxLen")}</th><th align="left">{t(L, "gov.chunk.overlap")}</th><th align="left">{t(L, "gov.chunk.tableAware")}</th><th align="left">{t(L, "gov.chunk.codeAware")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{chunkConfigs.length === 0 ? <NoData cols={8} /> : ckPg.paged.map((c, i) => (
+            <tbody>{chunkConfigs.length === 0 ? <NoData cols={8} locale={L} /> : ckPg.paged.map((c, i) => (
               <tr key={c.id ?? i}><td style={monoStyle}>{c.spaceId ?? "-"}</td><td>{c.strategy ?? "recursive"}</td><td>{c.maxLen ?? 600}</td><td>{c.overlap ?? 80}</td><td>{boolLabel(Boolean(c.tableAware), L)}</td><td>{boolLabel(Boolean(c.codeAware), L)}</td><td>{fmtDateTime(c.updatedAt, L)}</td><td>{c.spaceId ? <button onClick={() => deleteChunk(c.spaceId!)} disabled={ckBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
@@ -329,13 +335,13 @@ export default function KnowledgeEngineClient(props: Props) {
               {vsProvider === "milvus" && <F label={t(L, "gov.vectorStore.dbName")}><input value={vsDbName} onChange={e => setVsDbName(e.target.value)} disabled={vsBusy} /></F>}
             </div>
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={vsEnabled} onChange={e => setVsEnabled(e.target.checked)} disabled={vsBusy} /><span>{t(L, "gov.vectorStore.enabled")}</span></label>
-            <SaveBtn onClick={upsertVs} disabled={vsBusy || !vsSpaceId.trim()} busy={vsBusy} />
+            <SaveBtn onClick={upsertVs} disabled={vsBusy || !vsSpaceId.trim()} busy={vsBusy} locale={L} />
           </div>
         </Card>
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.vectorStore.title")}</span> <Badge>{vsConfigs.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.vectorStore.spaceId")}</th><th align="left">{t(L, "gov.vectorStore.provider")}</th><th align="left">{t(L, "gov.vectorStore.endpoint")}</th><th align="left">{t(L, "gov.vectorStore.timeoutMs")}</th><th align="left">{t(L, "gov.vectorStore.enabled")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{vsConfigs.length === 0 ? <NoData cols={7} /> : vsPg.paged.map((c, i) => (
+            <tbody>{vsConfigs.length === 0 ? <NoData cols={7} locale={L} /> : vsPg.paged.map((c, i) => (
               <tr key={c.id ?? i}><td style={monoStyle}>{c.spaceId ?? "-"}</td><td>{c.provider ?? "pg_fallback"}</td><td style={{ ...monoStyle, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{c.endpoint || "-"}</td><td>{c.timeoutMs ?? 10000}</td><td>{boolLabel(Boolean(c.enabled), L)}</td><td>{fmtDateTime(c.updatedAt, L)}</td><td>{c.spaceId ? <button onClick={() => deleteVs(c.spaceId!)} disabled={vsBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
@@ -370,13 +376,13 @@ export default function KnowledgeEngineClient(props: Props) {
                 </select>
               </F>
             )}
-            <SaveBtn onClick={upsertRt} disabled={rtBusy || !rtSpaceId.trim() || !rtName.trim()} busy={rtBusy} />
+            <SaveBtn onClick={upsertRt} disabled={rtBusy || !rtSpaceId.trim() || !rtName.trim()} busy={rtBusy} locale={L} />
           </div>
         </Card>
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.retrieval.title")}</span> <Badge>{rtStrategies.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.retrieval.spaceId")}</th><th align="left">{t(L, "gov.retrieval.name")}</th><th align="left">{t(L, "gov.retrieval.status")}</th><th align="left">HyDE</th><th align="left">{t(L, "gov.retrieval.enableQueryExpansion")}</th><th align="left">{t(L, "gov.retrieval.enableSparseEmbedding")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{rtStrategies.length === 0 ? <NoData cols={8} /> : rtPg.paged.map((s, i) => (
+            <tbody>{rtStrategies.length === 0 ? <NoData cols={8} locale={L} /> : rtPg.paged.map((s, i) => (
               <tr key={s.id ?? i}><td style={monoStyle}>{s.spaceId ?? "-"}</td><td>{s.name ?? "-"}</td><td><Badge>{s.status ?? "draft"}</Badge></td><td>{boolLabel(Boolean(s.enableHyde), L)}</td><td>{boolLabel(Boolean(s.enableQueryExpansion), L)}</td><td>{boolLabel(Boolean(s.enableSparseEmbedding), L)}</td><td>{fmtDateTime(s.updatedAt, L)}</td><td>{s.id ? <button onClick={() => deleteRt(s.id!)} disabled={rtBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>
@@ -395,13 +401,13 @@ export default function KnowledgeEngineClient(props: Props) {
               <F label={t(L, "gov.retention.maxSnippetLen")}><input type="number" min={50} max={5000} value={retMaxLen} onChange={e => setRetMaxLen(Number(e.target.value) || 600)} disabled={retBusy} /></F>
             </div>
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={retAllowSnippet} onChange={e => setRetAllowSnippet(e.target.checked)} disabled={retBusy} /><span>{t(L, "gov.retention.allowSnippet")}</span></label>
-            <SaveBtn onClick={upsertRet} disabled={retBusy || !retSpaceId.trim()} busy={retBusy} />
+            <SaveBtn onClick={upsertRet} disabled={retBusy || !retSpaceId.trim()} busy={retBusy} locale={L} />
           </div>
         </Card>
         <div style={{ marginTop: 16 }}>
           <Table header={<><span>{t(L, "gov.retention.title")}</span> <Badge>{retPolicies.length}</Badge></>}>
             <thead><tr><th align="left">{t(L, "gov.retention.spaceId")}</th><th align="left">{t(L, "gov.retention.allowSnippet")}</th><th align="left">{t(L, "gov.retention.retentionDays")}</th><th align="left">{t(L, "gov.retention.maxSnippetLen")}</th><th align="left">{t(L, "gov.routing.updatedAt")}</th><th align="left">{t(L, "gov.routing.actions")}</th></tr></thead>
-            <tbody>{retPolicies.length === 0 ? <NoData cols={6} /> : retPg.paged.map((p, i) => (
+            <tbody>{retPolicies.length === 0 ? <NoData cols={6} locale={L} /> : retPg.paged.map((p, i) => (
               <tr key={p.spaceId ?? i}><td style={monoStyle}>{p.spaceId ?? "-"}</td><td>{boolLabel(Boolean(p.allowSnippet), L)}</td><td>{p.retentionDays ?? 30}</td><td>{p.maxSnippetLen ?? 600}</td><td>{fmtDateTime(p.updatedAt, L)}</td><td>{p.spaceId ? <button onClick={() => deleteRet(p.spaceId!)} disabled={retBusy}>{t(L, "action.delete")}</button> : "-"}</td></tr>
             ))}</tbody>
           </Table>

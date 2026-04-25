@@ -121,6 +121,10 @@ function currentNodeId(): string {
   return process.env.NODE_ID || process.env.HOSTNAME || `node-${process.pid}`;
 }
 
+/** full checkpoint 写入间隔（每 N 次迭代写一次完整检查点），默认 3 */
+export const AGENT_LOOP_FULL_CHECKPOINT_INTERVAL = Math.max(1,
+  parseInt(process.env.AGENT_LOOP_FULL_CHECKPOINT_INTERVAL || "3", 10) || 3);
+
 /* ================================================================== */
 /*  1. Checkpoint Writer                                                */
 /* ================================================================== */
@@ -158,9 +162,31 @@ export interface WriteCheckpointParams {
 /**
  * UPSERT 检查点到 DB（幂等，同一 loopId 重复写入只更新）。
  * 每次迭代结束后调用，序列化当前循环全量状态。
+ *
+ * @param tier - "fast" 仅更新轻量计数字段（减少 IO）；"full" 完整 UPSERT（默认）
  */
-export async function writeCheckpoint(params: WriteCheckpointParams): Promise<void> {
+export async function writeCheckpoint(
+  params: WriteCheckpointParams,
+  tier: "fast" | "full" = "full",
+): Promise<void> {
   const status = params.status ?? "running";
+
+  /* ── fast tier：轻量 UPDATE，仅刷新计数/状态/心跳 ── */
+  if (tier === "fast") {
+    await params.pool.query(
+      `UPDATE agent_loop_checkpoints
+       SET iteration = $2, current_seq = $3, succeeded_steps = $4, failed_steps = $5,
+           status = $6, heartbeat_at = now(), updated_at = now()
+       WHERE loop_id = $1`,
+      [
+        params.loopId, params.iteration, params.currentSeq,
+        params.succeededSteps, params.failedSteps, status,
+      ],
+    );
+    return;
+  }
+
+  /* ── full tier：完整 UPSERT ── */
   const nodeId = currentNodeId();
 
   // 裁剪 observations 为摘要（保留最近 50 条，避免 JSONB 过大）

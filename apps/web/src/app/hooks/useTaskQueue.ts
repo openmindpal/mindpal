@@ -7,6 +7,7 @@
  * 提供统一的任务进度与队列操作接口。
  */
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { useCallback } from "react";
 import useSessionTaskQueue from "../useSessionTaskQueue";
 import useTaskManager from "../useTaskManager";

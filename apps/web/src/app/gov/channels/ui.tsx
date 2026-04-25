@@ -126,15 +126,18 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
   }, [props.locale, outboxStatus]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch
     refreshConfigs();
     refreshEvents();
   }, [refreshConfigs, refreshEvents]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial outbox fetch
     refreshOutbox();
   }, [refreshOutbox]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync UI state from data
     if (hasExistingConfig) setMappingOpen(true);
   }, [hasExistingConfig]);
 

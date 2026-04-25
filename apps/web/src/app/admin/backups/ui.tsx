@@ -72,9 +72,20 @@ export default function BackupsClient(props: {
 
   const spaces = useMemo(() => Array.isArray(spacesData?.spaces) ? spacesData!.spaces! : [], [spacesData]);
 
+  const backupItems = useMemo(() => Array.isArray(backups?.items) ? backups!.items! : [], [backups]);
+  const backupPageSize = 20;
+  const [backupPage, setBackupPage] = useState(0);
+  const backupTotalPages = Math.max(1, Math.ceil(backupItems.length / backupPageSize));
+  const pagedBackups = useMemo(() => backupItems.slice(backupPage * backupPageSize, (backupPage + 1) * backupPageSize), [backupItems, backupPage]);
+  const selectedBackup = useMemo(
+    () => backupItems.find((item) => item.backupId === selectedBackupId) ?? backupItems[0] ?? null,
+    [backupItems, selectedBackupId],
+  );
+
   // Auto-select first space
   useEffect(() => {
     if (!selectedSpaceId && spaces.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- initialize default selection from server data
       setSelectedSpaceId(spaces[0]!.id);
     }
   }, [spaces, selectedSpaceId]);
@@ -99,6 +110,7 @@ export default function BackupsClient(props: {
   }, [selectedSpaceId, props.locale]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch data on space selection change
     if (selectedSpaceId) loadBackups();
   }, [selectedSpaceId, loadBackups]);
 
@@ -189,16 +201,6 @@ export default function BackupsClient(props: {
       setBusy(false);
     }
   }
-
-  const backupItems = useMemo(() => Array.isArray(backups?.items) ? backups!.items! : [], [backups]);
-  const backupPageSize = 20;
-  const [backupPage, setBackupPage] = useState(0);
-  const backupTotalPages = Math.max(1, Math.ceil(backupItems.length / backupPageSize));
-  const pagedBackups = useMemo(() => backupItems.slice(backupPage * backupPageSize, (backupPage + 1) * backupPageSize), [backupItems, backupPage]);
-  const selectedBackup = useMemo(
-    () => backupItems.find((item) => item.backupId === selectedBackupId) ?? backupItems[0] ?? null,
-    [backupItems, selectedBackupId],
-  );
 
   return (
     <div>

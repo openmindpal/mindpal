@@ -7,7 +7,7 @@
  * 以及相关的 recent entries 管理。
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { type RecentEntry, loadRecent, addRecent } from "../homeHelpers";
 import useChatSession from "../useChatSession";
 import useNl2uiActions from "../useNl2uiActions";
@@ -19,6 +19,7 @@ export interface UseConversationParams {
 export function useConversation({ locale }: UseConversationParams) {
   const session = useChatSession({ locale });
   const [recent, setRecent] = useState<RecentEntry[]>([]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration: read localStorage once on mount
   useEffect(() => { setRecent(loadRecent()); }, []);
 
   const nl2ui = useNl2uiActions({ locale, setRecent });

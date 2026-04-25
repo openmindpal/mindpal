@@ -95,6 +95,11 @@ export default function GovObservabilityClient(props: { locale: string; initial:
   const [alertP95, setAlertP95] = useState<number>(5000);
   const [showAlertConfig, setShowAlertConfig] = useState(false);
 
+  const pageSize = 20;
+  const [routesPage, setRoutesPage] = useState(0);
+  const [syncPage, setSyncPage] = useState(0);
+  const [errorsPage, setErrorsPage] = useState(0);
+
   const initialError = useMemo(() => {
     if (status >= 400) return errText(props.locale, data as any);
     return "";
@@ -147,21 +152,20 @@ export default function GovObservabilityClient(props: { locale: string; initial:
     return result;
   }, [data, alertErrorRate, alertP95]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- derived from data, used as useMemo dep
   const routes = data?.routes ?? [];
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- derived from data, used as useMemo dep
   const sync = data?.sync ?? [];
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- derived from data, used as useMemo dep
   const topErrors = data?.topErrors ?? [];
   const knowledge = data?.knowledge ?? null;
 
-  const pageSize = 20;
-  const [routesPage, setRoutesPage] = useState(0);
   const routesTotalPages = Math.max(1, Math.ceil(routes.length / pageSize));
   const routesPaged = useMemo(() => routes.slice(routesPage * pageSize, (routesPage + 1) * pageSize), [routes, routesPage]);
 
-  const [syncPage, setSyncPage] = useState(0);
   const syncTotalPages = Math.max(1, Math.ceil(sync.length / pageSize));
   const syncPaged = useMemo(() => sync.slice(syncPage * pageSize, (syncPage + 1) * pageSize), [sync, syncPage]);
 
-  const [errorsPage, setErrorsPage] = useState(0);
   const errorsTotalPages = Math.max(1, Math.ceil(topErrors.length / pageSize));
   const errorsPaged = useMemo(() => topErrors.slice(errorsPage * pageSize, (errorsPage + 1) * pageSize), [topErrors, errorsPage]);
 

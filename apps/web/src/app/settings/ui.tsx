@@ -178,6 +178,7 @@ export default function SettingsClient(props: { locale: string }) {
 
   function patStatus(tok: PatToken): "active" | "expired" | "revoked" {
     if (tok.revokedAt) return "revoked";
+    // eslint-disable-next-line react-hooks/purity -- Date.now() needed for token expiry check
     if (tok.expiresAt && Date.parse(tok.expiresAt) <= Date.now()) return "expired";
     return "active";
   }
@@ -287,6 +288,7 @@ export default function SettingsClient(props: { locale: string }) {
       });
       if (res.ok) {
         const data = await res.json() as { authorizeUrl: string };
+        // eslint-disable-next-line react-hooks/immutability -- navigating away from page
         window.location.href = data.authorizeUrl;
         return;
       } else {
@@ -370,6 +372,7 @@ export default function SettingsClient(props: { locale: string }) {
   /* SSR hydration: read localStorage after mount */
   useEffect(() => {
     const token = getClientAuthToken();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration: read localStorage once on mount
     setAuthToken(token);
     setAuthTokenStatus(token ? "set" : "unset");
     setAuthEditing(!token);

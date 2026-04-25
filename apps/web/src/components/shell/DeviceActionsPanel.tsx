@@ -5,7 +5,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { IconDevice, IconCheck, IconX, IconPlay, IconClock, IconRefresh } from "./ShellIcons";
-import { formatDuration, formatTime, formatErrorCategory, formatToolRefLocalized, shortId } from "./shellUtils";
+import { formatDuration, formatTime, formatErrorCategory, formatToolRefLocalized } from "./shellUtils";
 import { useBottomPanel } from "./useBottomPanel";
 import { PanelLoading, PanelError, PanelEmpty } from "./PanelState";
 import styles from "@/styles/shell.module.css";
@@ -61,6 +61,7 @@ export default function DeviceActionsPanel({ locale, onBadgeUpdate }: { locale: 
   const [deviceNames, setDeviceNames] = useState<Record<string, string>>({});
   const deviceNameCache = useRef<Record<string, string>>({});
   const badgeRef = useRef(onBadgeUpdate);
+  // eslint-disable-next-line react-hooks/refs -- keep callback ref in sync
   badgeRef.current = onBadgeUpdate;
 
   const fetchActions = useCallback(async (): Promise<DeviceAction[]> => {

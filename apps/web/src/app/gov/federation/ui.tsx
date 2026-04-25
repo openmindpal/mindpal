@@ -197,6 +197,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
   useEffect(() => {
     if (props.initial?.json) {
       const data = props.initial.json as { status?: FederationStatus; nodes?: FederationNode[]; activeNodes?: number };
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- initialize from server-rendered props
       if (data.status) setFederationStatus(data.status);
       if (data.nodes) setNodes(data.nodes);
       if (data.activeNodes != null) setActiveNodes(data.activeNodes);
@@ -247,6 +248,7 @@ export default function FederationClient(props: { locale: string; initial?: Init
   }, [props.locale]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch
     refreshStatus();
     refreshNodes();
   }, [refreshStatus, refreshNodes]);

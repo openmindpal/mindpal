@@ -100,12 +100,14 @@ export function useTaskQueueState(sessionId: string) {
   });
 
   const sessionIdRef = useRef(sessionId);
+  // eslint-disable-next-line react-hooks/refs -- keep sessionId ref in sync
   sessionIdRef.current = sessionId;
 
   // Restore from localStorage
   useEffect(() => {
     const saved = readSavedTaskQueueState(sessionId);
     if (saved && (saved.entries.size > 0 || saved.dependencies.length > 0)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore persisted queue state on mount
       setQueueState({ sessionId, ...saved });
     }
   }, [sessionId]);

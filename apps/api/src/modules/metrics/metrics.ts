@@ -510,6 +510,32 @@ export function createMetricsRegistry() {
     setGauge(toPrometheusName("agent.config.version"), { key: params.key }, params.version);
   }
 
+  /* ─── P6: Fine-grained Phase Metrics (Think/Observe/Drift) ─── */
+
+  function observeThinkLlmDuration(params: { durationMs: number }) {
+    observeHistogram(toPrometheusName("agent.think.llm_duration_ms"), {}, params.durationMs, bucketsFor("agent.think.llm_duration_ms"));
+  }
+
+  function incThinkRetryCount(params: { count: number }) {
+    incCounter(toPrometheusName("agent.think.retry_count"), {}, params.count);
+  }
+
+  function setThinkConfidence(params: { confidence: number }) {
+    setGauge(toPrometheusName("agent.think.confidence"), {}, params.confidence);
+  }
+
+  function observeObserveDbDuration(params: { durationMs: number }) {
+    observeHistogram(toPrometheusName("agent.observe.db_duration_ms"), {}, params.durationMs, bucketsFor("agent.observe.db_duration_ms"));
+  }
+
+  function setDriftScore(params: { score: number }) {
+    setGauge(toPrometheusName("agent.drift.score"), {}, params.score);
+  }
+
+  function incDriftDetectionMethod(params: { method: string }) {
+    incCounter(toPrometheusName("agent.drift.detection_method"), { method: params.method }, 1);
+  }
+
   function renderPrometheus() {
     const lines: string[] = [];
 
@@ -872,6 +898,13 @@ export function createMetricsRegistry() {
     setActiveLoops,
     observeCacheStats,
     setConfigVersion,
+    // P6: Fine-grained Phase Metrics
+    observeThinkLlmDuration,
+    incThinkRetryCount,
+    setThinkConfidence,
+    observeObserveDbDuration,
+    setDriftScore,
+    incDriftDetectionMethod,
     renderPrometheus,
   };
 }

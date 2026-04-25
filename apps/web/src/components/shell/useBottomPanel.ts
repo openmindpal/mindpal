@@ -32,14 +32,17 @@ export function useBottomPanel<T>(options: UseBottomPanelOptions<T>): UseBottomP
   const mountedRef = useRef(true);
 
   // Cleanup on unmount
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      // timersRef is a stable ref, cleanup reads .current at unmount time
       timersRef.current.forEach((t) => clearTimeout(t));
       timersRef.current.clear();
     };
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const reload = useCallback(async () => {
     try {
@@ -62,6 +65,7 @@ export function useBottomPanel<T>(options: UseBottomPanelOptions<T>): UseBottomP
 
   // Initial fetch
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount
     reload();
   }, [reload]);
 

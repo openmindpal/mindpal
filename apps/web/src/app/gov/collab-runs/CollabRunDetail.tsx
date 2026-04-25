@@ -1,6 +1,6 @@
 "use client";
 
-import { t, statusLabel } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import { fmtDateTime } from "@/lib/fmtDateTime";
 import { Badge, Card, Table, StatusBadge } from "@/components/ui";
 import type { CollabDetailSnapshot, CollabRunEvent, CollabStateUpdate } from "@/lib/types";

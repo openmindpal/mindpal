@@ -115,6 +115,7 @@ export function ReferencePicker({
       // Clear current selection when parent changes
       if (value) {
         onChange("");
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reset selection when cascade parent changes
         setQuery("");
         setOptions([]);
       }
@@ -176,6 +177,7 @@ export function ReferencePicker({
   // If value exists on init, load its display label
   useEffect(() => {
     if (value && !query) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- load display label for pre-selected value
       loadSingleOption(value);
     }
   }, [loadSingleOption, query, value]);

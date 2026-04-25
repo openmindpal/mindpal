@@ -79,6 +79,7 @@ export default function RecentAndFavorites(props: {
   const [recent, setRecent] = useState<RecentEntry[]>([]);
   const [favorites, setFavorites] = useState<FavoriteEntry[]>([]);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration: read localStorage once on mount
     setRecent(loadRecent());
     setFavorites(loadFavorites());
   }, []);

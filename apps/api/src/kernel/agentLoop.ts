@@ -19,7 +19,7 @@ import { startSpan as otelStartSpan } from "../lib/tracing";
 import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, recallProceduralStrategies, type EnabledTool } from "../modules/agentContext";
 import { upsertTaskState } from "../modules/memory/repo";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
-import { writeCheckpoint, finalizeCheckpoint, startHeartbeat, registerProcess, updateProcessStatus } from "./loopCheckpoint";
+import { writeCheckpoint, finalizeCheckpoint, startHeartbeat, registerProcess, updateProcessStatus, AGENT_LOOP_FULL_CHECKPOINT_INTERVAL } from "./loopCheckpoint";
 import { acquireLoopSlot } from "./priorityScheduler";
 import { decomposeGoal } from "./goalDecomposer";
 import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations, extractWorldState } from "./worldStateExtractor";
@@ -46,7 +46,8 @@ import { initializeLoopState, finalizeLoopProcess, type LoopState } from "./loop
 
 /* ── re-export（外部文件 import from "./agentLoop"） ── */
 export type { AgentDecisionAction, AgentDecision, StepObservation, AgentLoopParams, ExecutionConstraints, AgentLoopResult } from "./loopTypes";
-export { buildObservation, compressStepHistory } from "./loopObservation";
+export { buildObservation, buildObservationsBatch, compressStepHistory } from "./loopObservation";
+import { buildObservationsBatch, AGENT_LOOP_BATCH_OBSERVE } from "./loopObservation";
 export { buildThinkPrompt, parseAgentDecision, extractConfidenceFromOutput, evaluateDecisionQuality, getDecisionQualityConfig } from "./loopThinkDecide";
 export { getCacheConfig, getLightIterationConfig, isLightIteration } from "./loopCacheConfig";
 
@@ -245,6 +246,11 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
 
       // ── Phase 1: Observe ──
       try { if (tracingCtx) startPhase(tracingCtx, "observe", iterations); } catch { /* noop */ }
+      if (iterations === 1 && AGENT_LOOP_BATCH_OBSERVE) {
+        const batchResult = await buildObservationsBatch(pool, runId, 0);
+        if (batchResult.observations.length > 0) observations.push(...batchResult.observations);
+        if (batchResult.dbDurationMs > 0) app.metrics.observeObserveDbDuration({ durationMs: batchResult.dbDurationMs });
+      }
       const lastObs = observations.length > 0 ? observations[observations.length - 1] : null;
       try { if (tracingCtx) endPhase(tracingCtx); } catch { /* noop */ }
 
@@ -283,6 +289,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         });
         modelOutputText = llmResult.outputText;
         currentModelUsed = llmResult.modelUsed;
+        if (llmResult.llmDurationMs > 0) app.metrics.observeThinkLlmDuration({ durationMs: llmResult.llmDurationMs });
       } catch (llmErr: any) {
         app.log.error({ err: llmErr, runId, iteration: iterations }, "[AgentLoop] LLM 调用失败");
         const result = buildResult("error", `LLM 调用失败：${llmErr?.message ?? "unknown"}`);
@@ -303,6 +310,11 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           driftScore: iterCtx.intentDrift.driftScore,
           shouldReset: iterCtx.intentDrift.shouldResetAnchor,
         }, "[AgentLoop] 意图漂移检测结果注入决策上下文");
+      }
+      // P6: 意图漂移指标打点
+      if (iterCtx.intentDrift) {
+        app.metrics.setDriftScore({ score: iterCtx.intentDrift.driftScore ?? 0 });
+        app.metrics.incDriftDetectionMethod({ method: (iterCtx.intentDrift as any).method ?? "keyword" });
       }
 
       // ── Phase 3: Decide ──
@@ -370,6 +382,10 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           ...(upgradedFrom ? { upgradedFrom } : {}),
         };
         decision.qualityScore = qualityScore;
+
+        // P6: 决策质量细粒度打点
+        if (decisionRetryCount > 0) app.metrics.incThinkRetryCount({ count: decisionRetryCount });
+        if (confidence >= 0) app.metrics.setThinkConfidence({ confidence });
       } catch (qualityErr: unknown) {
         // 决策质量评估为可选增强，失败不阻塞主流程
         app.log.warn({ err: (qualityErr as Error)?.message, runId, iteration: iterations }, "[AgentLoop] 决策质量评估异常（不影响执行）");
@@ -593,6 +609,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             app, pool, queue, subject: subject as any,
             traceId, runId, jobId: jobId ?? "", loopId, goal, iterations,
             decision, currentSeq, executionConstraints, signal, worldState, goalGraph,
+            toolCatalog: toolDiscovery.tools.map(t => ({ ref: t.toolRef, category: t.def.category, requiredAction: t.def.action ?? undefined })),
           });
           if (tcResult.outcome === "boundary_paused") {
             const result = buildResult("ask_user", `检测到意图冲突，已暂停执行: ${tcResult.reason}`);
@@ -638,7 +655,12 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         }
       } catch { /* noop */ }
 
-      // P0-1: 每次迭代结束后写 checkpoint（幂等 UPSERT）
+      // P0-1: 每次迭代结束后写 checkpoint（分层：fast 轻量 / full 完整）
+      const decisionAction: string = decision.action;
+      const isPhaseTransition = decisionAction === "replan" || decisionAction === "done" || decisionAction === "abort";
+      const checkpointTier: "fast" | "full" = (isPhaseTransition || iterations % AGENT_LOOP_FULL_CHECKPOINT_INTERVAL === 0 || iterations === 1)
+        ? "full" : "fast";
+
       await writeCheckpoint({
         pool, loopId,
         tenantId: subject.tenantId, spaceId: subject.spaceId ?? null,
@@ -655,7 +677,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         taskHistory: taskHistory ?? null,
         knowledgeContext: knowledgeContext ?? null,
         status: "running",
-      }).catch((e: unknown) => {
+      }, checkpointTier).catch((e: unknown) => {
         app.log.warn({ err: (e as Error)?.message, runId, loopId, iteration: iterations }, "[AgentLoop] checkpoint 写入失败（不阻塞主循环）");
       });
     }

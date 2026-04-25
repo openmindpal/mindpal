@@ -173,3 +173,24 @@ export interface AgentLoopResult {
   /** 优雅降级时的进度摘要（已完成的工作总结） */
   progressSummary?: string;
 }
+
+/* ================================================================== */
+/*  Similarity Strategy                                                */
+/* ================================================================== */
+
+/** 相似度计算策略接口 —— 用于意图漂移检测的可插拔算法 */
+export interface SimilarityStrategy {
+  compute(a: Set<string>, b: Set<string>): number;
+  readonly name: string;
+}
+
+/* ================================================================== */
+/*  WorldState Limits                                                   */
+/* ================================================================== */
+
+/** WorldState 大小限制配置 */
+export interface WorldStateLimits {
+  maxEntities: number;
+  maxFacts: number;
+  maxRelations: number;
+}

@@ -55,7 +55,10 @@ export default function LeftPanel(props: LeftPanelProps) {
 
   // SSR hydration guard: ensure first client render matches server output
   const [hydrated, setHydrated] = useState(false);
-  useEffect(() => { setHydrated(true); }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration guard
+    setHydrated(true);
+  }, []);
 
   return (
     <div

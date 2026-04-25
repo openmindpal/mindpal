@@ -175,7 +175,10 @@ export default function GovDevicesClient(props: { locale: string; initial?: Init
   }, [props.locale]);
 
   // 首次加载工具列表
-  useEffect(() => { loadAvailableTools(); }, [loadAvailableTools]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch
+    loadAvailableTools();
+  }, [loadAvailableTools]);
 
   // 过滤后的工具列表
   const filteredTools = useMemo(() => {

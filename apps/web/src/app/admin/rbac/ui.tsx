@@ -357,6 +357,7 @@ export default function AdminRbacClient(props: {
   const [sbHistory, setSbHistory] = useState<Array<{ subjectId: string; scopeType: string; scopeId: string; resourceType: string; resourceId: string; action: string; allowed: boolean; reason?: string | null; time: string }>>([]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount
     void refreshBindings().catch((e: unknown) => setError(errText(locale, toApiError(e))));
     void refreshPolicySets();
   }, [locale, refreshPolicySets, refreshBindings]);

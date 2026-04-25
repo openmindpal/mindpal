@@ -144,6 +144,7 @@ export default function CollabRunClient(props: {
     if (isTerminal) {
       streamRef.current?.close();
       streamRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- cleanup: reset stream state when terminal
       setStreamState("disconnected");
       return;
     }

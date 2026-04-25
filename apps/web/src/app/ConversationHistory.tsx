@@ -86,6 +86,7 @@ export default function ConversationHistory({
 
   /* ─── Auto fetch on open ─── */
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch data when panel opens
     if (open) void fetchSessions();
   }, [open, fetchSessions]);
 

@@ -9,6 +9,7 @@
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
 import { StructuredLogger, resolveBoolean, resolveNumber } from "@openslin/shared";
+import type { SimilarityStrategy } from "@openslin/shared";
 import type {
   IntentAnchor,
   BoundaryViolation as BoundaryViolationType,
@@ -541,6 +542,42 @@ export function getViolationTypeLabel(type: ViolationType): string {
 }
 
 /* ================================================================== */
+/*  相似度策略                                                        */
+/* ================================================================== */
+
+const jaccardStrategy: SimilarityStrategy = {
+  name: "jaccard",
+  compute(a, b) {
+    if (a.size === 0 && b.size === 0) return 1;
+    let intersection = 0;
+    for (const x of a) if (b.has(x)) intersection++;
+    const union = a.size + b.size - intersection;
+    return union === 0 ? 1 : intersection / union;
+  },
+};
+
+const diceStrategy: SimilarityStrategy = {
+  name: "dice",
+  compute(a, b) {
+    if (a.size === 0 && b.size === 0) return 1;
+    let intersection = 0;
+    for (const x of a) if (b.has(x)) intersection++;
+    const total = a.size + b.size;
+    return total === 0 ? 1 : (2 * intersection) / total;
+  },
+};
+
+const SIMILARITY_STRATEGIES: Record<string, SimilarityStrategy> = {
+  jaccard: jaccardStrategy,
+  dice: diceStrategy,
+};
+
+function getSimilarityStrategy(): SimilarityStrategy {
+  const name = process.env.INTENT_SIMILARITY_STRATEGY || "jaccard";
+  return SIMILARITY_STRATEGIES[name] ?? jaccardStrategy;
+}
+
+/* ================================================================== */
 /*  detectIntentBoundary — Think 阶段意图漂移检测                          */
 /* ================================================================== */
 
@@ -599,9 +636,8 @@ export async function detectIntentBoundary(params: {
   for (const ref of referenceTexts) {
     const refKeywords = new Set(extractKeywords(ref));
     if (refKeywords.size === 0) continue;
-    const intersection = [...currentKeywords].filter(kw => refKeywords.has(kw)).length;
-    const union = new Set([...currentKeywords, ...refKeywords]).size;
-    const jaccardSimilarity = union > 0 ? intersection / union : 0;
+    const strategy = getSimilarityStrategy();
+    const jaccardSimilarity = strategy.compute(currentKeywords, refKeywords);
     if (jaccardSimilarity > maxOverlap) {
       maxOverlap = jaccardSimilarity;
       bestMatchRef = ref;

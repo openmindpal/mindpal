@@ -8,7 +8,10 @@ import { type ApiError, toApiError, errText } from "@/lib/apiError";
 
 function CallbackUrl() {
   const [url, setUrl] = useState("/auth/sso/callback");
-  useEffect(() => { setUrl(`${window.location.origin}/auth/sso/callback`); }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read window.location on client mount
+    setUrl(`${window.location.origin}/auth/sso/callback`);
+  }, []);
   return <>{url}</>;
 }
 

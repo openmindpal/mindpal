@@ -1,9 +1,8 @@
 "use client";
 
-import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import Image from "next/image";
-import Link from "next/link";
 import { t } from "@/lib/i18n";
 import { safeJsonString } from "@/lib/apiError";
 import { type ToolSuggestion } from "@/lib/types";
@@ -12,7 +11,6 @@ import {
   type ChatFlowItem, type FlowDirective, type FlowNl2UiResult,
   type FlowApprovalNode, type FlowTaskQueueEvent, type FlowArtifactCard,
   type ToolExecState, type WorkspaceTab,
-  friendlyToolName, riskBadgeKey, riskBadgeClass, friendlyOutputSummary,
   friendlyErrorMessage,
 } from "./homeHelpers";
 import { ApprovalNodeRenderer } from "@/components/flow/FlowItemRenderer";
@@ -76,6 +74,7 @@ export default function ChatFlowRenderer(props: ChatFlowRendererProps) {
   const VIRTUALIZATION_THRESHOLD = 100;
   const useVirtualization = flow.length > VIRTUALIZATION_THRESHOLD;
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual returns non-memoizable functions by design
   const virtualizer = useVirtualizer({
     count: flow.length,
     getScrollElement: () => scrollRef.current,
@@ -85,7 +84,8 @@ export default function ChatFlowRenderer(props: ChatFlowRendererProps) {
   });
 
   /* ── Shared bubble renderer ── */
-  const renderBubble = useCallback((it: ChatFlowItem, index: number) => (
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const renderBubble = useCallback((it: ChatFlowItem, _index: number) => (
     <MemoizedFlowBubble
       key={it.id}
       it={it}

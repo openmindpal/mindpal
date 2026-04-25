@@ -165,6 +165,7 @@ export default function ActiveRunList(props: {
   // Cancel error messages stored alongside state
   const cancelErrors: Record<string, string> = {};
 
+  // eslint-disable-next-line react-hooks/immutability -- cancelErrors is intentionally mutable for error tracking
   const handleCancel = useCallback(async (runId: string) => {
     setActionState(runId, "loading");
     try {
@@ -183,6 +184,7 @@ export default function ActiveRunList(props: {
       cancelErrors[runId] = err instanceof Error ? err.message : "network_error";
       resetActionState(runId, 3000);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- cancelErrors is render-scoped, not a reactive dep
   }, [locale, setActionState, resetActionState]);
 
   return (

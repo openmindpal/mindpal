@@ -16,6 +16,35 @@ import { insertAuditEvent } from "../modules/audit/auditRepo";
 
 const _logger = new StructuredLogger({ module: "loopPermissionUnified" });
 
+/** 权限降级开关，默认关闭 */
+export const AGENT_LOOP_PERMISSION_FALLBACK = process.env.AGENT_LOOP_PERMISSION_FALLBACK === "true";
+
+/* ================================================================== */
+/*  权限降级 — 同 category 低权限替代工具查找                              */
+/* ================================================================== */
+
+const ACTION_RANK: Record<string, number> = { read: 0, list: 0, write: 1, execute: 2, admin: 3 };
+
+/**
+ * 从工具目录中查找同 category 的低权限替代工具。
+ * 纯元数据查找，不引入业务概念。
+ */
+export function findFallbackTool(
+  toolRef: string,
+  toolCatalog: Array<{ ref: string; category?: string; requiredAction?: string }>,
+  deniedAction: string,
+): string | null {
+  const current = toolCatalog.find(t => t.ref === toolRef);
+  if (!current?.category) return null;
+  const deniedRank = ACTION_RANK[deniedAction] ?? 2;
+  const candidates = toolCatalog.filter(
+    t => t.ref !== toolRef && t.category === current.category && (ACTION_RANK[t.requiredAction ?? "execute"] ?? 2) < deniedRank,
+  );
+  if (!candidates.length) return null;
+  // 优先返回 read 级别工具
+  return (candidates.find(t => t.requiredAction === "read") ?? candidates[0]).ref;
+}
+
 /* ================================================================== */
 /*  Types                                                               */
 /* ================================================================== */

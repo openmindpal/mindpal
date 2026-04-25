@@ -97,7 +97,8 @@ export type FactCategory =
   | "assumption"       // 假设（需要验证）
   | "constraint"       // 约束条件
   | "user_stated"      // 用户明确陈述的事实
-  | "system";          // 系统环境事实
+  | "system"           // 系统环境事实
+  | "conflict";        // 多源融合冲突标记
 
 /** 环境事实 */
 export interface WorldFact {
@@ -155,6 +156,11 @@ export interface WorldState {
   createdAt: string;
   /** 最后更新时间 */
   updatedAt: string;
+
+  /** @internal name → entityId 快速查找 */
+  _entityNameIdx?: Record<string, string>;
+  /** @internal fact key → fact index in facts array 快速查找 */
+  _factKeyIdx?: Record<string, number>;
 }
 
 /* ================================================================== */
@@ -177,6 +183,8 @@ export function createWorldState(runId: string, stateId?: string): WorldState {
     version: 1,
     createdAt: now,
     updatedAt: now,
+    _entityNameIdx: {},
+    _factKeyIdx: {},
   };
 }
 
@@ -184,12 +192,16 @@ export function createWorldState(runId: string, stateId?: string): WorldState {
  * 向 WorldState 添加或更新一个实体（按 entityId 去重）
  */
 export function upsertEntity(state: WorldState, entity: WorldEntity): WorldState {
-  return {
+  const next: WorldState = {
     ...state,
     entities: { ...state.entities, [entity.entityId]: entity },
     version: state.version + 1,
     updatedAt: new Date().toISOString(),
   };
+  if (state._entityNameIdx) {
+    next._entityNameIdx = { ...state._entityNameIdx, [entity.name]: entity.entityId };
+  }
+  return next;
 }
 
 /**
@@ -216,9 +228,11 @@ export function addRelation(state: WorldState, relation: WorldRelation): WorldSt
  * 向 WorldState 添加或更新一个事实（按 key 去重，新事实覆盖旧事实）
  */
 export function upsertFact(state: WorldState, fact: WorldFact): WorldState {
-  const existingIdx = state.facts.findIndex((f) => f.key === fact.key);
+  const existingIdx = state._factKeyIdx
+    ? (state._factKeyIdx[fact.key] ?? -1)
+    : state.facts.findIndex((f) => f.key === fact.key);
   let newFacts: WorldFact[];
-  if (existingIdx >= 0) {
+  if (existingIdx >= 0 && existingIdx < state.facts.length && state.facts[existingIdx]?.key === fact.key) {
     // 旧事实标记为失效，新事实替换
     newFacts = [...state.facts];
     newFacts[existingIdx] = {
@@ -230,12 +244,16 @@ export function upsertFact(state: WorldState, fact: WorldFact): WorldState {
   } else {
     newFacts = [...state.facts, fact];
   }
-  return {
+  const next: WorldState = {
     ...state,
     facts: newFacts,
     version: state.version + 1,
     updatedAt: new Date().toISOString(),
   };
+  if (state._factKeyIdx) {
+    next._factKeyIdx = { ...state._factKeyIdx, [fact.key]: newFacts.length - 1 };
+  }
+  return next;
 }
 
 /**
@@ -248,12 +266,20 @@ export function batchUpsertEntities(state: WorldState, entities: WorldEntity[]):
   for (const entity of entities) {
     merged[entity.entityId] = entity;
   }
-  return {
+  const next: WorldState = {
     ...state,
     entities: merged,
     version: state.version + 1,
     updatedAt: new Date().toISOString(),
   };
+  if (state._entityNameIdx) {
+    const idx = { ...state._entityNameIdx };
+    for (const entity of entities) {
+      idx[entity.name] = entity.entityId;
+    }
+    next._entityNameIdx = idx;
+  }
+  return next;
 }
 
 /**
@@ -358,6 +384,55 @@ export function worldStateToPromptText(state: WorldState, maxLength = 2000): str
   const truncIdx = text.lastIndexOf("\n", maxLength - 20);
   const safeIdx = truncIdx > 0 ? truncIdx : maxLength - 20;
   return text.slice(0, safeIdx) + "\n\n... (truncated)";
+}
+
+/* ================================================================== */
+/*  索引查询工具函数                                                      */
+/* ================================================================== */
+
+/**
+ * 确保索引已构建（懒初始化）。
+ * 如果索引已存在则直接返回，否则遍历现有数据构建索引。
+ */
+export function ensureIndexes(state: WorldState): WorldState {
+  if (state._entityNameIdx && state._factKeyIdx) return state;
+  const entityNameIdx: Record<string, string> = {};
+  for (const entity of Object.values(state.entities)) {
+    entityNameIdx[entity.name] = entity.entityId;
+  }
+  const factKeyIdx: Record<string, number> = {};
+  for (let i = 0; i < state.facts.length; i++) {
+    factKeyIdx[state.facts[i].key] = i;
+  }
+  return { ...state, _entityNameIdx: entityNameIdx, _factKeyIdx: factKeyIdx };
+}
+
+/**
+ * 按名称查找实体，O(1) 如有索引，否则回退线性扫描
+ */
+export function findEntityByName(state: WorldState, name: string): WorldEntity | undefined {
+  if (state._entityNameIdx) {
+    const id = state._entityNameIdx[name];
+    return id !== undefined ? state.entities[id] : undefined;
+  }
+  // 回退：线性扫描
+  return Object.values(state.entities).find((e) => e.name === name);
+}
+
+/**
+ * 按 key 查找有效事实，O(1) 如有索引，否则回退线性扫描
+ */
+export function findFactByKey(state: WorldState, key: string): WorldFact | undefined {
+  if (state._factKeyIdx) {
+    const idx = state._factKeyIdx[key];
+    if (idx !== undefined) {
+      const fact = state.facts[idx];
+      return fact?.key === key && fact.valid ? fact : undefined;
+    }
+    return undefined;
+  }
+  // 回退：线性扫描
+  return state.facts.find((f) => f.key === key && f.valid);
 }
 
 /* ================================================================== */

@@ -517,6 +517,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
         <div style={{ marginTop: 16 }}>
           <Card title={`${t(props.locale, "gov.safetyPolicies.policyTitle")} ${selectedPolicyId}`}>
             <div style={{ display: "grid", gap: 12 }}>
+            {/* eslint-disable-next-line react-hooks/static-components -- ChangesetPanel uses parent closure state */}
               <ChangesetPanel />
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <button onClick={() => loadVersions(selectedPolicyId)} disabled={busy}>
@@ -669,6 +670,7 @@ export default function SafetyPoliciesClient(props: { locale: string; initial: u
       {activeChangesetId && !selectedPolicyId && (
         <div style={{ marginTop: 16 }}>
           <Card title={t(props.locale, "gov.safetyPolicies.changesetOps")}>
+            {/* eslint-disable-next-line react-hooks/static-components -- ChangesetPanel uses parent closure state */}
             <ChangesetPanel />
           </Card>
         </div>

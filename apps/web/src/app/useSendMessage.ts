@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { errorMessageText, nextId } from "@/lib/apiError";
 import type { IntentMode, TaskState } from "@/lib/types";
-import type { ChatFlowItem, ChatAttachment, TaskProgress, TaskStepEntry } from "./homeHelpers";
+import type { ChatFlowItem, ChatAttachment, TaskProgress } from "./homeHelpers";
 import { handleSSEEvent, type SSEEventContext } from "./sseEventHandler";
 import { buildApiAttachments } from "./attachmentBuilder";
 

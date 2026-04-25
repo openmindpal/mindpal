@@ -56,7 +56,10 @@ export default function TasksClient(props: { locale: string; initial: unknown; i
   /* Auto-reload when page changes (skip initial) */
   const [initialized, setInitialized] = useState(false);
   useEffect(() => {
-    if (!initialized) { setInitialized(true); return; }
+    if (!initialized) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- skip initial render, mark as initialized
+      setInitialized(true); return;
+    }
     refresh();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);

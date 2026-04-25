@@ -85,7 +85,10 @@ export default function RunsClient(props: {
   /* Auto-reload when page changes (but skip initial render) */
   const [initialized, setInitialized] = useState(false);
   useEffect(() => {
-    if (!initialized) { setInitialized(true); return; }
+    if (!initialized) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- skip initial render, mark as initialized
+      setInitialized(true); return;
+    }
     load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);

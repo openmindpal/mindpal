@@ -129,6 +129,7 @@ export default function GovSyncConflictsClient(props: { locale: string; initial:
     }
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- tickets derived from data, used as useMemo dep
   const tickets: any[] = Array.isArray(data?.tickets) ? data.tickets : [];
   const ticketPageSize = 20;
   const [ticketPage, setTicketPage] = useState(0);

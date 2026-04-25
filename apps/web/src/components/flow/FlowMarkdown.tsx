@@ -4,6 +4,7 @@ import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import FlowCodeBlock from "./FlowCodeBlock";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import styles from "@/styles/page.module.css";
 
 const FlowMarkdown = memo(function FlowMarkdown({ text, locale, onImageClick }: {

@@ -155,11 +155,14 @@ export async function handleToolCallAction(params: {
   signal: AbortSignal | undefined;
   worldState: WorldState | null;
   goalGraph: GoalGraph | null;
+  /** 可选：工具目录元数据，用于权限降级 */
+  toolCatalog?: Array<{ ref: string; category?: string; requiredAction?: string }>;
 }): Promise<ToolCallActionResult> {
   const {
     app, pool, queue, subject, traceId, runId, jobId, loopId,
     goal, iterations, decision, currentSeq, executionConstraints, signal, goalGraph,
   } = params;
+  const toolCatalog = params.toolCatalog;
   let { worldState } = params;
 
   // 意图边界检查
@@ -208,6 +211,7 @@ export async function handleToolCallAction(params: {
     tenantId: subject.tenantId, spaceId: subject.spaceId,
     subjectId: subject.subjectId, traceId, runId, jobId,
     decision, seq: currentSeq, executionConstraints,
+    toolCatalog,
   });
 
   if (!execResult.ok) {

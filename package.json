@@ -11,10 +11,10 @@
     "dev:api": "pnpm --filter @openslin/api run dev",
     "dev:web": "pnpm --filter @openslin/web run dev",
     "dev:worker": "pnpm --filter @openslin/worker run dev",
-    "clean": "pnpm --filter @openslin/shared run clean --if-present && pnpm --filter @openslin/api run clean --if-present && pnpm --filter @openslin/worker run clean --if-present && pnpm --filter @openslin/device-agent run clean --if-present && pnpm --filter @openslin/runner run clean --if-present && pnpm --filter @openslin/admin-cli run clean --if-present",
+    "clean": "pnpm --filter @openslin/shared --if-present run clean && pnpm --filter @openslin/api --if-present run clean && pnpm --filter @openslin/worker --if-present run clean && pnpm --filter @openslin/device-agent --if-present run clean && pnpm --filter @openslin/runner --if-present run clean && pnpm --filter @openslin/admin-cli --if-present run clean",
     "build": "pnpm --filter @openslin/shared run build && pnpm --filter @openslin/api run build && pnpm --filter @openslin/worker run build && pnpm --filter @openslin/device-agent run build && pnpm --filter @openslin/runner run build && pnpm --filter @openslin/admin-cli run build && pnpm --filter @openslin/web run build",
     "test": "pnpm --filter @openslin/api run test && pnpm --filter @openslin/device-agent run test && pnpm --filter @openslin/web run test && pnpm --filter @openslin/worker run test && pnpm --filter @openslin/shared run test",
-    "lint": "pnpm -r run lint --if-present",
+    "lint": "pnpm -r --if-present run lint",
     "boundary-scan": "node scripts/boundary-scan.mjs",
     "verify": "pnpm run lint && pnpm run boundary-scan && pnpm run build && pnpm test",
     "verify:arch07": "pnpm run build && pnpm run lint && pnpm test"

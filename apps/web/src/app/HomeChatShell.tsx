@@ -118,6 +118,7 @@ export default function HomeChatShell(props: { locale: string }) {
     setActiveTask(null);
     setTaskProgress(null);
     setHistoryOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- conv is a hook return object that changes identity each render
   }, [conv.startNew, setActiveTask, setTaskProgress]);
 
   /* ─── Keyboard shortcuts ─── */
@@ -131,6 +132,7 @@ export default function HomeChatShell(props: { locale: string }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-bind when cmdOpen or maximized state changes
   }, [cmdOpen, conv.maximizedNl2ui, conv.setMaximizedNl2ui]);
 
   /* ─── Scroll management ─── */
@@ -176,6 +178,7 @@ export default function HomeChatShell(props: { locale: string }) {
       openInWorkspace({ kind: "page", name: card.title, url: entityUrl });
       conv.setRecent(addRecent({ kind: "page", name: card.title }));
     } else { void exec.send(card.title); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- exec.send and conv are hook return objects
   }, [locale, exec.send, openInWorkspace, conv]);
 
   const onApprovalDecision = useCallback(async (approvalId: string, decision: "approve" | "reject") => {
@@ -191,6 +194,7 @@ export default function HomeChatShell(props: { locale: string }) {
         return { ...node, status: decision === "approve" ? "approved" : "rejected", decidedAt: new Date().toISOString() };
       }));
     } catch (err: any) { console.error("[approval] decision failed", err); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- conv.setFlow is a stable setter
   }, [locale, conv.setFlow]);
 
   /* ──────────────────── RENDER ──────────────────────────────────────────── */

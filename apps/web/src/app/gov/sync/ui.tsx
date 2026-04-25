@@ -59,6 +59,7 @@ export default function SyncDebugClient(props: { locale: string }) {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch
     refreshOps();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
