@@ -29,6 +29,22 @@ import {
   type DeviceAttachment,
   type DeviceMultimodalCapabilities,
   type DeviceMultimodalPolicy,
+  // V2 安全握手
+  type DeviceSecurityPolicy,
+  type HandshakeSecurityExt,
+  type HandshakeAckSecurityExt,
+  type DeviceSessionState,
+  type SecureDeviceMessage,
+  DEFAULT_SECURITY_POLICY,
+  generateNonce,
+  generateECDHKeyPair,
+  deriveSessionKeys,
+  signHandshake,
+  verifyHandshake,
+  createSecureMessage,
+  decryptSecureMessage,
+  isSessionExpired,
+  shouldRotateKey,
 } from '@openslin/shared';
 
 // ────────────────────────────────────────────────────────────────
@@ -98,6 +114,15 @@ export class WebSocketDeviceAgent {
   /** 背压：高频上报连续失败计数与当前降频因子 */
   private reportConsecutiveFailures = 0;
   private reportFrequencyDivisor = 1;
+
+  /** V2 安全握手：ECDH 临时私钥（握手期间保留） */
+  private _ephemeralPrivateKey: string | null = null;
+  /** V2 安全握手：活跃设备会话 */
+  private _deviceSession: DeviceSessionState | null = null;
+  /** V2 安全握手：服务端下发的安全策略 */
+  private _securityPolicy: DeviceSecurityPolicy | null = null;
+  /** V2 安全握手：Token 轮换定时器 */
+  private _tokenRefreshTimer: NodeJS.Timeout | null = null;
 
   constructor(config: DeviceAgentConfig, confirmFn?: (q: string) => Promise<boolean>) {
     this.config = config;
@@ -279,6 +304,16 @@ export class WebSocketDeviceAgent {
       this.reconnectTimer = null;
     }
 
+    if (this._tokenRefreshTimer) {
+      clearTimeout(this._tokenRefreshTimer);
+      this._tokenRefreshTimer = null;
+    }
+
+    // 清理 V2 会话状态
+    this._deviceSession = null;
+    this._securityPolicy = null;
+    this._ephemeralPrivateKey = null;
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -435,6 +470,15 @@ export class WebSocketDeviceAgent {
         case 'heartbeat':
           // 心跳响应，无需处理
           break;
+        case 'secure.message' as any: {
+          const secMsg = message as unknown as SecureDeviceMessage;
+          const decrypted = this.handleSecureMessage(secMsg);
+          if (decrypted) {
+            // 解密后作为普通消息重新处理
+            this.handleMessage(Buffer.from(JSON.stringify(decrypted), 'utf8'));
+          }
+          break;
+        }
         case 'error':
           safeError(`[WebSocketDeviceAgent] 服务器错误：${JSON.stringify(message.payload)}`);
           break;
@@ -472,7 +516,10 @@ export class WebSocketDeviceAgent {
     const capabilities = loadedCapabilities.length > 0
       ? loadedCapabilities
       : ["desktop.control", "browser.automation", "file.ops"]; // fallback
-    const handshake: ProtocolHandshake & { multimodalCapabilities?: DeviceMultimodalCapabilities } = {
+    const handshake: ProtocolHandshake & {
+      multimodalCapabilities?: DeviceMultimodalCapabilities;
+      securityExt?: HandshakeSecurityExt;
+    } = {
       type: "protocol.handshake",
       protocolVersion: DEVICE_PROTOCOL_VERSION,
       agentVersion: resolveDeviceAgentEnv().agentVersion,
@@ -482,6 +529,36 @@ export class WebSocketDeviceAgent {
     if (this._multimodalCapabilities) {
       handshake.multimodalCapabilities = this._multimodalCapabilities;
     }
+    // V2 安全扩展：生成 ECDH 密钥对 + nonce + HMAC
+    try {
+      const keyPair = generateECDHKeyPair();
+      this._ephemeralPrivateKey = keyPair.privateKey;
+
+      const nonce = generateNonce();
+      const timestamp = Date.now();
+
+      // 先构建不含 hmac 的安全扩展数据，用于签名
+      const secExtData: Record<string, unknown> = {
+        nonce,
+        timestamp,
+        ephemeralPubKey: keyPair.publicKey,
+      };
+      const hmac = signHandshake(
+        { ...secExtData, type: handshake.type, protocolVersion: handshake.protocolVersion },
+        this.config.deviceToken,
+      );
+
+      handshake.securityExt = {
+        nonce,
+        timestamp,
+        ephemeralPubKey: keyPair.publicKey,
+        hmac,
+      };
+    } catch (err: any) {
+      // ECDH 生成失败时降级为 V1（不附加 securityExt）
+      safeLog(`[WebSocketDeviceAgent] V2 安全扩展生成失败，降级 V1: ${err?.message}`);
+      this._ephemeralPrivateKey = null;
+    }
     try {
       this.ws.send(JSON.stringify(handshake));
       safeLog(`[WebSocketDeviceAgent] 协议握手已发送: v${DEVICE_PROTOCOL_VERSION}`);
@@ -490,7 +567,7 @@ export class WebSocketDeviceAgent {
     }
   }
 
-  private handleHandshakeAck(ack: ProtocolHandshakeAck): void {
+  private handleHandshakeAck(ack: ProtocolHandshakeAck & { securityExt?: HandshakeAckSecurityExt }): void {
     if (ack.compatible) {
       safeLog(`[WebSocketDeviceAgent] 协议握手成功: negotiated=${ack.negotiatedVersion} server=${ack.serverVersion}`);
       if (ack.deprecationWarning) {
@@ -501,10 +578,81 @@ export class WebSocketDeviceAgent {
         this._multimodalPolicy = ack.multimodalPolicy;
         safeLog(`[WebSocketDeviceAgent] 多模态策略已接收: modalities=${ack.multimodalPolicy.allowedModalities.join(',')}`);
       }
+      // V2 安全握手：处理服务端安全扩展
+      if (ack.securityExt && this._ephemeralPrivateKey) {
+        this.handleSecurityAck(ack.securityExt);
+      } else {
+        safeLog('[WebSocketDeviceAgent] V1 兼容模式（无安全扩展）');
+      }
     } else {
       safeError(`[WebSocketDeviceAgent] 协议不兼容: server=${ack.serverVersion} negotiated=${ack.negotiatedVersion}，请升级 Device Agent`);
       // 服务端会主动关闭连接，此处阻止自动重连
       this.stop();
+    }
+  }
+
+  /** V2: 处理服务端安全ACK，派生会话密钥 */
+  private handleSecurityAck(secExt: HandshakeAckSecurityExt): void {
+    try {
+      // 验证服务端 HMAC
+      const { hmac, ...dataWithoutHmac } = secExt;
+      const hmacValid = verifyHandshake(
+        dataWithoutHmac as unknown as Record<string, unknown>,
+        hmac,
+        this.config.deviceToken,
+      );
+      if (!hmacValid) {
+        safeError('[WebSocketDeviceAgent] V2 服务端 HMAC 校验失败，降级 V1');
+        this._ephemeralPrivateKey = null;
+        return;
+      }
+
+      // ECDH 密钥交换
+      if (secExt.serverEphemeralPubKey && this._ephemeralPrivateKey) {
+        const salt = `${secExt.sessionId}:${secExt.serverNonce}`;
+        const { sessionKey, hmacKey } = deriveSessionKeys(
+          this._ephemeralPrivateKey,
+          secExt.serverEphemeralPubKey,
+          salt,
+        );
+
+        const policy = secExt.securityPolicy ?? DEFAULT_SECURITY_POLICY;
+        this._securityPolicy = policy;
+
+        this._deviceSession = {
+          sessionId: secExt.sessionId,
+          deviceId: this.config.deviceId,
+          tenantId: '',  // 服务端可在后续消息中补充
+          authLevel: policy.authLevel,
+          sessionKey,
+          hmacKey,
+          messageCounter: 0,
+          replayWindow: new Set(),
+          createdAt: Date.now(),
+          expiresAt: Date.now() + policy.sessionTtlMs,
+        };
+
+        safeLog(`[WebSocketDeviceAgent] V2 安全会话已建立: session=${secExt.sessionId} auth=${policy.authLevel}`);
+
+        // Token 轮换定时器
+        if (secExt.tokenRefreshAt) {
+          const delay = secExt.tokenRefreshAt - Date.now();
+          if (delay > 0) {
+            if (this._tokenRefreshTimer) clearTimeout(this._tokenRefreshTimer);
+            this._tokenRefreshTimer = setTimeout(() => {
+              safeLog('[WebSocketDeviceAgent] Token 轮换时间到达，触发重新握手');
+              this.sendProtocolHandshake();
+            }, delay);
+          }
+        }
+      } else {
+        safeLog('[WebSocketDeviceAgent] V2 ACK 缺少 serverEphemeralPubKey，降级 V1');
+      }
+    } catch (err: any) {
+      safeError(`[WebSocketDeviceAgent] V2 安全ACK处理失败: ${err?.message}`);
+    } finally {
+      // 清除临时私钥
+      this._ephemeralPrivateKey = null;
     }
   }
 
@@ -558,6 +706,59 @@ export class WebSocketDeviceAgent {
         this.scheduleReconnect();
       }
     }, delayMs);
+  }
+
+  // ── V2: 安全消息收发 ──────────────────────────────────────
+
+  /**
+   * 发送安全消息：有活跃 V2 会话时加密，否则降级明文（V1 兼容）
+   */
+  sendSecureMessage(payload: Record<string, unknown>): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    if (this._deviceSession && !isSessionExpired(this._deviceSession)) {
+      // V2: 密钥轮换检查
+      if (this._securityPolicy && shouldRotateKey(this._deviceSession, this._securityPolicy)) {
+        safeLog('[WebSocketDeviceAgent] 会话密钥需要轮换，触发重新握手');
+        this.sendProtocolHandshake();
+        // 在轮换完成前用当前密钥发送
+      }
+      const msg = createSecureMessage(payload, this._deviceSession);
+      this.ws.send(JSON.stringify(msg));
+    } else {
+      // V1 兼容：明文发送
+      this.ws.send(JSON.stringify(payload));
+    }
+  }
+
+  /**
+   * 处理收到的安全消息
+   */
+  handleSecureMessage(msg: SecureDeviceMessage): Record<string, unknown> | null {
+    if (!this._deviceSession) {
+      safeError('[WebSocketDeviceAgent] 收到安全消息但无活跃会话');
+      return null;
+    }
+    if (isSessionExpired(this._deviceSession)) {
+      safeError('[WebSocketDeviceAgent] 会话已过期，丢弃安全消息');
+      this._deviceSession = null;
+      return null;
+    }
+    const result = decryptSecureMessage(msg, this._deviceSession);
+    if (!result) {
+      safeError(`[WebSocketDeviceAgent] 安全消息解密/验证失败: seq=${msg.seq}`);
+    }
+    return result;
+  }
+
+  /** 获取当前 V2 安全会话（只读） */
+  get deviceSession(): DeviceSessionState | null {
+    return this._deviceSession;
+  }
+
+  /** 获取服务端下发的安全策略 */
+  get securityPolicy(): DeviceSecurityPolicy | null {
+    return this._securityPolicy;
   }
 
   // ── 二进制编码（保留在主类中，与状态上报紧密相关） ──

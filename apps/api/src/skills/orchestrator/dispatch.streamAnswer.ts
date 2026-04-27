@@ -115,31 +115,54 @@ export async function handleStreamAnswerMode(params: {
   const totalTurnCount = prevTotalTurns + 2;
   const PROACTIVE_SUMMARY_TURN_THRESHOLD = Math.max(4, Number(process.env.ORCHESTRATOR_PROACTIVE_SUMMARY_TURNS ?? "6") || 6);
 
-  if (droppedMsgs.length > 0) {
-    // 场景 1：消息被截断 → 用截断消息生成摘要
-    const summaryResult = await summarizeDroppedMessages({
-      app, subject, dropped: droppedMsgs, prevSummary: prevSummary || undefined,
-      locale, authorization, traceId,
+  // 异步摘要回写辅助函数：read-modify-write 模式（upsertSessionContext 不支持 patch）
+  const asyncSummaryWriteback = (summaryPromise: Promise<{ summary: string; sessionState?: any }>, label: string) => {
+    summaryPromise.then(async (summaryResult) => {
+      if (!summaryResult.summary) return;
+      try {
+        const current = await getSessionContext({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, sessionId: conversationId });
+        if (current?.context) {
+          const ttlDays = Math.max(1, Math.min(30, resolveNumber("ORCHESTRATOR_CONVERSATION_TTL_DAYS").value));
+          const expiresAt = current.expiresAt ?? new Date(Date.now() + ttlDays * 86400000).toISOString();
+          await upsertSessionContext({
+            pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, sessionId: conversationId,
+            context: { ...current.context, summary: summaryResult.summary, sessionState: summaryResult.sessionState ?? current.context.sessionState },
+            expiresAt,
+          });
+          app.log.info({ traceId, conversationId, summaryLen: summaryResult.summary.length }, `[dispatch.streamAnswer] ${label}异步精确摘要回写成功`);
+        }
+      } catch (err) {
+        app.log.warn({ err, traceId, conversationId }, `[dispatch.streamAnswer] ${label}异步摘要回写失败`);
+      }
+    }).catch((err) => {
+      app.log.warn({ err, traceId, conversationId }, `[dispatch.streamAnswer] ${label}异步精确摘要生成失败，已使用 fallback 摘要`);
     });
-    newSummary = summaryResult.summary || fallbackTruncateSummary(droppedMsgs);
-    newSessionState = summaryResult.sessionState;
+  };
+
+  if (droppedMsgs.length > 0) {
+    // 场景 1：消息被截断 → 立即用快速截断摘要（0ms），不阻塞主 LLM 调用
+    newSummary = fallbackTruncateSummary(droppedMsgs);
+    // 后台 fire-and-forget：异步调用 LLM 生成精确摘要并更新 session
+    asyncSummaryWriteback(
+      summarizeDroppedMessages({ app, subject, dropped: droppedMsgs, prevSummary: prevSummary || undefined, locale, authorization, traceId }),
+      "场景1-截断摘要",
+    );
   } else if (shouldTriggerEventDrivenSummary(message, totalTurnCount)) {
-    // 场景 2：关键事件触发 → 主动生成摘要
+    // 场景 2：关键事件触发 → 立即用快速截断摘要，后台异步生成精确摘要
     const triggerInfo = shouldTriggerEventDrivenSummary(message, totalTurnCount);
     app.log.info({
       traceId, conversationId,
       triggerReason: triggerInfo.reason,
       totalTurnCount,
-    }, "[context-event-driven] 事件驱动摘要触发");
+    }, "[context-event-driven] 事件驱动摘要触发（异步非阻塞策略）");
     
     const earlyMsgs = clippedPrev.slice(0, Math.min(Math.floor(clippedPrev.length / 2), 8));
     if (earlyMsgs.length >= 2) {
-      const summaryResult = await summarizeDroppedMessages({
-        app, subject, dropped: earlyMsgs, prevSummary: prevSummary || undefined,
-        locale, authorization, traceId,
-      });
-      newSummary = summaryResult.summary;
-      newSessionState = summaryResult.sessionState;
+      newSummary = fallbackTruncateSummary(earlyMsgs);
+      asyncSummaryWriteback(
+        summarizeDroppedMessages({ app, subject, dropped: earlyMsgs, prevSummary: prevSummary || undefined, locale, authorization, traceId }),
+        "场景2-事件驱动摘要",
+      );
     }
   } else if (!prevSummary && totalTurnCount >= PROACTIVE_SUMMARY_TURN_THRESHOLD && clippedPrev.length >= 4) {
     // 场景 3：未截断但对话轮次达到阈值且无摘要 → 从当前窗口前半部分提取摘要

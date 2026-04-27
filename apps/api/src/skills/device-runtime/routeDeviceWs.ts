@@ -19,7 +19,23 @@ import {
   type ProtocolHandshakeAck,
   type DeviceMultimodalQuery,
   type DeviceMultimodalCapabilities,
+  validateNonce,
+  generateNonce,
+  generateECDHKeyPair,
+  deriveSessionKeys,
+  signHandshake,
+  verifyHandshake,
+  createSecureMessage,
+  decryptSecureMessage,
+  isSessionExpired,
+  shouldRotateKey,
+  DEFAULT_SECURITY_POLICY,
+  type HandshakeSecurityExt,
+  type HandshakeAckSecurityExt,
+  type DeviceSessionState,
+  type SecureDeviceMessage,
 } from "@openslin/shared";
+import * as crypto from "node:crypto";
 
 const _logger = new StructuredLogger({ module: "api:deviceWs" });
 import {
@@ -60,6 +76,24 @@ function requireDeviceFromReq(req: any) {
 /** 协议握手超时（毫秒）：5s 内未收到握手消息则断开连接 */
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 
+// ── V2 安全会话管理（内存 Map，按 sessionId 索引） ──────────
+const secureSessions = new Map<string, DeviceSessionState>();
+
+/** 按 deviceId 查找活跃会话 */
+function findSessionByDevice(deviceId: string): DeviceSessionState | undefined {
+  for (const s of secureSessions.values()) {
+    if (s.deviceId === deviceId && !isSessionExpired(s)) return s;
+  }
+  return undefined;
+}
+
+/** 清理指定设备的所有会话 */
+function clearDeviceSessions(deviceId: string): void {
+  for (const [sid, s] of secureSessions) {
+    if (s.deviceId === deviceId) secureSessions.delete(sid);
+  }
+}
+
 /** 每个连接的协议上下文 */
 interface DeviceWsProtocolContext {
   negotiatedVersion: string;
@@ -67,6 +101,8 @@ interface DeviceWsProtocolContext {
   handshakeCompleted: boolean;
   /** 设备声明的多模态能力（元数据驱动） */
   multimodalCapabilities?: DeviceMultimodalCapabilities;
+  /** V2 安全会话 ID（存在即表示当前连接走 V2） */
+  secureSessionId?: string;
 }
 
 export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
@@ -220,7 +256,74 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
               protocolCtx.multimodalCapabilities = rawCaps;
             }
 
-            const ack: ProtocolHandshakeAck = {
+            // ── V2 安全握手检测 ────────────────────────────────
+            const securityExt = (handshake as any).securityExt as HandshakeSecurityExt | undefined;
+            let securityAckExt: HandshakeAckSecurityExt | undefined;
+
+            if (securityExt) {
+              // 1. 验证客户端 nonce + 时间戳
+              if (!validateNonce(securityExt.nonce, securityExt.timestamp)) {
+                _logger.warn("V2 handshake: invalid nonce or timestamp", { deviceId });
+                try { socket.close(4010, "invalid_nonce"); } catch { /* ignore */ }
+                break;
+              }
+
+              // 2. 验证客户端 HMAC（使用设备 token 作为密钥）
+              const deviceToken = (req as any).ctx?.deviceToken ?? "";
+              const { hmac: clientHmac, ...dataWithoutHmac } = securityExt;
+              const hmacValid = verifyHandshake(
+                { ...handshake, securityExt: dataWithoutHmac } as unknown as Record<string, unknown>,
+                clientHmac,
+                deviceToken,
+              );
+              if (!hmacValid) {
+                _logger.warn("V2 handshake: HMAC verification failed", { deviceId });
+                try { socket.close(4011, "hmac_invalid"); } catch { /* ignore */ }
+                break;
+              }
+
+              // 3. 生成服务端 ECDH 密钥对
+              const serverKeyPair = generateECDHKeyPair();
+              const serverNonce = generateNonce();
+
+              // 4. 派生会话密钥（salt = clientNonce + serverNonce）
+              const salt = securityExt.nonce + serverNonce;
+              const { sessionKey, hmacKey } = deriveSessionKeys(
+                serverKeyPair.privateKey,
+                securityExt.ephemeralPubKey!,
+                salt,
+              );
+
+              // 5. 创建会话状态
+              const sessionId = crypto.randomUUID();
+              const session: DeviceSessionState = {
+                sessionId,
+                deviceId,
+                tenantId: device.tenantId,
+                authLevel: DEFAULT_SECURITY_POLICY.authLevel,
+                sessionKey,
+                hmacKey,
+                messageCounter: 0,
+                replayWindow: new Set(),
+                createdAt: Date.now(),
+                expiresAt: Date.now() + DEFAULT_SECURITY_POLICY.sessionTtlMs,
+              };
+              secureSessions.set(sessionId, session);
+              protocolCtx.secureSessionId = sessionId;
+
+              // 6. 构建安全 ACK 扩展
+              securityAckExt = {
+                sessionId,
+                serverNonce,
+                serverEphemeralPubKey: serverKeyPair.publicKey,
+                securityPolicy: DEFAULT_SECURITY_POLICY,
+                hmac: "",
+              };
+
+              _logger.info("V2 secure handshake established", { deviceId, sessionId });
+            }
+
+            const ack: ProtocolHandshakeAck & { securityExt?: HandshakeAckSecurityExt } = {
               type: "protocol.handshake.ack",
               negotiatedVersion: negotiated ?? DEVICE_PROTOCOL_VERSION,
               serverVersion: DEVICE_PROTOCOL_VERSION,
@@ -233,6 +336,17 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
               } : null,
             };
 
+            // V2: 附加安全扩展并签名
+            if (securityAckExt) {
+              const deviceToken = (req as any).ctx?.deviceToken ?? "";
+              const { hmac: _h, ...ackExtWithoutHmac } = securityAckExt;
+              securityAckExt.hmac = signHandshake(
+                { ...ack, securityExt: ackExtWithoutHmac } as unknown as Record<string, unknown>,
+                deviceToken,
+              );
+              ack.securityExt = securityAckExt;
+            }
+
             if (compatible && negotiated) {
               protocolCtx.negotiatedVersion = negotiated;
               protocolCtx.handshakeCompleted = true;
@@ -243,6 +357,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
                 negotiatedVersion: negotiated,
                 agentVersion: protocolCtx.agentVersion,
                 capabilities: handshake.capabilities ?? [],
+                secureV2: !!securityAckExt,
               });
             } else {
               _logger.warn("protocol handshake incompatible", {
@@ -480,6 +595,63 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
             break;
           }
 
+          // ── V2 安全消息处理 ──────────────────────────────
+          case "secure.message": {
+            touchDeviceHeartbeat(deviceId);
+            const secMsg = msg as unknown as SecureDeviceMessage;
+            const session = secureSessions.get(secMsg.sessionId);
+
+            if (!session || session.deviceId !== deviceId) {
+              _logger.warn("secure.message: unknown session", { deviceId, sessionId: secMsg.sessionId });
+              try {
+                socket.send(JSON.stringify({ type: "secure.error", error: "unknown_session" }));
+              } catch { /* ignore */ }
+              break;
+            }
+
+            // 会话过期检查
+            if (isSessionExpired(session)) {
+              _logger.warn("secure.message: session expired", { deviceId, sessionId: session.sessionId });
+              secureSessions.delete(session.sessionId);
+              protocolCtx.secureSessionId = undefined;
+              try {
+                socket.send(JSON.stringify({ type: "secure.error", error: "session_expired", action: "rehandshake" }));
+              } catch { /* ignore */ }
+              break;
+            }
+
+            // 密钥轮换判定 → 提示客户端重新握手
+            if (shouldRotateKey(session, DEFAULT_SECURITY_POLICY)) {
+              _logger.info("secure.message: key rotation needed", { deviceId, sessionId: session.sessionId });
+              try {
+                socket.send(JSON.stringify({ type: "secure.key_rotation", sessionId: session.sessionId }));
+              } catch { /* ignore */ }
+            }
+
+            // 解密
+            const decrypted = decryptSecureMessage(secMsg, session);
+            if (!decrypted) {
+              _logger.warn("secure.message: decryption failed", { deviceId, sessionId: session.sessionId });
+              try {
+                socket.send(JSON.stringify({ type: "secure.error", error: "decrypt_failed" }));
+              } catch { /* ignore */ }
+              break;
+            }
+
+            // 将解密后的内部 payload 重新派发到消息处理
+            _logger.info("secure.message decrypted", { deviceId, innerType: decrypted.type ?? "unknown" });
+            if (typeof decrypted.type === "string") {
+              // 注入回消息流（模拟收到明文消息）
+              try {
+                const innerRaw = JSON.stringify(decrypted);
+                socket.emit("message", innerRaw);
+              } catch (emitErr: any) {
+                _logger.error("secure.message re-dispatch failed", { error: emitErr?.message });
+              }
+            }
+            break;
+          }
+
           default:
             _logger.info("unknown message type", { type, deviceId });
         }
@@ -488,9 +660,33 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
       }
     });
 
+    // ── V2: 安全消息发送辅助（供服务端主动推送加密消息） ─────
+    const secureSend = (payload: Record<string, unknown>) => {
+      const sid = protocolCtx.secureSessionId;
+      if (!sid) {
+        // V1 连接：明文发送
+        try { socket.send(JSON.stringify(payload)); } catch { /* ignore */ }
+        return;
+      }
+      const session = secureSessions.get(sid);
+      if (!session || isSessionExpired(session)) {
+        // 会话失效：降级明文
+        try { socket.send(JSON.stringify(payload)); } catch { /* ignore */ }
+        return;
+      }
+      try {
+        const secMsg = createSecureMessage(payload, session);
+        socket.send(JSON.stringify(secMsg));
+      } catch { /* ignore */ }
+    };
+    // 将 secureSend 挂载到 socket 上，供其他模块使用
+    (socket as any)._secureSend = secureSend;
+
     // ── 断开 / 错误清理 ──────────────────────────────────────────
     socket.on("close", () => {
       clearTimeout(handshakeTimeout);
+      // V2: 清理安全会话
+      clearDeviceSessions(deviceId);
       unregisterDeviceConnection(deviceId, socket as any);
       _logger.info("disconnected", { deviceId });
     });

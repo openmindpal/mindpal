@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { redactString, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget, StructuredLogger } from "@openslin/shared";
 import {
@@ -13,9 +14,11 @@ import { setAuditContext } from "../../../modules/audit/context";
 import { requirePermission } from "../../../modules/auth/guard";
 import { orchestrateChatTurn } from "../../orchestrator/modules/orchestrator";
 import { toReplyText } from "./channelCommon";
+import { invokeModelChatUpstreamStream } from "../../model-gateway/modules/invokeChatUpstreamStream";
+import { formatMarkdownForProvider } from "./channelMarkdown";
 import { channelConversationId } from "./conversationId";
 import { resolveChannelSecretPayload } from "./channelSecret";
-import type { ChannelProviderPlugin, IngressContext } from "./providerAdapters";
+import type { ChannelProviderPlugin, IngressContext, ParsedInbound } from "./providerAdapters";
 import {
   finalizeIngressEvent,
   getChannelAccount,
@@ -40,6 +43,41 @@ function dlpRuleIdsFromSummary(summary: { hitCounts?: Record<string, number> }) 
   if ((hitCounts.email ?? 0) > 0) out.push("dlp.email");
   if ((hitCounts.phone ?? 0) > 0) out.push("dlp.phone");
   return out;
+}
+
+// ─── 共享身份映射 ────────────────────────────────────────────────────────────
+
+async function resolveChannelIdentity(params: {
+  pool: any;
+  tenantId: string;
+  provider: string;
+  workspaceId: string;
+  channelUserId?: string;
+  channelChatId?: string;
+}): Promise<{ subjectId: string; spaceId: string; resolvedChatId: string } | null> {
+  const { pool, tenantId, provider, workspaceId, channelUserId, channelChatId } = params;
+  let subjectId: string | null = null;
+  let spaceId: string | null = null;
+  let resolvedChatId = channelChatId || null;
+
+  if (channelUserId) {
+    const acc = await getChannelAccount({ pool, tenantId, provider, workspaceId, channelUserId });
+    if (acc && acc.status === "active") {
+      subjectId = acc.subjectId;
+      spaceId = acc.spaceId ?? null;
+    }
+  }
+  if (!subjectId && channelChatId) {
+    const binding = await getChannelChatBinding({ pool, tenantId, provider, workspaceId, channelChatId });
+    if (binding && binding.status === "active") {
+      subjectId = binding.defaultSubjectId ?? null;
+      spaceId = binding.spaceId;
+      resolvedChatId = binding.channelChatId;
+    }
+  }
+
+  if (!subjectId || !spaceId || !resolvedChatId) return null;
+  return { subjectId, spaceId, resolvedChatId };
 }
 
 // ─── 通用入站管道 ────────────────────────────────────────────────────────────
@@ -132,37 +170,18 @@ export async function channelIngressPipeline(
   }
 
   // 7. 身份映射
-  let subjectId: string | null = null;
-  let spaceId: string | null = null;
-  let resolvedChatId = inbound.channelChatId || null;
+  const identity = await resolveChannelIdentity({
+    pool: app.db,
+    tenantId,
+    provider: plugin.provider,
+    workspaceId: inbound.workspaceId,
+    channelUserId: inbound.channelUserId,
+    channelChatId: inbound.channelChatId,
+  });
 
-  if (inbound.channelUserId) {
-    const acc = await getChannelAccount({
-      pool: app.db,
-      tenantId,
-      provider: plugin.provider,
-      workspaceId: inbound.workspaceId,
-      channelUserId: inbound.channelUserId,
-    });
-    if (acc && acc.status === "active") {
-      subjectId = acc.subjectId;
-      spaceId = acc.spaceId ?? null;
-    }
-  }
-  if (!subjectId && inbound.channelChatId) {
-    const binding = await getChannelChatBinding({
-      pool: app.db,
-      tenantId,
-      provider: plugin.provider,
-      workspaceId: inbound.workspaceId,
-      channelChatId: inbound.channelChatId,
-    });
-    if (binding && binding.status === "active") {
-      subjectId = binding.defaultSubjectId ?? null;
-      spaceId = binding.spaceId;
-      resolvedChatId = binding.channelChatId;
-    }
-  }
+  const subjectId = identity?.subjectId ?? null;
+  const spaceId = identity?.spaceId ?? null;
+  const resolvedChatId = identity?.resolvedChatId ?? inbound.channelChatId ?? null;
 
   if (!subjectId || !spaceId || !resolvedChatId) {
     req.ctx.audit!.errorCategory = "policy_violation";
@@ -251,6 +270,88 @@ export async function channelIngressPipeline(
       channelChatId: resolvedChatId,
       threadId: null,
     });
+
+    // ── 流式模式：仅当 Provider 支持 editMessage 时启用 ──
+    if (plugin.editMessage && plugin.sendReply && cfg.deliveryMode !== "async") {
+      const placeholderText = req.ctx.locale?.includes("zh") ? "正在思考..." : "Thinking...";
+      const sendResult = await plugin.sendReply(iCtx, placeholderText, resolvedChatId);
+      const externalMsgId = sendResult?.messageId;
+
+      if (externalMsgId) {
+        let fullText = "";
+        let lastEditTime = 0;
+        const THROTTLE_MS = 2000;
+
+        const streamOut = await invokeModelChatUpstreamStream({
+          app,
+          subject: { tenantId, spaceId: spaceId!, subjectId: subjectId! },
+          body: {
+            purpose: "channel_reply",
+            messages: [{ role: "user", content: inbound.text ?? "" }],
+            stream: true,
+          },
+          traceId: req.ctx.traceId,
+          requestId: req.ctx.requestId,
+          locale: req.ctx.locale,
+          onDelta: (text: string) => {
+            fullText += text;
+            const now = Date.now();
+            if (now - lastEditTime >= THROTTLE_MS && externalMsgId) {
+              lastEditTime = now;
+              plugin.editMessage!(iCtx, externalMsgId, fullText, resolvedChatId).catch(() => {});
+            }
+          },
+        });
+
+        // 流结束后，用完整文本 + Markdown 格式化做最终编辑
+        if (!fullText && streamOut?.outputText) fullText = streamOut.outputText;
+        const formattedText = formatMarkdownForProvider(plugin.provider, fullText || "");
+
+        // 出站 DLP 扫描
+        const dlpPolicy = resolveDlpPolicyFromEnv(process.env);
+        const dlpTarget = "channel:send";
+        const dlp = redactString(formattedText || fullText);
+        const dlpDenied = shouldDenyDlpForTarget({ summary: dlp.summary, target: dlpTarget, policy: dlpPolicy });
+        const dlpRuleIds = dlpRuleIdsFromSummary(dlp.summary);
+
+        if (dlpDenied) {
+          const denyText = req.ctx.locale?.includes("zh") ? "[内容已被安全策略拦截]" : "[Content blocked by safety policy]";
+          await plugin.editMessage(iCtx, externalMsgId, denyText, resolvedChatId).catch(() => {});
+          req.ctx.audit!.errorCategory = "policy_violation";
+          const err = Errors.dlpDenied();
+          const resp = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId }, status: "denied" as const, errorCode: err.errorCode };
+          await finalizeIngressEvent({ pool: app.db, id: inserted.id, status: "denied", responseStatusCode: 403, responseJson: resp });
+          await insertOutboxMessage({ pool: app.db, tenantId, provider: plugin.provider, workspaceId: inbound.workspaceId, channelChatId: resolvedChatId, requestId: req.ctx.requestId, traceId: req.ctx.traceId, status: "denied", messageJson: { errorCode: err.errorCode } });
+          throw err;
+        }
+
+        const safeText = dlp.value;
+        await plugin.editMessage(iCtx, externalMsgId, safeText, resolvedChatId).catch(() => {});
+
+        const correlation = { requestId: req.ctx.requestId, traceId: req.ctx.traceId };
+        const respBody = plugin.formatOutbound(req.ctx.locale, safeText, correlation);
+        await finalizeIngressEvent({ pool: app.db, id: inserted.id, status: "succeeded", responseStatusCode: 200, responseJson: respBody });
+        const sent = await insertOutboxMessage({ pool: app.db, tenantId, provider: plugin.provider, workspaceId: inbound.workspaceId, channelChatId: resolvedChatId, requestId: req.ctx.requestId, traceId: req.ctx.traceId, status: "succeeded", messageJson: respBody, externalMessageId: externalMsgId });
+        await markOutboxDelivered({ pool: app.db, tenantId, ids: [sent.id, received.id] });
+        await markOutboxAcked({ pool: app.db, tenantId, ids: [sent.id, received.id] });
+
+        const egressDlpSummary = dlp.summary.redacted
+          ? { ...dlp.summary, disposition: "redact" as const, mode: dlpPolicy.mode, policyVersion: dlpPolicy.version, target: dlpTarget, decision: "allowed" as const, ruleIds: dlpRuleIds }
+          : { ...dlp.summary, mode: dlpPolicy.mode, policyVersion: dlpPolicy.version, target: dlpTarget, decision: "allowed" as const, ruleIds: dlpRuleIds };
+        req.ctx.audit!.outputDigest = {
+          status: "succeeded",
+          provider: plugin.provider,
+          workspaceId: inbound.workspaceId,
+          eventId: inbound.eventId,
+          outboxId: sent.id,
+          safetySummary: { decision: "allowed", target: dlpTarget, ruleIds: dlpRuleIds, dlpSummary: egressDlpSummary },
+          egress: { target: dlpTarget, redacted: Boolean(egressDlpSummary.redacted) },
+        };
+        return respBody;
+      }
+      // messageId 获取失败 → fallback 到同步模式
+    }
+
     const out = await orchestrateChatTurn({
       app,
       pool: app.db,
@@ -380,5 +481,125 @@ export async function channelIngressPipeline(
       messageJson: resp,
     }).catch(() => {});
     throw e;
+  }
+}
+
+// ─── WS 长连接入站管道（不依赖 HTTP req/reply） ───────────────────────────────
+
+export async function channelWsIngressPipeline(params: {
+  app: any;
+  tenantId: string;
+  plugin: ChannelProviderPlugin;
+  parsed: ParsedInbound;
+}) {
+  const { app, tenantId, plugin, parsed } = params;
+  const requestId = crypto.randomUUID();
+  const traceId = crypto.randomUUID();
+
+  // 1. 查询 webhook 配置 + 解密 secret
+  const cfg = await getWebhookConfig({ pool: app.db, tenantId, provider: plugin.provider, workspaceId: parsed.workspaceId });
+  if (!cfg) {
+    _logger.warn("ws ingress: config not found", { provider: plugin.provider, workspaceId: parsed.workspaceId });
+    return;
+  }
+  const secretPayload = cfg.secretId
+    ? await resolveChannelSecretPayload({ app, tenantId, spaceId: cfg.spaceId ?? null, secretId: cfg.secretId })
+    : {};
+
+  // 2. 幂等去重
+  const bodyDigest = computeBridgeBodyDigest({
+    provider: plugin.provider,
+    workspaceId: parsed.workspaceId,
+    eventId: parsed.eventId,
+    timestampSec: parsed.timestampSec,
+    channelChatId: parsed.channelChatId || null,
+    channelUserId: parsed.channelUserId || null,
+    text: parsed.text || null,
+    payload: parsed.rawBody ?? null,
+  });
+  const inserted = await insertIngressEvent({
+    pool: app.db, tenantId, provider: plugin.provider,
+    workspaceId: parsed.workspaceId, eventId: parsed.eventId,
+    nonce: parsed.nonce, bodyDigest, bodyJson: parsed.rawBody,
+    requestId, traceId, status: "received",
+  });
+  if (!inserted) {
+    _logger.debug("ws ingress: duplicate event", { provider: plugin.provider, eventId: parsed.eventId });
+    return;
+  }
+
+  // 3. 身份映射
+  const identity = await resolveChannelIdentity({
+    pool: app.db,
+    tenantId,
+    provider: plugin.provider,
+    workspaceId: parsed.workspaceId,
+    channelUserId: parsed.channelUserId,
+    channelChatId: parsed.channelChatId,
+  });
+
+  const subjectId = identity?.subjectId ?? null;
+  const spaceId = identity?.spaceId ?? null;
+  const resolvedChatId = identity?.resolvedChatId ?? parsed.channelChatId ?? null;
+
+  if (!subjectId || !spaceId || !resolvedChatId) {
+    _logger.warn("ws ingress: identity mapping missing", {
+      provider: plugin.provider, workspaceId: parsed.workspaceId,
+      channelUserId: parsed.channelUserId, channelChatId: parsed.channelChatId,
+    });
+    await finalizeIngressEvent({ pool: app.db, id: inserted.id, status: "denied", responseStatusCode: 403, responseJson: { status: "denied", reason: "mapping_missing" } });
+    return;
+  }
+
+  // 4. orchestrateChatTurn
+  try {
+    const conversationId = channelConversationId({
+      provider: plugin.provider,
+      workspaceId: parsed.workspaceId,
+      channelChatId: resolvedChatId,
+      threadId: null,
+    });
+
+    const out = await orchestrateChatTurn({
+      app, pool: app.db,
+      subject: { subjectId, tenantId, spaceId },
+      message: parsed.text ?? "",
+      locale: "zh",
+      conversationId,
+      authorization: null,
+      traceId,
+    });
+    const replyText = toReplyText("zh", out);
+
+    // 5. DLP 扫描
+    const dlpPolicy = resolveDlpPolicyFromEnv(process.env);
+    const dlpTarget = "channel:send";
+    const dlp = redactString(replyText);
+    const dlpDenied = shouldDenyDlpForTarget({ summary: dlp.summary, target: dlpTarget, policy: dlpPolicy });
+    if (dlpDenied) {
+      _logger.warn("ws ingress: DLP denied", { provider: plugin.provider, eventId: parsed.eventId });
+      await finalizeIngressEvent({ pool: app.db, id: inserted.id, status: "denied", responseStatusCode: 403, responseJson: { status: "denied", reason: "dlp" } });
+      return;
+    }
+    const safeReplyText = dlp.value;
+
+    // 6. sendReply（构造最小 IngressContext，WS 模式不使用 req/reply）
+    if (plugin.sendReply) {
+      const minimalCtx: IngressContext = {
+        app,
+        req: null as any,
+        reply: null as any,
+        tenantId,
+        cfg,
+        secretPayload,
+      };
+      await plugin.sendReply(minimalCtx, safeReplyText, resolvedChatId);
+    }
+
+    await finalizeIngressEvent({ pool: app.db, id: inserted.id, status: "succeeded", responseStatusCode: 200, responseJson: { status: "succeeded" } });
+    _logger.info("ws ingress: reply sent", { provider: plugin.provider, eventId: parsed.eventId, workspaceId: parsed.workspaceId });
+  } catch (err: any) {
+    _logger.error("ws ingress: pipeline error", { provider: plugin.provider, eventId: parsed.eventId, error: err?.message ?? err });
+    await finalizeIngressEvent({ pool: app.db, id: inserted.id, status: "failed", responseStatusCode: 500, responseJson: { status: "failed" } }).catch(() => {});
   }
 }

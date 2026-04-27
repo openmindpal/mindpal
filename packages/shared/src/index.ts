@@ -779,3 +779,19 @@ export {
 } from "./metricsSchema";
 export type { MetricDefinition, MetricType } from "./metricsSchema";
 
+// ── 设备握手安全（V2 安全增强，元数据驱动） ──
+export {
+  DEFAULT_SECURITY_POLICY,
+  generateNonce, validateNonce,
+  generateECDHKeyPair, deriveSessionKeys,
+  signHandshake, verifyHandshake,
+  createSecureMessage, decryptSecureMessage,
+  checkReplay,
+  isSessionExpired, shouldRotateKey,
+} from "./deviceHandshakeSecurity";
+export type {
+  DeviceSecurityPolicy,
+  HandshakeSecurityExt, HandshakeAckSecurityExt,
+  DeviceSessionState, SecureDeviceMessage,
+} from "./deviceHandshakeSecurity";
+

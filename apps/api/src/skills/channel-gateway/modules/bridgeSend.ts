@@ -24,7 +24,7 @@ export async function bridgeSendWithRetry(params: {
   requestId: string;
   traceId: string;
   to: { channelChatId: string };
-  message: { text: string };
+  message: { text: string; markdown?: string; action?: "create" | "edit"; messageId?: string };
   idempotencyKey: string;
   maxAttempts: number;
   backoffMsBase: number;

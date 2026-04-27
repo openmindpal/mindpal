@@ -10,15 +10,17 @@ import { requirePermission } from "../../modules/auth/guard";
 import { orchestrateChatTurn } from "../orchestrator/modules/orchestrator";
 import { channelConversationId } from "./modules/conversationId";
 import { sha256Hex, stableStringify } from "../../lib/digest";
-import { getChannelProviderAdapter } from "./modules/providerAdapters";
+import { listChannelProviderMetas, getChannelProviderPluginOrNull, getChannelProviderPlugin } from "./modules/providerAdapters";
 // 副作用导入：注册各 Provider 插件到 registry
 import "./modules/providerFeishu";
 import "./modules/providerSlack";
 import "./modules/providerDiscord";
 import "./modules/providerBridge";
+import "./modules/providerWechat";
 import { testFeishuConfig } from "./modules/providerFeishu";
 import { handleBridgeEvents } from "./modules/providerBridge";
 import { resolveChannelSecretPayload } from "./modules/channelSecret";
+import { channelWsIngressPipeline, channelIngressPipeline } from "./modules/channelPipeline";
 import { computeBridgeBodyDigest, verifyBridgeSignature } from "./modules/bridgeContract";
 import {
   finalizeIngressEvent,
@@ -46,6 +48,11 @@ import {
   revokeChannelChatBinding,
 } from "./modules/channelRepo";
 import {
+  updateWebhookConfigEnabled,
+  updateWebhookConfigAdmissionPolicy,
+  deleteWebhookConfig,
+} from "./modules/channelRepo";
+import {
   createBindingState,
   consumeBindingState,
   getBindingStateByState,
@@ -57,6 +64,9 @@ import {
   exchangeCodeForChannelUser,
   resolveBindingCredentials,
 } from "./modules/channelBindingOAuth";
+
+/** 活跃的长连接 stop 函数注册表 */
+const activeLongConnections = new Map<string, () => void>();
 
 function hmacHex(secret: string, input: string) {
   return crypto.createHmac("sha256", secret).update(input, "utf8").digest("hex");
@@ -91,21 +101,21 @@ function parseChannelAttachments(
 
 export const channelRoutes: FastifyPluginAsync = async (app) => {
   app.post("/channels/feishu/events", async (req, reply) => {
-    const adapter = getChannelProviderAdapter("feishu");
-    return adapter.handle({ app, req, reply });
+    const plugin = getChannelProviderPlugin("feishu");
+    return channelIngressPipeline({ app, req, reply }, plugin);
   });
 
   app.register(async (sub) => {
     sub.addContentTypeParser("application/json", { parseAs: "string" }, async (_req: any, body: any) => body);
 
     sub.post("/channels/slack/events", async (req, reply) => {
-      const adapter = getChannelProviderAdapter("slack");
-      return adapter.handle({ app, req, reply });
+      const plugin = getChannelProviderPlugin("slack");
+      return channelIngressPipeline({ app, req, reply }, plugin);
     });
 
     sub.post("/channels/discord/interactions", async (req, reply) => {
-      const adapter = getChannelProviderAdapter("discord");
-      return adapter.handle({ app, req, reply });
+      const plugin = getChannelProviderPlugin("discord");
+      return channelIngressPipeline({ app, req, reply }, plugin);
     });
   });
 
@@ -394,6 +404,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
+  // [高级] 手动配置入口 — 仅供高级用户/调试使用（新流程由 setup/callback 自动创建）
   app.post("/governance/channels/webhook/configs", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "channel.webhook_config.write" });
@@ -451,6 +462,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     return { configs };
   });
 
+  // [高级] 手动配置入口 — 仅供高级用户/调试使用（setup 流程自带验证，此路由用于独立测试飞书配置）
   app.post("/governance/channels/providers/feishu/test", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "channel.webhook_config.read" });
@@ -465,6 +477,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     return { result };
   });
 
+  // [高级] 手动配置入口 — 仅供高级用户/调试使用（setup 流程自带验证，此路由用于独立测试任意 provider 配置）
   app.post("/governance/channels/providers/test", async (req) => {
     const subject = req.ctx.subject!;
     setAuditContext(req, { resourceType: "governance", action: "channel.webhook_config.read" });
@@ -926,6 +939,403 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // 渠道 Setup（扫码自动配置）
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** GET /channels/providers — 返回所有 Provider 元数据 */
+  app.get("/channels/providers", async (req) => {
+    setAuditContext(req, { resourceType: "channel", action: "providers.list" });
+
+    const decision = await requirePermission({
+      req,
+      resourceType: "governance",
+      action: "channel.webhook_config.read",
+    });
+    req.ctx.audit!.policyDecision = decision;
+    const tenantId = req.ctx.subject!.tenantId;
+
+    const metas = listChannelProviderMetas();
+    const configs = await listWebhookConfigs({ pool: app.db, tenantId, limit: 200 });
+    const configMap: Record<string, any> = {};
+    for (const c of configs) {
+      configMap[c.provider] = c;
+    }
+    return {
+      providers: metas.map(m => ({
+        ...m,
+        status: configMap[m.provider]
+          ? (configMap[m.provider].enabled ? "connected" : "disabled")
+          : "unconfigured",
+        workspaceId: configMap[m.provider]?.workspaceId ?? null,
+        admissionPolicy: configMap[m.provider]?.admissionPolicy ?? "open",
+        customName: configMap[m.provider]?.displayName ?? null,
+      })),
+    };
+  });
+
+  /** POST /channels/setup/:provider/init — 生成扫码二维码 */
+  app.post("/channels/setup/:provider/init", async (req) => {
+    const params = z.object({ provider: z.string().min(1).max(50) }).parse(req.params);
+    const body = z.object({
+      spaceId: z.string().min(1).optional(),
+    }).parse(req.body ?? {});
+
+    setAuditContext(req, { resourceType: "channel", action: "setup.init" });
+
+    const decision = await requirePermission({
+      req,
+      resourceType: "governance",
+      action: "channel.webhook_config.write",
+    });
+    req.ctx.audit!.policyDecision = decision;
+
+    const plugin = getChannelProviderPluginOrNull(params.provider);
+    if (!plugin || !plugin.buildSetupAuthorizeUrl) {
+      throw Errors.badRequest(`Provider "${params.provider}" 不支持扫码配置`);
+    }
+
+    const subject = req.ctx.subject!;
+    const tenantId = subject.tenantId;
+
+    const state = newBindingStateValue();
+    const created = await createBindingState({
+      pool: app.db,
+      tenantId,
+      provider: params.provider,
+      workspaceId: "__setup__",
+      spaceId: body.spaceId ?? "default",
+      targetSubjectId: null,
+      state,
+      label: `setup:${params.provider}`,
+      ttlSeconds: 600,
+    });
+
+    const xfProto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]?.trim();
+    const proto = xfProto === "https" || xfProto === "http" ? xfProto : "http";
+    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "").split(",")[0]?.trim();
+    if (!host) throw Errors.badRequest("缺少 host");
+    const redirectUri = `${proto}://${host}/v1/channels/setup/${encodeURIComponent(params.provider)}/callback`;
+
+    const authorizeUrl = plugin.buildSetupAuthorizeUrl({ redirectUri, state });
+
+    req.ctx.audit!.outputDigest = {
+      provider: params.provider,
+      setupId: created.row.id,
+      expiresAt: created.row.expiresAt,
+    };
+
+    return {
+      setupId: created.row.id,
+      authorizeUrl,
+      expiresAt: created.row.expiresAt,
+      provider: params.provider,
+    };
+  });
+
+  /** GET /channels/setup/:provider/callback — 平台扫码回调 */
+  app.get("/channels/setup/:provider/callback", async (req, reply) => {
+    const params = z.object({ provider: z.string().min(1).max(50) }).parse(req.params);
+    const q = z.object({ code: z.string().min(1), state: z.string().min(1) }).parse(req.query);
+    setAuditContext(req, { resourceType: "channel", action: "setup.callback" });
+
+    // 1. 验证 state
+    const bindingState = await getBindingStateByState({ pool: app.db, state: q.state });
+    if (!bindingState) {
+      return reply.status(400).type("text/html; charset=utf-8").send(htmlResult("配置失败", "授权链接无效或已过期，请重新扫码。"));
+    }
+    if (bindingState.provider !== params.provider) {
+      return reply.status(400).type("text/html; charset=utf-8").send(htmlResult("配置失败", "授权链接与渠道不匹配。"));
+    }
+    if (bindingState.status !== "pending") {
+      return reply.status(400).type("text/html; charset=utf-8").send(htmlResult("配置失败", "该授权链接已被使用，请重新扫码。"));
+    }
+    const expiresMs = Date.parse(bindingState.expiresAt);
+    if (!Number.isFinite(expiresMs) || expiresMs < Date.now()) {
+      return reply.status(400).type("text/html; charset=utf-8").send(htmlResult("配置失败", "授权链接已过期，请重新扫码。"));
+    }
+
+    const plugin = getChannelProviderPluginOrNull(params.provider);
+    if (!plugin || !plugin.handleSetupCallback) {
+      return reply.status(400).type("text/html; charset=utf-8").send(htmlResult("配置失败", `Provider "${params.provider}" 不支持自动配置。`));
+    }
+
+    // 2. 调用 plugin 处理回调
+    const xfProto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]?.trim();
+    const proto = xfProto === "https" || xfProto === "http" ? xfProto : "http";
+    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "").split(",")[0]?.trim();
+    const redirectUri = `${proto}://${host}/v1/channels/setup/${encodeURIComponent(params.provider)}/callback`;
+
+    let setupResult;
+    try {
+      setupResult = await plugin.handleSetupCallback({ code: q.code, redirectUri, state: q.state });
+    } catch (e: any) {
+      _logger.error("setup callback failed", { provider: params.provider, error: e?.message ?? e });
+      return reply.status(500).type("text/html; charset=utf-8").send(htmlResult("配置失败", `获取授权信息失败：${e?.message ?? "未知错误"}`));
+    }
+
+    const tenantId = bindingState.tenantId;
+
+    // 3. 自动创建加密 secret
+    let secretId: string | null = null;
+    if (Object.keys(setupResult.credentials).length > 0) {
+      try {
+        const { createSecretRecord } = await import("../../modules/secrets/secretRepo");
+        const { encryptSecretEnvelope } = await import("../../modules/secrets/envelope");
+        const encResult = await encryptSecretEnvelope({
+          pool: app.db,
+          tenantId,
+          masterKey: app.cfg.secrets.masterKey,
+          scopeType: "tenant",
+          scopeId: tenantId,
+          payload: setupResult.credentials,
+        });
+        const secretRecord = await createSecretRecord({
+          pool: app.db,
+          tenantId,
+          scopeType: "tenant",
+          scopeId: tenantId,
+          connectorInstanceId: crypto.randomUUID(),
+          keyVersion: encResult.keyVersion,
+          encFormat: encResult.encFormat,
+          encryptedPayload: encResult.encryptedPayload,
+        });
+        secretId = secretRecord.id;
+      } catch (e: any) {
+        _logger.error("auto-create secret failed, falling back", { provider: params.provider, error: e?.message ?? e });
+      }
+    }
+
+    // 4. 自动写入 webhook_config
+    await upsertWebhookConfig({
+      pool: app.db,
+      tenantId,
+      provider: params.provider,
+      workspaceId: setupResult.workspaceId,
+      spaceId: bindingState.spaceId !== "default" ? bindingState.spaceId : null,
+      secretEnvKey: null,
+      secretId: secretId,
+      providerConfig: null,
+      enabled: true,
+      autoProvisioned: true,
+      admissionPolicy: "open",
+      displayName: setupResult.displayName ?? null,
+      setupState: setupResult.webhookRegistered ? { webhookRegistered: true } : null,
+    });
+
+    // 5. 自动注册 Webhook（如果 plugin 支持）
+    if (plugin.registerWebhook) {
+      try {
+        const callbackUrl = `${proto}://${host}/channels/${encodeURIComponent(params.provider)}/events`;
+        const webhookResult = await plugin.registerWebhook({ credentials: setupResult.credentials, callbackUrl });
+        if (webhookResult.ok) {
+          _logger.info("webhook auto-registered", { provider: params.provider, registrationId: webhookResult.registrationId });
+        }
+      } catch (e: any) {
+        _logger.error("webhook auto-registration failed", { provider: params.provider, error: e?.message ?? e });
+      }
+    }
+
+    // 6. 尝试启动长连接（非阻塞，与 Webhook 模式并存）
+    if (plugin.startLongConnection && setupResult.credentials) {
+      const connKey = `${params.provider}:${setupResult.workspaceId}`;
+      // 先关闭旧连接
+      const prev = activeLongConnections.get(connKey);
+      if (prev) { try { prev(); } catch { /* ignore */ } activeLongConnections.delete(connKey); }
+
+      plugin.startLongConnection({
+        credentials: setupResult.credentials,
+        onEvent: async (parsed) => {
+          _logger.info("long connection event received", { provider: params.provider, eventId: parsed.eventId });
+          await channelWsIngressPipeline({ app, tenantId, plugin, parsed });
+        },
+      }).then(({ stop }) => {
+        activeLongConnections.set(connKey, stop);
+        _logger.info("long connection started", { provider: params.provider, workspaceId: setupResult.workspaceId });
+      }).catch((err: any) => {
+        _logger.error("long connection start failed (non-blocking)", { provider: params.provider, error: err?.message });
+      });
+    }
+
+    // 7. 消费 state
+    await consumeBindingState({ pool: app.db, state: q.state, boundChannelUserId: `setup:${setupResult.workspaceId}` });
+
+    req.ctx.audit!.outputDigest = {
+      provider: params.provider,
+      workspaceId: setupResult.workspaceId,
+      autoProvisioned: true,
+      secretId,
+    };
+
+    reply.header("content-type", "text/html; charset=utf-8");
+    return htmlResult("配置成功", `${setupResult.displayName ?? params.provider} 渠道已成功连接！现在可以在该平台中与智能体对话了。`);
+  });
+
+  /** POST /channels/setup/:provider/toggle — 启用/禁用 */
+  app.post("/channels/setup/:provider/toggle", async (req) => {
+    const params = z.object({ provider: z.string().min(1).max(50) }).parse(req.params);
+    const body = z.object({
+      workspaceId: z.string().min(1),
+      enabled: z.boolean(),
+    }).parse(req.body);
+    setAuditContext(req, { resourceType: "channel", action: "setup.toggle" });
+
+    const tenantId = (req as any).ctx?.subject?.tenantId ?? (req.headers["x-tenant-id"] as string | undefined) ?? "tenant_dev";
+    const decision = await requirePermission({ req, resourceType: "governance", action: "channel.webhook_config.write" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const updated = await updateWebhookConfigEnabled({
+      pool: app.db, tenantId, provider: params.provider, workspaceId: body.workspaceId, enabled: body.enabled,
+    });
+    if (!updated) throw Errors.notFound("config not found");
+
+    req.ctx.audit!.outputDigest = { provider: params.provider, workspaceId: body.workspaceId, enabled: body.enabled };
+    return { status: "ok", enabled: body.enabled };
+  });
+
+  /** POST /channels/setup/:provider/remove — 移除配置 */
+  app.post("/channels/setup/:provider/remove", async (req) => {
+    const params = z.object({ provider: z.string().min(1).max(50) }).parse(req.params);
+    const body = z.object({ workspaceId: z.string().min(1) }).parse(req.body);
+    setAuditContext(req, { resourceType: "channel", action: "setup.remove" });
+
+    const tenantId = (req as any).ctx?.subject?.tenantId ?? (req.headers["x-tenant-id"] as string | undefined) ?? "tenant_dev";
+    const decision = await requirePermission({ req, resourceType: "governance", action: "channel.webhook_config.write" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const deleted = await deleteWebhookConfig({
+      pool: app.db, tenantId, provider: params.provider, workspaceId: body.workspaceId,
+    });
+    if (!deleted) throw Errors.notFound("config not found");
+
+    req.ctx.audit!.outputDigest = { provider: params.provider, workspaceId: body.workspaceId, removed: true };
+    return { status: "removed" };
+  });
+
+  /** POST /channels/setup/:provider/admission — 切换准入策略 */
+  app.post("/channels/setup/:provider/admission", async (req) => {
+    const params = z.object({ provider: z.string().min(1).max(50) }).parse(req.params);
+    const body = z.object({
+      workspaceId: z.string().min(1),
+      policy: z.enum(["open", "pairing"]),
+    }).parse(req.body);
+    setAuditContext(req, { resourceType: "channel", action: "setup.admission" });
+
+    const tenantId = (req as any).ctx?.subject?.tenantId ?? (req.headers["x-tenant-id"] as string | undefined) ?? "tenant_dev";
+    const decision = await requirePermission({ req, resourceType: "governance", action: "channel.webhook_config.write" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const updated = await updateWebhookConfigAdmissionPolicy({
+      pool: app.db, tenantId, provider: params.provider, workspaceId: body.workspaceId, admissionPolicy: body.policy,
+    });
+    if (!updated) throw Errors.notFound("config not found");
+
+    req.ctx.audit!.outputDigest = { provider: params.provider, workspaceId: body.workspaceId, admissionPolicy: body.policy };
+    return { status: "ok", admissionPolicy: body.policy };
+  });
+
+  /** GET /channels/setup/:provider/status — 查询单个 setup 状态（供前端轮询） */
+  app.get("/channels/setup/:provider/status", async (req) => {
+    const params = z.object({ provider: z.string().min(1).max(50) }).parse(req.params);
+    setAuditContext(req, { resourceType: "channel", action: "setup.status" });
+
+    const decision = await requirePermission({
+      req,
+      resourceType: "governance",
+      action: "channel.webhook_config.read",
+    });
+    req.ctx.audit!.policyDecision = decision;
+    const tenantId = req.ctx.subject!.tenantId;
+
+    const configs = await listWebhookConfigs({ pool: app.db, tenantId, provider: params.provider, limit: 1 });
+    const config = configs[0] ?? null;
+
+    return {
+      provider: params.provider,
+      configured: !!config,
+      enabled: config?.enabled ?? false,
+      workspaceId: config?.workspaceId ?? null,
+      admissionPolicy: config?.admissionPolicy ?? "open",
+      displayName: config?.displayName ?? null,
+      autoProvisioned: config?.autoProvisioned ?? false,
+    };
+  });
+
+  /** POST /channels/setup/:provider/manual — 手动配置 */
+  app.post("/channels/setup/:provider/manual", async (req, reply) => {
+    setAuditContext(req, { resourceType: "channel", action: "setup.manual" });
+    const decision = await requirePermission({ req, resourceType: "governance", action: "channel.webhook_config.write" });
+    req.ctx.audit!.policyDecision = decision;
+    const tenantId = req.ctx.subject!.tenantId;
+    const provider = (req.params as any).provider;
+    const body = (req.body as any) ?? {};
+
+    // 获取 plugin
+    const plugin = getChannelProviderPluginOrNull(provider);
+    if (!plugin) return reply.code(400).send({ error: "unknown_provider" });
+
+    // 校验必须是 manual mode
+    if (!plugin.meta.setupModes.includes("manual")) {
+      return reply.code(400).send({ error: "provider_not_manual", message: "此渠道不支持手动配置" });
+    }
+
+    // 从 manualConfigFields 校验必填字段
+    const fields = plugin.meta.manualConfigFields ?? [];
+    const credentials: Record<string, string> = {};
+    for (const f of fields) {
+      const val = String(body[f.key] ?? "").trim();
+      if (f.required && !val) {
+        return reply.code(400).send({ error: "missing_field", field: f.key });
+      }
+      if (val) credentials[f.key] = val;
+    }
+
+    // workspaceId: 手动模式使用 body.workspaceId 或生成一个默认值
+    const workspaceId = String(body.workspaceId ?? "").trim() || `manual_${provider}_${Date.now()}`;
+
+    // 创建加密 secret（复用现有逻辑，与 setup/callback 路由相同的 dynamic import 方式）
+    let secretId: string | null = null;
+    if (Object.keys(credentials).length > 0) {
+      const { createSecretRecord } = await import("../../modules/secrets/secretRepo");
+      const { encryptSecretEnvelope } = await import("../../modules/secrets/envelope");
+      const encResult = await encryptSecretEnvelope({
+        pool: app.db,
+        tenantId,
+        masterKey: app.cfg.secrets.masterKey,
+        scopeType: "tenant",
+        scopeId: tenantId,
+        payload: credentials,
+      });
+      const secretRecord = await createSecretRecord({
+        pool: app.db,
+        tenantId,
+        scopeType: "tenant",
+        scopeId: tenantId,
+        connectorInstanceId: crypto.randomUUID(),
+        keyVersion: encResult.keyVersion,
+        encFormat: encResult.encFormat,
+        encryptedPayload: encResult.encryptedPayload,
+      });
+      secretId = secretRecord.id;
+    }
+
+    // upsert webhook config
+    await upsertWebhookConfig({
+      pool: app.db,
+      tenantId,
+      provider,
+      workspaceId,
+      secretId,
+      enabled: true,
+      autoProvisioned: false,
+      admissionPolicy: "open",
+      displayName: body.displayName || null,
+      setupState: { manual: true, configuredAt: new Date().toISOString() },
+    });
+
+    return { ok: true, provider, workspaceId };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // 渠道扫码授权绑定（Channel QR-code OAuth Binding）
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -984,7 +1394,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     const proto = xfProto === "https" || xfProto === "http" ? xfProto : "http";
     const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "").split(",")[0]?.trim();
     if (!host) throw Errors.badRequest("缺少 host");
-    const redirectUri = `${proto}://${host}/channels/binding/callback/${encodeURIComponent(body.provider)}`;
+    const redirectUri = `${proto}://${host}/v1/channels/binding/callback/${encodeURIComponent(body.provider)}`;
 
     // 构建 IM 平台授权 URL
     const authorizeUrl = buildChannelBindingAuthorizeUrl({
@@ -1057,7 +1467,7 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     const xfProto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]?.trim();
     const proto = xfProto === "https" || xfProto === "http" ? xfProto : "http";
     const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "").split(",")[0]?.trim();
-    const redirectUri = `${proto}://${host}/channels/binding/callback/${encodeURIComponent(params.provider)}`;
+    const redirectUri = `${proto}://${host}/v1/channels/binding/callback/${encodeURIComponent(params.provider)}`;
 
     let channelUser;
     try {
@@ -1188,6 +1598,62 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return { states };
+  });
+
+  // ─── 启动恢复：自动重连所有已启用的长连接 ─────────────────────────────────────
+  app.addHook("onReady", async () => {
+    try {
+      const tenantId = process.env.DEFAULT_TENANT_ID ?? "tenant_dev";
+      const configs = await listWebhookConfigs({ pool: app.db, tenantId, limit: 200 });
+      const enabledConfigs = configs.filter(c => c.enabled);
+      if (enabledConfigs.length === 0) return;
+
+      _logger.info("long connection recovery: checking configs", { total: enabledConfigs.length });
+
+      for (const cfg of enabledConfigs) {
+        const plugin = getChannelProviderPluginOrNull(cfg.provider);
+        if (!plugin?.startLongConnection) continue;
+
+        const connKey = `${cfg.provider}:${cfg.workspaceId}`;
+        if (activeLongConnections.has(connKey)) continue; // already connected
+
+        // resolve credentials from secret store
+        let credentials: Record<string, string> = {};
+        if (cfg.secretId) {
+          try {
+            const sp = await resolveChannelSecretPayload({ app, tenantId, spaceId: cfg.spaceId ?? null, secretId: cfg.secretId });
+            // flatten secret payload to string Record for startLongConnection
+            for (const [k, v] of Object.entries(sp)) {
+              if (typeof v === "string") credentials[k] = v;
+            }
+          } catch (e: any) {
+            _logger.error("long connection recovery: secret resolve failed", { provider: cfg.provider, workspaceId: cfg.workspaceId, error: e?.message });
+            continue;
+          }
+        }
+
+        if (Object.keys(credentials).length === 0) {
+          _logger.debug("long connection recovery: no credentials, skipping", { provider: cfg.provider, workspaceId: cfg.workspaceId });
+          continue;
+        }
+
+        // non-blocking start
+        plugin.startLongConnection({
+          credentials,
+          onEvent: async (parsed) => {
+            _logger.info("long connection event received", { provider: cfg.provider, eventId: parsed.eventId });
+            await channelWsIngressPipeline({ app, tenantId, plugin, parsed });
+          },
+        }).then(({ stop }) => {
+          activeLongConnections.set(connKey, stop);
+          _logger.info("long connection recovered", { provider: cfg.provider, workspaceId: cfg.workspaceId });
+        }).catch((err: any) => {
+          _logger.error("long connection recovery failed (non-blocking)", { provider: cfg.provider, workspaceId: cfg.workspaceId, error: err?.message });
+        });
+      }
+    } catch (err: any) {
+      _logger.error("long connection recovery: unexpected error", { error: err?.message ?? err });
+    }
   });
 };
 

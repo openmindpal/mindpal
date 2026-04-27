@@ -12,6 +12,11 @@ export type ChannelWebhookConfigRow = {
   deliveryMode: string;
   maxAttempts: number;
   backoffMsBase: number;
+  enabled: boolean;
+  autoProvisioned: boolean;
+  admissionPolicy: string;
+  displayName: string | null;
+  setupState: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -81,6 +86,7 @@ export type ChannelOutboxMessageRow = {
   messageJson: any;
   deliveredAt: string | null;
   ackedAt: string | null;
+  externalMessageId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -98,6 +104,11 @@ function toWebhookConfig(r: any): ChannelWebhookConfigRow {
     deliveryMode: r.delivery_mode,
     maxAttempts: Number(r.max_attempts ?? 8),
     backoffMsBase: Number(r.backoff_ms_base ?? 500),
+    enabled: r.enabled ?? true,
+    autoProvisioned: r.auto_provisioned ?? false,
+    admissionPolicy: r.admission_policy ?? 'open',
+    displayName: r.display_name ?? null,
+    setupState: r.setup_state ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -175,6 +186,7 @@ function toOutboxMessage(r: any): ChannelOutboxMessageRow {
     messageJson: r.message_json ?? {},
     deliveredAt: r.delivered_at,
     ackedAt: r.acked_at,
+    externalMessageId: r.external_message_id ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -193,14 +205,20 @@ export async function upsertWebhookConfig(params: {
   deliveryMode?: "sync" | "async";
   maxAttempts?: number;
   backoffMsBase?: number;
+  enabled?: boolean;
+  autoProvisioned?: boolean;
+  admissionPolicy?: string;
+  displayName?: string | null;
+  setupState?: Record<string, unknown> | null;
 }) {
   const providerConfig = params.providerConfig == null ? null : JSON.stringify(params.providerConfig);
   const secretEnvKey = params.secretEnvKey == null ? null : String(params.secretEnvKey);
   const secretId = params.secretId == null ? null : String(params.secretId);
+  const setupState = params.setupState == null ? null : JSON.stringify(params.setupState);
   const res = await params.pool.query(
     `
-      INSERT INTO channel_webhook_configs (tenant_id, provider, workspace_id, space_id, secret_env_key, secret_id, provider_config, tolerance_sec, delivery_mode, max_attempts, backoff_ms_base)
-      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11)
+      INSERT INTO channel_webhook_configs (tenant_id, provider, workspace_id, space_id, secret_env_key, secret_id, provider_config, tolerance_sec, delivery_mode, max_attempts, backoff_ms_base, enabled, auto_provisioned, admission_policy, display_name, setup_state)
+      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)
       ON CONFLICT (tenant_id, provider, workspace_id)
       DO UPDATE SET
         space_id = EXCLUDED.space_id,
@@ -211,6 +229,11 @@ export async function upsertWebhookConfig(params: {
         delivery_mode = EXCLUDED.delivery_mode,
         max_attempts = EXCLUDED.max_attempts,
         backoff_ms_base = EXCLUDED.backoff_ms_base,
+        enabled = COALESCE(EXCLUDED.enabled, channel_webhook_configs.enabled),
+        auto_provisioned = COALESCE(EXCLUDED.auto_provisioned, channel_webhook_configs.auto_provisioned),
+        admission_policy = COALESCE(EXCLUDED.admission_policy, channel_webhook_configs.admission_policy),
+        display_name = COALESCE(EXCLUDED.display_name, channel_webhook_configs.display_name),
+        setup_state = COALESCE(EXCLUDED.setup_state, channel_webhook_configs.setup_state),
         updated_at = now()
       RETURNING *
     `,
@@ -226,6 +249,11 @@ export async function upsertWebhookConfig(params: {
       params.deliveryMode ?? "sync",
       params.maxAttempts ?? 8,
       params.backoffMsBase ?? 500,
+      params.enabled ?? true,
+      params.autoProvisioned ?? false,
+      params.admissionPolicy ?? 'open',
+      params.displayName ?? null,
+      setupState,
     ],
   );
   return toWebhookConfig(res.rows[0]);
@@ -479,15 +507,16 @@ export async function insertOutboxMessage(params: {
   traceId: string;
   status: string;
   messageJson: any;
+  externalMessageId?: string;
 }) {
   const messageJson = JSON.stringify(params.messageJson ?? {});
   const res = await params.pool.query(
     `
-      INSERT INTO channel_outbox_messages (tenant_id, provider, workspace_id, channel_chat_id, to_user_id, request_id, trace_id, status, message_json)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+      INSERT INTO channel_outbox_messages (tenant_id, provider, workspace_id, channel_chat_id, to_user_id, request_id, trace_id, status, message_json, external_message_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
       RETURNING *
     `,
-    [params.tenantId, params.provider, params.workspaceId, params.channelChatId, params.toUserId ?? null, params.requestId, params.traceId, params.status, messageJson],
+    [params.tenantId, params.provider, params.workspaceId, params.channelChatId, params.toUserId ?? null, params.requestId, params.traceId, params.status, messageJson, params.externalMessageId ?? null],
   );
   return toOutboxMessage(res.rows[0]);
 }
@@ -664,4 +693,51 @@ export async function getLatestOutboxByRequestId(params: { pool: Pool; tenantId:
   );
   if (!res.rowCount) return null;
   return toOutboxMessage(res.rows[0]);
+}
+
+export async function updateWebhookConfigEnabled(params: {
+  pool: Pool; tenantId: string; provider: string; workspaceId: string; enabled: boolean;
+}): Promise<ChannelWebhookConfigRow | null> {
+  const { rows } = await params.pool.query(
+    `UPDATE channel_webhook_configs
+     SET enabled = $4, updated_at = now()
+     WHERE tenant_id = $1 AND provider = $2 AND workspace_id = $3
+     RETURNING *`,
+    [params.tenantId, params.provider, params.workspaceId, params.enabled]
+  );
+  return rows[0] ? toWebhookConfig(rows[0]) : null;
+}
+
+export async function updateWebhookConfigAdmissionPolicy(params: {
+  pool: Pool; tenantId: string; provider: string; workspaceId: string; admissionPolicy: string;
+}): Promise<ChannelWebhookConfigRow | null> {
+  const { rows } = await params.pool.query(
+    `UPDATE channel_webhook_configs
+     SET admission_policy = $4, updated_at = now()
+     WHERE tenant_id = $1 AND provider = $2 AND workspace_id = $3
+     RETURNING *`,
+    [params.tenantId, params.provider, params.workspaceId, params.admissionPolicy]
+  );
+  return rows[0] ? toWebhookConfig(rows[0]) : null;
+}
+
+export async function updateOutboxExternalMessageId(params: {
+  pool: Pool; id: string; externalMessageId: string;
+}): Promise<void> {
+  await params.pool.query(
+    `UPDATE channel_outbox_messages SET external_message_id = $1, updated_at = now() WHERE id = $2`,
+    [params.externalMessageId, params.id],
+  );
+}
+
+export async function deleteWebhookConfig(params: {
+  pool: Pool; tenantId: string; provider: string; workspaceId: string;
+}): Promise<ChannelWebhookConfigRow | null> {
+  const { rows } = await params.pool.query(
+    `DELETE FROM channel_webhook_configs
+     WHERE tenant_id = $1 AND provider = $2 AND workspace_id = $3
+     RETURNING *`,
+    [params.tenantId, params.provider, params.workspaceId]
+  );
+  return rows[0] ? toWebhookConfig(rows[0]) : null;
 }

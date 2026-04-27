@@ -5,6 +5,7 @@ import { resolveChannelSecretPayload } from "./channelSecret";
 import { feishuSendTextToChatWithRetry, getFeishuTenantAccessToken } from "./feishu";
 import type { ChannelProviderPlugin, IngressContext, ParsedInbound } from "./providerAdapters";
 import { registerChannelProvider } from "./providerAdapters";
+import { FeishuWsClient } from "./feishuLongConnection";
 
 function toTextPayload(raw: unknown) {
   if (typeof raw !== "string") return "";
@@ -17,6 +18,14 @@ function toTextPayload(raw: unknown) {
 
 const feishuPlugin: ChannelProviderPlugin = {
   provider: "feishu",
+  meta: {
+    provider: "feishu",
+    displayName: { zh: "飞书", en: "Feishu" },
+    icon: "feishu",
+    setupModes: ["qr"],
+    features: { admissionPolicy: true, groupChat: true, directMessage: true, richMessage: true },
+    supportsEdit: true,
+  },
 
   extractWorkspaceId(req) {
     const body = (req as any).body ?? {};
@@ -91,6 +100,37 @@ const feishuPlugin: ChannelProviderPlugin = {
     return { correlation, status: "succeeded" };
   },
 
+  buildSetupAuthorizeUrl({ redirectUri, state }) {
+    const appId = process.env.FEISHU_ISV_APP_ID || process.env.FEISHU_APP_ID || "";
+    const base = process.env.FEISHU_BASE_URL || "https://open.feishu.cn";
+    const u = new URL(`${base}/open-apis/authen/v1/authorize`);
+    u.searchParams.set("app_id", appId);
+    u.searchParams.set("redirect_uri", redirectUri);
+    u.searchParams.set("state", state);
+    u.searchParams.set("scope", "contact:user.base:readonly");
+    return u.toString();
+  },
+  async handleSetupCallback({ code }) {
+    const appId = process.env.FEISHU_ISV_APP_ID || process.env.FEISHU_APP_ID || "";
+    const appSecret = process.env.FEISHU_ISV_APP_SECRET || process.env.FEISHU_APP_SECRET || "";
+    const base = process.env.FEISHU_BASE_URL || "https://open.feishu.cn";
+    // 1. 用 code 换取 user_access_token
+    const tokenRes = await fetch(`${base}/open-apis/authen/v1/oidc/access_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${await getFeishuTenantAccessToken({ baseUrl: base, appId, appSecret })}` },
+      body: JSON.stringify({ grant_type: "authorization_code", code }),
+    });
+    const tokenJson: any = await tokenRes.json();
+    const tenantKey = String(tokenJson?.data?.tenant_key ?? "");
+    const displayName = String(tokenJson?.data?.name ?? "");
+    // 返回凭据供 setup 回调自动存储
+    return {
+      workspaceId: tenantKey || "default",
+      credentials: { appId, appSecret },
+      displayName: displayName || "飞书组织",
+    };
+  },
+
   async sendReply(ctx, text, chatId) {
     const cfg = ctx.cfg;
     const secretPayload = ctx.secretPayload;
@@ -106,7 +146,7 @@ const feishuPlugin: ChannelProviderPlugin = {
       (typeof (secretPayload as any).appSecret === "string" ? String((secretPayload as any).appSecret) : "");
     if (appId && appSecret) {
       const accessToken = await getFeishuTenantAccessToken({ baseUrl, appId, appSecret });
-      await feishuSendTextToChatWithRetry({
+      const json = await feishuSendTextToChatWithRetry({
         baseUrl,
         tenantAccessToken: accessToken,
         chatId,
@@ -114,9 +154,84 @@ const feishuPlugin: ChannelProviderPlugin = {
         maxAttempts: Math.min(3, Number(cfg.maxAttempts ?? 2)),
         backoffMsBase: Number(cfg.backoffMsBase ?? 200),
       });
+      return { messageId: json?.data?.message_id as string | undefined };
     }
+    return { messageId: undefined };
+  },
+
+  async editMessage(ctx, messageId, text, _chatId) {
+    const cfg = ctx.cfg;
+    const secretPayload = ctx.secretPayload;
+    const providerConfig = cfg.providerConfig && typeof cfg.providerConfig === "object" ? cfg.providerConfig : {};
+    const appIdEnvKey = String((providerConfig as any).appIdEnvKey ?? "");
+    const appSecretEnvKey = String((providerConfig as any).appSecretEnvKey ?? "");
+    const baseUrl = String(process.env.FEISHU_BASE_URL ?? "https://open.feishu.cn");
+    const appId =
+      (appIdEnvKey ? String(process.env[appIdEnvKey] ?? "") : "") ||
+      (typeof (secretPayload as any).appId === "string" ? String((secretPayload as any).appId) : "");
+    const appSecret =
+      (appSecretEnvKey ? String(process.env[appSecretEnvKey] ?? "") : "") ||
+      (typeof (secretPayload as any).appSecret === "string" ? String((secretPayload as any).appSecret) : "");
+    if (!appId || !appSecret) throw new Error("飞书凭据缺失，无法编辑消息");
+    const token = await getFeishuTenantAccessToken({ baseUrl, appId, appSecret });
+    const res = await fetch(`${baseUrl}/open-apis/im/v1/messages/${messageId}`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ msg_type: "text", content: JSON.stringify({ text }) }),
+    });
+    if (!res.ok) throw new Error(`飞书编辑消息失败: ${res.status}`);
+  },
+
+  // ─── 长连接 ───────────────────────────────────────────────────────────────
+
+  async startLongConnection({ credentials, onEvent }) {
+    const { appId, appSecret } = credentials;
+    const baseUrl = process.env.FEISHU_BASE_URL || "https://open.feishu.cn";
+
+    const client = new FeishuWsClient({ appId, appSecret, baseUrl });
+
+    client.on("event", async (eventData: any) => {
+      try {
+        // 跳过 url_verification 等非消息事件
+        const eventType = String(eventData?.header?.event_type ?? eventData?.type ?? "");
+        if (eventType === "url_verification") return;
+        // 必须有消息内容才路由到 pipeline
+        if (!eventData?.event?.message) return;
+
+        const parsed = parseWsEventToInbound(eventData);
+        await onEvent(parsed);
+      } catch (err: any) {
+        console.error("[feishu-ws] event handling error", err?.message ?? err);
+      }
+    });
+
+    await client.start();
+    return { stop: () => client.stop() };
   },
 };
+
+// ─── 长连接：从 WS 事件体提取 ParsedInbound（与 parseInbound 逻辑一致但不依赖 HTTP 请求） ───
+
+function parseWsEventToInbound(body: any): ParsedInbound {
+  const eventId = String(body?.header?.event_id ?? "").trim();
+  if (!eventId) throw new Error("eventId 缺失");
+  const channelChatId = String(body?.event?.message?.chat_id ?? "").trim();
+  const channelUserId = String(
+    body?.event?.sender?.sender_id?.open_id ?? body?.event?.sender?.sender_id?.user_id ?? ""
+  ).trim();
+  const msgText = toTextPayload(body?.event?.message?.content);
+  const timestampSec = Math.floor(Date.now() / 1000);
+  return {
+    workspaceId: String(body?.header?.tenant_key ?? body?.tenant_key ?? "").trim(),
+    eventId,
+    nonce: eventId,
+    timestampSec,
+    channelChatId,
+    channelUserId,
+    text: msgText,
+    rawBody: body,
+  };
+}
 
 registerChannelProvider(feishuPlugin);
 

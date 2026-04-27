@@ -4,7 +4,7 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "node --max-old-space-size=4096 ../../node_modules/next/dist/bin/next dev --webpack --hostname 127.0.0.1 --port 4000",
+    "dev": "node --max-old-space-size=4096 ../../node_modules/next/dist/bin/next dev --webpack --hostname 0.0.0.0 --port 4000",
     "build": "node --max-old-space-size=4096 ../../node_modules/next/dist/bin/next build",
     "start": "next start",
     "lint": "node scripts/check-no-zh.mjs && eslint --max-warnings 0",
