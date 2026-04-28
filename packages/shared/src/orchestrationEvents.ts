@@ -96,6 +96,25 @@ export enum OrchestrationCommandType {
   CANCEL_RUN = "cancel_run",
 }
 
+/* ================================================================== */
+/*  预检结果                                                            */
+/* ================================================================== */
+
+/** 预检诊断项 */
+export interface PreflightIssue {
+  code: string;
+  severity: "error" | "warning";
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+/** 统一预检结果 */
+export interface PreflightResult {
+  ok: boolean;
+  issues: PreflightIssue[];
+  requiredApprovals?: string[];
+}
+
 /** 调度指令信封 */
 export interface OrchestrationCommand {
   commandType: OrchestrationCommandType;

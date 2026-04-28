@@ -17,9 +17,76 @@ import {
 import { isToolAllowedByConstraints } from "./loopThinkDecide";
 import { getSharedSubClient } from "./loopRedisClient";
 import { ErrorCategory, StructuredLogger } from "@openslin/shared";
+import type { ToolSemanticMeta, SemanticAuditEntry, FallbackImpact } from "@openslin/shared";
+import { performance } from "node:perf_hooks";
 import { authorizeToolExecution, findFallbackTool, AGENT_LOOP_PERMISSION_FALLBACK } from "./loopPermissionUnified";
 
 const _logger = new StructuredLogger({ module: "loopToolExecutor" });
+
+/* ================================================================== */
+/*  Fallback 影响评估                                                    */
+/* ================================================================== */
+
+export function evaluateFallbackImpact(
+  originalMeta: ToolSemanticMeta | undefined,
+  fallbackMeta: ToolSemanticMeta | undefined,
+  _goalId: string,
+): FallbackImpact {
+  // 无元数据时默认无影响
+  if (!originalMeta || !fallbackMeta) {
+    return {
+      impact: "none",
+      originalOperationType: originalMeta?.operationType || "unknown",
+      fallbackOperationType: fallbackMeta?.operationType || "unknown",
+      reason: "Missing semantic metadata for impact evaluation",
+    };
+  }
+
+  // 1. 操作类型对等检查 — write→read / delete→non-delete 目标不可达
+  if (originalMeta.operationType === "write" && fallbackMeta.operationType === "read") {
+    return {
+      impact: "goal_unreachable",
+      originalOperationType: originalMeta.operationType,
+      fallbackOperationType: fallbackMeta.operationType,
+      reason: "Write operation fell back to read-only — original goal cannot be achieved",
+    };
+  }
+  if (originalMeta.operationType === "delete" && fallbackMeta.operationType !== "delete") {
+    return {
+      impact: "goal_unreachable",
+      originalOperationType: originalMeta.operationType,
+      fallbackOperationType: fallbackMeta.operationType,
+      reason: "Delete operation fell back to non-delete — original goal cannot be achieved",
+    };
+  }
+
+  // 2. 精确度降级检查
+  if (originalMeta.precisionLevel === "exact" && fallbackMeta.precisionLevel !== "exact") {
+    return {
+      impact: "degraded",
+      originalOperationType: originalMeta.operationType,
+      fallbackOperationType: fallbackMeta.operationType,
+      reason: `Precision degraded from ${originalMeta.precisionLevel} to ${fallbackMeta.precisionLevel}`,
+    };
+  }
+
+  // 3. 操作类型不同但非致命
+  if (originalMeta.operationType !== fallbackMeta.operationType) {
+    return {
+      impact: "degraded",
+      originalOperationType: originalMeta.operationType,
+      fallbackOperationType: fallbackMeta.operationType,
+      reason: `Operation type changed from ${originalMeta.operationType} to ${fallbackMeta.operationType}`,
+    };
+  }
+
+  return {
+    impact: "none",
+    originalOperationType: originalMeta.operationType,
+    fallbackOperationType: fallbackMeta.operationType,
+    reason: "Fallback tool is semantically equivalent",
+  };
+}
 
 /* ================================================================== */
 /*  Act — 执行单步工具调用                                               */
@@ -39,8 +106,8 @@ export async function executeToolCall(params: {
   seq: number;
   executionConstraints?: ExecutionConstraints;
   /** 可选：工具目录元数据，用于权限降级查找同 category 替代 */
-  toolCatalog?: Array<{ ref: string; category?: string; requiredAction?: string }>;
-}): Promise<{ stepId: string; ok: boolean; error?: string; executionTimeoutMs?: number }> {
+  toolCatalog?: Array<{ ref: string; category?: string; requiredAction?: string; semanticMeta?: ToolSemanticMeta }>;
+}): Promise<{ stepId: string; ok: boolean; error?: string; executionTimeoutMs?: number; fallbackImpact?: FallbackImpact }> {
   const { app, pool, queue, tenantId, spaceId, subjectId, traceId, runId, jobId, decision, seq, executionConstraints, toolCatalog } = params;
   const rawToolRef = decision.toolRef ?? "";
   if (!rawToolRef) return { stepId: "", ok: false, error: "missing_tool_ref" };
@@ -57,6 +124,7 @@ export async function executeToolCall(params: {
       return { stepId: "", ok: false, error: allowed.reason };
     }
     // ── 统一权限检查（合并 ABAC + 治理检查） ──
+    const permStart = performance.now();
     let authResult = await authorizeToolExecution({
       pool, subjectId, tenantId, spaceId, traceId, runId, jobId,
       resourceType: resolved.resourceType,
@@ -67,10 +135,12 @@ export async function executeToolCall(params: {
     if (!authResult.authorized) {
       // ── 权限降级尝试：在工具目录中查找同 category 的低权限替代 ──
       if (AGENT_LOOP_PERMISSION_FALLBACK && toolCatalog?.length) {
+        const originalCatalogEntry = toolCatalog.find(t => t.ref === resolved.toolRef);
         const fallbackRef = findFallbackTool(
           resolved.toolRef,
           toolCatalog,
           resolved.action,
+          originalCatalogEntry?.semanticMeta,
         );
         if (fallbackRef) {
           _logger.info("permission-fallback", { toolRef: resolved.toolRef, fallbackRef, runId });
@@ -83,10 +153,27 @@ export async function executeToolCall(params: {
             limits: executionConstraints as Record<string, unknown> | undefined,
           });
           if (fallbackAuth.authorized) {
+            // ── 语义漂移检测（通过 evaluateFallbackImpact 统一评估） ──
+            const originalMeta = originalCatalogEntry?.semanticMeta;
+            const fallbackCatalogEntry = toolCatalog.find(t => t.ref === fallbackRef);
+            const fallbackMeta = fallbackCatalogEntry?.semanticMeta;
+            const fbImpact = evaluateFallbackImpact(originalMeta, fallbackMeta, runId);
+            if (fbImpact.impact !== "none") {
+              const auditEntry: SemanticAuditEntry = {
+                timestamp: new Date().toISOString(),
+                originalToolId: resolved.toolRef,
+                fallbackToolId: fallbackRef,
+                impact: fbImpact,
+                goalId: runId,
+              };
+              _logger.warn("semantic-drift-detected", auditEntry as unknown as Record<string, unknown>);
+            }
             // 降级成功：用替代工具继续执行
             Object.assign(resolved, fallbackResolved);
             Object.assign(decision, { toolRef: fallbackRef });
             authResult = fallbackAuth;
+            // 将 fallbackImpact 暂存，在返回时一并传递
+            (params as any)._fallbackImpact = fbImpact;
           }
         }
       }
@@ -94,6 +181,8 @@ export async function executeToolCall(params: {
         return { stepId: "", ok: false, error: authResult.errorMessage ?? "权限检查未通过" };
       }
     }
+    const permDur = Math.round(performance.now() - permStart);
+    _logger.debug("permission-check", { permission_duration_ms: permDur, toolRef: rawToolRef, runId });
     const opDecision = authResult.opDecision!;
     // 权限通过后再做 schema 校验，避免权限拒绝时浪费 schema 解析
     validateToolInput(resolved.version.inputSchema, inputDraft);
@@ -133,7 +222,7 @@ export async function executeToolCall(params: {
       jobType: "agent.run",
       masterKey: app.cfg.secrets.masterKey,
     });
-    return { stepId: submitResult.stepId, ok: true, executionTimeoutMs: resolved.executionTimeoutMs };
+    return { stepId: submitResult.stepId, ok: true, executionTimeoutMs: resolved.executionTimeoutMs, fallbackImpact: (params as any)._fallbackImpact };
   } catch (err: any) {
     if (err?.httpStatus) {
       return { stepId: "", ok: false, error: `${ErrorCategory.GOVERNANCE_DENIED}: ${err.errorCode ?? err.message}` };
@@ -178,8 +267,13 @@ export async function waitForStepCompletion(
   timeoutMs = 120_000,
 ): Promise<{ status: string; outputDigest: any; output: any; errorCategory: string | null }> {
   // 先检查是否已经完成
+  const stepWaitStart = performance.now();
   const immediate = await queryStepTerminal(pool, stepId);
-  if (immediate) return immediate;
+  if (immediate) {
+    const stepWaitDur = Math.round(performance.now() - stepWaitStart);
+    _logger.debug("step-wait-immediate", { step_wait_duration_ms: stepWaitDur, stepId });
+    return immediate;
+  }
 
   if (signal?.aborted) {
     return { status: "canceled", outputDigest: null, output: null, errorCategory: ErrorCategory.INTERRUPTED };
@@ -187,11 +281,10 @@ export async function waitForStepCompletion(
 
   // 尝试通过 Redis Pub/Sub 等待事件通知，同时保留 DB 轮询兆底
   const channel = `step:done:${stepId}`;
-  const fallbackPollMs = 5_000;
 
   return new Promise<{ status: string; outputDigest: any; output: any; errorCategory: string | null }>((resolve) => {
     let settled = false;
-    let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
     // 2.1 FIX: 使用模块级懒单例 Redis 连接，避免每次调用创建新连接
     let subRegistered = false;
@@ -200,7 +293,7 @@ export async function waitForStepCompletion(
     let abortHandler: (() => void) | null = null;
 
     const cleanup = () => {
-      if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; }
+      if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
       if (timeoutTimer) { clearTimeout(timeoutTimer); timeoutTimer = null; }
       if (signal && abortHandler) {
         signal.removeEventListener("abort", abortHandler);
@@ -225,6 +318,8 @@ export async function waitForStepCompletion(
       if (settled) return;
       settled = true;
       cleanup();
+      const stepWaitDur = Math.round(performance.now() - stepWaitStart);
+      _logger.debug("step-wait", { step_wait_duration_ms: stepWaitDur, stepId });
       resolve(result);
     };
 
@@ -237,13 +332,23 @@ export async function waitForStepCompletion(
     abortHandler = () => settle({ status: "canceled", outputDigest: null, output: null, errorCategory: ErrorCategory.INTERRUPTED });
     signal?.addEventListener("abort", abortHandler, { once: true });
 
-    // DB 轮询兆底（防止 Redis 消息丢失）
-    fallbackTimer = setInterval(() => {
-      if (settled) return;
-      queryStepTerminal(pool, stepId)
-        .then((r) => { if (r) settle(r); })
-        .catch(() => { /* ignore, will retry next tick */ });
-    }, fallbackPollMs);
+    // DB 轮询兜底（防止 Redis 消息丢失）— 递增间隔策略
+    let pollCount = 0;
+    const getPollInterval = (): number => {
+      pollCount++;
+      if (pollCount <= 3) return 500;   // 前 1.5 秒：每 500ms 轮询一次
+      if (pollCount <= 8) return 1000;  // 接下来 5 秒：每 1s 轮询一次
+      return 3000;                       // 之后：每 3s 轮询一次
+    };
+    const schedulePoll = () => {
+      fallbackTimer = setTimeout(() => {
+        if (settled) return;
+        queryStepTerminal(pool, stepId)
+          .then((r) => { if (r) settle(r); else schedulePoll(); })
+          .catch(() => { schedulePoll(); });
+      }, getPollInterval());
+    };
+    schedulePoll();
 
     // Redis Pub/Sub 事件驱动（复用共享连接）
     (async () => {

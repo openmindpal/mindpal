@@ -30,7 +30,7 @@ import type {
   OrchestrationEventType,
 } from "@openslin/shared";
 import { StructuredLogger, tryTransitionAgent, mapOrchestrationToAgent } from "@openslin/shared";
-import type { AgentPhase } from "@openslin/shared";
+import type { AgentPhase, PreflightResult } from "@openslin/shared";
 
 import { runAgentLoop, type AgentLoopParams, type AgentLoopResult } from "./agentLoop";
 import type { LoopState } from "./loopLifecycle";
@@ -135,12 +135,7 @@ export interface IOrchestrationKernel {
     tenantId: string;
     toolRef?: string;
     subject?: { subjectId: string; roles?: string[] };
-  }): Promise<{
-    allowed: boolean;
-    reason?: string;
-    requiresApproval?: boolean;
-    assessmentContext?: unknown;
-  }>;
+  }): Promise<PreflightResult>;
 }
 
 /* ================================================================== */
@@ -388,7 +383,7 @@ export async function preflightCheck(params: {
   tenantId: string;
   toolRef?: string;
   subject?: { subjectId: string; roles?: string[] };
-}): Promise<{ allowed: boolean; reason?: string; requiresApproval?: boolean; assessmentContext?: unknown }> {
+}): Promise<PreflightResult> {
   const { pool, runId, stepId, tenantId, toolRef, subject } = params;
 
   // 1. 预算检查
@@ -402,16 +397,18 @@ export async function preflightCheck(params: {
     [runId, tenantId],
   );
 
-  if (runMeta.rowCount === 0) return { allowed: false, reason: "run_not_found" };
+  if (runMeta.rowCount === 0) {
+    return { ok: false, issues: [{ code: "RUN_NOT_FOUND", severity: "error", message: "run_not_found" }] };
+  }
   const meta = runMeta.rows[0];
 
   if (meta.max_steps && Number(meta.step_count) >= Number(meta.max_steps)) {
-    return { allowed: false, reason: "budget_exceeded_max_steps" };
+    return { ok: false, issues: [{ code: "BUDGET_EXCEEDED_STEPS", severity: "error", message: "budget_exceeded_max_steps" }] };
   }
   if (meta.max_wall_time_ms && meta.started_at) {
     const elapsed = Date.now() - new Date(meta.started_at).getTime();
     if (elapsed > Number(meta.max_wall_time_ms)) {
-      return { allowed: false, reason: "budget_exceeded_wall_time" };
+      return { ok: false, issues: [{ code: "BUDGET_EXCEEDED_WALL_TIME", severity: "error", message: "budget_exceeded_wall_time" }] };
     }
   }
   if (meta.max_tokens || meta.max_cost_usd) {
@@ -422,10 +419,10 @@ export async function preflightCheck(params: {
     );
     const u = usage.rows[0];
     if (meta.max_tokens && Number(u.tokens) >= Number(meta.max_tokens)) {
-      return { allowed: false, reason: "budget_exceeded_tokens" };
+      return { ok: false, issues: [{ code: "BUDGET_EXCEEDED_TOKENS", severity: "error", message: "budget_exceeded_tokens" }] };
     }
     if (meta.max_cost_usd && Number(u.cost) >= Number(meta.max_cost_usd)) {
-      return { allowed: false, reason: "budget_exceeded_cost" };
+      return { ok: false, issues: [{ code: "BUDGET_EXCEEDED_COST", severity: "error", message: "budget_exceeded_cost" }] };
     }
   }
 
@@ -442,7 +439,15 @@ export async function preflightCheck(params: {
         for (const t of (r.tool_policy?.allowedTools ?? [])) allowedTools.add(t);
       }
       if (allowedTools.size > 0 && !allowedTools.has(toolRef) && !allowedTools.has("*")) {
-        return { allowed: false, reason: `tool_not_allowed_for_roles: ${toolRef}` };
+        return {
+          ok: false,
+          issues: [{
+            code: "TOOL_NOT_ALLOWED_FOR_ROLES",
+            severity: "error",
+            message: `Tool ${toolRef} not allowed for role`,
+            details: { toolRef },
+          }],
+        };
       }
     }
   }
@@ -455,12 +460,16 @@ export async function preflightCheck(params: {
         pool, tenantId, toolRef, inputDraft: {},
       });
       if (assessment.approvalRequired) {
-        return { allowed: true, requiresApproval: true, assessmentContext: assessment };
+        return {
+          ok: true,
+          issues: [],
+          requiredApprovals: [(assessment as any).suggestedApprover ?? "default"],
+        };
       }
     } catch { /* 评估失败不阻断 */ }
   }
 
-  return { allowed: true };
+  return { ok: true, issues: [] };
 }
 
 /** 合并两个 AbortSignal（任一触发即 abort） */

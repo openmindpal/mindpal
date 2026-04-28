@@ -17,8 +17,7 @@ import {
   type DeviceModality,
 } from "@openslin/shared";
 
-import { invokeModelChatUpstreamStream } from "../model-gateway/modules/invokeChatUpstreamStream";
-import { upsertSessionContext } from "../../modules/memory/sessionContextRepo";
+import { orchestrateChatTurn } from "../orchestrator/modules/orchestrator";
 import type { DeviceStreamEvent } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "api:deviceMultimodal" });
@@ -136,10 +135,10 @@ function extractBase64Payload(dataUrl: string): string {
 }
 
 /**
- * 处理设备多模态查询（流式）
+ * 处理设备多模态查询
  *
- * 使用 invokeModelChatUpstreamStream 实现每个 delta 立即通过 WS 推送，
- * 采用 DeviceStreamEvent 协议（device_stream_start/delta/end/error）。
+ * 通过 orchestrateChatTurn 标准编排管线处理，自动获得会话持久化、工具执行与 toolContext 持久化能力，
+ * 回复结果通过 DeviceStreamEvent 协议（device_stream_start/delta/end/error）推送至设备端。
  */
 export async function processDeviceQuery(params: ProcessDeviceQueryParams): Promise<void> {
   const { ws, payload, deviceRecord, pool, app } = params;
@@ -184,109 +183,58 @@ export async function processDeviceQuery(params: ProcessDeviceQueryParams): Prom
       dataUrl: a.dataUrl!,
     }));
 
-  // 5. 构建 LLM 消息（参考 dispatch.streamAnswer.ts 的多模态内容构建方式）
-  const contentParts: Array<{ type: string; [k: string]: any }> = [];
-
-  const imageAtts = orchAttachments.filter((a) => a.type === "image" && a.dataUrl);
-  const voiceAtts = orchAttachments.filter((a) => a.type === "voice" && a.dataUrl);
-  const videoAtts = orchAttachments.filter((a) => a.type === "video" && a.dataUrl);
-
-  for (const att of imageAtts) {
-    contentParts.push({ type: "image_url", image_url: { url: att.dataUrl, detail: "auto" } });
-  }
-  for (const att of voiceAtts) {
-    contentParts.push({ type: "input_audio", input_audio: { data: extractBase64Payload(att.dataUrl), format: "wav" } });
-  }
-  for (const att of videoAtts) {
-    contentParts.push({ type: "video_url", video_url: { url: att.dataUrl } });
-  }
-
-  const userContent = contentParts.length > 0
-    ? [...contentParts, { type: "text" as const, text: message.trim() }]
-    : message.trim();
-
-  const messages: Array<{ role: string; content: string | Array<{ type: string; [k: string]: any }> }> = [
-    { role: "user", content: userContent },
-  ];
-
-  // 6. 发送流开始信号
+  // 5. 发送流开始信号
   safeSend(ws, { type: "device_stream_start", sessionId, streamId });
 
-  _logger.info("processing device query (streaming)", {
+  _logger.info("processing device query via orchestrateChatTurn", {
     deviceId: deviceRecord.deviceId,
     sessionId,
     streamId,
     messageLen: message.length,
     attachmentCount: orchAttachments.length,
     attachmentTypes: orchAttachments.map((a) => a.type),
+    conversationId: conversationId ?? null,
   });
 
-  // 7. 真流式调用
-  let fullText = "";
+  // 6. 调用标准编排管线（内置会话持久化 + 工具执行 + toolContext 持久化）
+  const traceId = `device_${deviceRecord.deviceId}_${Date.now()}`;
   try {
-    await invokeModelChatUpstreamStream({
+    const result = await orchestrateChatTurn({
       app,
+      pool,
       subject,
-      body: {
-        purpose: "device.multimodal.stream",
-        messages,
-        stream: true,
-        constraints: {},
-        ...(orchAttachments.length > 0 ? { attachments: orchAttachments as any } : {}),
-      },
+      message: message.trim(),
       locale: "zh-CN",
-      onDelta: (text: string) => {
-        fullText += text;
-        safeSend(ws, { type: "device_stream_delta", sessionId, streamId, delta: text });
-        safeSend(ws, { type: "device_response", sessionId, chunk: text });
-      },
+      conversationId: conversationId ?? undefined,
+      authorization: null,
+      traceId,
+      attachments: orchAttachments.length > 0 ? orchAttachments : undefined,
     });
 
+    const fullText = result.replyText ?? "";
+
+    // 将完整回复通过 WS 推送给设备端（保持 device_stream_delta/end 协议）
+    safeSend(ws, { type: "device_stream_delta", sessionId, streamId, delta: fullText });
+    safeSend(ws, { type: "device_response", sessionId, chunk: fullText });
     safeSend(ws, { type: "device_stream_end", sessionId, streamId, fullText });
     safeSend(ws, { type: "device_response", sessionId, chunk: fullText, done: true });
 
-    // ── 会话持久化：将本轮对话写入 session_contexts ──
-    if (conversationId && deviceRecord.spaceId) {
-      try {
-        const subjectId = deviceRecord.ownerSubjectId ?? `device:${deviceRecord.deviceId}`;
-        const nowIso = new Date().toISOString();
-        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-        await upsertSessionContext({
-          pool,
-          tenantId: deviceRecord.tenantId,
-          spaceId: deviceRecord.spaceId,
-          subjectId,
-          sessionId: conversationId,
-          context: {
-            v: 2,
-            messages: [
-              { role: "user", content: message.trim(), at: nowIso },
-              { role: "assistant", content: fullText, at: nowIso },
-            ],
-          },
-          expiresAt,
-        });
-      } catch (persistErr: any) {
-        _logger.warn("session persist failed (non-fatal)", { deviceId: deviceRecord.deviceId, conversationId, error: persistErr?.message });
-      }
-    }
-
-    _logger.info("device query completed (streaming)", {
+    _logger.info("device query completed via orchestrateChatTurn", {
       deviceId: deviceRecord.deviceId,
       sessionId,
       streamId,
-      conversationId: conversationId ?? null,
+      conversationId: result.conversationId ?? conversationId ?? null,
       replyLen: fullText.length,
+      hasToolSuggestions: !!(result as any).toolSuggestions,
     });
   } catch (err: any) {
-    _logger.error("device streaming failed, falling back to batch", {
+    _logger.error("device orchestrateChatTurn failed", {
       deviceId: deviceRecord.deviceId,
       sessionId,
       streamId,
       error: err?.message ?? "unknown",
     });
-    // 流式失败：发送错误信号
-    safeSend(ws, { type: "device_stream_error", sessionId, streamId, error: err?.message || "streaming failed" });
-    safeSend(ws, { type: "device_response", sessionId, error: err?.message || "streaming failed", done: true });
+    safeSend(ws, { type: "device_stream_error", sessionId, streamId, error: err?.message || "orchestration failed" });
+    safeSend(ws, { type: "device_response", sessionId, error: err?.message || "orchestration failed", done: true });
   }
 }

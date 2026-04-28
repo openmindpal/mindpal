@@ -6,7 +6,7 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import type { GoalGraph, WorldState } from "@openslin/shared";
+import type { GoalGraph, WorldState, FailureDiagnosis, FallbackImpact } from "@openslin/shared";
 import { ErrorCategory } from "@openslin/shared";
 import type { AgentDecision, StepObservation, ExecutionConstraints } from "./loopTypes";
 import type { VerificationResult } from "./verifierAgent";
@@ -135,8 +135,8 @@ export async function handleDoneAction(params: {
 
 export type ToolCallActionResult =
   | { outcome: "boundary_paused"; reason: string }
-  | { outcome: "validation_failed"; failObs: StepObservation }
-  | { outcome: "executed"; obs: StepObservation; succeeded: boolean; worldState: WorldState | null; goalGraph: GoalGraph | null; stepVerification?: import("./verifierAgent").StepVerificationResult };
+  | { outcome: "validation_failed"; failObs: StepObservation; diagnosis?: FailureDiagnosis }
+  | { outcome: "executed"; obs: StepObservation; succeeded: boolean; worldState: WorldState | null; goalGraph: GoalGraph | null; stepVerification?: import("./verifierAgent").StepVerificationResult; diagnosis?: FailureDiagnosis; fallbackImpact?: FallbackImpact };
 
 export async function handleToolCallAction(params: {
   app: FastifyInstance;
@@ -181,7 +181,7 @@ export async function handleToolCallAction(params: {
       reason: boundaryCheck.reason,
     }, "[AgentLoop] 检测到意图边界违例，触发熔断");
 
-    await insertAuditEvent(pool, {
+    insertAuditEvent(pool, {
       tenantId: subject.tenantId, spaceId: subject.spaceId,
       subjectId: subject.subjectId,
       resourceType: "intent_boundary", action: "violation_detected",
@@ -220,8 +220,9 @@ export async function handleToolCallAction(params: {
       status: "failed", outputDigest: { error: execResult.error },
       output: null, errorCategory: ErrorCategory.INPUT_VALIDATION_FAILED, durationMs: null,
     };
+    const diagnosis = diagnoseFailure(ErrorCategory.INPUT_VALIDATION_FAILED, failObs, goal);
     app.log.warn({ runId, toolRef: decision.toolRef, error: execResult.error }, "[AgentLoop] 工具验证失败");
-    return { outcome: "validation_failed", failObs };
+    return { outcome: "validation_failed", failObs, diagnosis };
   }
 
   // 等待步骤执行完成
@@ -259,5 +260,53 @@ export async function handleToolCallAction(params: {
     }
   }
 
-  return { outcome: "executed", obs, succeeded: stepResult.status === "succeeded", worldState, goalGraph: updatedGoalGraph, stepVerification };
+  // 失败诊断
+  const diagnosis = obs.status !== "succeeded" && obs.errorCategory
+    ? diagnoseFailure(obs.errorCategory, obs, goal)
+    : undefined;
+
+  return { outcome: "executed", obs, succeeded: stepResult.status === "succeeded", worldState, goalGraph: updatedGoalGraph, stepVerification, diagnosis, fallbackImpact: execResult.fallbackImpact };
+}
+
+/* ================================================================== */
+/*  失败诊断生成                                                        */
+/* ================================================================== */
+
+/** errorCategory → failureType 映射表 */
+const ERROR_CATEGORY_TO_FAILURE: Record<string, { failureType: string; isRetryable: boolean }> = {
+  [ErrorCategory.GOVERNANCE_DENIED]:       { failureType: "permission_denied",  isRetryable: false },
+  [ErrorCategory.GOVERNANCE_UNAVAILABLE]:  { failureType: "permission_denied",  isRetryable: false },
+  [ErrorCategory.INPUT_VALIDATION_FAILED]: { failureType: "precondition_unmet", isRetryable: true },
+  [ErrorCategory.STEP_TIMEOUT]:            { failureType: "timeout",            isRetryable: true },
+  [ErrorCategory.TOOL_UNAVAILABLE]:        { failureType: "tool_unavailable",   isRetryable: true },
+  [ErrorCategory.TOOL_EXECUTION_FAILED]:   { failureType: "output_invalid",     isRetryable: true },
+  [ErrorCategory.INTERRUPTED]:             { failureType: "interrupted",         isRetryable: false },
+  [ErrorCategory.DEADLETTER]:              { failureType: "deadletter",          isRetryable: false },
+  [ErrorCategory.COLLAB_ERROR]:            { failureType: "collab_error",        isRetryable: true },
+};
+
+/**
+ * 根据 errorCategory 映射生成失败诊断（纯规则映射，不调 LLM）
+ */
+function diagnoseFailure(
+  errorCategory: string,
+  stepResult: StepObservation,
+  goalId: string,
+): FailureDiagnosis {
+  const mapping = ERROR_CATEGORY_TO_FAILURE[errorCategory];
+  const failureType = mapping?.failureType ?? errorCategory;
+  const isRetryable = mapping?.isRetryable ?? true;
+
+  const rootCause =
+    (stepResult.outputDigest?.error as string | undefined)
+    ?? (stepResult.outputDigest?.message as string | undefined)
+    ?? "unknown";
+
+  return {
+    failureType,
+    affectedGoalId: goalId,
+    rootCause,
+    isRetryable,
+    suggestedActions: [],
+  };
 }

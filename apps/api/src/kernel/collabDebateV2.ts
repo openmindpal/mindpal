@@ -14,10 +14,10 @@ import {
   type DebateSession, type DebatePosition, type DebateRound,
   type DebateVerdict, type DebateParty, type DebateCorrection,
   type ConsensusEvolutionEntry,
-  collabConfig,
+  type DebateConfig,
 } from "@openslin/shared";
 import type { DebateV2PhaseParams } from "./collabTypes";
-import { buildDebateHistoryContext, writeDebateEnvelope } from "./collabDebate";
+import { buildDebateHistoryContext, writeDebateEnvelope, loadDebateConfig } from "./collabDebate";
 
 // ── N方辩论主入口 ──────────────────────────────────────────
 
@@ -28,15 +28,19 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
   } = params;
   const arbiterRole = params.arbiterRole ?? "orchestrator_arbiter";
   const maxIterationsPerRound = params.maxIterationsPerRound ?? 5;
-  const enableCorrection = params.enableCorrection !== false;
-  const consensusThreshold = params.consensusThreshold ?? 0.6;
+
+  // 从 approval_rules 动态加载辩论配置
+  const debateConfig = await loadDebateConfig(pool, subject.tenantId);
+
+  const enableCorrection = params.enableCorrection ?? debateConfig.allowCorrections;
+  const consensusThreshold = params.consensusThreshold ?? debateConfig.convergenceThreshold;
 
   const debateId = crypto.randomUUID();
   const session = createDebateSessionV2({
     debateId, collabRunId, topic,
     parties: parties.map(p => ({ partyId: p.agentId, role: p.role, stance: p.stance, budget: p.budget })),
     arbiter: arbiterRole,
-    maxRounds: params.maxRounds,
+    maxRounds: params.maxRounds ?? debateConfig.maxRounds,
   });
 
   app.log.info({
@@ -85,7 +89,7 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
       }
     }
 
-    const divergence = detectNPartyDivergence(roundPositions);
+    const divergence = detectNPartyDivergence(roundPositions, debateConfig);
     const debateRound: DebateRound = { round, positions: roundPositions, divergenceDetected: divergence };
     session.rounds.push(debateRound);
 
@@ -100,11 +104,11 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
       }
     }
 
-    const consensusEntry = computeConsensusEvolution(session, round);
+    const consensusEntry = computeConsensusEvolution(session, round, debateConfig);
     if (!session.consensusEvolution) session.consensusEvolution = [];
     session.consensusEvolution.push(consensusEntry);
 
-    if (isDebateConvergedV2(session, collabConfig("COLLAB_CONFIDENCE_THRESHOLD"), consensusThreshold)) {
+    if (isDebateConvergedV2(session, debateConfig.minConfidence, consensusThreshold)) {
       session.status = "converged";
       break;
     }
@@ -226,14 +230,14 @@ Structure your response as JSON:
   }
 }
 
-function detectNPartyDivergence(positions: DebatePosition[]): boolean {
+function detectNPartyDivergence(positions: DebatePosition[], config: DebateConfig): boolean {
   if (positions.length <= 1) return false;
   for (let i = 0; i < positions.length; i++) {
     for (let j = i + 1; j < positions.length; j++) {
-      if (Math.abs(positions[i]!.confidence - positions[j]!.confidence) > 0.4) return true;
+      if (Math.abs(positions[i]!.confidence - positions[j]!.confidence) > config.divergenceConfDiff * 2.5) return true;
     }
   }
-  return positions.reduce((s, p) => s + p.confidence, 0) / positions.length < 0.5;
+  return positions.reduce((s, p) => s + p.confidence, 0) / positions.length < config.minConfidence;
 }
 
 async function detectAndApplyCorrections(params: {
@@ -300,7 +304,7 @@ async function detectAndApplyCorrections(params: {
   return corrections;
 }
 
-function computeConsensusEvolution(session: DebateSession, round: number): ConsensusEvolutionEntry {
+function computeConsensusEvolution(session: DebateSession, round: number, config: DebateConfig): ConsensusEvolutionEntry {
   const lastRound = session.rounds[session.rounds.length - 1];
   const positions = lastRound?.positions ?? [];
   const partyPositions: Record<string, { claim: string; confidence: number }> = {};
@@ -309,9 +313,9 @@ function computeConsensusEvolution(session: DebateSession, round: number): Conse
   }
   const consensusScore = computeDebateConsensusScore(session);
   let consensusState: ConsensusEvolutionEntry["consensusState"] = "no_consensus";
-  if (consensusScore >= 0.8) consensusState = "full_consensus";
-  else if (consensusScore >= 0.6) consensusState = "majority_consensus";
-  else if (consensusScore >= 0.3) consensusState = "partial_consensus";
+  if (consensusScore >= config.convergenceThreshold) consensusState = "full_consensus";
+  else if (consensusScore >= config.minConfidence) consensusState = "majority_consensus";
+  else if (consensusScore >= config.minConfidence * 0.5) consensusState = "partial_consensus";
   return {
     step: (session.consensusEvolution?.length ?? 0) + 1, atRound: round, consensusState,
     partyPositions, agreedPoints: [],

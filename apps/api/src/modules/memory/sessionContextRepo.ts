@@ -6,6 +6,8 @@ export type SessionMessage = {
   role: SessionRole;
   content: string;
   at?: string;
+  /** 本轮工具调用结果摘要（用于后续轮次 LLM 上下文恢复） */
+  toolContext?: string;
 };
 
 export type SessionContext = {

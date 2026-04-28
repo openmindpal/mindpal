@@ -274,10 +274,6 @@ describe("relation auto-extraction", () => {
 /* ================================================================== */
 
 describe("evaluateCondition - relation_holds", () => {
-  // NOTE: evaluateCondition 当前未实现 relation_holds 分支，
-  // 会走 default 返回 condition.satisfied ?? false。
-  // 以下测试验证的是当前行为（未来实现后应更新）。
-
   function buildStateWithRelation(): ReturnType<typeof createWorldState> {
     let s = createWorldState(TEST_RUN_ID);
     s = upsertEntity(s, {
@@ -295,7 +291,7 @@ describe("evaluateCondition - relation_holds", () => {
     return s;
   }
 
-  it("should return satisfied value when relation_holds (not yet implemented)", () => {
+  it("should return true when matching relation exists", () => {
     const state = buildStateWithRelation();
     const goal = createGoalGraph(TEST_RUN_ID, "test");
     goal.subGoals = [{
@@ -305,7 +301,6 @@ describe("evaluateCondition - relation_holds", () => {
         description: "A produces B",
         assertionType: "relation_holds" as const,
         assertionParams: { fromEntity: "A", toEntity: "B", type: "produces" },
-        satisfied: true,
       }],
       postconditions: [],
       successCriteria: [],
@@ -313,11 +308,10 @@ describe("evaluateCondition - relation_holds", () => {
       priority: 5,
     }];
     const result = evaluateGoalConditions(goal, state);
-    // relation_holds 走 default 分支，返回 condition.satisfied ?? false
     expect(result.subGoals[0].preconditions[0].satisfied).toBe(true);
   });
 
-  it("should return false when relation_holds satisfied is undefined", () => {
+  it("should return false when relation does not exist", () => {
     const state = buildStateWithRelation();
     const goal = createGoalGraph(TEST_RUN_ID, "test");
     goal.subGoals = [{
@@ -327,7 +321,26 @@ describe("evaluateCondition - relation_holds", () => {
         description: "X produces Y",
         assertionType: "relation_holds" as const,
         assertionParams: { fromEntity: "X", toEntity: "Y", type: "produces" },
-        // satisfied 未设置 → undefined → false
+      }],
+      postconditions: [],
+      successCriteria: [],
+      completionEvidence: [],
+      priority: 5,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    expect(result.subGoals[0].preconditions[0].satisfied).toBe(false);
+  });
+
+  it("should return false when relation type does not match", () => {
+    const state = buildStateWithRelation();
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g3", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [{
+        description: "A modifies B",
+        assertionType: "relation_holds" as const,
+        assertionParams: { fromEntity: "A", toEntity: "B", type: "modifies" },
       }],
       postconditions: [],
       successCriteria: [],
@@ -544,5 +557,217 @@ describe("index functions", () => {
     expect(indexed._factKeyIdx).toBeDefined();
     expect(typeof indexed._factKeyIdx!["temp:high"]).toBe("number");
     expect(typeof indexed._factKeyIdx!["status:ok"]).toBe("number");
+  });
+});
+
+/* ================================================================== */
+/*  evaluateCondition - regex_match                                     */
+/* ================================================================== */
+
+describe("evaluateCondition - regex_match", () => {
+  const now = new Date().toISOString();
+
+  it("should match entity property value against regex", () => {
+    let state = createWorldState(TEST_RUN_ID);
+    state = upsertEntity(state, {
+      entityId: "e1", name: "Report", category: "artifact",
+      properties: { format: "PDF-v2.1" },
+      state: "active", confidence: 1, discoveredAt: now, updatedAt: now,
+    });
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g1", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [{
+        description: "Format is PDF",
+        assertionType: "regex_match" as const,
+        assertionParams: { entityName: "Report", property: "format", pattern: "^PDF" },
+      }],
+      postconditions: [], successCriteria: [], completionEvidence: [], priority: 5, edgeType: "sequential" as const,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    expect(result.subGoals[0].preconditions[0].satisfied).toBe(true);
+  });
+
+  it("should return false when regex does not match", () => {
+    let state = createWorldState(TEST_RUN_ID);
+    state = upsertEntity(state, {
+      entityId: "e1", name: "Report", category: "artifact",
+      properties: { format: "DOCX" },
+      state: "active", confidence: 1, discoveredAt: now, updatedAt: now,
+    });
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g1", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [{
+        description: "Format is PDF",
+        assertionType: "regex_match" as const,
+        assertionParams: { entityName: "Report", property: "format", pattern: "^PDF" },
+      }],
+      postconditions: [], successCriteria: [], completionEvidence: [], priority: 5,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    expect(result.subGoals[0].preconditions[0].satisfied).toBe(false);
+  });
+
+  it("should match against fact value by factKey", () => {
+    let state = createWorldState(TEST_RUN_ID);
+    state = upsertFact(state, {
+      factId: "f1", category: "observation", key: "output:format",
+      statement: "Output format is JSON", value: "application/json",
+      confidence: 1, valid: true, recordedAt: now,
+    });
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g1", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [{
+        description: "Output is JSON",
+        assertionType: "regex_match" as const,
+        assertionParams: { factKey: "output:format", pattern: "json$" },
+      }],
+      postconditions: [], successCriteria: [], completionEvidence: [], priority: 5, edgeType: "sequential" as const,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    expect(result.subGoals[0].preconditions[0].satisfied).toBe(true);
+  });
+});
+
+/* ================================================================== */
+/*  evaluateCondition - numeric_range                                   */
+/* ================================================================== */
+
+describe("evaluateCondition - numeric_range", () => {
+  const now = new Date().toISOString();
+
+  it("should return true when value is within range", () => {
+    let state = createWorldState(TEST_RUN_ID);
+    state = upsertEntity(state, {
+      entityId: "sensor1", name: "Thermometer", category: "external",
+      properties: { temperature: 25 },
+      state: "active", confidence: 1, discoveredAt: now, updatedAt: now,
+    });
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g1", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [{
+        description: "Temperature in range",
+        assertionType: "numeric_range" as const,
+        assertionParams: { entityName: "Thermometer", property: "temperature", min: 20, max: 30 },
+      }],
+      postconditions: [], successCriteria: [], completionEvidence: [], priority: 5, edgeType: "sequential" as const,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    expect(result.subGoals[0].preconditions[0].satisfied).toBe(true);
+  });
+
+  it("should return false when value is outside range", () => {
+    let state = createWorldState(TEST_RUN_ID);
+    state = upsertEntity(state, {
+      entityId: "sensor1", name: "Thermometer", category: "external",
+      properties: { temperature: 35 },
+      state: "active", confidence: 1, discoveredAt: now, updatedAt: now,
+    });
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g1", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [{
+        description: "Temperature in range",
+        assertionType: "numeric_range" as const,
+        assertionParams: { entityName: "Thermometer", property: "temperature", min: 20, max: 30 },
+      }],
+      postconditions: [], successCriteria: [], completionEvidence: [], priority: 5, edgeType: "sequential" as const,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    expect(result.subGoals[0].preconditions[0].satisfied).toBe(false);
+  });
+});
+
+/* ================================================================== */
+/*  evaluateSuccessCriterion - threshold strategy                       */
+/* ================================================================== */
+
+describe("evaluateSuccessCriterion - threshold strategy", () => {
+  it("threshold strategy should pass when ratio meets thresholdValue", () => {
+    // 构建含多个成功事实的 state
+    let state = createWorldState(TEST_RUN_ID);
+    state = upsertFact(state, {
+      factId: "f1", category: "observation", key: "s1",
+      statement: "Step alpha succeeded with beta output",
+      confidence: 1, valid: true, recordedAt: new Date().toISOString(),
+    });
+
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g1", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [], postconditions: [],
+      successCriteria: [{
+        criterionId: "sc1",
+        description: "alpha beta gamma delta",
+        weight: 1, required: true,
+        strategy: "threshold" as const,
+        thresholdValue: 0.5,
+      }],
+      completionEvidence: [], priority: 5, edgeType: "sequential" as const,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    // "alpha" 和 "beta" 匹配 (2/4 = 0.5)，满足 threshold=0.5
+    expect(result.subGoals[0].successCriteria[0].met).toBe(true);
+  });
+
+  it("threshold strategy should fail when ratio below thresholdValue", () => {
+    let state = createWorldState(TEST_RUN_ID);
+    state = upsertFact(state, {
+      factId: "f1", category: "observation", key: "s1",
+      statement: "Step alpha succeeded",
+      confidence: 1, valid: true, recordedAt: new Date().toISOString(),
+    });
+
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g1", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [], postconditions: [],
+      successCriteria: [{
+        criterionId: "sc2",
+        description: "alpha beta gamma delta",
+        weight: 1, required: true,
+        strategy: "threshold" as const,
+        thresholdValue: 0.8,
+      }],
+      completionEvidence: [], priority: 5, edgeType: "sequential" as const,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    // "alpha" 匹配 (1/4 = 0.25)，不满足 threshold=0.8
+    expect(result.subGoals[0].successCriteria[0].met).toBe(false);
+  });
+
+  it("any strategy should pass if any keyword matches", () => {
+    let state = createWorldState(TEST_RUN_ID);
+    state = upsertFact(state, {
+      factId: "f1", category: "observation", key: "s1",
+      statement: "Step alpha succeeded",
+      confidence: 1, valid: true, recordedAt: new Date().toISOString(),
+    });
+
+    const goal = createGoalGraph(TEST_RUN_ID, "test");
+    goal.subGoals = [{
+      goalId: "g1", parentGoalId: null, description: "test",
+      status: "in_progress" as const, dependsOn: [],
+      preconditions: [], postconditions: [],
+      successCriteria: [{
+        criterionId: "sc3",
+        description: "alpha beta gamma",
+        weight: 1, required: true,
+        strategy: "any" as const,
+      }],
+      completionEvidence: [], priority: 5, edgeType: "sequential" as const,
+    }];
+    const result = evaluateGoalConditions(goal, state);
+    expect(result.subGoals[0].successCriteria[0].met).toBe(true);
   });
 });

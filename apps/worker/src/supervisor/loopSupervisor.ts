@@ -253,4 +253,75 @@ export async function tickLoopSupervisor(deps: LoopSupervisorDeps): Promise<void
       ).catch(() => {});
     }
   }
+
+  /* ───── 协作运行超时检测与恢复 ───── */
+
+  const collabTimeoutMs = Math.max(15_000, Number(process.env.COLLAB_HEARTBEAT_TIMEOUT_MS) || 30_000);
+  const collabMaxResumes = Math.max(1, Number(process.env.COLLAB_MAX_RESUMES) || 3);
+
+  const { rows: staleCollabs } = await pool.query<{
+    collab_run_id: string; tenant_id: string; task_id: string; resume_count: number;
+  }>(
+    `SELECT collab_run_id, tenant_id, task_id, resume_count
+     FROM collab_runs
+     WHERE status = 'running'
+       AND heartbeat_at IS NOT NULL
+       AND heartbeat_at < NOW() - ($1 || ' milliseconds')::interval
+       AND resume_count < $2
+     ORDER BY heartbeat_at ASC
+     LIMIT 10`,
+    [collabTimeoutMs, collabMaxResumes],
+  );
+
+  for (const row of staleCollabs) {
+    // CAS 获取恢复锁（自包含 SQL，与 collabCheckpoint.ts 同构）
+    const lockRes = await pool.query(
+      `UPDATE collab_runs
+       SET status = 'resuming',
+           resume_count = resume_count + 1,
+           updated_at = NOW()
+       WHERE collab_run_id = $1
+         AND status IN ('running', 'paused')
+         AND checkpoint_state IS NOT NULL`,
+      [row.collab_run_id],
+    );
+    if ((lockRes.rowCount ?? 0) === 0) continue;
+
+    // 加载 checkpoint_state
+    const cpRes = await pool.query<{ checkpoint_state: any; resume_count: number }>(
+      `SELECT checkpoint_state, resume_count FROM collab_runs WHERE collab_run_id = $1 AND checkpoint_state IS NOT NULL`,
+      [row.collab_run_id],
+    );
+    if (!cpRes.rows[0]) continue;
+
+    if (queue) {
+      try {
+        await queue.add("collab_resume", {
+          collabRunId: row.collab_run_id,
+          tenantId: row.tenant_id,
+          taskId: row.task_id,
+          resumeState: cpRes.rows[0].checkpoint_state,
+        }, {
+          jobId: `collab_resume:${row.collab_run_id}:${cpRes.rows[0].resume_count}`,
+          priority: 1,
+          removeOnComplete: true,
+          removeOnFail: 3,
+        });
+        _logger.info("queued collab resume", { collabRunId: row.collab_run_id, resumeCount: cpRes.rows[0].resume_count });
+      } catch (e: any) {
+        _logger.error("collab resume enqueue failed", { collabRunId: row.collab_run_id, err: e?.message });
+        // 回退状态，让下次 tick 重试
+        await pool.query(
+          "UPDATE collab_runs SET status = 'running', updated_at = NOW() WHERE collab_run_id = $1",
+          [row.collab_run_id],
+        ).catch(() => {});
+      }
+    } else {
+      _logger.warn("no queue available for collab resume", { collabRunId: row.collab_run_id });
+      await pool.query(
+        "UPDATE collab_runs SET status = 'running', updated_at = NOW() WHERE collab_run_id = $1",
+        [row.collab_run_id],
+      ).catch(() => {});
+    }
+  }
 }

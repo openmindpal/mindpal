@@ -548,3 +548,77 @@ export function mergeWorldStates(
 
   return { merged, conflicts };
 }
+
+/* ================================================================== */
+/*  P0 失败诊断                                                         */
+/* ================================================================== */
+
+/** 失败诊断 — failureType 通过 SchemaRegistry 注册，Skill 可扩展 */
+export interface FailureDiagnosis {
+  /** 元数据定义的故障类型（内置：tool_unavailable | permission_denied | precondition_unmet | environment_changed | timeout | output_invalid） */
+  failureType: string;
+  /** 受影响的目标 ID */
+  affectedGoalId: string;
+  /** LLM 生成的根因分析 */
+  rootCause: string;
+  /** 是否可重试 */
+  isRetryable: boolean;
+  /** 建议的重规划动作列表 */
+  suggestedActions: ReplanAction[];
+}
+
+/** 重规划动作 — 失败后的恢复策略 */
+export type ReplanAction =
+  | { type: 'retry_with_params'; params: Record<string, unknown> }
+  | { type: 'substitute_tool'; toolId: string }
+  | { type: 'decompose_further'; subGoals: string[] }
+  | { type: 'skip_and_compensate'; compensationPlan: string }
+  | { type: 'abort_branch'; reason: string };
+
+/* ================================================================== */
+/*  P4 工具语义元数据                                                     */
+/* ================================================================== */
+
+/** 工具语义元数据 — 作为工具注册 Schema 的扩展字段 */
+export interface ToolSemanticMeta {
+  /** 操作类型（元数据定义：read | write | delete | transform | query） */
+  operationType: string;
+  /** 精度级别（exact | approximate | best_effort） */
+  precisionLevel: string;
+  /** 副作用列表 */
+  sideEffects: string[];
+  /** 语义等价工具（引用元数据注册表） */
+  semanticEquivalents: string[];
+  /** 明确不等价的工具 */
+  notEquivalentTo: string[];
+}
+
+/** fallback 影响评估 */
+export interface FallbackImpact {
+  /** 影响程度 */
+  impact: 'none' | 'degraded' | 'goal_unreachable';
+  /** 原始操作类型 */
+  originalOperationType: string;
+  /** 降级后操作类型 */
+  fallbackOperationType: string;
+  /** 影响原因 */
+  reason: string;
+}
+
+/* ================================================================== */
+/*  P4 语义审计                                                          */
+/* ================================================================== */
+
+/** fallback 审计条目 */
+export interface SemanticAuditEntry {
+  /** 审计时间 */
+  timestamp: string;
+  /** 原始工具 ID */
+  originalToolId: string;
+  /** 降级工具 ID */
+  fallbackToolId: string;
+  /** 影响评估 */
+  impact: FallbackImpact;
+  /** 关联目标 ID */
+  goalId: string;
+}

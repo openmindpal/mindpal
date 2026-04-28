@@ -221,3 +221,21 @@ CREATE INDEX IF NOT EXISTS idx_memory_entries_global_scope
 CREATE INDEX IF NOT EXISTS idx_memory_entries_global_distill_candidates
   ON memory_entries (tenant_id, memory_class, created_at DESC)
   WHERE deleted_at IS NULL AND distilled_to IS NULL AND scope = 'global';
+
+-- ============ merged from 033_memory_provenance.sql ============
+-- 033: 记忆来源追溯字段（P3 阶段一）
+
+-- 来源类型：元数据驱动，string 类型可通过 Schema 扩展
+ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS provenance_type TEXT DEFAULT 'unknown';
+
+-- 证据链引用
+ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS evidence_chain TEXT[] DEFAULT '{}';
+
+-- 索引优化：按来源类型快速筛选
+CREATE INDEX IF NOT EXISTS idx_memory_provenance_type ON memory_entries (provenance_type);
+
+-- ============ merged from 034_memory_conflict_array.sql ============
+-- P3 阶段三：将 conflict_marker 从单个 UUID 扩展为 UUID 数组，支持多版本冲突追踪
+ALTER TABLE memory_entries
+  ALTER COLUMN conflict_marker TYPE UUID[]
+  USING CASE WHEN conflict_marker IS NOT NULL THEN ARRAY[conflict_marker] ELSE NULL END;

@@ -382,3 +382,15 @@ CREATE TABLE IF NOT EXISTS knowledge_vector_store_configs (
 );
 
 COMMENT ON TABLE knowledge_vector_store_configs IS '向量存储后端配置，per-tenant/per-space 级别，支持 Qdrant/Milvus/External/PG Fallback';
+
+-- ============ merged from 032_collab_knowledge_enhance.sql (knowledge部分) ============
+-- 知识引擎：chunks 引用链与源定位字段补齐
+
+ALTER TABLE knowledge_chunks
+  ADD COLUMN IF NOT EXISTS citation_refs   JSONB NOT NULL DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS source_page     INT,
+  ADD COLUMN IF NOT EXISTS source_section  TEXT;
+
+COMMENT ON COLUMN knowledge_chunks.citation_refs  IS '引用链 [{chunkId, docId, relation}]';
+COMMENT ON COLUMN knowledge_chunks.source_page    IS '源文档页码（PDF 场景）';
+COMMENT ON COLUMN knowledge_chunks.source_section IS '源文档章节标识';

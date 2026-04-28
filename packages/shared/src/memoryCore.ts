@@ -287,7 +287,7 @@ export interface MemoryRerankInput {
   stage: string;
   confidence: number;
   factVersion: number;
-  conflictMarker: string | null;
+  conflictMarker: string[] | null;
   resolutionStatus: string | null;
   memoryClass: string;
   decayScore: number;
@@ -358,7 +358,7 @@ export function computeMemoryRerankScore(
   const fv = Number.isFinite(c.factVersion) ? c.factVersion : 1;
   const versionBoost = Math.min(fv / 10, 0.1);
   // 8. Conflict penalty
-  const hasConflict = c.conflictMarker && c.resolutionStatus !== "resolved" && c.resolutionStatus !== "superseded";
+  const hasConflict = c.conflictMarker && c.conflictMarker.length > 0 && c.resolutionStatus !== "resolved" && c.resolutionStatus !== "superseded";
   const conflictPenalty = hasConflict ? MEMORY_CONFLICT_PENALTY : 0;
   // 9. Class boost
   const classBoost = MEMORY_CLASS_WEIGHT[c.memoryClass ?? "semantic"] ?? 0;
@@ -397,3 +397,25 @@ export function computeMemoryRerankScore(
 export function escapeIlikePat(s: string): string {
   return s.replace(/[%_\\]/g, ch => "\\" + ch);
 }
+
+/* ══════════════════════════════════════════════════════════════════
+ * 7. 记忆来源可信度（P3）
+ * ══════════════════════════════════════════════════════════════════ */
+
+/** 记忆来源可信度配置 — sourceType 通过元数据 Schema 定义，租户可自定义 */
+export interface MemoryProvenanceConfig {
+  /** 来源类型（元数据定义，内置：user_input | tool_output | task_result | llm_inference） */
+  sourceType: string;
+  /** 初始可信度（覆盖默认 50） */
+  baseTrust: number;
+  /** 证据链引用 */
+  evidenceChain: string[];
+}
+
+/** 内置来源类型 → 默认可信度映射 */
+export const DEFAULT_SOURCE_TRUST_MAP: Record<string, number> = {
+  user_input: 85,
+  tool_output: 70,
+  task_result: 60,
+  llm_inference: 40,
+};

@@ -524,7 +524,7 @@ export async function runLifecycleWorker(params: {
   pool: Pool;
   tenantId?: string;
   spaceId?: string;
-  operations?: Array<"purge" | "compact" | "distill" | "distill_upgrade" | "decay">,
+  operations?: Array<"purge" | "compact" | "distill" | "distill_upgrade" | "decay" | "degrade_pending">,
   config?: Partial<LifecycleWorkerConfig>;
 }): Promise<LifecycleWorkerResult[]> {
   const operations = params.operations ?? ["purge"];
@@ -581,6 +581,16 @@ export async function runLifecycleWorker(params: {
       config: params.config,
     });
     results.push(decayResult);
+  }
+
+  // 6. P3: 过期 pending 记忆自动降级
+  if (operations.includes("degrade_pending")) {
+    const degradeResult = await degradeExpiredPendingMemories({
+      pool: params.pool,
+      tenantId: params.tenantId,
+      config: params.config,
+    });
+    results.push(degradeResult);
   }
 
   return results;
@@ -788,6 +798,72 @@ export async function distillUpgradeMemories(params: {
   }
 
   return { operation: "distill_upgrade", processed, affected, errors, details, durationMs: Date.now() - startTime, distilledEntryIds: distilledEntryIds.length > 0 ? distilledEntryIds : undefined };
+}
+
+/* ── P3: 过期 pending 记忆自动降级 ── */
+
+/**
+ * 超过 14 天未确认的 pending 记忆自动降级：
+ * - confidence -= 0.3（下限 0.0）
+ * - resolution_status → 'superseded'
+ *
+ * 仅处理 resolution_status = 'pending' 且 updated_at 超过 14 天的记忆。
+ */
+export async function degradeExpiredPendingMemories(params: {
+  pool: Pool;
+  tenantId?: string;
+  config?: Partial<LifecycleWorkerConfig>;
+}): Promise<LifecycleWorkerResult> {
+  const config = { ...DEFAULT_CONFIG, ...params.config };
+  const startTime = Date.now();
+  let affected = 0;
+  let errors = 0;
+
+  try {
+    const tenantFilter = params.tenantId ? "AND tenant_id = $1" : "";
+    const args = params.tenantId ? [params.tenantId] : [];
+
+    if (!config.dryRun) {
+      const res = await params.pool.query(
+        `UPDATE memory_entries
+         SET confidence = GREATEST(confidence - 0.3, 0.0),
+             resolution_status = 'superseded',
+             updated_at = now()
+         WHERE deleted_at IS NULL
+           AND resolution_status = 'pending'
+           AND updated_at < now() - INTERVAL '14 days'
+           ${tenantFilter}
+         RETURNING id`,
+        args,
+      );
+      affected = res.rowCount ?? 0;
+    } else {
+      const res = await params.pool.query(
+        `SELECT COUNT(*) AS cnt
+         FROM memory_entries
+         WHERE deleted_at IS NULL
+           AND resolution_status = 'pending'
+           AND updated_at < now() - INTERVAL '14 days'
+           ${tenantFilter}`,
+        args,
+      );
+      affected = Number((res.rows[0] as Record<string, unknown>)?.cnt ?? 0);
+    }
+
+    _logger.info("degrade_expired_pending", { affected, dryRun: config.dryRun, durationMs: Date.now() - startTime });
+  } catch (err) {
+    errors++;
+    _logger.error("degrade_expired_pending error", { err: (err as Error)?.message });
+  }
+
+  return {
+    operation: "degrade_expired_pending",
+    processed: affected,
+    affected,
+    errors,
+    details: affected > 0 ? [{ id: "-", action: config.dryRun ? "would_degrade" : "degraded", reason: `${affected} pending memories expired after 14 days` }] : [],
+    durationMs: Date.now() - startTime,
+  };
 }
 
 /* ── P1-3 Memory OS: 差异化衰减策略 ── */

@@ -92,6 +92,7 @@ export interface CollabBusConfig {
   redis?: {
     publish(channel: string, message: string): Promise<number>;
     xadd?(key: string, id: string, ...args: string[]): Promise<string>;
+    set?(key: string, value: string, ...args: Array<string | number>): Promise<string | null>;
   };
   backpressure?: Partial<BackpressureConfig>;
   /** Redis Stream 消费者组名，默认 "collabbus" */
@@ -282,7 +283,8 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
       await pool.query(
         `INSERT INTO collab_envelopes
          (tenant_id, space_id, collab_run_id, task_id, from_role, to_role, broadcast, kind, payload_digest)
-         VALUES ($1, $2, $3::uuid, $4::uuid, $5, $6, $7, $8, $9)`,
+         VALUES ($1, $2, $3::uuid, $4::uuid, $5, $6, $7, $8, $9)
+         ON CONFLICT (collab_run_id, message_id) DO NOTHING`,
         [
           msg.tenantId,
           spaceId ?? null,
@@ -362,6 +364,13 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
     async publish(msg, opts) {
       // Layer 1: 进程内分发（零延迟）
       dispatchWithBackpressure(msg);
+
+      // 消息去重 — 复用 D2D SETNX 模式
+      if (config.redis?.set) {
+        const dedupKey = `collab:dedup:${msg.collabRunId}:${msg.messageId}`;
+        const isNew = await config.redis.set(dedupKey, "1", "EX", 300, "NX");
+        if (!isNew) return; // 已投递，幂等跳过
+      }
 
       // Layer 2: Redis Stream / Pub/Sub（跨进程）
       writeRedisStream(msg).catch((e: unknown) => {

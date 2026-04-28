@@ -199,3 +199,26 @@ CREATE TABLE IF NOT EXISTS event_reasoning_rules (
 
 CREATE INDEX IF NOT EXISTS event_reasoning_rules_tenant_status_idx
   ON event_reasoning_rules (tenant_id, status, priority ASC);
+
+-- ============ merged from 030_channel_setup.sql ============
+-- 030: Channel setup enhancements — QR-code auto-provisioning support
+ALTER TABLE channel_webhook_configs
+  ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS auto_provisioned BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS admission_policy TEXT NOT NULL DEFAULT 'open',
+  ADD COLUMN IF NOT EXISTS display_name TEXT NULL,
+  ADD COLUMN IF NOT EXISTS setup_state JSONB NULL;
+
+-- admission_policy: 'open' (所有人可用) | 'pairing' (需配对)
+-- auto_provisioned: true 表示通过扫码自动创建
+-- setup_state: 存储平台返回的额外状态（如 webhook_registration_id）
+
+CREATE INDEX IF NOT EXISTS channel_webhook_configs_enabled_idx
+  ON channel_webhook_configs (tenant_id, enabled, provider);
+
+-- ============ merged from 031_outbox_external_msg_id.sql ============
+ALTER TABLE channel_outbox_messages
+  ADD COLUMN IF NOT EXISTS external_message_id TEXT NULL;
+
+COMMENT ON COLUMN channel_outbox_messages.external_message_id
+  IS '平台侧消息 ID，用于后续编辑/更新消息';

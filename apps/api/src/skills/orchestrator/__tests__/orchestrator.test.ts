@@ -143,25 +143,25 @@ describe("orchestrator/shouldTriggerEventDrivenSummary", () => {
 
 /* ── buildLightChatPrompt ── */
 describe("orchestrator/buildLightChatPrompt", () => {
-  it("should include memory context when provided", () => {
-    const prompt = buildLightChatPrompt("zh-CN", "用户偏好：深色模式");
-    expect(prompt).toContain("深色模式");
-    expect(prompt).toContain("相关记忆");
+  it("should include capability summary without memory", () => {
+    const prompt = buildLightChatPrompt("zh-CN");
+    expect(prompt).toBeTruthy();
+    expect(prompt).not.toContain("相关记忆");
   });
 
   it("should include summary context when provided", () => {
-    const prompt = buildLightChatPrompt("zh-CN", "", { totalTurnCount: 30, windowMessageCount: 10, summary: "之前讨论了项目进展" });
+    const prompt = buildLightChatPrompt("zh-CN", { totalTurnCount: 30, windowMessageCount: 10, summary: "之前讨论了项目进展" });
     expect(prompt).toContain("项目进展");
     expect(prompt).toContain("早期对话摘要");
   });
 
   it("should work for en-US locale", () => {
-    const prompt = buildLightChatPrompt("en-US", "user likes dark mode");
-    expect(prompt).toContain("Recalled Memory");
+    const prompt = buildLightChatPrompt("en-US");
+    expect(prompt).not.toContain("Recalled Memory");
   });
 
-  it("should work with empty memory context", () => {
-    const prompt = buildLightChatPrompt("zh-CN", "");
+  it("should work with no arguments except locale", () => {
+    const prompt = buildLightChatPrompt("zh-CN");
     expect(prompt).toBeTruthy();
     expect(prompt).not.toContain("相关记忆");
   });
@@ -170,30 +170,29 @@ describe("orchestrator/buildLightChatPrompt", () => {
 /* ── buildSystemPrompt ── */
 describe("orchestrator/buildSystemPrompt", () => {
   it("should include tool catalog when provided", () => {
-    const prompt = buildSystemPrompt("zh-CN", "", "", "tool1: description\ntool2: description");
+    const prompt = buildSystemPrompt("zh-CN", "", "tool1: description\ntool2: description");
     expect(prompt).toContain("Available Tools");
     expect(prompt).toContain("tool1");
   });
 
-  it("should include memory context", () => {
-    const prompt = buildSystemPrompt("zh-CN", "记忆内容", "", "");
-    expect(prompt).toContain("记忆内容");
-    expect(prompt).toContain("Recalled Memory");
+  it("should not include memory section", () => {
+    const prompt = buildSystemPrompt("zh-CN", "", "");
+    expect(prompt).not.toContain("Recalled Memory");
   });
 
   it("should include task context", () => {
-    const prompt = buildSystemPrompt("zh-CN", "", "最近任务列表", "");
+    const prompt = buildSystemPrompt("zh-CN", "最近任务列表", "");
     expect(prompt).toContain("最近任务列表");
     expect(prompt).toContain("Recent Tasks");
   });
 
   it("should include conversation context summary", () => {
-    const prompt = buildSystemPrompt("zh-CN", "", "", "", { totalTurnCount: 50, windowMessageCount: 10, summary: "摘要" });
+    const prompt = buildSystemPrompt("zh-CN", "", "", { totalTurnCount: 50, windowMessageCount: 10, summary: "摘要" });
     expect(prompt).toContain("摘要");
   });
 
   it("should include platform description", () => {
-    const prompt = buildSystemPrompt("zh-CN", "", "", "");
+    const prompt = buildSystemPrompt("zh-CN", "", "");
     expect(prompt).toContain("灵智Mindpal");
     expect(prompt).toContain("Agent OS");
   });

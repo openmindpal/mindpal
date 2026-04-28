@@ -17,9 +17,35 @@ import type { WorkflowQueue } from "../modules/workflow/queue";
 import {
   createDebateSessionV2, isDebateConvergedV2,
   type DebateSession, type DebatePosition, type DebateRound, type DebateVerdict,
-  collabConfig,
+  type DebateConfig, DEBATE_CONFIG_DEFAULTS,
 } from "@openslin/shared";
 import type { DebatePhaseParams } from "./collabTypes";
+import { loadApprovalRules } from "./approvalRuleEngine";
+
+// ── 辩论配置动态加载 ─────────────────────────────────────────
+
+/**
+ * 从 approval_rules 加载辩论配置（rule_type='debate_config'），
+ * 缺省用 DEBATE_CONFIG_DEFAULTS 兜底。
+ */
+export async function loadDebateConfig(pool: Pool, tenantId: string): Promise<DebateConfig> {
+  const rules = await loadApprovalRules({ pool, tenantId, ruleType: "debate_config" });
+  const cfg = (rules[0]?.metadata ?? {}) as Record<string, unknown>;
+  return {
+    maxRounds:                (cfg.maxRounds as number)                ?? DEBATE_CONFIG_DEFAULTS.maxRounds,
+    convergenceThreshold:     (cfg.convergenceThreshold as number)     ?? DEBATE_CONFIG_DEFAULTS.convergenceThreshold,
+    minConfidence:            (cfg.minConfidence as number)            ?? DEBATE_CONFIG_DEFAULTS.minConfidence,
+    arbiterModel:             cfg.arbiterModel as string | undefined,
+    allowCorrections:         (cfg.allowCorrections as boolean)        ?? DEBATE_CONFIG_DEFAULTS.allowCorrections,
+    requireEvidence:          (cfg.requireEvidence as boolean)         ?? DEBATE_CONFIG_DEFAULTS.requireEvidence,
+    scoreDecay:               (cfg.scoreDecay as number)               ?? DEBATE_CONFIG_DEFAULTS.scoreDecay,
+    correctionBonus:          (cfg.correctionBonus as number)          ?? DEBATE_CONFIG_DEFAULTS.correctionBonus,
+    consensusEvolutionWindow: (cfg.consensusEvolutionWindow as number) ?? DEBATE_CONFIG_DEFAULTS.consensusEvolutionWindow,
+    divergenceConfDiff:       (cfg.divergenceConfDiff as number)       ?? DEBATE_CONFIG_DEFAULTS.divergenceConfDiff,
+    minParties:               (cfg.minParties as number)               ?? DEBATE_CONFIG_DEFAULTS.minParties,
+    maxParties:               (cfg.maxParties as number)               ?? DEBATE_CONFIG_DEFAULTS.maxParties,
+  };
+}
 
 // ── P0-协作: 自主辩论机制 (v1) ────────────────────────────
 
@@ -39,6 +65,9 @@ export async function runDebatePhase(params: DebatePhaseParams): Promise<DebateS
   const arbiterRole = params.arbiterRole ?? "orchestrator_arbiter";
   const maxIterationsPerRound = params.maxIterationsPerRound ?? 5;
 
+  // 从 approval_rules 动态加载辩论配置
+  const debateConfig = await loadDebateConfig(pool, subject.tenantId);
+
   const debateId = crypto.randomUUID();
   const session = createDebateSessionV2({
     debateId, collabRunId, topic,
@@ -47,7 +76,7 @@ export async function runDebatePhase(params: DebatePhaseParams): Promise<DebateS
       { partyId: sideB.agentId, role: sideB.role, stance: "con" },
     ],
     arbiter: arbiterRole,
-    maxRounds: params.maxRounds,
+    maxRounds: params.maxRounds ?? debateConfig.maxRounds,
   });
 
   app.log.info({ debateId, topic, sideA: sideA.role, sideB: sideB.role, maxRounds: session.maxRounds },
@@ -87,7 +116,7 @@ export async function runDebatePhase(params: DebatePhaseParams): Promise<DebateS
     });
 
     // 检测分歧度
-    const divergence = detectDivergence(sideAPosition, sideBPosition);
+    const divergence = detectDivergence(sideAPosition, sideBPosition, debateConfig);
     const debateRound: DebateRound = {
       round,
       positions: [sideAPosition, sideBPosition],
@@ -280,9 +309,9 @@ function parseDebatePosition(params: {
 }
 
 /** 检测双方立场的分歧度 */
-function detectDivergence(posA: DebatePosition, posB: DebatePosition): boolean {
+function detectDivergence(posA: DebatePosition, posB: DebatePosition, config: DebateConfig): boolean {
   const confGap = Math.abs(posA.confidence - posB.confidence);
-  if (posA.confidence >= collabConfig("COLLAB_DIVERGENCE_MIN_CONF") && posB.confidence >= collabConfig("COLLAB_DIVERGENCE_MIN_CONF") && confGap <= collabConfig("COLLAB_DIVERGENCE_CONF_DIFF")) {
+  if (posA.confidence >= config.minConfidence && posB.confidence >= config.minConfidence && confGap <= config.divergenceConfDiff) {
     return false;
   }
   return true;

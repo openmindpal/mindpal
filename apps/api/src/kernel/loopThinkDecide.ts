@@ -33,7 +33,19 @@ export function formatToolCatalog(tools: EnabledTool[], locale: string): string 
     const description = typeof tool.def.description === "string"
       ? tool.def.description
       : String((tool.def.description as any)?.[locale] ?? (tool.def.description as any)?.["zh-CN"] ?? "");
-    return `- ${tool.toolRef} (${displayName}) [${tool.def.scope}/${tool.def.riskLevel}]${description ? ` - ${description}` : ""}`;
+    const inputFields = tool.ver?.inputSchema?.fields
+      ? Object.entries(tool.ver.inputSchema.fields as Record<string, any>)
+          .map(([k, v]) => {
+            const type = v?.type ?? "string";
+            const req = v?.required ? "*" : "";
+            const descRaw = typeof v?.description === "string" ? v.description : "";
+            const descShort = descRaw.length > 120 ? descRaw.slice(0, 120) + "..." : descRaw;
+            return `${k}:${type}${req}${descShort ? "(" + descShort + ")" : ""}`;
+          })
+          .join(", ")
+      : "";
+    const inputPart = inputFields ? ` | input: {${inputFields}}` : "";
+    return `- ${tool.toolRef} (${displayName}) [${tool.def.scope}/${tool.def.riskLevel}]${description ? ` - ${description}` : ""}${inputPart}`;
   }).join("\n");
 }
 
@@ -91,6 +103,8 @@ export function buildThinkPrompt(params: {
   strategyContext?: string;
   /** P2-触发器: 环境状态上下文（设备/模型/连接器状态摘要） */
   environmentContext?: string;
+  /** P2-召回反哺: 信息缺口（记忆召回检测到的未覆盖关键查询） */
+  informationGaps?: string[];
 }): { systemPrompt: string; userPrompt: string } {
   const { goal, toolCatalog, executionConstraints, completedSteps, lastObservation, userIntervention, memoryContext, taskHistory, knowledgeContext, strategyContext, environmentContext } = params;
 
@@ -202,6 +216,14 @@ ${environmentContext}
 `;
   }
 
+  if (params.informationGaps?.length) {
+    userPrompt += `
+## ⚠ Information Gaps
+The following critical information has NOT been retrieved and may need to be acquired first:
+${params.informationGaps.map(g => `- ${g}`).join("\n")}
+`;
+  }
+
   if (userIntervention) {
     userPrompt += `
 ## ⚠️ User Intervention (HIGHEST PRIORITY)
@@ -308,7 +330,7 @@ export interface DecisionQualityConfig {
 export function getDecisionQualityConfig(): DecisionQualityConfig {
   return {
     confidenceThreshold: resolveNumber("AGENT_LOOP_CONFIDENCE_THRESHOLD", undefined, undefined, 0.3).value,
-    maxRetries: resolveNumber("AGENT_LOOP_CONFIDENCE_MAX_RETRIES", undefined, undefined, 2).value,
+    maxRetries: resolveNumber("AGENT_LOOP_CONFIDENCE_MAX_RETRIES", undefined, undefined, 1).value,
   };
 }
 

@@ -581,6 +581,11 @@ export const knowledgeRoutes: FastifyPluginAsync = async (app) => {
           location: { chunkIndex: h.chunk_index, startOffset: h.start_offset, endOffset: h.end_offset },
           snippetDigest: { len: snippetRaw.length, sha256_8: crypto.createHash("sha256").update(snippetRaw, "utf8").digest("hex").slice(0, 8) },
           rankReason: h.rank_reason ?? { kind: rankPolicy },
+          // 引用链 + 源文档回溯字段
+          documentVersion: h.document_version,
+          citationRefs: h.citation_refs ?? [],
+          sourcePage: h.source_page ?? null,
+          sourceSection: h.source_section ?? h.hierarchy_path ?? null,
         };
       });
 
@@ -765,6 +770,10 @@ export const knowledgeRoutes: FastifyPluginAsync = async (app) => {
           snippetAllowed,
           policyRef: { strategyRef: log?.strategyRef ?? null, rankPolicy: log?.rankPolicy ?? null, vectorStoreRef: log?.vectorStoreRef ?? null, retrievalLogId: body.retrievalLogId ?? null },
           accessScope: { tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId ?? null },
+          // 引用链 + 源文档回溯字段
+          citationRefs: r.citation_refs ?? [],
+          sourcePage: r.source_page ?? null,
+          sourceSection: r.source_section ?? null,
         },
       };
     } catch (e: any) {
@@ -888,6 +897,10 @@ export const knowledgeRoutes: FastifyPluginAsync = async (app) => {
           snippetAllowed,
           policyRef: { strategyRef: log?.strategyRef ?? null, rankPolicy: log?.rankPolicy ?? null, vectorStoreRef: log?.vectorStoreRef ?? null, retrievalLogId: body.retrievalLogId ?? null },
           accessScope: { tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId ?? null },
+          // 引用链 + 源文档回溯字段
+          citationRefs: r.citation_refs ?? [],
+          sourcePage: r.source_page ?? null,
+          sourceSection: r.source_section ?? null,
         },
       });
     }

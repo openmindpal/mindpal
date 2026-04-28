@@ -405,18 +405,49 @@ async function executeMemoryRead(
   
   if (!query) {
     // 空 query → 列出最近记忆（如"显示我的记忆"）
-    const entries = await listMemoryEntries({
-      pool: ctx.pool,
-      tenantId: ctx.tenantId,
-      spaceId: ctx.spaceId,
-      subjectId: ctx.subjectId,
-      scope,
-      type: primaryType,
-      limit,
-      offset: 0,
-    });
+    // 当 types 有多个元素时，逐类型查询并合并去重，确保所有类型都被覆盖
+    let allEntries: Awaited<ReturnType<typeof listMemoryEntries>>;
+    if (types && types.length > 1) {
+      const perTypeLimit = Math.max(3, Math.ceil(limit / types.length));
+      const batches = await Promise.all(
+        types.map(t =>
+          listMemoryEntries({
+            pool: ctx.pool,
+            tenantId: ctx.tenantId,
+            spaceId: ctx.spaceId,
+            subjectId: ctx.subjectId,
+            scope,
+            type: t,
+            limit: perTypeLimit,
+            offset: 0,
+          }),
+        ),
+      );
+      const seenIds = new Set<string>();
+      const merged: typeof allEntries = [];
+      for (const batch of batches) {
+        for (const e of batch) {
+          if (!seenIds.has(e.id)) {
+            seenIds.add(e.id);
+            merged.push(e);
+          }
+        }
+      }
+      allEntries = merged.slice(0, limit);
+    } else {
+      allEntries = await listMemoryEntries({
+        pool: ctx.pool,
+        tenantId: ctx.tenantId,
+        spaceId: ctx.spaceId,
+        subjectId: ctx.subjectId,
+        scope,
+        type: primaryType,
+        limit,
+        offset: 0,
+      });
+    }
     return {
-      evidence: entries.map(e => ({
+      evidence: allEntries.map(e => ({
         id: e.id,
         type: e.type,
         scope: e.scope,
@@ -424,7 +455,7 @@ async function executeMemoryRead(
         snippet: (e.title ? e.title + "\n" : "") + (e.contentText ?? "").slice(0, 300),
         createdAt: e.createdAt,
       })),
-      candidateCount: entries.length,
+      candidateCount: allEntries.length,
     };
   }
 

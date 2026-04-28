@@ -484,7 +484,7 @@ async function _handleApprovalOrEnqueue(params: {
   const stepId = step.stepId ?? step.step_id;
 
   // ── 编排预检：预算 / 角色工具策略 / 审批需求评估 ──
-  let preflightResult: { allowed: boolean; reason?: string; requiresApproval?: boolean; assessmentContext?: unknown } | null = null;
+  let preflightResult: import("@openslin/shared").PreflightResult | null = null;
   try {
     preflightResult = await preflightCheck({
       pool, runId, stepId, tenantId,
@@ -504,8 +504,8 @@ async function _handleApprovalOrEnqueue(params: {
     );
 
     // 预检不通过：停止 run 并标记 step 失败
-    if (!preflightResult.allowed) {
-      _kernelLogger.warn("preflight rejected", { runId, stepId, reason: preflightResult.reason });
+    if (!preflightResult.ok) {
+      _kernelLogger.warn("preflight rejected", { runId, stepId, reason: preflightResult.issues[0]?.message ?? "preflight_denied" });
       await pool.query(
         "UPDATE steps SET status = 'failed', updated_at = now(), finished_at = now() WHERE step_id = $1",
         [stepId],
@@ -531,7 +531,7 @@ async function _handleApprovalOrEnqueue(params: {
   });
 
   // 预检要求审批时，强制进入审批流程
-  if (preflightResult?.requiresApproval || approvalRequired) {
+  if ((preflightResult?.requiredApprovals?.length ?? 0) > 0 || approvalRequired) {
     await markStepNeedsApproval(pool, stepId);
     if (JSON.stringify(step.inputDigest ?? null) !== JSON.stringify(approvalInputDigest ?? null)) {
       await updateInputDigest(pool, { stepId, runId, inputDigest: approvalInputDigest });

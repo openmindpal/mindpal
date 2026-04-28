@@ -232,7 +232,7 @@ export async function processKnowledgeEmbeddingJob(params: { pool: Pool; embeddi
   try {
     const chunksRes = await params.pool.query(
       `
-        SELECT id, snippet
+        SELECT id, chunk_index, snippet, content_digest
         FROM knowledge_chunks
         WHERE tenant_id=$1 AND space_id=$2 AND document_id=$3 AND document_version=$4
         ORDER BY chunk_index ASC
@@ -246,19 +246,71 @@ export async function processKnowledgeEmbeddingJob(params: { pool: Pool; embeddi
     const nowIso = new Date().toISOString();
     const embeddings: any[] = [];
 
+    /* ── 增量更新：查询旧版本中 digest 匹配的 chunks，复用 embedding ── */
+    const reusableMap = new Map<string, { embedding_vector: any; embedding_minhash: any; embedding_model_ref: string }>();
+    let reusedCount = 0;
+    if (documentVersion > 1) {
+      try {
+        const newDigests = chunks.map((c: any) => String(c.content_digest ?? "")).filter(Boolean);
+        if (newDigests.length > 0) {
+          const prevRes = await params.pool.query(
+            `
+              SELECT content_digest, embedding_vector, embedding_minhash, embedding_model_ref
+              FROM knowledge_chunks
+              WHERE tenant_id = $1 AND space_id = $2 AND document_id = $3
+                AND document_version = $4
+                AND content_digest = ANY($5)
+                AND embedding_model_ref IS NOT NULL
+            `,
+            [tenantId, spaceId, documentId, documentVersion - 1, newDigests],
+          );
+          for (const row of prevRes.rows as any[]) {
+            if (row.content_digest && (row.embedding_vector || row.embedding_minhash)) {
+              reusableMap.set(String(row.content_digest), row);
+            }
+          }
+          if (reusableMap.size > 0) {
+            _logger.info("incremental reuse candidates found", { documentId, oldVersion: documentVersion - 1, candidates: reusableMap.size, totalChunks: chunks.length });
+          }
+        }
+      } catch (e: any) {
+        _logger.warn("incremental digest lookup failed, falling back to full embedding", { err: e?.message ?? e });
+        reusableMap.clear();
+      }
+    }
+
+    /* 标记可复用的 chunks（digest 匹配且有 embedding） */
+    const chunkReuse: boolean[] = new Array(chunks.length).fill(false);
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const digest = String(chunks[ci]!.content_digest ?? "");
+      if (digest && reusableMap.has(digest)) {
+        chunkReuse[ci] = true;
+        reusedCount++;
+      }
+    }
+
     /* 尝试加载 per-tenant/per-space Embedding 模型配置（数据库优先） */
     let extCfg = await resolveEmbeddingConfigFromDb(params.pool, tenantId, spaceId);
     if (!extCfg) extCfg = resolveExternalEmbeddingConfig();
-    let externalVectors: number[][] | null = null;
-    if (extCfg) {
+    let externalVectors: (number[] | null)[] = new Array(chunks.length).fill(null);
+    const chunksToEmbed = chunks
+      .map((c: any, i: number) => ({ index: i, snippet: String(c.snippet ?? "").slice(0, 8000) }))
+      .filter((_, i) => !chunkReuse[i]);
+
+    if (extCfg && chunksToEmbed.length > 0) {
       try {
-        const texts = chunks.map((c) => String(c.snippet ?? "").slice(0, 8000));
-        externalVectors = await fetchExternalEmbeddings(extCfg, texts);
-        _logger.info("external vectors returned", { model: extCfg.model, count: externalVectors.length, dimensions: externalVectors[0]?.length ?? 0 });
+        const texts = chunksToEmbed.map((c) => c.snippet);
+        const vectors = await fetchExternalEmbeddings(extCfg, texts);
+        for (let j = 0; j < chunksToEmbed.length; j++) {
+          externalVectors[chunksToEmbed[j]!.index] = vectors[j] ?? null;
+        }
+        _logger.info("external vectors returned", { model: extCfg.model, count: vectors.length, dimensions: vectors[0]?.length ?? 0, skippedReused: reusedCount });
       } catch (e: any) {
         _logger.error("external embedding failed, fallback to minhash", { err: e?.message ?? e });
-        externalVectors = null;
+        externalVectors = new Array(chunks.length).fill(null);
       }
+    } else if (extCfg && chunksToEmbed.length === 0) {
+      _logger.info("all chunks reused from previous version, skipping embedding API call", { documentId, version: documentVersion, reusedCount });
     }
 
     for (let ci = 0; ci < chunks.length; ci++) {
@@ -267,11 +319,46 @@ export async function processKnowledgeEmbeddingJob(params: { pool: Pool; embeddi
       const snippet = String(c.snippet ?? "");
       if (!id) continue;
 
+      /* 增量复用：digest 匹配的 chunk 直接复制旧版本的 embedding */
+      const digest = String(c.content_digest ?? "");
+      const reused = chunkReuse[ci] ? reusableMap.get(digest) : undefined;
+
+      if (reused) {
+        const reusedModelRef = String(reused.embedding_model_ref ?? modelRef);
+        const reusedMinhash = Array.isArray(reused.embedding_minhash) ? reused.embedding_minhash : computeMinhash(snippet, k);
+        const reusedVec = reused.embedding_vector;
+        if (reusedVec) {
+          await params.pool.query(
+            `UPDATE knowledge_chunks
+             SET embedding_model_ref=$2, embedding_minhash=$3, embedding_vector=$6, embedding_updated_at=now()
+             WHERE id=$1 AND tenant_id=$4 AND space_id=$5`,
+            [id, reusedModelRef, reusedMinhash, tenantId, spaceId, typeof reusedVec === "string" ? reusedVec : JSON.stringify(reusedVec)],
+          );
+        } else {
+          await params.pool.query(
+            `UPDATE knowledge_chunks
+             SET embedding_model_ref=$2, embedding_minhash=$3, embedding_updated_at=now()
+             WHERE id=$1 AND tenant_id=$4 AND space_id=$5`,
+            [id, reusedModelRef, reusedMinhash, tenantId, spaceId],
+          );
+        }
+        embeddings.push({
+          chunkId: id,
+          documentId,
+          documentVersion,
+          embeddingModelRef: reusedModelRef,
+          vector: reusedVec ?? reusedMinhash,
+          updatedAt: nowIso,
+        });
+        updated++;
+        continue;
+      }
+
       /* minhash 始终计算（作为回退和 GIN 索引） */
       const minhash = computeMinhash(snippet, k);
 
       /* 如果有外部向量，也保存到 embedding_vector 列 */
-      const extVec = externalVectors && ci < externalVectors.length ? externalVectors[ci] : null;
+      const extVec = externalVectors[ci];
       const effectiveModelRef = extVec ? `${extCfg!.model}:${extCfg!.dimensions}` : modelRef;
 
       if (extVec) {
@@ -309,16 +396,24 @@ export async function processKnowledgeEmbeddingJob(params: { pool: Pool; embeddi
       const v2Chain = createVectorStoreChainFromEnv();
       if (v2Chain.capabilities().provider !== "fallback") {
         const collectionName = `kn_${tenantId.slice(0, 8)}_${spaceId.slice(0, 8)}`;
-        const dimension = externalVectors && externalVectors.length > 0 && externalVectors[0]!.length > 0
-          ? externalVectors[0]!.length
-          : 0;
+        const dimension = externalVectors.some(v => v !== null && v.length > 0)
+          ? externalVectors.find(v => v !== null && v!.length > 0)!.length
+          : (reusableMap.size > 0 ? (() => { for (const r of reusableMap.values()) { if (Array.isArray(r.embedding_vector) && r.embedding_vector.length > 0) return r.embedding_vector.length; } return 0; })() : 0);
         if (dimension > 0) {
           await v2Chain.ensureCollection({ name: collectionName, dimension, distance: "cosine" });
           const v2Embeddings: VectorStoreEmbeddingV2[] = [];
           for (let ci2 = 0; ci2 < chunks.length; ci2++) {
             const c2 = chunks[ci2]!;
-            const extVec2 = externalVectors && ci2 < externalVectors.length ? externalVectors[ci2] : null;
+            /* 增量复用的 chunk 也需要写入 V2 向量存储 */
+            const digest2 = String(c2.content_digest ?? "");
+            const reused2 = chunkReuse[ci2] ? reusableMap.get(digest2) : undefined;
+            const extVec2 = reused2?.embedding_vector
+              ? (Array.isArray(reused2.embedding_vector) ? reused2.embedding_vector : null)
+              : (externalVectors[ci2] ?? null);
             if (extVec2 && extVec2.length > 0) {
+              const v2ModelRef = extCfg
+                ? `${extCfg.model}:${extCfg.dimensions}`
+                : String(reused2?.embedding_model_ref ?? modelRef);
               v2Embeddings.push({
                 id: String(c2.id ?? ""),
                 vector: extVec2,
@@ -328,7 +423,7 @@ export async function processKnowledgeEmbeddingJob(params: { pool: Pool; embeddi
                   documentId,
                   documentVersion,
                   chunkIndex: ci2,
-                  embeddingModelRef: `${extCfg!.model}:${extCfg!.dimensions}`,
+                  embeddingModelRef: v2ModelRef,
                 },
                 updatedAt: nowIso,
               });
@@ -346,13 +441,22 @@ export async function processKnowledgeEmbeddingJob(params: { pool: Pool; embeddi
 
     await params.pool.query("UPDATE knowledge_embedding_jobs SET status='succeeded', last_error=NULL, updated_at=now() WHERE id=$1", [params.embeddingJobId]);
     const latencyMs = Date.now() - startedAt;
+    _logger.info("incremental indexing complete", {
+      documentId,
+      oldVersion: documentVersion > 1 ? documentVersion - 1 : null,
+      newVersion: documentVersion,
+      totalChunks: chunks.length,
+      reusedChunks: reusedCount,
+      newEmbeddings: chunks.length - reusedCount,
+      latencyMs,
+    });
     await writeAudit(params.pool, {
       traceId,
       tenantId,
       spaceId,
       action: "embed",
       inputDigest: { embeddingJobId: params.embeddingJobId, documentId, version: documentVersion, modelRef },
-      outputDigest: { chunkCount: chunks.length, updatedCount: updated, latencyMs, vectorStoreRef: vectorStore.ref, vectorStoreUpsert: upsertRes, v2UpsertRes: v2UpsertRes ?? undefined },
+      outputDigest: { chunkCount: chunks.length, updatedCount: updated, reusedChunks: reusedCount, newEmbeddings: chunks.length - reusedCount, latencyMs, vectorStoreRef: vectorStore.ref, vectorStoreUpsert: upsertRes, v2UpsertRes: v2UpsertRes ?? undefined },
     });
   } catch (e: any) {
     const msg = String(e?.message ?? e);

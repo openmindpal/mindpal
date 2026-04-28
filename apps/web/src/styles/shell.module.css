@@ -1186,7 +1186,7 @@
 
 /* ─── StatusBar ─────────────────────────────────────────────────────────── */
 
-.statusBar { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: var(--sl-surface); border-radius: 6px; font-size: 12px; }
+.statusBar { position: relative; display: inline-flex; align-items: center; }
 .loading { color: var(--sl-text-muted); font-size: 14px; letter-spacing: 2px; animation: sbPulse 1s ease-in-out infinite; }
 
 @keyframes sbPulse {
@@ -1195,15 +1195,24 @@
 }
 
 .errorDot { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--sl-danger-bg); color: var(--sl-danger); font-weight: 600; font-size: 12px; }
-.badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 12px; text-decoration: none; font-weight: 500; font-size: 12px; transition: all var(--sl-transition-fast); cursor: pointer; }
-.badge:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
-.badgeIcon { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.badgeCount { font-variant-numeric: tabular-nums; }
-.badge_neutral { background: var(--sl-bg-muted); color: var(--sl-text-muted); }
-.badge_neutral:hover { background: var(--sl-bg); color: var(--sl-text); }
-.badge_warning { background: var(--sl-warning-bg, #fef3c7); color: var(--sl-warning, #d97706); }
-.badge_warning:hover { background: var(--sl-warning-bg-hover, #fde68a); }
-.badge_danger { background: var(--sl-danger-bg, #fee2e2); color: var(--sl-danger, #dc2626); }
-.badge_danger:hover { background: var(--sl-danger-bg-hover, #fecaca); }
-.badge_success { background: var(--sl-success-bg, #d1fae5); color: var(--sl-success, #059669); }
-.badge_success:hover { background: var(--sl-success-bg-hover, #a7f3d0); }
+
+/* Collapsed status indicator */
+.sbIndicator { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent; cursor: pointer; transition: background 0.15s; padding: 0; }
+.sbIndicator:hover { background: var(--sl-hover); }
+.sbDot { width: 8px; height: 8px; border-radius: 50%; transition: background 0.2s, box-shadow 0.2s; }
+.sbDotOk { background: var(--sl-success, #22c55e); }
+.sbDotWarn { background: var(--sl-warning, #f59e0b); box-shadow: 0 0 6px var(--sl-warning, #f59e0b); animation: sbPulse 1.5s ease-in-out infinite; }
+.sbDotError { background: var(--sl-error, #dc2626); box-shadow: 0 0 6px var(--sl-error, #dc2626); animation: sbPulse 1.5s ease-in-out infinite; }
+
+/* Detail popover */
+.sbPopover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 50; min-width: 220px; background: var(--sl-surface); border: 1px solid var(--sl-border); border-radius: var(--sl-radius-2, 8px); box-shadow: var(--sl-shadow-3, 0 8px 24px rgba(0,0,0,0.12)); padding: 8px 0; animation: sbSlideIn 0.12s ease-out; }
+@keyframes sbSlideIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.sbPopoverRow { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 12px; color: var(--sl-fg-secondary); text-decoration: none; transition: background 0.12s; }
+.sbPopoverRow:hover { background: var(--sl-hover); }
+.sbPopoverIcon { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex-shrink: 0; }
+.sbPopoverLabel { flex: 1; }
+.sbPopoverCount { font-weight: 600; font-variant-numeric: tabular-nums; min-width: 20px; text-align: right; }
+.sbCountDanger { color: var(--sl-error, #dc2626); }
+.sbCountWarning { color: var(--sl-warning, #d97706); }
+.sbCountOk { color: var(--sl-muted); }
+.sbPopoverBackdrop { position: fixed; inset: 0; z-index: 49; }

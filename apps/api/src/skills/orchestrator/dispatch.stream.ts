@@ -36,7 +36,7 @@ import { buildExecutionReplyText, explainDispatchStreamError, explainPlanningFai
 import { deriveLoopPresentationStatus, makeOnStepComplete, makeOnLoopEnd, streamLoopSummary, wrapSseWithEventBus } from "./dispatch.streamHelpers";
 import { handleStreamAnswerMode } from "./dispatch.streamAnswer";
 import { resolveExecutionClassFromSuggestions } from "./dispatch.executionPolicy";
-import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge } from "./modules/orchestrator";
+import { discoverEnabledTools, recallRecentTasks } from "./modules/orchestrator";
 import { loadInlineWritableEntities } from "./modules/inlineToolExecutor";
 import { getQueueManager, getTaskExecutor } from "./dispatch.streamTaskQueue";
 import { persistStreamSessionContext } from "./dispatch.streamSessionPersist";
@@ -296,37 +296,19 @@ export function registerStreamRoute(app: any): void {
         app.log.warn({ err: sessionErr, traceId: req.ctx.traceId }, "[dispatch.stream] 加载会话历史失败，不影响执行");
       }
 
-      // 5.0.1 并行回忆：记忆 + 任务历史 + 知识库
-      let memoryContextText = "";
+      // 5.0.1 并行回忆：任务历史
       let taskContextText = "";
-      let knowledgeContextText = "";
       try {
-        const [memRecall, taskRecall, knowledgeRecall] = await Promise.all([
-          recallRelevantMemory({
-            pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!,
-            subjectId: subject.subjectId, message,
-            auditContext: req.ctx.traceId ? { traceId: req.ctx.traceId, requestId: req.ctx.requestId } : undefined,
-          }),
-          recallRecentTasks({
+        const taskRecall = await recallRecentTasks({
             pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!,
             subjectId: subject.subjectId,
             auditContext: { traceId: req.ctx.traceId },
-          }),
-          recallRelevantKnowledge({
-            pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId!,
-            subjectId: subject.subjectId, message,
-            auditContext: { traceId: req.ctx.traceId },
-          }),
-        ]);
-        memoryContextText = memRecall.text;
+          });
         taskContextText = taskRecall.text;
-        knowledgeContextText = knowledgeRecall.text;
-        if (memoryContextText || taskContextText || knowledgeContextText) {
+        if (taskContextText) {
           app.log.info({
             traceId: req.ctx.traceId, conversationId, mode,
-            memoryRecallLen: memoryContextText.length,
             taskRecallLen: taskContextText.length,
-            knowledgeRecallLen: knowledgeContextText.length,
           }, "[dispatch.stream] execute 路径上下文回忆完成");
         }
       } catch (recallErr: any) {
@@ -340,9 +322,9 @@ export function registerStreamRoute(app: any): void {
         traceId: req.ctx.traceId, userMessage: message,
         plannerRole: "agent", actorRole: "executor",
         purpose: "dispatch.stream.execute", headers: {},
-        memoryContext: memoryContextText || undefined,
+        memoryContext: undefined,
         taskContext: taskContextText || undefined,
-        knowledgeContext: knowledgeContextText || undefined,
+        knowledgeContext: undefined,
       });
 
       if (isAutoMode && mode === "execute") {

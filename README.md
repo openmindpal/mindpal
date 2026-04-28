@@ -157,7 +157,7 @@
 | 后端框架 | Fastify 5 + WebSocket |
 | 前端框架 | Next.js 16 + React 19 |
 | UI 库 | @xyflow/react (流程图) + framer-motion + react-markdown |
-| 数据库 | PostgreSQL 16（28 个迁移文件） |
+| 数据库 | PostgreSQL 16（24 个迁移文件） |
 | 缓存/消息 | Redis 7 + ioredis |
 | 任务队列 | BullMQ 5.58 |
 | 对象存储 | MinIO |
@@ -203,16 +203,16 @@ cp .env.example .env    # 按需修改
 ### 4. 安装依赖 & 初始化数据库
 
 ```bash
-npm install
-npm run db:seed -w @openslin/api    # 迁移 + 种子数据 + core schema
+pnpm install
+pnpm --filter @openslin/api run db:seed    # 迁移 + 种子数据 + core schema
 ```
 
 ### 5. 启动服务
 
 ```bash
-npm run dev:api       # API 服务     → http://localhost:3001
-npm run dev:worker    # Worker 异步作业（BullMQ）
-npm run dev:web       # Web 前端     → http://localhost:4000
+pnpm run dev:api       # API 服务     → http://localhost:3001
+pnpm run dev:worker    # Worker 异步作业（BullMQ）
+pnpm run dev:web       # Web 前端     → http://localhost:4000
 
 # 可选：启动可观测性服务（Prometheus/Grafana/Jaeger/Loki）
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
@@ -245,7 +245,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 提供只读/幂等运维 CLI，适合排障与运营查询：
 
 ```bash
-npm run dev -w @openslin/admin-cli
+pnpm run dev -w @openslin/admin-cli
 
 # 示例
 openslin-admin audit verify --apiBase http://localhost:3001/v1 --token <token> --tenantId tenant_dev
@@ -261,28 +261,27 @@ openslin/
 │   ├── api/            # Fastify API 服务（Agent OS 大脑）
 │   │   ├── kernel/     # 内核：Agent Loop/目标分解/规划/执行/调度/协作
 │   │   ├── routes/     # 43 个路由（含 /v1 版本化）
-│   │   ├── modules/    # 28 个领域模块（认证/治理/模型/知识/记忆等）
+│   │   ├── modules/    # 32 个领域模块（认证/治理/模型/知识/记忆等）
 │   │   ├── skills/     # 39 个内建技能（四层：kernel/core/optional/extension）
 │   │   ├── plugins/    # 15 个中间件（日志/追踪/版本化/通知/DLP/审计等）
-│   │   └── migrations/ # 28 个 SQL 迁移文件
+│   │   └── migrations/ # 24 个 SQL 迁移文件
 │   ├── web/            # Next.js 前端（React 19 + ReactFlow + 国际化）
 │   ├── worker/         # BullMQ 异步工作节点（知识/记忆/治理/通知）
 │   ├── device-agent/   # 桌面端 Agent（Playwright + GUI 自动化 + 视觉感知）
 │   ├── runner/         # Skill 沙箱运行时（Fastify + RPC 协议 + 子进程隔离）
 │   └── admin-cli/      # 运维 CLI 工具
 ├── packages/
-│   └── shared/         # 共享库（587 行索引，250+ 导出符号）
-│                         多模态类型/ABAC策略引擎/Prompt注入检测/DLP/状态机/
-│                         GoalGraph/WorldState/熔断器/事件总线/协作协议/
-│                         Skill RPC协议/结构化日志/供应链安全/沙箱安全/文档解析
+│   ├── shared/         # 共享库（815 行索引，300+ 导出符号）
+│   │                     多模态类型/ABAC策略引擎/Prompt注入检测/DLP/状态机/
+│   │                     GoalGraph/WorldState/熔断器/事件总线/协作协议/
+│   │                     Skill RPC协议/结构化日志/供应链安全/沙箱安全/文档解析
+│   └── device-agent-sdk/ # 端侧代理 SDK 内核（可嵌入的设备智能体运行时）
 ├── skills/             # 外部 Skill 包（23 个，manifest.json + dist/）
 │   ├── echo-skill/                # 回声测试
 │   ├── math-skill/                # 数学计算
 │   ├── http-fetch-skill/          # HTTP 请求
 │   ├── imap-poll-skill/           # IMAP 邮件轮询
 │   ├── exchange-poll-skill/       # Exchange 邮件轮询
-│   ├── slack-send-skill/          # Slack 消息
-│   ├── webhook-send-skill/        # Webhook 发送
 │   ├── memory-graph-skill/        # 记忆图谱构建
 │   ├── collab-guard-skill/        # 协作守护
 │   ├── collab-review-skill/       # 协作审查

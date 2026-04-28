@@ -4,6 +4,25 @@ import { chunkText as knowledgeChunkText, resolveChunkConfigFromEnv, defaultChun
 import type { ChunkResult, ChunkStrategyConfig, ChunkStrategyName } from "./chunkStrategy";
 import { writeKnowledgeAudit as writeAudit } from "./auditWriter";
 
+// ─── 引用链提取 ──────────────────────────────────────────────────
+
+/** 从分块内容中提取 Markdown 链接和 footnote 引用 */
+function extractCitations(content: string): Array<{ url?: string; relation: string }> {
+  const refs: Array<{ url?: string; relation: string }> = [];
+  // Markdown 链接
+  const linkRe = /\[([^\]]*)\]\(([^)]+)\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = linkRe.exec(content)) !== null) {
+    refs.push({ url: m[2], relation: "references" });
+  }
+  // Footnote 引用
+  const fnRe = /\[\^([^\]]+)\]/g;
+  while ((m = fnRe.exec(content)) !== null) {
+    refs.push({ url: `#footnote-${m[1]}`, relation: "cites" });
+  }
+  return refs;
+}
+
 /** 固定长度分块 — 智能分块引擎失败时的 fallback */
 function chunkTextFixed(text: string, maxLen: number) {
   const chunks: Array<{ chunkIndex: number; startOffset: number; endOffset: number; snippet: string; contentDigest: string }> = [];
@@ -89,15 +108,23 @@ export async function processKnowledgeIndexJob(params: { pool: Pool; indexJobId:
       const rowsSql: string[] = [];
       for (let i = 0; i < chunks.length; i++) {
         const c = chunks[i]!;
-        const base = i * 13;
-        rowsSql.push(`($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13})`);
-        values.push(tenantId, spaceId, docId, docVersion, c.chunkIndex, c.startOffset, c.endOffset, c.snippet, c.contentDigest, c.strategyName, c.hierarchyPath, c.overlapBefore, c.overlapAfter);
+        const citationRefs = extractCitations(c.snippet);
+        const sourcePage = (c as any).sourcePage ?? null;
+        const sourceSection = c.hierarchyPath ?? null;
+        const base = i * 16;
+        rowsSql.push(`($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13},$${base + 14},$${base + 15},$${base + 16})`);
+        values.push(tenantId, spaceId, docId, docVersion, c.chunkIndex, c.startOffset, c.endOffset, c.snippet, c.contentDigest, c.strategyName, c.hierarchyPath, c.overlapBefore, c.overlapAfter,
+          citationRefs.length > 0 ? JSON.stringify(citationRefs) : null,
+          sourcePage,
+          sourceSection,
+        );
       }
       await params.pool.query(
         `
           INSERT INTO knowledge_chunks (
             tenant_id, space_id, document_id, document_version, chunk_index, start_offset, end_offset, snippet, content_digest,
-            chunk_strategy, hierarchy_path, overlap_before, overlap_after
+            chunk_strategy, hierarchy_path, overlap_before, overlap_after,
+            citation_refs, source_page, source_section
           ) VALUES ${rowsSql.join(",")}
           ON CONFLICT (tenant_id, space_id, document_id, document_version, chunk_index) DO NOTHING
         `,

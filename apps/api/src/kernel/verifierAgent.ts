@@ -15,6 +15,7 @@ import type { FastifyInstance } from "fastify";
 import type {
   GoalGraph, WorldState, SuccessCriterion,
 } from "@openslin/shared";
+import type { PlanStep } from "./planningKernel";
 import {
   worldStateToPromptText, getValidFacts, computeGoalProgress,
 } from "@openslin/shared";
@@ -522,14 +523,42 @@ export function verifyStepResult(params: {
 
     // 检查 WorldState 中是否有支撑证据
     const validFacts = getValidFacts(worldState);
+
+    // 优先：evidenceRef 直接查找（含置信度门槛）
+    if (criterion.evidenceRef) {
+      const refFact = validFacts.find(f => f.factId === criterion.evidenceRef || f.key === criterion.evidenceRef);
+      if (refFact && (refFact.confidence ?? 0) >= 0.7) {
+        evidence.push(`Criterion "${criterion.description}" satisfied by evidence ref (confidence: ${refFact.confidence})`);
+        continue;
+      }
+    }
+
+    // 次选：关键词 + 置信度匹配（不再要求 "succeeded" 文本）
     const keywords = criterion.description.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
-    const hasEvidence = validFacts.some(f => {
-      const fl = f.statement.toLowerCase();
-      return keywords.some((kw: string) => fl.includes(kw)) && fl.includes("succeeded");
+    const matchingFacts = validFacts.filter(f => {
+      const keyLower = (f.key ?? "").toLowerCase();
+      const stmtLower = f.statement.toLowerCase();
+      return keywords.some((kw: string) => keyLower.includes(kw) || stmtLower.includes(kw));
     });
 
-    if (hasEvidence || (criterion.evidenceRef && validFacts.some(f => f.factId === criterion.evidenceRef))) {
-      evidence.push(`Criterion "${criterion.description}" satisfied by WorldState evidence`);
+    if (matchingFacts.length > 0) {
+      const bestMatch = matchingFacts.reduce((a, b) =>
+        (a.confidence ?? 0) > (b.confidence ?? 0) ? a : b,
+      );
+      if ((bestMatch.confidence ?? 0) >= 0.5) {
+        evidence.push(`Criterion "${criterion.description}" satisfied by WorldState evidence (confidence: ${bestMatch.confidence})`);
+        continue;
+      }
+    }
+
+    // 兜底：纯文本关键词匹配
+    const anyTextMatch = validFacts.some(f => {
+      const stmtLower = f.statement.toLowerCase();
+      return keywords.some((kw: string) => stmtLower.includes(kw));
+    });
+
+    if (anyTextMatch) {
+      evidence.push(`Criterion "${criterion.description}" satisfied by keyword text match`);
     } else if (criterion.required) {
       failedCriteria.push(criterion.description);
     }
@@ -580,4 +609,55 @@ export function applyStepVerification(
   });
 
   return { ...goalGraph, subGoals: updatedGoals, updatedAt: now };
+}
+
+/* ================================================================== */
+/*  Replan 可行性预检                                                    */
+/* ================================================================== */
+
+export interface FeasibilityResult {
+  /** 计划是否整体可行 */
+  feasible: boolean;
+  /** 0-1 可行性评分 */
+  score: number;
+  /** 不可行的步骤列表 */
+  infeasibleSteps: Array<{
+    stepIndex: number;
+    reason: string;
+  }>;
+}
+
+/**
+ * 评估重规划产出的新计划在当前 WorldState 下是否可行。
+ *
+ * 检查维度：
+ * 1. 每步使用的 toolRef 是否在可用工具列表中
+ * 2. （扩展点）前置条件与 WorldState 事实的简单匹配
+ *
+ * 该函数为纯同步、无 LLM 调用，可在重规划流程中零成本调用。
+ */
+export function evaluateReplanFeasibility(
+  planSteps: PlanStep[],
+  availableTools: string[],
+): FeasibilityResult {
+  const infeasibleSteps: FeasibilityResult["infeasibleSteps"] = [];
+
+  for (let i = 0; i < planSteps.length; i++) {
+    const step = planSteps[i];
+    // 提取不带版本号的工具名（toolRef 格式可能为 "toolName@version"）
+    const toolName = step.toolRef.split("@")[0] ?? step.toolRef;
+    if (!availableTools.some(t => t === step.toolRef || t === toolName)) {
+      infeasibleSteps.push({ stepIndex: i, reason: `Tool "${step.toolRef}" not available` });
+    }
+  }
+
+  const score = planSteps.length > 0
+    ? (planSteps.length - infeasibleSteps.length) / planSteps.length
+    : 1;
+
+  return {
+    feasible: infeasibleSteps.length === 0,
+    score,
+    infeasibleSteps,
+  };
 }

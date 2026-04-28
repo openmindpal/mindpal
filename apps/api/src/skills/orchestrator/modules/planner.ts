@@ -6,6 +6,7 @@ import { isToolEnabled } from "../../../modules/governance/toolGovernanceRepo";
 import { resolveEffectiveToolRef } from "../../../modules/tools/resolve";
 import { getToolDefinition, getToolVersionByRef, type ToolDefinition } from "../../../modules/tools/toolRepo";
 import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import type { FailureDiagnosis } from "@openslin/shared";
 
 function sha256_8(input: string) {
   return sha256Hex(input).slice(0, 8);
@@ -396,6 +397,10 @@ export interface ReplanResult {
  *   - If `broadenScopeOnReplan` is true, allowedTools is relaxed to null
  *   - maxSteps is incremented by 1
  *
+ * ## P0 阶段二 新增
+ * - `diagnosis` — 可选失败诊断，注入重规划 prompt 引导搜索空间调整
+ * - `replanBudget` 机制：partial 消耗 1，full 消耗 2；budget 耗尽即停止
+ *
  * Guards against infinite loops via hard cap on attempts.
  */
 export async function replanOnFailure(params: {
@@ -411,18 +416,36 @@ export async function replanOnFailure(params: {
   weights?: Partial<ScoringWeights>;
   historicalRates?: Map<string, number>;
   replanConfig?: Partial<ReplanConfig>;
+  /** P0 阶段二：失败诊断，可选 */
+  diagnosis?: FailureDiagnosis;
 }): Promise<ReplanResult> {
   const config: ReplanConfig = { ...DEFAULT_REPLAN_CONFIG, ...params.replanConfig };
   // Hard cap: never exceed 5 attempts to prevent infinite loops
   const maxAttempts = Math.min(Math.max(0, config.maxReplanAttempts), 5);
 
-  let attempt = 0;
-  let result = await buildHeuristicPlan(params);
+  // replanBudget：初始值 = maxAttempts（上限 5）
+  let replanBudget = maxAttempts;
 
-  while (result.planSteps.length === 0 && attempt < maxAttempts) {
+  // 构建可能携带诊断摘要的 goal
+  const effectiveGoal = params.diagnosis
+    ? appendDiagnosisSummary(params.goal, params.diagnosis)
+    : params.goal;
+
+  let attempt = 0;
+  let result = await buildHeuristicPlan({ ...params, goal: effectiveGoal });
+
+  while (result.planSteps.length === 0 && attempt < maxAttempts && replanBudget > 0) {
     attempt++;
+
+    // 估算本次消耗：如果 broadenScope 且已连续失败多次视为 full（消耗 2），否则 partial（消耗 1）
+    const isFull = config.broadenScopeOnReplan && attempt > 1;
+    const cost = isFull ? 2 : 1;
+    replanBudget -= cost;
+    if (replanBudget < 0) break;
+
     const relaxedParams = {
       ...params,
+      goal: effectiveGoal,
       // Broaden scope: relax allowed tools on retry
       allowedTools: config.broadenScopeOnReplan ? null : params.allowedTools,
       // Slightly increase step budget on retry
@@ -442,4 +465,20 @@ export async function replanOnFailure(params: {
     replanAttempts: attempt,
     usedFallback: result.planSteps.length === 0 && attempt > 0,
   };
+}
+
+/**
+ * 将诊断摘要追加到 goal 文本，引导后续评分/筛选逻辑。
+ */
+function appendDiagnosisSummary(goal: string, diagnosis: FailureDiagnosis): string {
+  const lines: string[] = [goal, "", "[Failure Diagnosis]"];
+  lines.push(`Type: ${diagnosis.failureType}`);
+  lines.push(`Root cause: ${diagnosis.rootCause}`);
+  if (!diagnosis.isRetryable) {
+    lines.push("Note: not retryable — consider alternative tools");
+  }
+  if (diagnosis.suggestedActions.length > 0) {
+    lines.push(`Suggested actions: ${diagnosis.suggestedActions.map(a => a.type).join(", ")}`);
+  }
+  return lines.join("\n");
 }

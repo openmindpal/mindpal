@@ -17,6 +17,7 @@ export { checkAuditCompleteness, checkOutputSafety, checkInvariants, checkTimeou
 
 import { checkPermission, checkPolicy, checkSafety, checkToolAvailability } from "./governancePreChecks";
 import { checkAuditCompleteness, checkOutputSafety, checkInvariants, checkTimeout, checkResourceUsage } from "./governanceChecks";
+import { turboSkipPolicySafety, isTurboAllowedForTenant } from "./loopTurboMode";
 
 const logger = new StructuredLogger({ module: "governance" });
 
@@ -97,10 +98,22 @@ export async function runPreExecutionChecks(params: {
   const startedAt = new Date().toISOString();
   const results: CheckResult[] = [];
 
-  results.push(await checkPermission({ pool, context }));
-  results.push(await checkPolicy({ pool, context }));
-  results.push(await checkSafety({ pool, context }));
-  results.push(await checkToolAvailability({ pool, context }));
+  if (turboSkipPolicySafety() && isTurboAllowedForTenant(context.tenantId)) {
+    // 加速模式：仅执行 permission + availability
+    const [permResult, availResult] = await Promise.all([
+      checkPermission({ pool, context }),
+      checkToolAvailability({ pool, context }),
+    ]);
+    results.push(permResult, availResult);
+  } else {
+    const [permResult, policyResult, safetyResult, availResult] = await Promise.all([
+      checkPermission({ pool, context }),
+      checkPolicy({ pool, context }),
+      checkSafety({ pool, context }),
+      checkToolAvailability({ pool, context }),
+    ]);
+    results.push(permResult, policyResult, safetyResult, availResult);
+  }
 
   const blockingFailures = results.filter(r => !r.passed && r.blocking).length;
 

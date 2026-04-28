@@ -27,6 +27,10 @@ export interface GoalCondition {
     | "relation_holds"      // 某关系成立
     | "fact_true"           // 某事实为真
     | "output_contains"     // 输出包含特定内容
+    | "regex_match"         // 正则匹配
+    | "numeric_range"       // 数值范围判定
+    | "temporal_after"      // 时间在某时刻之后
+    | "temporal_before"     // 时间在某时刻之前
     | "custom";             // 自定义（由 Verifier 解释）
   /** 结构化断言参数（按 assertionType 不同含义不同） */
   assertionParams?: Record<string, unknown>;
@@ -50,6 +54,10 @@ export interface SuccessCriterion {
   met?: boolean;
   /** 满足时的证据引用 */
   evidenceRef?: string;
+  /** 多条标准聚合策略：all=全部满足, any=任一满足, threshold=满足度达阈值 */
+  strategy?: 'all' | 'any' | 'threshold';
+  /** 仅 strategy='threshold' 时生效，满足比例阈值（0-1） */
+  thresholdValue?: number;
 }
 
 /** 完成证据 — Verifier 校验的具体证据项 */
@@ -126,6 +134,8 @@ export interface SubGoal {
   executedStepSeqs?: number[];
   /** 状态更新时间 */
   updatedAt?: string;
+  /** 完成级别（运行时由条件评估器填充） */
+  completionLevel?: 'full' | 'partial' | 'failed';
 }
 
 /* ================================================================== */

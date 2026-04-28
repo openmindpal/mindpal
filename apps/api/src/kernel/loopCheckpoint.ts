@@ -121,9 +121,9 @@ function currentNodeId(): string {
   return process.env.NODE_ID || process.env.HOSTNAME || `node-${process.pid}`;
 }
 
-/** full checkpoint 写入间隔（每 N 次迭代写一次完整检查点），默认 3 */
+/** full checkpoint 写入间隔（每 N 次迭代写一次完整检查点），默认 5 */
 export const AGENT_LOOP_FULL_CHECKPOINT_INTERVAL = Math.max(1,
-  parseInt(process.env.AGENT_LOOP_FULL_CHECKPOINT_INTERVAL || "3", 10) || 3);
+  parseInt(process.env.AGENT_LOOP_FULL_CHECKPOINT_INTERVAL || "5", 10) || 5);
 
 /* ================================================================== */
 /*  1. Checkpoint Writer                                                */

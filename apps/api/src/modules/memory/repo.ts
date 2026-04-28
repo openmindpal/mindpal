@@ -14,6 +14,7 @@ import {
   type WriteIntent,
   type MemoryRerankInput,
   type MemoryScope,
+  DEFAULT_SOURCE_TRUST_MAP,
 } from "@openslin/shared";
 import { encryptMemoryContent, decryptMemoryContent } from "./memoryEncryption";
 
@@ -63,7 +64,7 @@ export type MemoryEntryRow = {
   factVersion: number;
   confidence: number;
   salience: number;
-  conflictMarker: string | null;
+  conflictMarker: string[] | null;
   resolutionStatus: string | null;
   /** P1-3 Memory OS: 三层分类 + 衰减 + 蒸馏 */
   memoryClass: MemoryClass;
@@ -81,6 +82,9 @@ export type MemoryEntryRow = {
   pinned: boolean;
   pinnedAt: string | null;
   pinnedBy: string | null;
+  /** P3: 记忆来源追溯 */
+  provenanceType: string;
+  evidenceChain: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -137,7 +141,7 @@ function toEntry(r: any): MemoryEntryRow {
     factVersion: r.fact_version ?? 1,
     confidence: r.confidence ?? 0.5,
     salience: r.salience ?? 0.5,
-    conflictMarker: r.conflict_marker ?? null,
+    conflictMarker: Array.isArray(r.conflict_marker) ? r.conflict_marker : (r.conflict_marker ? [r.conflict_marker] : null),
     resolutionStatus: r.resolution_status ?? null,
     // P1-3 Memory OS
     memoryClass: r.memory_class ?? "semantic",
@@ -155,6 +159,8 @@ function toEntry(r: any): MemoryEntryRow {
     pinned: Boolean(r.pinned),
     pinnedAt: r.pinned_at ?? null,
     pinnedBy: r.pinned_by ?? null,
+    provenanceType: r.provenance_type ?? "unknown",
+    evidenceChain: Array.isArray(r.evidence_chain) ? r.evidence_chain : [],
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -304,7 +310,8 @@ export async function markMemoryConflict(params: {
   await params.pool.query(
     `
       UPDATE memory_entries
-      SET conflict_marker = $3, resolution_status = $4, updated_at = now()
+      SET conflict_marker = array_append(COALESCE(conflict_marker, '{}'::uuid[]), $3::uuid),
+          resolution_status = $4, updated_at = now()
       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
     `,
     [params.tenantId, params.newMemoryId, params.conflictWithId, params.resolutionStatus ?? "pending"],
@@ -415,12 +422,34 @@ export async function arbitrateMemoryConflict(params: {
     }
 
     case "auto_merged": {
+      // P3: 多因子加权评分决定 winner
+      function computeMergeScore(entry: { confidence: number; sourceTrust?: number; factVersion?: number }): number {
+        const trustWeight = ((entry.sourceTrust ?? 50) / 100);       // 来源可信度
+        const versionWeight = Math.min((entry.factVersion ?? 1) / 10, 1);  // 版本权重
+        const confidenceWeight = entry.confidence ?? 0.5;            // 置信度
+        return trustWeight * 0.4 + versionWeight * 0.3 + confidenceWeight * 0.3;
+      }
+
+      const newScore = computeMergeScore(newMemory);
+      const scoredConflicts = conflictMemories.map(m => ({ ...m, _score: computeMergeScore(m) }));
+      const allScored = [{ ...newMemory, _score: newScore, contentText: newMemory.contentText, title: newMemory.title }, ...scoredConflicts];
+      allScored.sort((a, b) => b._score - a._score);
+      const winner = allScored[0]!;
+      const losers = allScored.filter(c => c.id !== winner.id);
+
+      // P3: factVersion 与 confidence 协调 — 加权平均置信度
+      const winnerTrust = (winner as any).sourceTrust ?? 50;
+      const totalTrust = losers.reduce((sum, l) => sum + ((l as any).sourceTrust ?? 50), winnerTrust);
+      const newConfidence = totalTrust > 0
+        ? (winner.confidence * winnerTrust + losers.reduce((sum, l) => sum + l.confidence * ((l as any).sourceTrust ?? 50), 0)) / totalTrust
+        : winner.confidence;
+
       // 合并新旧记忆内容为一条新记忆
       const mergedContent = [
-        `[合并记忆] 新内容：${newMemory.contentText}`,
-        ...conflictMemories.map(m => `旧内容(${m.id.slice(0, 8)}): ${m.contentText.slice(0, 300)}`),
+        `[合并记忆] 胜出内容：${winner.contentText}`,
+        ...losers.map(m => `旧内容(${m.id.slice(0, 8)}): ${m.contentText.slice(0, 300)}`),
       ].join("\n---\n");
-      const mergedTitle = newMemory.title ?? conflictMemories[0]?.title ?? "合并记忆";
+      const mergedTitle = winner.title ?? conflictMemories[0]?.title ?? "合并记忆";
 
       const mergedEntry = await createMemoryEntry({
         pool,
@@ -436,10 +465,17 @@ export async function arbitrateMemoryConflict(params: {
         _skipRiskCheck: true,
       });
 
-      // 标记原始记忆为已合并
+      // P3: 更新合并产物的 confidence 和 factVersion（age 重置已通过 createMemoryEntry 的 now() 完成）
+      const maxFactVersion = Math.max(newMemory.factVersion, ...conflictMemories.map(m => (m as any).factVersion ?? 1));
+      await pool.query(
+        `UPDATE memory_entries SET confidence = $2, fact_version = $3, updated_at = now() WHERE tenant_id = $1 AND id = $4 AND deleted_at IS NULL`,
+        [tenantId, Math.max(0, Math.min(1, newConfidence)), maxFactVersion + 1, mergedEntry.entry.id],
+      );
+
+      // 标记原始记忆为已合并，conflict_marker 指向合并产物
       const allOriginalIds = [newMemory.id, ...conflictMemories.map(m => m.id)];
       await pool.query(
-        `UPDATE memory_entries SET resolution_status = 'superseded', conflict_marker = $3, updated_at = now() WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL`,
+        `UPDATE memory_entries SET resolution_status = 'superseded', conflict_marker = array_append(COALESCE(conflict_marker, '{}'::uuid[]), $3::uuid), updated_at = now() WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL`,
         [tenantId, allOriginalIds, mergedEntry.entry.id],
       );
       await pool.query(
@@ -449,9 +485,9 @@ export async function arbitrateMemoryConflict(params: {
 
       result = {
         strategy: "auto_merged",
-        winnerMemoryId: null,
+        winnerMemoryId: winner.id,
         mergedMemoryId: mergedEntry.entry.id,
-        reasoning: `自动合并策略：${allOriginalIds.length} 条记忆合并为 ${mergedEntry.entry.id}`,
+        reasoning: `自动合并策略(多因子加权)：${allOriginalIds.length} 条记忆合并为 ${mergedEntry.entry.id}，winner=${winner.id}(score=${winner._score.toFixed(3)})`,
         needsUserConfirmation: false,
       };
       break;
@@ -621,6 +657,8 @@ export async function createMemoryEntry(params: {
   memoryClass?: MemoryClass;
   /** 合并检测阈值（minhash overlap），传入后写入前先查找近似记忆，超过阈值则 UPDATE 而非 INSERT */
   mergeThreshold?: number;
+  /** P3: 记忆来源类型（user_input | tool_output | task_result | llm_inference 等） */
+  provenanceType?: string;
 }): Promise<{
   entry: MemoryEntryRow;
   dlpSummary: any;
@@ -678,6 +716,10 @@ export async function createMemoryEntry(params: {
   const writePolicy = validation.proof.policy;
   const writeProof = validation.proof;
 
+  // P3: 确定来源类型和初始可信度
+  const resolvedProvenanceType = params.provenanceType ?? "unknown";
+  const sourceTrust = DEFAULT_SOURCE_TRUST_MAP[resolvedProvenanceType] ?? 50;
+
   // ── 可选合并检测：写入前查找 minhash 近似记忆，超过阈值则更新而非新建 ──
   if (params.mergeThreshold != null && params.mergeThreshold > 0) {
     try {
@@ -731,8 +773,8 @@ export async function createMemoryEntry(params: {
         tenant_id, space_id, owner_subject_id, scope, type, title,
         content_text, content_digest, retention_days, expires_at, write_policy, source_ref,
         write_proof, embedding_model_ref, embedding_minhash, embedding_updated_at,
-        memory_class
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),$16)
+        memory_class, source_trust, provenance_type
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),$16,$17,$18)
       RETURNING *
     `,
     [
@@ -752,6 +794,8 @@ export async function createMemoryEntry(params: {
       MINHASH_MODEL_REF,
       minhash,
       params.memoryClass ?? "semantic",
+      sourceTrust,
+      resolvedProvenanceType,
     ],
   );
   const entry = toEntry(res.rows[0]);
@@ -1072,19 +1116,26 @@ export async function searchMemory(params: {
   const scopeArgs = [...baseArgs];
   const scopeNextIdx = idx;
 
-  // ── Stage 1: Lexical (ILIKE) 召回 ──
+  // ── Stage 1: Lexical (ILIKE) 召回 — 分段匹配，支持多问句/长查询 ──
   const lexLimit = Math.max(params.limit, params.limit * 3);
+  let lexSegments = params.query.split(/[？?；;，,、]/).map(s => s.trim()).filter(s => s.length >= 2);
+  if (lexSegments.length === 1 && lexSegments[0]!.length > 30) {
+    lexSegments = lexSegments[0]!.split(/\s+/).map(s => s.trim()).filter(s => s.length >= 2);
+  }
+  if (!lexSegments.length) lexSegments = [params.query];
+  lexSegments = lexSegments.slice(0, 10);
+  const lexPatterns = lexSegments.map(s => `%${escapeIlikePat(s)}%`);
   const lexIdx = scopeNextIdx;
   const lexRes = await params.pool.query(
     `
       SELECT *, 'lexical' AS _stage
       FROM memory_entries
       WHERE ${scopeWhereClause}
-        AND (content_text ILIKE $${lexIdx} OR COALESCE(title,'') ILIKE $${lexIdx})
+        AND (content_text ILIKE ANY($${lexIdx}::text[]) OR COALESCE(title,'') ILIKE ANY($${lexIdx}::text[]))
       ORDER BY created_at DESC
       LIMIT $${lexIdx + 1}
     `,
-    [...scopeArgs, `%${escapeIlikePat(params.query)}%`, lexLimit],
+    [...scopeArgs, lexPatterns, lexLimit],
   );
 
   // ── Stage 2: Semantic (minhash overlap) 召回 ──
@@ -1303,7 +1354,7 @@ export async function searchMemory(params: {
       stage: String(c._stage ?? "lexical"),
       confidence: typeof c.confidence === "number" && Number.isFinite(c.confidence) ? c.confidence : 0.5,
       factVersion: typeof c.fact_version === "number" && Number.isFinite(c.fact_version) ? c.fact_version : 1,
-      conflictMarker: c.conflict_marker ?? null,
+      conflictMarker: Array.isArray(c.conflict_marker) ? c.conflict_marker : (c.conflict_marker ? [String(c.conflict_marker)] : null),
       resolutionStatus: c.resolution_status ?? null,
       memoryClass: String(c.memory_class ?? "semantic"),
       decayScore: typeof c.decay_score === "number" && Number.isFinite(c.decay_score) ? c.decay_score : 1.0,
@@ -1320,7 +1371,7 @@ export async function searchMemory(params: {
   const topEntries = scored.slice(0, params.limit).map((r) => toEntry(r));
 
   // ── 正式解密：通过 API 侧 memoryEncryption 桥接层对密文透明解密 ──
-  const evidence: Array<{ id: string; type: string; scope: string; title: string | null; snippet: string; createdAt: string; conflictMarker: string | null; resolutionStatus: string | null }> = [];
+  const evidence: Array<{ id: string; type: string; scope: string; title: string | null; snippet: string; createdAt: string; conflictMarker: string[] | null; resolutionStatus: string | null }> = [];
   for (const e of topEntries) {
     const decrypted = await decryptMemoryContent({
       pool: params.pool,
@@ -1338,7 +1389,7 @@ export async function searchMemory(params: {
       title: e.title,
       snippet: String(redacted.value ?? ""),
       createdAt: e.createdAt,
-      conflictMarker: e.conflictMarker != null ? String(e.conflictMarker) : null,
+      conflictMarker: e.conflictMarker,
       resolutionStatus: e.resolutionStatus != null ? String(e.resolutionStatus) : null,
     });
   }
@@ -1613,6 +1664,120 @@ export async function deleteMemoryAttachments(params: {
     [params.tenantId, params.memoryId],
   );
   return res.rowCount ?? 0;
+}
+
+/* ── P3: 真值推断引擎 ── */
+
+/**
+ * 根据世界状态事实更新相关记忆的置信度（任务验证反馈回路）
+ * - 证实：confidence += 0.1（上限 1.0）
+ * - 矛盾：confidence -= 0.2（下限 0.0），触发冲突标记
+ *
+ * 复用 minhash 机制做语义匹配，不修改现有函数签名。
+ */
+export async function updateMemoryConfidenceFromFacts(
+  pool: Pool,
+  tenantId: string,
+  spaceId: string,
+  facts: Array<{ key: string; value: unknown; confidence?: number }>,
+): Promise<{ corroborated: number; contradicted: number }> {
+  let corroborated = 0;
+  let contradicted = 0;
+
+  for (const fact of facts) {
+    // 1. 将 fact 序列化为文本并计算 minhash
+    const factText = `${fact.key} ${typeof fact.value === "string" ? fact.value : JSON.stringify(fact.value ?? "")}`;
+    const factMinhash = computeMinhash(factText);
+
+    // 2. 查询与 fact 语义相近的记忆（复用 minhash overlap 召回）
+    const candidatesRes = await pool.query(
+      `SELECT id, content_text, confidence, embedding_minhash, conflict_marker
+       FROM memory_entries
+       WHERE tenant_id = $1
+         AND space_id = $2
+         AND deleted_at IS NULL
+         AND (expires_at IS NULL OR expires_at > now())
+         AND embedding_minhash IS NOT NULL
+         AND embedding_minhash && $3::int[]
+       ORDER BY updated_at DESC
+       LIMIT 20`,
+      [tenantId, spaceId, factMinhash],
+    );
+
+    if (!candidatesRes.rowCount) continue;
+
+    const CORROBORATE_THRESHOLD = 0.5;
+    const factConfidence = fact.confidence ?? 0.5;
+
+    for (const row of candidatesRes.rows as Record<string, unknown>[]) {
+      const mh = Array.isArray(row.embedding_minhash) ? (row.embedding_minhash as number[]) : [];
+      const overlapScore = minhashOverlapScore(factMinhash, mh);
+
+      if (overlapScore < 0.3) continue; // 低于冲突检测阈值，忽略
+
+      const memoryId = String(row.id);
+
+      if (factConfidence >= 0.7 && overlapScore >= CORROBORATE_THRESHOLD) {
+        // 证实：高置信度 fact 且语义高度相似
+        await pool.query(
+          `UPDATE memory_entries
+           SET confidence = LEAST(confidence + 0.1, 1.0),
+               updated_at = now()
+           WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+          [memoryId, tenantId],
+        );
+        corroborated++;
+      } else if (factConfidence >= 0.7 && overlapScore >= 0.3 && overlapScore < CORROBORATE_THRESHOLD) {
+        // 矛盾：fact 高置信度但与记忆仅部分重叠（可能包含相反信息）
+        await pool.query(
+          `UPDATE memory_entries
+           SET confidence = GREATEST(confidence - 0.2, 0.0),
+               resolution_status = COALESCE(resolution_status, 'pending'),
+               updated_at = now()
+           WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+          [memoryId, tenantId],
+        );
+        contradicted++;
+      }
+    }
+  }
+
+  return { corroborated, contradicted };
+}
+
+/**
+ * 确认或拒绝待确认的记忆（user_confirmed 闭环）
+ */
+export async function confirmPendingMemory(
+  pool: Pool,
+  memoryId: string,
+  confirmed: boolean,
+): Promise<void> {
+  if (confirmed) {
+    // 确认：提升 confidence，标记为 resolved
+    await pool.query(
+      `UPDATE memory_entries
+       SET confidence = LEAST(confidence + 0.2, 1.0),
+           resolution_status = 'resolved',
+           arbitration_strategy = 'user_confirmed',
+           arbitrated_at = now(),
+           updated_at = now()
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [memoryId],
+    );
+  } else {
+    // 拒绝：大幅降低 confidence
+    await pool.query(
+      `UPDATE memory_entries
+       SET confidence = GREATEST(confidence - 0.5, 0.0),
+           resolution_status = 'superseded',
+           arbitration_strategy = 'user_confirmed',
+           arbitrated_at = now(),
+           updated_at = now()
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [memoryId],
+    );
+  }
 }
 
 /**

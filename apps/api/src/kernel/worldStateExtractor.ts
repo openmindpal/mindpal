@@ -83,6 +83,53 @@ function addAgentRelation(
 }
 
 /* ================================================================== */
+/*  跨步骤观察矛盾检测                                                   */
+/* ================================================================== */
+
+/** 观察矛盾报告 */
+interface ConflictReport {
+  entityId: string;
+  existingState: string;
+  newState: string;
+  description: string;
+}
+
+/** 矛盾状态对定义 */
+const stateContradictions: Record<string, string[]> = {
+  created: ['deleted', 'not_found'],
+  deleted: ['created', 'exists'],
+  exists: ['not_found', 'deleted'],
+  not_found: ['exists', 'created'],
+};
+
+/**
+ * 检测新提取的实体与现有 WorldState 中同名实体的状态矛盾。
+ * 纯函数，不修改任何状态。
+ */
+function detectObservationConflicts(
+  newEntities: WorldEntity[],
+  existingState: WorldState,
+): ConflictReport[] {
+  const conflicts: ConflictReport[] = [];
+  for (const newEntity of newEntities) {
+    const existing = findEntityByName(existingState, newEntity.name);
+    if (!existing) continue;
+
+    if (existing.state && newEntity.state && existing.state !== newEntity.state) {
+      if (stateContradictions[existing.state]?.includes(newEntity.state)) {
+        conflicts.push({
+          entityId: existing.entityId,
+          existingState: existing.state,
+          newState: newEntity.state,
+          description: `Entity "${newEntity.name}" state conflict: was "${existing.state}", now "${newEntity.state}"`,
+        });
+      }
+    }
+  }
+  return conflicts;
+}
+
+/* ================================================================== */
 /*  规则提取器 — 从结构化工具输出直接提取                                  */
 /* ================================================================== */
 
@@ -208,7 +255,42 @@ export function extractFromObservation(
   // 通用提取：如果输出包含常见结构化字段
   state = extractGenericOutput(state, obs, output, now);
 
+  // 5.3 证据权重：按来源类别调整本步骤新增 facts 的 confidence
+  state = {
+    ...state,
+    facts: state.facts.map(f => {
+      if (f.sourceStepSeq !== obs.seq) return f;
+      // 直接观测 → 0.9，推断 → 0.5，其他保留原值
+      if (f.category === 'observation') return { ...f, confidence: Math.min(f.confidence, 0.9) };
+      if (f.category === 'inference') return { ...f, confidence: Math.min(f.confidence, 0.5) };
+      return f;
+    }),
+  };
+
+  // 5.1 跨步骤观察矛盾检测
+  const newEntities = Object.values(state.entities).filter(e => e.sourceStepSeq === obs.seq);
+  const conflicts = detectObservationConflicts(newEntities, currentState);
+  for (const conflict of conflicts) {
+    console.warn(`[WorldStateExtractor] ${conflict.description}`);
+    state = upsertFact(state, {
+      factId: crypto.randomUUID(),
+      category: 'conflict',
+      key: `conflict:entity:${conflict.entityId}:step${obs.seq}`,
+      statement: conflict.description,
+      value: { entityId: conflict.entityId, existingState: conflict.existingState, newState: conflict.newState },
+      sourceStepSeq: obs.seq,
+      sourceToolRef: toolRef,
+      confidence: 1.0,
+      valid: true,
+      recordedAt: now,
+    });
+  }
+
   // 更新元数据（version 已由 upsertFact/upsertEntity 自动递增，此处仅更新序号和时间戳）
+  // TODO: 此处应调用 updateMemoryConfidenceFromFacts（定义在 modules/memory/repo.ts）
+  // 以根据新提取的事实更新相关记忆的置信度（证实 +0.1 / 矛盾 -0.2），
+  // 但该函数需要 DB pool 参数，而 extractFromObservation 为纯函数（无 IO 依赖）。
+  // 待上层调用方（agentLoop / loopActHandlers）集成时传入 pool 并在提取后调用。
   state = {
     ...state,
     afterIteration: Math.max(state.afterIteration, obs.seq),
@@ -613,6 +695,20 @@ export function evaluateGoalConditions(
       met: evaluateSuccessCriterion(sc, worldState),
     }));
 
+    // ── 9.2 + 9.3: postconditions 纳入完成判定 + 软完成级别 ──
+    const allRequiredCriteriaMet = goal.successCriteria
+      .filter((sc) => sc.required)
+      .every((sc) => sc.met);
+
+    // postconditions 全为空时退化为仅看 criteria
+    const postconditionsSatisfied = !goal.postconditions.length ||
+      goal.postconditions.every((pc) => pc.satisfied);
+
+    goal.completionLevel =
+      allRequiredCriteriaMet && postconditionsSatisfied ? 'full' :
+      allRequiredCriteriaMet && !postconditionsSatisfied ? 'partial' :
+      'failed';
+
     goal.updatedAt = now;
     updatedGraph.subGoals[i] = goal;
   }
@@ -657,36 +753,165 @@ function evaluateCondition(condition: GoalCondition, state: WorldState): boolean
         (f) => f.valid && f.statement.includes(pattern),
       );
     }
+    case "relation_holds": {
+      // 通过实体名称解析 ID，在 relations 中查找匹配关系
+      const fromName = String(params.fromEntity ?? "");
+      const toName = String(params.toEntity ?? "");
+      const relType = String(params.type ?? "");
+      const fromEntity = findEntityByName(state, fromName);
+      const toEntity = findEntityByName(state, toName);
+      if (!fromEntity || !toEntity) return condition.satisfied ?? false;
+      return state.relations.some(
+        (r) =>
+          r.fromEntityId === fromEntity.entityId &&
+          r.toEntityId === toEntity.entityId &&
+          r.type === relType,
+      );
+    }
+    case "regex_match": {
+      try {
+        const regexPattern = new RegExp(String(params.pattern ?? ""));
+        // 支持两种目标：实体属性值 或 事实内容
+        let target = "";
+        if (params.entityName && params.property) {
+          const entity = findEntityByName(state, String(params.entityName));
+          target = String(entity?.properties?.[String(params.property)] ?? "");
+        } else if (params.factKey) {
+          const fact = findFactByKey(state, String(params.factKey));
+          target = fact ? String(fact.value ?? fact.statement) : "";
+        } else {
+          // 回退：在所有有效事实的 statement 中搜索
+          return state.facts.some(
+            (f) => f.valid && regexPattern.test(f.statement),
+          );
+        }
+        return regexPattern.test(target);
+      } catch {
+        return condition.satisfied ?? false;
+      }
+    }
+    case "numeric_range": {
+      let numValue = NaN;
+      if (params.entityName && params.property) {
+        const entity = findEntityByName(state, String(params.entityName));
+        numValue = Number(entity?.properties?.[String(params.property)] ?? NaN);
+      } else if (params.factKey) {
+        const fact = findFactByKey(state, String(params.factKey));
+        numValue = Number(fact?.value ?? NaN);
+      }
+      if (Number.isNaN(numValue)) return condition.satisfied ?? false;
+      const min = Number(params.min ?? -Infinity);
+      const max = Number(params.max ?? Infinity);
+      return numValue >= min && numValue <= max;
+    }
+    case "temporal_after": {
+      const threshold = new Date(String(params.timestamp ?? "")).getTime();
+      if (Number.isNaN(threshold)) return condition.satisfied ?? false;
+      if (params.entityName) {
+        const entity = findEntityByName(state, String(params.entityName));
+        if (!entity) return condition.satisfied ?? false;
+        return new Date(entity.updatedAt).getTime() > threshold;
+      }
+      if (params.factKey) {
+        const fact = findFactByKey(state, String(params.factKey));
+        if (!fact) return condition.satisfied ?? false;
+        return new Date(fact.recordedAt).getTime() > threshold;
+      }
+      return condition.satisfied ?? false;
+    }
+    case "temporal_before": {
+      const threshold = new Date(String(params.timestamp ?? "")).getTime();
+      if (Number.isNaN(threshold)) return condition.satisfied ?? false;
+      if (params.entityName) {
+        const entity = findEntityByName(state, String(params.entityName));
+        if (!entity) return condition.satisfied ?? false;
+        return new Date(entity.updatedAt).getTime() < threshold;
+      }
+      if (params.factKey) {
+        const fact = findFactByKey(state, String(params.factKey));
+        if (!fact) return condition.satisfied ?? false;
+        return new Date(fact.recordedAt).getTime() < threshold;
+      }
+      return condition.satisfied ?? false;
+    }
     default:
       return condition.satisfied ?? false;
   }
 }
 
-/** 评估成功标准（当前为基于 WorldState 事实的简单匹配） */
+/** 评估成功标准（结构化求值 + all/any/threshold 策略） */
 function evaluateSuccessCriterion(criterion: SuccessCriterion, state: WorldState): boolean {
   if (criterion.met) return true; // 已满足的不回退
 
-  // 基于证据引用（优先使用索引查找）
+  // ── 1. 优先：evidenceRef 查找匹配 fact，要求高置信度 ──
   if (criterion.evidenceRef) {
     const factByKey = findFactByKey(state, criterion.evidenceRef);
-    if (factByKey) return true;
+    if (factByKey && factByKey.valid) {
+      return (factByKey.confidence ?? 0) >= 0.7;
+    }
     // 回退：按 factId 查找
-    return state.facts.some((f) => f.factId === criterion.evidenceRef && f.valid);
+    const factById = state.facts.find((f) => f.factId === criterion.evidenceRef && f.valid);
+    if (factById) {
+      return (factById.confidence ?? 0) >= 0.7;
+    }
+    // evidenceRef 指定但未找到 → 不满足
+    return false;
   }
 
-  // 自动匹配：检查是否有与 criterion.description 相关的成功事实
-  // 这是一个简化的关键词匹配，完整评估由 Verifier LLM 执行
+  // ── 2. 次选：遍历 facts 用关键词 + 置信度匹配 ──
   const keywords = criterion.description.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
   if (keywords.length === 0) return false;
 
-  const successFacts = state.facts.filter(
-    (f) => f.valid && f.category === "observation" && f.statement.toLowerCase().includes("succeeded"),
-  );
-
-  return successFacts.some((f) => {
-    const factLower = f.statement.toLowerCase();
-    return keywords.some((kw: string) => factLower.includes(kw));
+  // 在所有有效 facts 中搜索关键词匹配（不再限定 "succeeded" 文本）
+  const matchingFacts = state.facts.filter((f) => {
+    if (!f.valid) return false;
+    const keyLower = (f.key ?? "").toLowerCase();
+    const stmtLower = f.statement.toLowerCase();
+    const valueLower = String(f.value ?? "").toLowerCase();
+    return keywords.some((kw: string) =>
+      keyLower.includes(kw) || stmtLower.includes(kw) || valueLower.includes(kw),
+    );
   });
+
+  if (matchingFacts.length > 0) {
+    // 取最高置信度的匹配 fact
+    const bestMatch = matchingFacts.reduce((a, b) =>
+      (a.confidence ?? 0) > (b.confidence ?? 0) ? a : b,
+    );
+    const bestConfidence = bestMatch.confidence ?? 0;
+
+    // 根据 strategy 选择聚合方式
+    const strategy = criterion.strategy || 'all';
+    switch (strategy) {
+      case 'any':
+        // 任一匹配且置信度 ≥ 0.5 即满足
+        return bestConfidence >= 0.5;
+      case 'threshold': {
+        // 满足的关键词比例达到阈值（在高置信度 facts 中）
+        const highConfFacts = matchingFacts.filter((f) => (f.confidence ?? 0) >= 0.5);
+        const matchedCount = keywords.filter((kw: string) =>
+          highConfFacts.some((f) => {
+            const s = f.statement.toLowerCase();
+            const k = (f.key ?? "").toLowerCase();
+            return s.includes(kw) || k.includes(kw);
+          }),
+        ).length;
+        return (matchedCount / keywords.length) >= (criterion.thresholdValue ?? 1.0);
+      }
+      case 'all':
+      default:
+        // 有匹配且最高置信度 ≥ 0.5
+        return bestConfidence >= 0.5;
+    }
+  }
+
+  // ── 3. 兜底：关键词在 fact statement 中的纯文本匹配（无置信度门槛） ──
+  const anyTextMatch = state.facts.some((f) => {
+    if (!f.valid) return false;
+    const stmtLower = f.statement.toLowerCase();
+    return keywords.some((kw: string) => stmtLower.includes(kw));
+  });
+  return anyTextMatch;
 }
 
 /**

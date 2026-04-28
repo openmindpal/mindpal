@@ -7,10 +7,12 @@
  * 包含：记忆召回 / 任务召回 / 知识召回 / 工具发现
  */
 import type { Pool } from "pg";
+import type { FastifyInstance } from "fastify";
 import { searchMemory, listRecentTaskStates, touchMemoryAccess } from "./memory/repo";
 import { computeMinhash, minhashOverlapScore } from "@openslin/shared";
 import { getKnowledgeContract } from "./contracts/knowledgeContract";
 import { StructuredLogger } from "@openslin/shared";
+import { invokeModelChat } from "../lib/llm";
 
 const _logger = new StructuredLogger({ module: "agentContext" });
 import {
@@ -76,25 +78,100 @@ function splitBySentence(text: string, maxParts = 4): string[] {
 
 // ─── 查询分解 ─────────────────────────────────────────────────────
 
+interface DecomposedQuery {
+  subQueries: Array<{
+    intent: string;          // 子意图描述
+    searchQuery: string;     // 优化后的检索查询
+    priority: 'critical' | 'supporting';
+  }>;
+  implicitConstraints: string[];  // 提取的隐式约束
+}
+
+const decomposeCache = new Map<string, DecomposedQuery>();
+const DECOMPOSE_CACHE_MAX = 200;
+
+const DECOMPOSE_SYSTEM_PROMPT = `你是一个查询分解引擎。将用户的复合消息分解为独立的信息检索子查询。
+返回严格的 JSON，不要附加任何解释文字。
+格式：
+{
+  "subQueries": [
+    { "intent": "子意图描述", "searchQuery": "优化后的检索查询", "priority": "critical" | "supporting" }
+  ],
+  "implicitConstraints": ["提取的隐式约束"]
+}
+规则：
+- 如果消息只有单一意图，返回包含一个 subQuery 的数组
+- priority=critical 表示核心信息需求，supporting 表示辅助上下文
+- implicitConstraints 提取时间、范围、身份等隐含限定条件
+- subQueries 最多 4 个`;
+
 /**
  * 将复合消息分解为独立子查询。
- * TODO: 接入 LLM 查询分解（需要 FastifyInstance 才能调用 invokeModelChat）
- * 当前实现为纯标点分割降级方案。
- * 超时或失败时返回 null，由调用方降级处理。
+ * 当 app 可用时调用 LLM 做结构化分解，失败时 fallback 到 splitBySentence。
  */
-async function decomposeQuery(message: string): Promise<string[] | null> {
-  try {
-    // TODO: 接入 LLM 查询分解
-    // 当 recallRelevantMemory 支持传入 app (FastifyInstance) 后，可使用 invokeModelChat：
-    // prompt: "将用户消息拆分为独立的信息检索子查询。每行一个子查询，不加编号，不解释。如果消息只有一个意图则原样返回。"
-    // 设置 2 秒超时 via AbortController
+async function decomposeQuery(message: string, app?: FastifyInstance): Promise<DecomposedQuery | null> {
+  const cacheKey = message.slice(0, 500);
+  const cached = decomposeCache.get(cacheKey);
+  if (cached) return cached;
 
-    // 降级方案：标点分割
-    const parts = splitBySentence(message);
-    return parts.length > 1 ? parts : null;
-  } catch {
-    return null; // 超时或失败时返回 null
+  // 有 app 时尝试 LLM 分解
+  if (app) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      const result = await invokeModelChat({
+        app,
+        subject: { tenantId: "system", subjectId: "query_decompose" },
+        locale: "zh-CN",
+        purpose: "query_decompose",
+        messages: [
+          { role: "system", content: DECOMPOSE_SYSTEM_PROMPT },
+          { role: "user", content: message.slice(0, 800) },
+        ],
+        timeoutMs: 3000,
+      });
+      clearTimeout(timer);
+
+      const text = (result?.outputText ?? "").trim();
+      // 提取 JSON（兼容 markdown 代码块包裹）
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]) as DecomposedQuery;
+        if (Array.isArray(parsed.subQueries) && parsed.subQueries.length > 0) {
+          // 规范化
+          const normalized: DecomposedQuery = {
+            subQueries: parsed.subQueries.slice(0, 4).map(sq => ({
+              intent: String(sq.intent ?? ""),
+              searchQuery: String(sq.searchQuery ?? ""),
+              priority: sq.priority === "supporting" ? "supporting" : "critical",
+            })),
+            implicitConstraints: Array.isArray(parsed.implicitConstraints)
+              ? parsed.implicitConstraints.map(String).slice(0, 5)
+              : [],
+          };
+          // 写入缓存
+          if (decomposeCache.size >= DECOMPOSE_CACHE_MAX) {
+            const firstKey = decomposeCache.keys().next().value;
+            if (firstKey !== undefined) decomposeCache.delete(firstKey);
+          }
+          decomposeCache.set(cacheKey, normalized);
+          return normalized;
+        }
+      }
+    } catch (err) {
+      _logger.warn("decomposeQuery LLM failed, falling back to splitBySentence", { err: (err as Error)?.message });
+    }
   }
+
+  // fallback：标点分割转为 DecomposedQuery 格式
+  const parts = splitBySentence(message);
+  if (parts.length <= 1) return null;
+
+  const fallback: DecomposedQuery = {
+    subQueries: parts.map(p => ({ intent: p, searchQuery: p, priority: "critical" as const })),
+    implicitConstraints: [],
+  };
+  return fallback;
 }
 
 // ─── 记忆召回 ─────────────────────────────────────────────────────
@@ -108,7 +185,16 @@ export async function recallRelevantMemory(params: {
   auditContext?: { traceId?: string; requestId?: string };
   /** P1-3 Memory OS: 可选多查询维度（例如 GoalGraph 子目标描述） */
   additionalQueries?: string[];
-}): Promise<{ text: string; recallStats?: { evidenceCount: number; searchMode: string; retryTriggered?: boolean } }> {
+  /** P2: 可选 FastifyInstance，传入后启用 LLM 语义查询分解 */
+  app?: FastifyInstance;
+}): Promise<{
+  text: string;
+  recallStats?: { evidenceCount: number; searchMode: string; retryTriggered?: boolean };
+  /** P2-召回反哺: LLM / 子查询覆盖率检测到的信息缺口 */
+  informationGaps?: string[];
+  /** P2-召回反哺: 召回内容摘要，供 planner 快速判断已知范围 */
+  recallSummary?: string;
+}> {
   const limit = memoryRecallLimit();
   if (limit <= 0) return { text: "" };
   try {
@@ -156,16 +242,26 @@ export async function recallRelevantMemory(params: {
 
     if (needsRetry) {
       try {
-        let subQueries: string[] | null = null;
+        let decomposed: DecomposedQuery | null = null;
         try {
-          subQueries = await decomposeQuery(params.message);
+          decomposed = await decomposeQuery(params.message, params.app);
         } catch {
-          subQueries = null;
+          decomposed = null;
         }
-        // 降级到标点分割
-        if (!subQueries || subQueries.length === 0) {
+
+        // 从 DecomposedQuery 提取 searchQuery 列表，fallback 到标点分割
+        let subQueries: string[];
+        if (decomposed && decomposed.subQueries.length > 0) {
+          // 优先使用 critical 查询，其次 supporting
+          const sorted = [...decomposed.subQueries].sort((a, b) =>
+            a.priority === "critical" && b.priority !== "critical" ? -1 :
+            b.priority === "critical" && a.priority !== "critical" ? 1 : 0,
+          );
+          subQueries = sorted.map(sq => sq.searchQuery).filter(q => q.length > 2);
+        } else {
           subQueries = splitBySentence(params.message);
         }
+
         if (subQueries.length > 0) {
           const retryPromises = subQueries.map(q =>
             searchMemory({
@@ -174,7 +270,7 @@ export async function recallRelevantMemory(params: {
               spaceId: params.spaceId,
               subjectId: params.subjectId,
               query: q.slice(0, 300),
-              limit: Math.ceil(limit / subQueries!.length) + 2,
+              limit: Math.ceil(limit / subQueries.length) + 2,
             }),
           );
           const retryResults = await Promise.all(retryPromises);
@@ -194,27 +290,101 @@ export async function recallRelevantMemory(params: {
       }
     }
 
-    // 元数据管线（minhash + 12因子 rerank）已完成语义召回与质量排序，直接截断
-    const evidence = allEvidence.slice(0, limit);
+    // ─── P2: 分层召回与相关性过滤 ───
+    // 1. 相关性评分：使用 minhash overlap 作为轻量相关性指标
+    const queryMinhash = computeMinhash(params.message.slice(0, 500));
+    const RELEVANCE_THRESHOLD = 0.3;
+
+    const scoredEvidence = allEvidence.map(e => {
+      // 基于 snippet 文本计算 minhash overlap 作为相关性分数
+      const snippetText = (e.title ? e.title + " " : "") + (e.snippet ?? "");
+      const snippetMinhash = computeMinhash(snippetText);
+      const minhashScore = minhashOverlapScore(queryMinhash, snippetMinhash);
+      // 词法命中补偿：snippet 包含查询关键词时加分
+      const queryLower = params.message.slice(0, 100).toLowerCase();
+      const lexicalHit = snippetText.toLowerCase().includes(queryLower) ? 0.4 : 0;
+      const relevanceScore = Math.min(1, minhashScore + lexicalHit);
+      return { ...e, _relevanceScore: relevanceScore };
+    }).filter(e => e._relevanceScore >= RELEVANCE_THRESHOLD);
+
+    // 2. 分层注入：按 priority 标签分组（由 decomposeQuery 二阶段检索赋予）
+    // evidence 来自不同子查询——使用查询顺序推断优先级
+    // critical 子查询结果优先注入（60% 预算），supporting 次之（30%），其余 10%
+    let decomposed: DecomposedQuery | null = null;
+    if (!needsRetry && params.message.length > 20) {
+      // 仅在未触发 retry 时做 decompose（retry 路径内部已使用 decompose）
+      try { decomposed = await decomposeQuery(params.message, params.app); } catch { decomposed = null; }
+    }
+
+    // 标记 evidence 的优先级：基于其 snippet 与各 sub-query 的匹配度
+    type PrioritizedEvidence = typeof scoredEvidence[number] & { _priority: 'critical' | 'supporting' | 'other' };
+    let prioritized: PrioritizedEvidence[];
+
+    if (decomposed && decomposed.subQueries.length > 1) {
+      prioritized = scoredEvidence.map(e => {
+        const snippetLower = ((e.title ?? "") + " " + (e.snippet ?? "")).toLowerCase();
+        let bestPriority: 'other' = 'other';
+        for (const sq of decomposed!.subQueries) {
+          const sqLower = sq.searchQuery.toLowerCase();
+          if (sqLower.length >= 2 && snippetLower.includes(sqLower.slice(0, 30))) {
+            if (sq.priority === 'critical') { bestPriority = 'critical' as any; break; }
+            if (sq.priority === 'supporting') bestPriority = 'supporting' as any;
+          }
+        }
+        return { ...e, _priority: bestPriority as 'critical' | 'supporting' | 'other' };
+      });
+    } else {
+      // 无分解结果时，全部视为 critical
+      prioritized = scoredEvidence.map(e => ({ ...e, _priority: 'critical' as const }));
+    }
+
+    // 3. 按 priority 分组并按预算分配结果数
+    const criticalResults = prioritized.filter(r => r._priority === 'critical');
+    const supportingResults = prioritized.filter(r => r._priority === 'supporting');
+    const otherResults = prioritized.filter(r => r._priority === 'other');
+
+    // 以 limit 数量作为总预算（字符预算在后续截断阶段处理）
+    const totalBudget = limit;
+    const criticalBudget = Math.floor(totalBudget * 0.6);
+    const supportingBudget = Math.floor(totalBudget * 0.3);
+    const otherBudget = totalBudget - criticalBudget - supportingBudget;
+
+    // 按相关性分数降序排列各层，截取预算内结果
+    const sortByRelevance = (a: { _relevanceScore: number }, b: { _relevanceScore: number }) => b._relevanceScore - a._relevanceScore;
+    const selectedCritical = criticalResults.sort(sortByRelevance).slice(0, Math.max(criticalBudget, 1));
+    const selectedSupporting = supportingResults.sort(sortByRelevance).slice(0, supportingBudget);
+    const selectedOther = otherResults.sort(sortByRelevance).slice(0, otherBudget);
+
+    // 合并去重（critical 优先）
+    const finalSeen = new Set<string>();
+    const evidence: typeof allEvidence = [];
+    for (const batch of [selectedCritical, selectedSupporting, selectedOther]) {
+      for (const item of batch) {
+        if (!finalSeen.has(item.id)) {
+          finalSeen.add(item.id);
+          evidence.push(item);
+        }
+      }
+    }
     if (!evidence.length) return { text: "" };
 
     // P1-3 Memory OS: 更新访问计数（不阻塞主流程）
     const recalledIds = evidence.map(e => e.id);
     touchMemoryAccess({ pool: params.pool, tenantId: params.tenantId, memoryIds: recalledIds }).catch(() => {});
 
-    // 截断优先级排序：identity/profile/user_info 类型优先保留，其余按 score 原序
+    // 截断优先级排序：identity/profile/user_info 类型优先保留，其余按分层顺序
     const priorityTypes = new Set(["identity", "profile", "user_info"]);
     const sorted = [...evidence].sort((a, b) => {
       const ap = priorityTypes.has(a.type) ? 1 : 0;
       const bp = priorityTypes.has(b.type) ? 1 : 0;
-      return bp - ap; // 优先类型排前，同优先级保持原有 score 顺序（stable sort）
+      return bp - ap; // 优先类型排前，同优先级保持分层注入顺序
     });
 
     let totalChars = 0;
     const lines: string[] = [];
     for (const e of sorted) {
       let line = `- [记忆 #${e.id}] 类型: ${e.type ?? "memory"}${e.title ? ", 标题: " + e.title : ""}, 内容: ${e.snippet}`;
-      if (e.conflictMarker && e.resolutionStatus === "pending") {
+      if (e.conflictMarker && e.conflictMarker.length > 0 && e.resolutionStatus === "pending") {
         line += ` [⚠ 存在冲突，需用户确认]`;
       }
       if (totalChars + line.length > MEMORY_RECALL_MAX_CHARS) {
@@ -244,7 +414,38 @@ export async function recallRelevantMemory(params: {
       }).catch(() => {});
     }
 
-    return { text: lines.join("\n"), recallStats: { evidenceCount: evidence.length, searchMode, retryTriggered } };
+    // ─── P2-召回反哺: 信息缺口检测 ───
+    // 获取本次完整的 decomposed（retry 路径已经使用过，非 retry 路径在分层召回阶段获取）
+    const effectiveDecomposed = decomposed ?? (needsRetry ? await decomposeQuery(params.message, params.app).catch(() => null) : null);
+
+    const informationGaps: string[] = [];
+    if (effectiveDecomposed?.subQueries) {
+      for (const sq of effectiveDecomposed.subQueries) {
+        if (sq.priority !== "critical") continue;
+        const sqLower = sq.searchQuery.toLowerCase().slice(0, 60);
+        if (sqLower.length < 2) continue;
+        const covered = evidence.some(e => {
+          const txt = ((e.title ?? "") + " " + (e.snippet ?? "")).toLowerCase();
+          return txt.includes(sqLower.slice(0, 30)) || sqLower.includes((e.title ?? "").toLowerCase().slice(0, 20));
+        });
+        if (!covered) {
+          informationGaps.push(sq.intent || sq.searchQuery);
+        }
+      }
+    }
+
+    // ─── P2-召回反哺: 召回摘要生成 ───
+    const coveredTypes = [...new Set(evidence.map(e => e.type || "general"))];
+    const recallSummary = evidence.length > 0
+      ? `Found ${evidence.length} relevant items covering: ${coveredTypes.join(", ")}`
+      : "No relevant information found";
+
+    return {
+      text: lines.join("\n"),
+      recallStats: { evidenceCount: evidence.length, searchMode, retryTriggered },
+      informationGaps: informationGaps.length > 0 ? informationGaps : undefined,
+      recallSummary,
+    };
   } catch (err) {
     _logger.warn("recallRelevantMemory failed", { err: (err as Error)?.message });
     return { text: "" };
@@ -655,7 +856,13 @@ export async function discoverEnabledTools(params: {
       const desc = i18nText(t.def.description, params.locale);
       const inputFields = t.ver?.inputSchema?.fields
         ? Object.entries(t.ver.inputSchema.fields as Record<string, any>)
-            .map(([k, v]) => `${k}:${v?.type ?? "string"}${v?.required ? "*" : ""}`)
+            .map(([k, v]) => {
+              const type = v?.type ?? "string";
+              const req = v?.required ? "*" : "";
+              const descRaw = typeof v?.description === "string" ? v.description : "";
+              const descShort = descRaw.length > 120 ? descRaw.slice(0, 120) + "..." : descRaw;
+              return `${k}:${type}${req}${descShort ? "(" + descShort + ")" : ""}`;
+            })
             .join(", ")
         : "";
       const line = `- ${t.toolRef} | ${displayName}${desc ? ": " + desc : ""}${inputFields ? " | input: {" + inputFields + "}" : ""} | risk=${t.def.riskLevel} | priority=${t.def.priority}${t.def.category !== 'uncategorized' ? ' | category=' + t.def.category : ''}`;

@@ -34,11 +34,15 @@ export interface LoopState {
   executionConstraints: ExecutionConstraints | null;
   toolDiscovery: { catalog: string; tools: EnabledTool[] };
   memoryContext: string | undefined;
+  /** P2-召回反哺: 信息缺口（可选，由记忆召回检测） */
+  informationGaps: string[] | undefined;
   taskHistory: string | undefined;
   knowledgeContext: string | undefined;
   strategyContext: string | undefined;
   goalGraph: GoalGraph | null;
   worldState: WorldState | null;
+  /** 目标分解异步 Promise（不阻塞首次迭代，第二次迭代前 await） */
+  goalDecompPromise: Promise<{ graph: GoalGraph | null; ok: boolean }> | null;
   processId: string | null;
   heartbeat: { stop: () => void };
   subjectPayload: Record<string, unknown>;
@@ -77,6 +81,7 @@ export async function initializeLoopState(params: AgentLoopParams): Promise<Loop
   const auditCtx = traceId ? { traceId } : undefined;
   let toolDiscovery: { catalog: string; tools: EnabledTool[] };
   let memoryContext: string | undefined;
+  let informationGaps: string[] | undefined;
   let taskHistory: string | undefined;
   let knowledgeContext: string | undefined;
   let strategyContext: string | undefined;
@@ -97,7 +102,7 @@ export async function initializeLoopState(params: AgentLoopParams): Promise<Loop
 
     const [td, memoryRecall, taskRecall, knowledgeRecall, strategyRecall] = await Promise.all([
       cachedTools ?? discoverEnabledTools({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, locale }),
-      recallRelevantMemory({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, message: goal, auditContext: auditCtx }),
+      recallRelevantMemory({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, message: goal, auditContext: auditCtx, app }),
       recallRecentTasks({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, auditContext: auditCtx }),
       recallRelevantKnowledge({ pool, tenantId: subject.tenantId, spaceId: subject.spaceId, subjectId: subject.subjectId, message: goal, auditContext: auditCtx }),
       cachedStrategy !== undefined
@@ -108,6 +113,7 @@ export async function initializeLoopState(params: AgentLoopParams): Promise<Loop
     if (cc.ENABLED && !cachedTools) cacheSet(cacheKeyTool, td, cc.TOOL_DISCOVERY_TTL_MS);
     if (cc.ENABLED && cachedStrategy === undefined && strategyRecall.text) cacheSet(cacheKeyStrategy, strategyRecall.text, cc.STRATEGY_RECALL_TTL_MS);
     memoryContext = memoryRecall.text || undefined;
+    informationGaps = memoryRecall.informationGaps;
     taskHistory = taskRecall.text || undefined;
     knowledgeContext = knowledgeRecall.text || undefined;
     strategyContext = strategyRecall.text || undefined;
@@ -151,22 +157,25 @@ export async function initializeLoopState(params: AgentLoopParams): Promise<Loop
     status: "running",
   });
 
-  // 目标分解
-  try {
-    const decompResult = await decomposeGoal({
-      app, pool, subject, locale, authorization, traceId,
-      goal, runId, toolCatalog: toolDiscovery.catalog, defaultModelRef,
-    });
-    goalGraph = decompResult.graph;
-    app.log.info({ runId, loopId, subGoalCount: goalGraph.subGoals.length, decompositionOk: decompResult.ok }, "[AgentLoop] GoalGraph 目标分解完成");
-    await upsertGoalGraph(pool, {
-      goalGraph, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, runId, loopId, goal,
-    }).catch((e: unknown) => {
-      app.log.error({ err: (e as Error)?.message, runId, loopId, graphId: goalGraph?.graphId }, "[AgentLoop] GoalGraph 持久化失败（不阻塞主流程）");
-    });
-  } catch (e: any) {
-    app.log.warn({ err: e?.message, runId }, "[AgentLoop] GoalGraph 分解失败（降级为纯文本目标）");
-  }
+  // 目标分解（异步执行，不阻塞首次迭代）
+  const goalDecompPromise = (async (): Promise<{ graph: GoalGraph | null; ok: boolean }> => {
+    try {
+      const decompResult = await decomposeGoal({
+        app, pool, subject, locale, authorization, traceId,
+        goal, runId, toolCatalog: toolDiscovery.catalog, defaultModelRef,
+      });
+      app.log.info({ runId, loopId, subGoalCount: decompResult.graph.subGoals.length, decompositionOk: decompResult.ok }, "[AgentLoop] GoalGraph 目标分解完成");
+      upsertGoalGraph(pool, {
+        goalGraph: decompResult.graph, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, runId, loopId, goal,
+      }).catch((e: unknown) => {
+        app.log.error({ err: (e as Error)?.message, runId, loopId, graphId: decompResult.graph?.graphId }, "[AgentLoop] GoalGraph 持久化失败（不阻塞主流程）");
+      });
+      return decompResult;
+    } catch (e: any) {
+      app.log.warn({ err: e?.message, runId }, "[AgentLoop] GoalGraph 分解失败（降级为纯文本目标）");
+      return { graph: null, ok: false };
+    }
+  })();
 
   worldState = extractWorldState({
     runId,
@@ -188,8 +197,8 @@ export async function initializeLoopState(params: AgentLoopParams): Promise<Loop
   return {
     loopId, loopStartedAt, observations, iterations, succeededSteps, failedSteps,
     lastDecision, currentSeq, executionConstraints: executionConstraints ?? null, toolDiscovery,
-    memoryContext, taskHistory, knowledgeContext, strategyContext,
-    goalGraph, worldState, processId, heartbeat, subjectPayload, auditCtx,
+    memoryContext, informationGaps, taskHistory, knowledgeContext, strategyContext,
+    goalGraph, worldState, goalDecompPromise, processId, heartbeat, subjectPayload, auditCtx,
   };
 }
 

@@ -259,10 +259,13 @@ export {
   escapeIlikePat,
   // Cosine Similarity
   cosineSimilarity,
+  // 记忆来源可信度
+  DEFAULT_SOURCE_TRUST_MAP,
 } from "./memoryCore";
 export type {
   MemoryRiskEvaluation, WriteProof, WriteIntent, MemoryRerankInput,
   MemoryScope,
+  MemoryProvenanceConfig,
 } from "./memoryCore";
 
 // ─── 列级加密（AES-256-GCM，API / Worker 共享） ────────────────────────────
@@ -476,6 +479,8 @@ export type {
   EntityCategory, WorldEntity, RelationType, WorldRelation,
   FactCategory, WorldFact, WorldState,
   WorldStateSource, WorldStateEntry, WorldStateConflict,
+  FailureDiagnosis, ReplanAction, ToolSemanticMeta, FallbackImpact,
+  SemanticAuditEntry,
 } from "./worldState";
 
 // ─── OTel 初始化工具 ─────────────────────────────────────────────────
@@ -550,9 +555,11 @@ export {
   isDebateConverged as isDebateConvergedV2,
   computeDebateConsensusScore,
   COLLAB_CONFIG_DEFAULTS,
+  DEBATE_CONFIG_DEFAULTS,
   collabConfig,
 } from "./collabProtocol";
 export type {
+  DebateConfig,
   CollabMessageType,
   CollabMessage,
   CollabMessageEnvelope,
@@ -727,6 +734,8 @@ export type {
   OrchestrationEvent,
   StepExecutionResult,
   OrchestrationCommand,
+  PreflightIssue,
+  PreflightResult,
 } from "./orchestrationEvents";
 
 // ── 统一流式事件类型 ──

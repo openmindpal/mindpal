@@ -5,6 +5,7 @@ import {
   processMemoryEmbeddingJob,
   backfillMemoryEmbeddings,
 } from "./memoryEmbedding";
+import { cosineSimilarity } from "@openslin/shared";
 
 /* ── 全局 mock ─────────────────────────────────────────── */
 
@@ -564,21 +565,6 @@ describe("backfillMemoryEmbeddings", () => {
 /* ── 蒸馏记忆 vs 原始记忆 向量召回评分对比 ───────────── */
 
 describe("蒸馏记忆向量召回评分验证", () => {
-  /**
-   * 模拟 cosine similarity 计算
-   * 用于验证蒸馏后的 semantic/procedural 记忆在向量空间中
-   * 与查询的相关性高于原始 episodic 碎片
-   */
-  function cosineSimilarity(a: number[], b: number[]): number {
-    let dot = 0, normA = 0, normB = 0;
-    for (let i = 0; i < a.length; i++) {
-      dot += a[i]! * b[i]!;
-      normA += a[i]! * a[i]!;
-      normB += b[i]! * b[i]!;
-    }
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom === 0 ? 0 : dot / denom;
-  }
 
   it("蒸馏 semantic 记忆与查询的 cosine 相似度高于 episodic 碎片", () => {
     // 模拟场景：查询"如何优化数据库性能"

@@ -94,6 +94,10 @@ export type CollabMessageType =
   | "feedback"          // 反馈消息
   | "query"             // 查询消息
   | "ack"               // 确认消息
+  // ── 运行恢复协议 ──
+  | "collab.checkpoint"       // 协作运行检查点
+  | "collab.resume"           // 协作运行恢复
+  | "collab.heartbeat_timeout" // 协作运行心跳超时
   // ── 通用 ──
   | "escalate"          // 问题上报
   | "heartbeat";        // 心跳
@@ -507,6 +511,38 @@ export interface ConsensusEvolutionEntry {
   /** 时间戳 */
   recordedAt: string;
 }
+
+/** 辩论配置（从 approval_rules 动态加载或兜底默认值） */
+export interface DebateConfig {
+  maxRounds: number;
+  convergenceThreshold: number;
+  minConfidence: number;
+  arbiterModel?: string;
+  allowCorrections: boolean;
+  requireEvidence: boolean;
+  // V2 扩展
+  scoreDecay: number;
+  correctionBonus: number;
+  consensusEvolutionWindow: number;
+  divergenceConfDiff: number;
+  minParties: number;
+  maxParties: number;
+}
+
+/** 辩论配置默认值（无 DB 规则时兜底） */
+export const DEBATE_CONFIG_DEFAULTS: DebateConfig = {
+  maxRounds: 5,
+  convergenceThreshold: 0.8,
+  minConfidence: 0.6,
+  allowCorrections: true,
+  requireEvidence: true,
+  scoreDecay: 0.9,
+  correctionBonus: 0.05,
+  consensusEvolutionWindow: 3,
+  divergenceConfDiff: 0.15,
+  minParties: 2,
+  maxParties: 10,
+};
 
 /** 创建 N 方辩论会话 */
 export function createDebateSession(params: {

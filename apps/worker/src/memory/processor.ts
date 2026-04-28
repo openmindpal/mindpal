@@ -13,6 +13,7 @@ import {
   type WriteProof,
   type MemoryRerankInput,
   APPROVAL_REQUIRED_RISK_LEVELS,
+  DEFAULT_SOURCE_TRUST_MAP,
 } from "@openslin/shared";
 import { encryptMemoryContent, decryptMemoryContent, isMemoryEncryptionEnabled } from "./memoryEncryption";
 
@@ -24,6 +25,8 @@ export async function memoryWrite(params: {
   spaceId: string;
   subjectId: string;
   input: any;
+  /** P3: 记忆来源类型（user_input | tool_output | task_result | llm_inference 等） */
+  provenanceType?: string;
 }) {
   const scope = params.input?.scope === "space" ? "space" : params.input?.scope === "global" ? "global" : "user";
   const type = String(params.input?.type ?? "other");
@@ -33,6 +36,10 @@ export async function memoryWrite(params: {
   const confidence = typeof params.input?.confidence === "number" && Number.isFinite(params.input.confidence) ? Math.max(0, Math.min(1, params.input.confidence)) : null;
   const retentionDays = typeof params.input?.retentionDays === "number" && Number.isFinite(params.input.retentionDays) ? params.input.retentionDays : null;
   const expiresAt = retentionDays ? new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000).toISOString() : null;
+
+  // P3: 确定来源类型和初始可信度
+  const resolvedProvenanceType = params.provenanceType ?? (params.input?.provenanceType ? String(params.input.provenanceType) : "unknown");
+  const sourceTrust = DEFAULT_SOURCE_TRUST_MAP[resolvedProvenanceType] ?? 50;
 
   const redacted = redactValue(contentTextRaw);
   const contentText = String(redacted.value ?? "");
@@ -113,7 +120,7 @@ export async function memoryWrite(params: {
 
   // ── 冲突检测：写入前检查是否存在语义相近但内容矛盾的记忆 ──
   let conflictDetected = false;
-  let conflictMarker: string | null = null;
+  let conflictMarkers: string[] = [];
   const CONFLICT_THRESHOLD = 0.3;
   try {
     const conflictCandRes = await params.pool.query(
@@ -133,8 +140,7 @@ export async function memoryWrite(params: {
         const existingLower = String(row.content_text ?? "").toLowerCase().trim();
         if (existingLower !== newContentLower) {
           conflictDetected = true;
-          conflictMarker = String(row.id);
-          break;
+          conflictMarkers.push(String(row.id));
         }
       }
     }
@@ -204,13 +210,17 @@ export async function memoryWrite(params: {
               embedding_updated_at = now(),
               fact_version = COALESCE(fact_version, 1) + 1,
               confidence = COALESCE($13, confidence),
-              conflict_marker = COALESCE($14, conflict_marker),
+              conflict_marker = CASE WHEN $14::uuid[] IS NOT NULL THEN (
+                SELECT array_agg(DISTINCT x) FROM unnest(COALESCE(conflict_marker, '{}'::uuid[]) || $14::uuid[]) AS x
+              ) ELSE conflict_marker END,
               resolution_status = CASE WHEN $14 IS NOT NULL THEN 'pending' ELSE resolution_status END,
+              source_trust = $15,
+              provenance_type = $16,
               updated_at = now()
           WHERE id = $1 AND tenant_id = $2
           RETURNING id, scope, type, title, created_at, fact_version, content_text, updated_at
         `,
-        [bestId, params.tenantId, title, storedContentText, digest, retentionDays, expiresAt, writeProof.policy, JSON.stringify(writeProof), JSON.stringify(src), MINHASH_MODEL_REF, minhash, confidence, conflictMarker],
+        [bestId, params.tenantId, title, storedContentText, digest, retentionDays, expiresAt, writeProof.policy, JSON.stringify(writeProof), JSON.stringify(src), MINHASH_MODEL_REF, minhash, confidence, conflictMarkers.length > 0 ? conflictMarkers : null, sourceTrust, resolvedProvenanceType],
       );
       if (!mergeRes.rows.length) {
         throw new Error(`memory merge update returned no rows: id=${bestId}, tenant=${params.tenantId}`);
@@ -233,8 +243,9 @@ export async function memoryWrite(params: {
         tenant_id, space_id, owner_subject_id, scope, type, title,
         content_text, content_digest, retention_days, expires_at, write_policy, write_proof, source_ref,
         embedding_model_ref, embedding_minhash, embedding_updated_at,
-        confidence, conflict_marker, resolution_status
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),$16,$17,$18)
+        confidence, conflict_marker, resolution_status,
+        source_trust, provenance_type
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),$16,$17,$18,$19,$20)
       RETURNING id, scope, type, title, created_at
     `,
     [
@@ -254,8 +265,10 @@ export async function memoryWrite(params: {
       MINHASH_MODEL_REF,
       minhash,
       confidence,
-      conflictMarker,
-      conflictMarker ? "pending" : null,
+      conflictMarkers.length > 0 ? conflictMarkers : null,
+      conflictMarkers.length > 0 ? "pending" : null,
+      sourceTrust,
+      resolvedProvenanceType,
     ],
   );
   const row = res.rows[0] as Record<string, unknown>;
@@ -337,8 +350,15 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
   const scopeArgs = [...baseArgs];
   const scopeNextIdx = idx;
 
-  // Stage 1: Lexical (ILIKE)
+  // Stage 1: Lexical (ILIKE) — 分段匹配，支持多问句/长查询
   const lexLimit = Math.max(limit, limit * 3);
+  let lexSegments = query.split(/[？?；;，,、]/).map(s => s.trim()).filter(s => s.length >= 2);
+  if (lexSegments.length === 1 && lexSegments[0]!.length > 30) {
+    lexSegments = lexSegments[0]!.split(/\s+/).map(s => s.trim()).filter(s => s.length >= 2);
+  }
+  if (!lexSegments.length) lexSegments = [query];
+  lexSegments = lexSegments.slice(0, 10);
+  const lexPatterns = lexSegments.map(s => `%${escapeIlikePat(s)}%`);
   const lexIdx = scopeNextIdx;
   const lexRes = await params.pool.query(
     `
@@ -347,11 +367,11 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
              'lexical' AS _stage
       FROM memory_entries
       WHERE ${scopeWhereClause}
-        AND (content_text ILIKE $${lexIdx} OR COALESCE(title,'') ILIKE $${lexIdx})
+        AND (content_text ILIKE ANY($${lexIdx}::text[]) OR COALESCE(title,'') ILIKE ANY($${lexIdx}::text[]))
       ORDER BY created_at DESC
       LIMIT $${lexIdx + 1}
     `,
-    [...scopeArgs, `%${escapeIlikePat(query)}%`, lexLimit],
+    [...scopeArgs, lexPatterns, lexLimit],
   );
 
   // Stage 2: Semantic (minhash overlap)
@@ -410,7 +430,7 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
       stage: String(c._stage ?? "lexical"),
       confidence: typeof c.confidence === "number" && Number.isFinite(c.confidence) ? c.confidence : 0.5,
       factVersion: typeof c.fact_version === "number" && Number.isFinite(c.fact_version) ? c.fact_version : 1,
-      conflictMarker: c.conflict_marker != null ? String(c.conflict_marker) : null,
+      conflictMarker: Array.isArray(c.conflict_marker) ? (c.conflict_marker as string[]) : (c.conflict_marker != null ? [String(c.conflict_marker)] : null),
       resolutionStatus: c.resolution_status != null ? String(c.resolution_status) : null,
       memoryClass: String(c.memory_class ?? "semantic"),
       decayScore: typeof c.decay_score === "number" && Number.isFinite(c.decay_score) ? c.decay_score : 1.0,

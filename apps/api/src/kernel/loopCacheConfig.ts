@@ -15,9 +15,23 @@ import { resolveNumber, resolveBoolean, createMemoryCacheManager, type CacheMana
 /*  P1-8/P1-9: 准备阶段缓存分层 + 会话级缓存                              */
 /* ================================================================== */
 
+/** 缓存配置显式类型 */
+export interface CacheConfig {
+  TOOL_DISCOVERY_TTL_MS: number;
+  MEMORY_RECALL_TTL_MS: number;
+  STRATEGY_RECALL_TTL_MS: number;
+  ENABLED: boolean;
+  MAX_SIZE: number;
+  PURGE_INTERVAL_MS: number;
+}
+
+/** 缓存 getCacheConfig 结果 */
+let _cacheConfigCache: CacheConfig | null = null;
+
 /** P1-8: 缓存配置（环境变量已注册到 configRegistry.data.json） */
 export function getCacheConfig() {
-  return {
+  if (_cacheConfigCache) return _cacheConfigCache;
+  _cacheConfigCache = {
     /** 工具发现缓存 TTL (ms)，默认 30s */
     TOOL_DISCOVERY_TTL_MS: resolveNumber("CACHE_TOOL_DISCOVERY_TTL_MS", undefined, undefined, 30000).value,
     /** 记忆召回缓存 TTL (ms)，默认 60s */
@@ -31,6 +45,7 @@ export function getCacheConfig() {
     /** P0-4: 过期清理间隔 (ms)，默认 60s */
     PURGE_INTERVAL_MS: resolveNumber("AGENT_PREPARE_CACHE_PURGE_MS", undefined, undefined, 60000).value,
   };
+  return _cacheConfigCache;
 }
 
 /** 内部 CacheManager 单例（懒初始化） */
@@ -69,8 +84,19 @@ export function prepareCacheKey(prefix: string, tenantId: string, spaceId: strin
 /*  P1-11: 轻迭代模式配置                                                */
 /* ================================================================== */
 
+/** 轻迭代配置显式类型 */
+export interface LightIterationConfig {
+  ENABLED: boolean;
+  LIGHT_ROUNDS: number;
+  MAX_PARALLEL_TOOLS_LIGHT: number;
+}
+
+/** 缓存 getLightIterationConfig 结果 */
+let _lightIterationConfigCache: LightIterationConfig | null = null;
+
 export function getLightIterationConfig() {
-  return {
+  if (_lightIterationConfigCache) return _lightIterationConfigCache;
+  _lightIterationConfigCache = {
     /** 启用轻迭代模式 */
     ENABLED: resolveBoolean("AGENT_LIGHT_ITERATION", undefined, undefined, true).value,
     /** 前 N 轮为轻迭代 */
@@ -78,6 +104,7 @@ export function getLightIterationConfig() {
     /** 轻迭代模式下最大并行工具调用数 */
     MAX_PARALLEL_TOOLS_LIGHT: resolveNumber("AGENT_LIGHT_MAX_TOOLS", undefined, undefined, 2).value,
   };
+  return _lightIterationConfigCache;
 }
 
 /** P1-11: 判断当前迭代是否为轻迭代模式 */
@@ -115,4 +142,7 @@ function resetCacheManager(): void {
     _cacheManager.shutdown();
     _cacheManager = null;
   }
+  // 同时重置配置缓存，确保热更新生效
+  _cacheConfigCache = null;
+  _lightIterationConfigCache = null;
 }

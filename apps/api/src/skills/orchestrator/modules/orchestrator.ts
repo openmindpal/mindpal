@@ -12,7 +12,7 @@ import { getEffectiveRoutingPolicy } from "../../../modules/modelGateway/routing
 
 // Re-export from agentContext (canonical location) for convenience
 export { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, type EnabledTool } from "../../../modules/agentContext";
-import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, type EnabledTool } from "../../../modules/agentContext";
+import { discoverEnabledTools, recallRecentTasks, type EnabledTool } from "../../../modules/agentContext";
 
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -317,11 +317,9 @@ You can invoke these tools to help users complete tasks. When asked about capabi
  */
 export function buildLightChatPrompt(
   locale: string,
-  memoryContext: string,
   contextMeta?: ContextMeta,
   enabledTools?: EnabledTool[],
   ruleCache?: OrchestratorRuleCache,
-  knowledgeContext?: string,
 ): string {
   const zh = locale !== "en-US";
 
@@ -336,19 +334,9 @@ export function buildLightChatPrompt(
   const parts: string[] = [
     capabilitySummary,
     zh
-      ? "根据对话上下文自主判断是否需要调用工具。保持对话的自然流畅，当用户在表达观点、纠正误解或进行讨论时，应自然地回应并保持话题连贯性。"
-      : "Autonomously decide whether to invoke tools based on conversation context. Maintain natural conversational flow — when the user is expressing opinions, correcting misunderstandings, or having a discussion, respond naturally and maintain topic coherence.",
+      ? "根据对话上下文自主判断是否需要调用工具。当你需要查询不在当前对话上下文中的信息时，应主动通过可用工具进行查询，而非仅凭已有信息作答。保持对话的自然流畅，当用户在表达观点、纠正误解或进行讨论时，应自然地回应并保持话题连贯性。"
+      : "Autonomously decide whether to invoke tools based on conversation context. When you need information not present in the current conversation, proactively use available tools to query it rather than answering with only what you have. Maintain natural conversational flow — when the user is expressing opinions, correcting misunderstandings, or having a discussion, respond naturally and maintain topic coherence.",
   ];
-  if (memoryContext) {
-    parts.push(
-      `\n## ${zh ? "相关记忆" : "Recalled Memory"}\n` +
-      memoryContext +
-      `\n\n${zh ? "参考以上记忆提供上下文相关的回复。" : "Use the above recalled memory to provide contextually relevant responses."}`
-    );
-  }
-  if (knowledgeContext) {
-    parts.push(`\n## Relevant Knowledge\n${knowledgeContext}`);
-  }
   appendConversationContext(parts, contextMeta, locale);
   return parts.join("\n");
 }
@@ -360,11 +348,9 @@ export function buildLightChatPrompt(
  */
 export function buildSystemPrompt(
   locale: string,
-  memoryContext: string,
   taskContext: string,
   toolCatalog: string,
   contextMeta?: ContextMeta,
-  knowledgeContext?: string,
 ): string {
   const parts: string[] = [
     "You are 灵智Mindpal, the intelligent agent of an Agent OS / Agent Infrastructure platform.",
@@ -373,6 +359,7 @@ export function buildSystemPrompt(
     "Core architecture layers: (1) Governance plane — identity, RBAC, safety policies, approvals, audit, release management; (2) Execution plane — tool contracts with versioned schemas, idempotency, workflows, async tasks; (3) Device runtime — edge devices, gateways, robot controllers, desktop executors under the same permission boundary; (4) Knowledge & Memory — RAG with evidence chains, long-term memory, task history; (5) Multi-channel interop — IM/Webhook ingress, reliable outbox, receipts.",
     "The platform is extensible via Skills (sandboxed tool packages with manifest-declared permissions and network policies). Any business domain — enterprise operations, industrial automation, embodied intelligence, smart cities, finance, healthcare, logistics and more — can be served by developing and registering new Skills, without modifying the core platform.",
     "You have access to the user's long-term memory, task history, and a set of platform tools/skills.",
+    "When you need information not present in the current conversation (user data, preferences, history, knowledge, etc.), proactively use available tools to query it rather than answering with only what you have.",
     "Follow user locale when replying. Be concise and helpful.",
     "You CANNOT execute tools directly. You can only suggest tool invocations using the required tool_call block format.",
     "NEVER claim that a tool has been executed or that data has been saved unless the system provides an execution receipt/result.",
@@ -396,22 +383,12 @@ export function buildSystemPrompt(
       "\nNo database tools are currently enabled in this workspace. You can still help with information, analysis, and suggestions."
     );
   }
-  if (memoryContext) {
-    parts.push(
-      "\n## Recalled Memory\n" +
-      memoryContext +
-      "\n\nUse the above recalled memory to provide contextually relevant responses."
-    );
-  }
   if (taskContext) {
     parts.push(
       "\n## Recent Tasks\n" +
       taskContext +
       "\n\nUse the above task history to understand what the user has been working on recently."
     );
-  }
-  if (knowledgeContext) {
-    parts.push(`\n## Relevant Knowledge\n${knowledgeContext}`);
   }
   appendConversationContext(parts, contextMeta, locale);
   return parts.join("\n");
@@ -658,40 +635,38 @@ export async function orchestrateChatTurn(params: {
 
   /* ── 记忆召回 + 工具发现阶段（架构-08§7 + 架构-11§4.1）── */
   const auditContext = params.traceId ? { traceId: params.traceId } : undefined;
-  const [memoryRecall, taskRecall, knowledgeRecall, toolDiscovery] = await Promise.all([
-    spaceId
-      ? recallRelevantMemory({ pool: params.pool, tenantId: params.subject.tenantId, spaceId, subjectId: params.subject.subjectId, message: userContent, auditContext })
-      : Promise.resolve({ text: "" }),
+  const [taskRecall, toolDiscovery] = await Promise.all([
     spaceId
       ? recallRecentTasks({ pool: params.pool, tenantId: params.subject.tenantId, spaceId, subjectId: params.subject.subjectId, auditContext })
-      : Promise.resolve({ text: "" }),
-    spaceId
-      ? recallRelevantKnowledge({ pool: params.pool, tenantId: params.subject.tenantId, spaceId, subjectId: params.subject.subjectId, message: userContent, auditContext })
       : Promise.resolve({ text: "" }),
     spaceId
       ? discoverEnabledTools({ pool: params.pool, tenantId: params.subject.tenantId, spaceId, locale })
       : Promise.resolve({ catalog: "", tools: [] as EnabledTool[] }),
   ]);
-  const memoryContext = memoryRecall.text;
   const taskContext = taskRecall.text;
-  const knowledgeContext = knowledgeRecall.text;
 
   const modelMessages: { role: string; content: string | Array<{type: string; [k: string]: any}> }[] = [
     { role: "system", content: toolDiscovery.catalog
-      ? buildSystemPrompt(locale, memoryContext, taskContext, toolDiscovery.catalog, {
+      ? buildSystemPrompt(locale, taskContext, toolDiscovery.catalog, {
           totalTurnCount,
           windowMessageCount: clippedPrev.length,
           summary: newSummary || undefined,
-        }, knowledgeContext)
-      : buildLightChatPrompt(locale, memoryContext, {
+        })
+      : buildLightChatPrompt(locale, {
           totalTurnCount,
           windowMessageCount: clippedPrev.length,
           summary: newSummary || undefined,
-        }, toolDiscovery.tools, ruleCache, knowledgeContext)  // 传递实际的工具列表，让智能体动态感知能力
+        }, toolDiscovery.tools, ruleCache)  // 传递实际的工具列表，让智能体动态感知能力
     },
     ...clippedPrev
       .filter((m: any) => m && typeof m === "object")
-      .map((m: any) => ({ role: String(m.role ?? "user"), content: String(m.content ?? "") }))
+      .flatMap((m: any) => {
+        const msg = { role: String(m.role ?? "user"), content: String(m.content ?? "") };
+        if (m.toolContext && m.role === "assistant") {
+          return [msg, { role: "system" as const, content: String(m.toolContext) }];
+        }
+        return [msg];
+      })
       .filter((m: any) => m.content),
   ];
 
@@ -759,6 +734,8 @@ export async function orchestrateChatTurn(params: {
   let outputText = "";
   let modelError = false;
   let modelErrorDetail = "";
+  let followUpText = "";
+  let savedToolContext = "";
   try {
     const modelOut = await invokeModelChat({
       app: params.app,
@@ -953,10 +930,17 @@ export async function orchestrateChatTurn(params: {
     }
     const assistantRedacted = redactValue(replyText);
     const assistantContent = String(assistantRedacted.value ?? "");
+    const finalAssistantContent = followUpText || assistantContent;
+    const assistantMsg: SessionMessage = {
+      role: "assistant" as const,
+      content: String(redactValue(finalAssistantContent).value ?? ""),
+      at: nowIso,
+      ...(savedToolContext ? { toolContext: savedToolContext } : {}),
+    };
     const nextMsgs: SessionMessage[] = [
-      ...clippedPrev.map((m) => ({ role: coerceRole(m.role), content: String(m.content ?? ""), at: typeof m.at === "string" ? m.at : undefined })).filter((m) => m.content),
+      ...clippedPrev.map((m) => ({ role: coerceRole(m.role), content: String(m.content ?? ""), at: typeof m.at === "string" ? m.at : undefined, ...(m.toolContext ? { toolContext: String(m.toolContext) } : {}) })).filter((m) => m.content),
       { role: "user", content: userContent, at: nowIso },
-      { role: "assistant", content: assistantContent, at: nowIso },
+      assistantMsg,
     ];
     const trimmed = nextMsgs.slice(Math.max(0, nextMsgs.length - historyLimit));
     // 窗口再次溢出时，为新截断的消息更新摘要

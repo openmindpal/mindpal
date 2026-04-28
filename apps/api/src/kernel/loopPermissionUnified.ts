@@ -8,6 +8,7 @@
  */
 import type { Pool } from "pg";
 import { ErrorCategory, StructuredLogger } from "@openslin/shared";
+import type { ToolSemanticMeta } from "@openslin/shared";
 import { Errors } from "../lib/errors";
 import { authorize } from "../modules/auth/authz";
 import { buildAbacEvaluationRequestFromContext } from "../modules/auth/guard";
@@ -15,6 +16,30 @@ import { runPreExecutionChecks, type CheckpointContext } from "./governanceCheck
 import { insertAuditEvent } from "../modules/audit/auditRepo";
 
 const _logger = new StructuredLogger({ module: "loopPermissionUnified" });
+
+/* ── ABAC 决策会话级缓存 ── */
+const _abacCache = new Map<string, { decision: any; expiresAt: number }>();
+const ABAC_CACHE_TTL_MS = 30_000; // 30秒
+
+function abacCacheKey(tenantId: string, spaceId: string, subjectId: string, resourceType: string, action: string): string {
+  return `${tenantId}:${spaceId || '-'}:${subjectId}:${resourceType}:${action}`;
+}
+
+function getCachedAbacDecision(key: string): any | undefined {
+  const entry = _abacCache.get(key);
+  if (entry && entry.expiresAt > Date.now()) return entry.decision;
+  if (entry) _abacCache.delete(key); // 过期清除
+  return undefined;
+}
+
+function setCachedAbacDecision(key: string, decision: any): void {
+  _abacCache.set(key, { decision, expiresAt: Date.now() + ABAC_CACHE_TTL_MS });
+  // 简单淘汰：超过 200 条时清除最旧
+  if (_abacCache.size > 200) {
+    const firstKey = _abacCache.keys().next().value;
+    if (firstKey) _abacCache.delete(firstKey);
+  }
+}
 
 /** 权限降级开关，默认关闭 */
 export const AGENT_LOOP_PERMISSION_FALLBACK = process.env.AGENT_LOOP_PERMISSION_FALLBACK === "true";
@@ -26,16 +51,39 @@ export const AGENT_LOOP_PERMISSION_FALLBACK = process.env.AGENT_LOOP_PERMISSION_
 const ACTION_RANK: Record<string, number> = { read: 0, list: 0, write: 1, execute: 2, admin: 3 };
 
 /**
- * 从工具目录中查找同 category 的低权限替代工具。
+ * 从工具目录中查找替代工具。
+ * 三级策略：语义等价 → 同 category 且 operationType 相同 → 同 category 低权限兜底。
  * 纯元数据查找，不引入业务概念。
  */
 export function findFallbackTool(
   toolRef: string,
-  toolCatalog: Array<{ ref: string; category?: string; requiredAction?: string }>,
+  toolCatalog: Array<{ ref: string; category?: string; requiredAction?: string; semanticMeta?: ToolSemanticMeta }>,
   deniedAction: string,
+  semanticMeta?: ToolSemanticMeta,
 ): string | null {
   const current = toolCatalog.find(t => t.ref === toolRef);
+
+  // 1. 优先从 semanticEquivalents 中查找已注册且可用的工具
+  if (semanticMeta?.semanticEquivalents?.length) {
+    const equivalent = toolCatalog.find(
+      t => semanticMeta.semanticEquivalents.includes(t.ref) && t.ref !== toolRef,
+    );
+    if (equivalent) return equivalent.ref;
+  }
+
   if (!current?.category) return null;
+
+  // 2. 同 category 且 operationType 相同的工具
+  if (semanticMeta?.operationType) {
+    const sameOp = toolCatalog.find(
+      t => t.ref !== toolRef
+        && t.category === current.category
+        && t.semanticMeta?.operationType === semanticMeta.operationType,
+    );
+    if (sameOp) return sameOp.ref;
+  }
+
+  // 3. 兜底：同 category 低权限工具
   const deniedRank = ACTION_RANK[deniedAction] ?? 2;
   const candidates = toolCatalog.filter(
     t => t.ref !== toolRef && t.category === current.category && (ACTION_RANK[t.requiredAction ?? "execute"] ?? 2) < deniedRank,
@@ -86,7 +134,7 @@ export interface AuthorizationResult {
 /*  Internal helpers                                                     */
 /* ================================================================== */
 
-/** 执行单次 ABAC 权限查询 */
+/** 执行单次 ABAC 权限查询（带会话级缓存） */
 async function checkAbac(params: {
   pool: Pool;
   subjectId: string;
@@ -98,7 +146,11 @@ async function checkAbac(params: {
   runId: string;
   jobId: string;
 }) {
-  return authorize({
+  const cacheKey = abacCacheKey(params.tenantId, params.spaceId, params.subjectId, params.resourceType, params.action);
+  const cached = getCachedAbacDecision(cacheKey);
+  if (cached) return cached;
+
+  const decision = await authorize({
     pool: params.pool,
     subjectId: params.subjectId,
     tenantId: params.tenantId,
@@ -125,6 +177,12 @@ async function checkAbac(params: {
       },
     }),
   });
+
+  // 仅缓存 allow 结果；拒绝结果不缓存，以便权限修复后立即生效
+  if (decision.decision === "allow") {
+    setCachedAbacDecision(cacheKey, decision);
+  }
+  return decision;
 }
 
 /* ================================================================== */
@@ -142,12 +200,13 @@ async function checkAbac(params: {
 export async function authorizeToolExecution(params: AuthorizeToolParams): Promise<AuthorizationResult> {
   const { pool, subjectId, tenantId, spaceId, traceId, runId, jobId, resourceType, action, toolRef, limits } = params;
 
-  // ── Layer 1: 通用 tool/execute ABAC 权限 ──
-  const genericDecision = await checkAbac({
-    pool, subjectId, tenantId, spaceId,
-    resourceType: "tool", action: "execute",
-    traceId, runId, jobId,
-  });
+  // ── Layer 1 + Layer 2: 并行执行两层 ABAC 检查 ──
+  const [genericDecision, specificDecision] = await Promise.all([
+    checkAbac({ pool, subjectId, tenantId, spaceId, resourceType: "tool", action: "execute", traceId, runId, jobId }),
+    checkAbac({ pool, subjectId, tenantId, spaceId, resourceType, action, traceId, runId, jobId }),
+  ]);
+
+  // 依次检查结果（保持原有的审计写入逻辑）
   if (genericDecision.decision !== "allow") {
     // ── 审计日志：记录权限拒绝决策 ──
     insertAuditEvent(pool, {
@@ -169,13 +228,6 @@ export async function authorizeToolExecution(params: AuthorizeToolParams): Promi
       errorMessage: `${ErrorCategory.GOVERNANCE_DENIED}: tool/execute permission denied`,
     };
   }
-
-  // ── Layer 2: 特定 resourceType/action ABAC 权限 ──
-  const specificDecision = await checkAbac({
-    pool, subjectId, tenantId, spaceId,
-    resourceType, action,
-    traceId, runId, jobId,
-  });
   if (specificDecision.decision !== "allow") {
     // ── 审计日志：记录权限拒绝决策 ──
     insertAuditEvent(pool, {

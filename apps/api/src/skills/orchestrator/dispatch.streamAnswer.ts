@@ -9,7 +9,7 @@ import { redactValue, parseDocument, dataUrlToBuffer, StructuredLogger, resolveN
 import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 
 const _logger = new StructuredLogger({ module: "api:dispatch.streamAnswer" });
-import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, type ContextMeta, shouldTriggerEventDrivenSummary } from "./modules/orchestrator";
+import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRecentTasks, type ContextMeta, shouldTriggerEventDrivenSummary } from "./modules/orchestrator";
 import { createOrchestratorTurn } from "./modules/turnRepo";
 import { getSessionContext, upsertSessionContext, type SessionMessage } from "../../modules/memory/sessionContextRepo";
 import { digestParams, sha256Hex } from "../../lib/digest";
@@ -59,26 +59,22 @@ export async function handleStreamAnswerMode(params: {
   // --- Tier-1: 加载LLM必需的核心上下文（会话历史 + 记忆召回 + 工具发现）---
   // P1-3: 从用户消息中提取多维度查询，激活 additionalQueries 并行检索
   const additionalQueries = extractAdditionalQueries(message);
-  const [prevSession, memoryRecall, toolDiscovery] = await Promise.all([
+  const [prevSession, toolDiscovery] = await Promise.all([
     getSessionContext({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, sessionId: conversationId }),
-    recallRelevantMemory({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, message, auditContext: auditCtx, additionalQueries }),
     discoverEnabledTools({ pool: app.db, tenantId: subject.tenantId, spaceId, locale }),
   ]);
 
   app.log.info({
     traceId, conversationId,
-    hasMemory: !!memoryRecall?.text,
-    memoryLen: memoryRecall?.text?.length ?? 0,
     toolCount: toolDiscovery?.tools?.length ?? 0,
-  }, "[dispatch.streamAnswer] Tier-1核心上下文加载完成（会话+记忆+工具）");
+  }, "[dispatch.streamAnswer] Tier-1核心上下文加载完成（会话+工具）");
 
-  // --- Tier-2: 异步启动增强上下文（知识库+任务历史，非必需）---
+  // --- Tier-2: 异步启动增强上下文（任务历史，非必需）---
   const enrichPromise = Promise.all([
     recallRecentTasks({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, auditContext: auditCtx }),
-    recallRelevantKnowledge({ pool: app.db, tenantId: subject.tenantId, spaceId, subjectId: subject.subjectId, message, auditContext: auditCtx }),
   ]).catch((err) => {
     app.log.warn({ err }, "[dispatch.streamAnswer] enrichment context load failed, proceeding without");
-    return [null, null] as const;
+    return [null] as const;
   });
 
   // --- 短等待：给知识库和任务100ms机会到达 ---
@@ -87,12 +83,9 @@ export async function handleStreamAnswerMode(params: {
   const earlyEnrich = await Promise.race([enrichPromise, enrichTimeout]);
 
   let taskRecall: Awaited<ReturnType<typeof recallRecentTasks>> | null = null;
-  let knowledgeRecall: Awaited<ReturnType<typeof recallRelevantKnowledge>> | null = null;
-  let knowledgeContext: string = "";
 
   if (earlyEnrich !== null && Array.isArray(earlyEnrich)) {
-    [taskRecall, knowledgeRecall] = earlyEnrich;
-    knowledgeContext = knowledgeRecall?.text ?? "";
+    [taskRecall] = earlyEnrich;
     app.log.info({ traceId, conversationId, enrichWaitMs: ENRICH_WAIT_MS }, "[dispatch.streamAnswer] Tier-2增强上下文在短等待窗口内到达，将注入prompt");
   } else {
     app.log.info({ traceId, conversationId, enrichWaitMs: ENRICH_WAIT_MS }, "[dispatch.streamAnswer] Tier-2增强上下文未在短等待窗口内到达，LLM流完成后补充");
@@ -191,25 +184,27 @@ export async function handleStreamAnswerMode(params: {
   };
   const systemPrompt = buildSystemPrompt(
     locale,
-    memoryRecall?.text ?? "",
     taskRecall?.text ?? "",
     toolDiscovery?.catalog ?? "",
     contextMeta,
-    knowledgeContext || undefined,
   );
   app.log.info({
     traceId, conversationId,
     promptType: "full_enriched",
     hasToolDiscovery: !!(toolDiscovery?.tools?.length),
-    hasMemory: !!memoryRecall?.text,
-    hasKnowledge: !!knowledgeContext,
     hasTaskRecall: !!taskRecall?.text,
-  }, "[dispatch.streamAnswer] 系统提示词构建完成（Tier-1记忆+工具已注入）");
+  }, "[dispatch.streamAnswer] 系统提示词构建完成（Tier-1工具已注入）");
   const modelMessages: { role: string; content: string | Array<{type: string; [k: string]: any}> }[] = [
     { role: "system", content: systemPrompt },
     ...clippedPrev
       .filter((m: any) => m && typeof m === "object")
-      .map((m: any) => ({ role: String(m.role ?? "user"), content: String(m.content ?? "") }))
+      .flatMap((m: any) => {
+        const msg = { role: String(m.role ?? "user"), content: String(m.content ?? "") };
+        if (m.toolContext && m.role === "assistant") {
+          return [msg, { role: "system" as const, content: String(m.toolContext) }];
+        }
+        return [msg];
+      })
       .filter((m: any) => m.content),
   ];
 
@@ -273,6 +268,8 @@ export async function handleStreamAnswerMode(params: {
   // 3. 真流式调用 (使用 tool_call 过滤器)
   let fullText = "";
   let streamError = false;
+  let followUpText = "";
+  let savedToolContext = "";
   let actualModelRef: string | null = null;
   const filter = new ToolCallFilter((text) => sse.sendEvent("delta", { text }));
 
@@ -314,28 +311,26 @@ export async function handleStreamAnswerMode(params: {
   }
 
   // --- Tier-2 结果消费：LLM流式调用完成后，补充获取未在短等待窗口内到达的增强上下文 ---
-  if (!taskRecall && !knowledgeRecall) {
+  if (!taskRecall) {
     const lateEnrich = await enrichPromise;
     if (lateEnrich && Array.isArray(lateEnrich)) {
-      [taskRecall, knowledgeRecall] = lateEnrich;
-      knowledgeContext = knowledgeRecall?.text ?? "";
+      [taskRecall] = lateEnrich;
     }
     app.log.info({
       traceId, conversationId,
       enrichSource: "late",
       taskRecallLen: taskRecall?.text?.length ?? 0,
-      knowledgeContextLen: knowledgeContext.length,
     }, "[context-debug] Tier-2增强上下文延迟加载完成（短等待未命中，LLM流完成后补充）");
   } else {
     app.log.info({
       traceId, conversationId,
       enrichSource: "early",
       taskRecallLen: taskRecall?.text?.length ?? 0,
-      knowledgeContextLen: knowledgeContext.length,
     }, "[context-debug] Tier-2增强上下文已在短等待窗口内注入prompt（无需延迟加载）");
   }
 
-  // 4. 持久化会话上下文
+  // 4. 持久化会话上下文（延迟到内联工具执行后，确保捕获二次回复和工具上下文）
+  const persistSession = async () => {
   if (!streamError) {
     try {
       const nowIso = new Date().toISOString();
@@ -346,10 +341,17 @@ export async function handleStreamAnswerMode(params: {
       }
       const assistantRedacted = redactValue(fullText);
       const assistantContent = String(assistantRedacted.value ?? "");
+      const finalAssistantContent = followUpText || assistantContent;
+      const assistantMsg: SessionMessage = {
+        role: "assistant",
+        content: String(redactValue(finalAssistantContent).value ?? ""),
+        at: nowIso,
+        ...(savedToolContext ? { toolContext: savedToolContext } : {}),
+      };
       const nextMsgs: SessionMessage[] = [
-        ...clippedPrev.map((m: any) => ({ role: coerceRole(m.role), content: String(m.content ?? ""), at: typeof m.at === "string" ? m.at : undefined })).filter((m: any) => m.content),
+        ...clippedPrev.map((m: any) => ({ role: coerceRole(m.role), content: String(m.content ?? ""), at: typeof m.at === "string" ? m.at : undefined, ...(m.toolContext ? { toolContext: String(m.toolContext) } : {}) })).filter((m: any) => m.content),
         { role: "user", content: userContent, at: nowIso },
-        { role: "assistant", content: assistantContent, at: nowIso },
+        assistantMsg,
       ];
       const trimmed = nextMsgs.slice(Math.max(0, nextMsgs.length - historyLimit));
       const persistDroppedCount = Math.max(0, nextMsgs.length - historyLimit);
@@ -386,6 +388,7 @@ export async function handleStreamAnswerMode(params: {
       app.log.warn({ err: e, traceId }, "[dispatch.stream] session persist failed");
     }
   }
+  }; // end persistSession
 
   // 5. 解析工具建议：基于工具元数据动态分类
   const parsed = parseToolCallsFromOutput(fullText);
@@ -582,6 +585,7 @@ export async function handleStreamAnswerMode(params: {
 
     // 将工具结果注入 LLM 做二次回复
     const toolResultText = formatInlineResultsForLLM(inlineResults, locale);
+    savedToolContext = toolResultText;
     if (toolResultText) {
       sse.sendEvent("status", { phase: "thinking" });
       const followUpFilter = new ToolCallFilter((text) => sse.sendEvent("delta", { text }));
@@ -603,7 +607,7 @@ export async function handleStreamAnswerMode(params: {
           },
           locale,
           traceId: traceId ?? undefined,
-          onDelta: (text: string) => { followUpFilter.feed(text); },
+          onDelta: (text: string) => { followUpText += text; followUpFilter.feed(text); },
         });
         followUpFilter.flush();
       } catch (followUpErr: any) {
@@ -654,10 +658,14 @@ export async function handleStreamAnswerMode(params: {
           ? header + "\n" + resultSummaryParts.join("\n")
           : (zh ? `工具已执行但结果格式化失败（${reason}），请重试。` : `Tool executed but formatting failed (${reason}). Please retry.`);
 
+        followUpText += "\n\n" + fallbackText;
         sse.sendEvent("delta", { text: "\n\n" + fallbackText });
       }
     }
   }
+
+  // 4. 执行持久化（内联工具执行完毕，followUpText 和 savedToolContext 已填充）
+  await persistSession();
 
   if (workflowSuggestions.length > 0) {
     sse.sendEvent("toolSuggestions", {

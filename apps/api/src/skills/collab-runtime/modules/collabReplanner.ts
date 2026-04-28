@@ -14,9 +14,10 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
+import type { FailureDiagnosis, WorldState } from "@openslin/shared";
 import { runPlanningPipeline, type PlanStep } from "../../../kernel/planningKernel";
 import { type RoleName, shouldTriggerReplan, recordCoordinationEvent } from "./dynamicCoordinator";
-import { verifySimple, type VerificationResult } from "../../../kernel/verifierAgent";
+import { verifySimple, evaluateReplanFeasibility, type VerificationResult, type FeasibilityResult } from "../../../kernel/verifierAgent";
 import { invokeModelChat, type LlmSubject } from "../../../lib/llm";
 
 /* ================================================================== */
@@ -52,6 +53,10 @@ export interface ReplanContext {
   previousPlanSteps: PlanStep[];
   completedStepIds: string[];
   originalMessage: string;
+  /** P0 阶段一：失败诊断结果，供后续策略自适应使用 */
+  diagnosis?: FailureDiagnosis;
+  /** P0 阶段二：当前世界状态快照，用于向 LLM 提供实体/事实摘要 */
+  worldState?: WorldState;
 }
 
 export interface GuardReviewResult {
@@ -80,6 +85,18 @@ export interface ReplanResult {
   verification?: VerificationResult;
   /** 是否已触发 escalate */
   escalated?: boolean;
+  /** 可行性预检结果（可选） */
+  feasibility?: FeasibilityResult;
+}
+
+/** 重规划经验片段：记录一次诊断→策略→结果的闭环 */
+export interface ReplanEpisode {
+  traceId: string;
+  diagnosis: FailureDiagnosis;
+  strategy: string;
+  outcome: "success" | "failure";
+  feasibilityScore?: number;
+  timestamp: string;
 }
 
 export interface ReplanConfig {
@@ -121,6 +138,8 @@ export const DEFAULT_REPLAN_CONFIG: ReplanConfig = {
 
 /**
  * 根据上下文选择重规划策略
+ *
+ * 优先级：abort 硬上限 → 诊断驱动 → 连续同类失败升级 → 硬阈值兜底
  */
 export function selectReplanStrategy(params: {
   context: ReplanContext;
@@ -128,29 +147,65 @@ export function selectReplanStrategy(params: {
   replanAttempts: number;
 }): ReplanStrategy {
   const { context, config, replanAttempts } = params;
-  
-  // 超过最大重规划次数，放弃
+
+  // 硬上限：超过最大重规划次数，放弃
   if (replanAttempts >= config.maxReplanAttempts) {
     return "abort";
   }
-  
+
+  /* ── 诊断驱动（新增） ── */
+  const { diagnosis } = context;
+  if (diagnosis) {
+    const diagStrategy = mapDiagnosisToStrategy(diagnosis);
+    if (diagStrategy) return diagStrategy;
+  }
+
+  /* ── 连续同类失败升级（新增） ── */
+  // 连续 >= consecutiveFailureEscalateThreshold 次同类失败 → 升级到 abort
+  if (context.failureCount >= config.consecutiveFailureEscalateThreshold) {
+    return "abort";
+  }
+
+  /* ── 硬阈值兜底（保留现有逻辑） ── */
+
   // Guard 拦截或 Reviewer 不认可，且启用降级
   if ((context.trigger === "guard_rejected" || context.trigger === "reviewer_rejected") && config.enableDegradation) {
     return "degraded";
   }
-  
+
   // 连续失败达到阈值，完全重规划
   if (context.failureCount >= config.fullReplanThreshold) {
     return "full";
   }
-  
+
   // 证据不足，需要重新检索
   if (context.trigger === "evidence_insufficient") {
     return "partial";
   }
-  
+
   // 默认部分重规划
   return "partial";
+}
+
+/**
+ * 将诊断结果映射为重规划策略；返回 undefined 表示诊断无法决定，回落到后续逻辑。
+ */
+function mapDiagnosisToStrategy(diagnosis: FailureDiagnosis): ReplanStrategy | undefined {
+  switch (diagnosis.failureType) {
+    case "permission_denied":
+    case "tool_unavailable":
+      return "degraded";
+    case "precondition_unmet":
+      if (diagnosis.isRetryable) return "partial";
+      break;
+    case "timeout":
+      return "partial";
+    case "environment_changed":
+      return "full";
+    default:
+      break;
+  }
+  return undefined;
 }
 
 /* ================================================================== */
@@ -399,6 +454,41 @@ export async function executeReplan(params: {
       }
     }
 
+    /* ────────────────────────────────────────────── */
+    /*  可行性预检 + ReplanEpisode 记录               */
+    /* ────────────────────────────────────────────── */
+    let feasibility: FeasibilityResult | undefined;
+    if (newPlanSteps.length > 0) {
+      // 收集当前可用工具列表（从新计划步骤中提取，作为基线）
+      const knownTools = Array.from(new Set(
+        context.previousPlanSteps.map(s => s.toolRef.split("@")[0] ?? s.toolRef)
+      ));
+      feasibility = evaluateReplanFeasibility(newPlanSteps, knownTools);
+    }
+
+    // 记录 ReplanEpisode（仅当存在诊断信息时）
+    if (context.diagnosis) {
+      const episode: ReplanEpisode = {
+        traceId: traceId ?? context.collabRunId,
+        diagnosis: context.diagnosis,
+        strategy,
+        outcome: newPlanSteps.length > 0 ? "success" : "failure",
+        feasibilityScore: feasibility?.score,
+        timestamp: new Date().toISOString(),
+      };
+      await recordCoordinationEvent({
+        pool,
+        tenantId,
+        event: {
+          eventType: "collab.replan.episode" as any,
+          collabRunId: context.collabRunId,
+          turnNumber: 0,
+          actorRole: "planner",
+          metadata: episode as any,
+        },
+      });
+    }
+
     return {
       ok: newPlanSteps.length > 0,
       strategy,
@@ -410,6 +500,7 @@ export async function executeReplan(params: {
       degradationApplied,
       guardReview,
       verification,
+      feasibility,
       requiresConfirmation: config.requireConfirmationBeforeReplan,
     };
     
@@ -430,6 +521,8 @@ export async function executeReplan(params: {
 
 /**
  * 构建部分重规划的消息
+ *
+ * 包含：已完成步骤摘要 + 失败信息 + 诊断摘要 + WorldState 实体/事实摘要
  */
 function buildPartialReplanMessage(context: ReplanContext): string {
   const completedSteps = context.previousPlanSteps.filter(
@@ -450,12 +543,47 @@ function buildPartialReplanMessage(context: ReplanContext): string {
   if (context.reviewerFeedback) {
     failureInfo += `\nReviewer 反馈: ${context.reviewerFeedback}`;
   }
+
+  /* ── 诊断摘要（新增） ── */
+  let diagnosisSummary = "";
+  if (context.diagnosis) {
+    const d = context.diagnosis;
+    diagnosisSummary = `\n\n失败诊断:
+- 故障类型: ${d.failureType}
+- 根因: ${d.rootCause}
+- 可重试: ${d.isRetryable ? "是" : "否"}`;
+    if (d.suggestedActions.length > 0) {
+      diagnosisSummary += `\n- 建议动作: ${d.suggestedActions.map(a => a.type).join(", ")}`;
+    }
+  }
+
+  /* ── WorldState 实体 + 事实摘要（新增，限制 token 膨胀） ── */
+  let worldStateSummary = "";
+  if (context.worldState) {
+    const ws = context.worldState;
+    const entityEntries = Object.values(ws.entities);
+    const topEntities = entityEntries.slice(0, 5);
+    const topFacts = ws.facts.slice(0, 10);
+    if (topEntities.length > 0 || topFacts.length > 0) {
+      worldStateSummary = "\n\n当前环境状态:";
+      if (topEntities.length > 0) {
+        worldStateSummary += "\n实体:\n" + topEntities.map(e => `- [${e.category}] ${e.name}`).join("\n");
+        if (entityEntries.length > 5) worldStateSummary += `\n  (... 共 ${entityEntries.length} 个实体)`;
+      }
+      if (topFacts.length > 0) {
+        worldStateSummary += "\n事实:\n" + topFacts.map(f => `- ${f.key}: ${f.value}`).join("\n");
+        if (ws.facts.length > 10) worldStateSummary += `\n  (... 共 ${ws.facts.length} 个事实)`;
+      }
+    }
+  }
   
   return `请重新规划以下任务的剩余步骤，避免之前失败的方法:
 
 原始任务: ${context.originalMessage}
 ${completedSummary}
 ${failureInfo}
+${diagnosisSummary}
+${worldStateSummary}
 
 请提供替代方案，使用不同的工具或方法来完成任务。`;
 }

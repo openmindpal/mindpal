@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
@@ -17,46 +17,24 @@ type SystemStatus = {
   devices: { total: number; online: number; offline: number };
 };
 
-/* ─── Badge Component ───────────────────────────────────────────────────────── */
+/* ─── Helpers ───────────────────────────────────────────────────────────────── */
 
-function StatusBadge(props: {
-  icon: React.ReactNode;
-  count: number;
-  label: string;
-  href: string;
-  tone?: "neutral" | "warning" | "danger" | "success";
-}) {
-  const tone = props.tone ?? (props.count > 0 ? "warning" : "neutral");
-  const cls = `${styles.badge} ${styles[`badge_${tone}`]}`;
-
-  return (
-    <Link href={props.href} className={cls} title={props.label}>
-      <span className={styles.badgeIcon}>{props.icon}</span>
-      <span className={styles.badgeCount}>{props.count}</span>
-    </Link>
-  );
+/** Determine aggregate severity: "ok" | "warn" | "error" */
+function getSeverity(s: SystemStatus): "ok" | "warn" | "error" {
+  const hasDanger = s.runs.failed > 0 || s.deadletter.count > 0;
+  if (hasDanger) return "error";
+  const hasWarn =
+    s.approvals.pending + s.runs.needsApproval > 0 ||
+    (s.devices.total > 0 && s.devices.offline > 0);
+  if (hasWarn) return "warn";
+  return "ok";
 }
 
-function DeviceBadge(props: {
-  online: number;
-  total: number;
-  label: string;
-  href: string;
-}) {
-  const allOnline = props.total > 0 && props.online === props.total;
-  const hasOffline = props.total > 0 && props.online < props.total;
-  const tone = props.total === 0 ? "neutral" : allOnline ? "success" : hasOffline ? "warning" : "neutral";
-  const cls = `${styles.badge} ${styles[`badge_${tone}`]}`;
-
-  return (
-    <Link href={props.href} className={cls} title={props.label}>
-      <span className={styles.badgeIcon}><IconDevice /></span>
-      <span className={styles.badgeCount}>
-        {props.online}/{props.total}
-      </span>
-    </Link>
-  );
-}
+const dotClass: Record<string, string> = {
+  ok: styles.sbDotOk,
+  warn: styles.sbDotWarn,
+  error: styles.sbDotError,
+};
 
 /* ─── Main StatusBar Component ──────────────────────────────────────────────── */
 
@@ -64,6 +42,8 @@ export default function StatusBar(props: { locale: string }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -94,18 +74,7 @@ export default function StatusBar(props: { locale: string }) {
     return () => clearInterval(timer);
   }, [fetchStatus]);
 
-  // Build hrefs
-  const approvalsHref = `/gov/approvals?lang=${encodeURIComponent(props.locale)}`;
-  const runsHref = `/runs?status=failed&lang=${encodeURIComponent(props.locale)}`;
-  const deadletterHref = `/gov/workflow/deadletters?lang=${encodeURIComponent(props.locale)}`;
-  const devicesHref = `/gov/devices?lang=${encodeURIComponent(props.locale)}`;
-
-  // Labels
-  const labelApprovals = t(props.locale, "statusBar.pendingApprovals");
-  const labelErrors = t(props.locale, "statusBar.failedRuns");
-  const labelDeadletter = t(props.locale, "statusBar.deadletter");
-  const labelDevices = t(props.locale, "statusBar.devices");
-
+  // ── Loading / Error states ────────────────────────────────────────────────
   if (loading) {
     return (
       <div className={styles.statusBar}>
@@ -122,49 +91,78 @@ export default function StatusBar(props: { locale: string }) {
     );
   }
 
+  // ── Derived values ────────────────────────────────────────────────────────
+  const severity = getSeverity(status);
   const pendingApprovals = status.approvals.pending + status.runs.needsApproval;
   const failedRuns = status.runs.failed;
   const deadletterCount = status.deadletter.count;
+  const { online, total, offline } = status.devices;
+
+  // Build hrefs
+  const loc = encodeURIComponent(props.locale);
+  const approvalsHref = `/gov/approvals?lang=${loc}`;
+  const runsHref = `/runs?status=failed&lang=${loc}`;
+  const deadletterHref = `/gov/workflow/deadletters?lang=${loc}`;
+  const devicesHref = `/gov/devices?lang=${loc}`;
+
+  // Labels
+  const labelApprovals = t(props.locale, "statusBar.pendingApprovals");
+  const labelErrors = t(props.locale, "statusBar.failedRuns");
+  const labelDeadletter = t(props.locale, "statusBar.deadletter");
+  const labelDevices = t(props.locale, "statusBar.devices");
+
+  const countCls = (v: number, tone: "danger" | "warning" = "danger") =>
+    `${styles.sbPopoverCount} ${v > 0 ? (tone === "danger" ? styles.sbCountDanger : styles.sbCountWarning) : styles.sbCountOk}`;
 
   return (
-    <div className={styles.statusBar}>
-      {/* Pending approvals badge */}
-      <StatusBadge
-        icon={<IconApproval />}
-        count={pendingApprovals}
-        label={labelApprovals}
-        href={approvalsHref}
-        tone={pendingApprovals > 0 ? "warning" : "neutral"}
-      />
+    <div className={styles.statusBar} ref={rootRef}>
+      {/* Single status indicator */}
+      <button
+        className={styles.sbIndicator}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="System status"
+      >
+        <span className={`${styles.sbDot} ${dotClass[severity]}`} />
+      </button>
 
-      {/* Failed runs badge */}
-      <StatusBadge
-        icon={<IconError />}
-        count={failedRuns}
-        label={labelErrors}
-        href={runsHref}
-        tone={failedRuns > 0 ? "danger" : "neutral"}
-      />
+      {/* Popover detail panel */}
+      {open && (
+        <>
+          {/* Invisible backdrop to capture outside clicks */}
+          <div className={styles.sbPopoverBackdrop} onClick={() => setOpen(false)} />
+          <div className={styles.sbPopover}>
+            {/* Pending approvals */}
+            <Link href={approvalsHref} className={styles.sbPopoverRow} onClick={() => setOpen(false)}>
+              <span className={styles.sbPopoverIcon}><IconApproval /></span>
+              <span className={styles.sbPopoverLabel}>{labelApprovals}</span>
+              <span className={countCls(pendingApprovals, "warning")}>{pendingApprovals}</span>
+            </Link>
 
-      {/* Deadletter queue badge */}
-      {deadletterCount > 0 && (
-        <StatusBadge
-          icon={<IconDeadletter />}
-          count={deadletterCount}
-          label={labelDeadletter}
-          href={deadletterHref}
-          tone="danger"
-        />
-      )}
+            {/* Failed runs */}
+            <Link href={runsHref} className={styles.sbPopoverRow} onClick={() => setOpen(false)}>
+              <span className={styles.sbPopoverIcon}><IconError /></span>
+              <span className={styles.sbPopoverLabel}>{labelErrors}</span>
+              <span className={countCls(failedRuns)}>{failedRuns}</span>
+            </Link>
 
-      {/* Device status badge */}
-      {status.devices.total > 0 && (
-        <DeviceBadge
-          online={status.devices.online}
-          total={status.devices.total}
-          label={labelDevices}
-          href={devicesHref}
-        />
+            {/* Deadletter queue */}
+            <Link href={deadletterHref} className={styles.sbPopoverRow} onClick={() => setOpen(false)}>
+              <span className={styles.sbPopoverIcon}><IconDeadletter /></span>
+              <span className={styles.sbPopoverLabel}>{labelDeadletter}</span>
+              <span className={countCls(deadletterCount)}>{deadletterCount}</span>
+            </Link>
+
+            {/* Devices */}
+            {total > 0 && (
+              <Link href={devicesHref} className={styles.sbPopoverRow} onClick={() => setOpen(false)}>
+                <span className={styles.sbPopoverIcon}><IconDevice /></span>
+                <span className={styles.sbPopoverLabel}>{labelDevices}</span>
+                <span className={countCls(offline, "warning")}>{online}/{total}</span>
+              </Link>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

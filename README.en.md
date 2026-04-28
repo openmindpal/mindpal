@@ -206,22 +206,24 @@ Note: all public business APIs are mounted under the `/v1` prefix. The Web front
 ### 4. Install Dependencies & Initialize Database
 
 ```bash
-npm install
-npm run db:seed -w @openslin/api    # Migration + seed data + core schema
+pnpm install
+pnpm --filter @openslin/api run db:seed    # Migration + seed data + core schema
 ```
 
 ### 5. Start Services
 
 ```bash
-npm run dev:api       # API Server    → http://localhost:3001
-npm run dev:worker    # Worker (BullMQ async jobs)
-npm run dev:web       # Web Frontend  → http://localhost:4000
+pnpm run dev:api       # API Server    → http://localhost:3001
+pnpm run dev:worker    # Worker (BullMQ async jobs)
+pnpm run dev:web       # Web Frontend  → http://localhost:4000
 
 # Optional: Start observability services (Prometheus/Grafana/Jaeger/Loki)
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 ```
 
 ### Default URLs
+
+**Application Services**
 
 | Service | URL |
 |---------|-----|
@@ -232,12 +234,21 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 | API Base (/v1) | http://localhost:3001/v1 |
 | API Health | http://localhost:3001/health |
 
+**Infrastructure** (ports depend on `.env` configuration)
+
+| Service | Default Port | Description |
+|---------|-------------|-------------|
+| PostgreSQL | 5432 | Database |
+| Redis | 6379 | Cache / Queue |
+| MinIO API | 9000 | Object Storage |
+| MinIO Console | 9001 | Storage Management UI |
+
 ### Admin CLI
 
 Read-only / idempotent operations CLI for troubleshooting and ops:
 
 ```bash
-npm run dev -w @openslin/admin-cli
+pnpm run dev -w @openslin/admin-cli
 
 # Examples
 openslin-admin audit verify --apiBase http://localhost:3001/v1 --token <token> --tenantId tenant_dev
@@ -253,29 +264,28 @@ openslin/
 │   ├── api/            # Fastify API server (Agent OS Brain)
 │   │   ├── kernel/     # Kernel: Agent Loop/Goal Decomposition/Planning/Execution/Scheduling/Collaboration
 │   │   ├── routes/     # 43 routes (with /v1 versioning)
-│   │   ├── modules/    # 28 domain modules (auth/governance/model/knowledge/memory)
+│   │   ├── modules/    # 32 domain modules (auth/governance/model/knowledge/memory)
 │   │   ├── skills/     # 39 built-in skills (4 tiers: kernel/core/optional/extension)
 │   │   ├── plugins/    # 15 middlewares (logging/tracing/versioning/notifications/DLP/audit)
-│   │   └── migrations/ # 28 SQL migration files
+│   │   └── migrations/ # 24 SQL migration files
 │   ├── web/            # Next.js frontend (React 19 + ReactFlow + i18n)
 │   ├── worker/         # BullMQ async worker node (knowledge/memory/governance/notifications)
 │   ├── device-agent/   # Desktop Agent (Playwright + GUI automation + visual perception)
 │   ├── runner/         # Skill sandbox runtime (Fastify + RPC protocol + subprocess isolation)
 │   └── admin-cli/      # Ops CLI tool
 ├── packages/
-│   └── shared/         # Shared library (587-line index, 250+ exported symbols)
-│                         Multimodal types/ABAC policy engine/Prompt injection detection/DLP/
-│                         State machine/GoalGraph/WorldState/Circuit breaker/Event bus/
-│                         Collab protocol/Skill RPC/Structured logging/Supply chain security/
-│                         Sandbox security/Document parsing
+│   ├── shared/         # Shared library (815-line index, 300+ exported symbols)
+│   │                     Multimodal types/ABAC policy engine/Prompt injection detection/DLP/
+│   │                     State machine/GoalGraph/WorldState/Circuit breaker/Event bus/
+│   │                     Collab protocol/Skill RPC/Structured logging/Supply chain security/
+│   │                     Sandbox security/Document parsing
+│   └── device-agent-sdk/ # Device Agent SDK kernel (embeddable device agent runtime)
 ├── skills/             # External Skill packages (23 total, manifest.json + dist/)
 │   ├── echo-skill/                # Echo test
 │   ├── math-skill/                # Math computation
 │   ├── http-fetch-skill/          # HTTP requests
 │   ├── imap-poll-skill/           # IMAP email polling
 │   ├── exchange-poll-skill/       # Exchange email polling
-│   ├── slack-send-skill/          # Slack messaging
-│   ├── webhook-send-skill/        # Webhook sending
 │   ├── memory-graph-skill/        # Memory graph construction
 │   ├── collab-guard-skill/        # Collaboration guard
 │   ├── collab-review-skill/       # Collaboration review
@@ -591,15 +601,74 @@ This project's development is made possible by the technical contributions and i
 - DeepSeek ⭐
 - Alibaba (Qwen)
 - Tencent (Hunyuan)
-- Huawei (Pangu)
+- Huawei (Pangu) ⭐
 - ByteDance (Doubao) ⭐
 - Moonshot AI (Kimi)
 - Zhipu AI (ChatGLM)
+- 01.AI (Yi)
 - MiniMax (ABAB)
+- Xiaomi
 - Baidu (ERNIE)
 - iFlytek (Spark)
 - Baichuan AI
 - SenseTime (SenseNova)
+- StepFun
+- Kunlun Tech (SkyWork)
+
+
+**Smart Vehicles**
+- Huawei Car BU (ADS Advanced Driving)
+- Xiaomi Auto
+- BYD (Yangwang / God’s Eye Driving)
+- NIO (NOP+ Full Domain Navigation)
+- XPeng (XNGP Full Scenario)
+- Li Auto (AD Max Intelligent Driving)
+- JAC Motors
+- Chery Automobile
+- Geely
+- Great Wall Motors
+- SAIC Motor
+- Changan Automobile
+
+**Robotics Companies**
+- Unitree Robotics
+- Agibot
+- UBTECH (Walker Humanoid Robot)
+- Zhongzhi Robotics
+- LimX Dynamics
+- Tiangong Robotics
+- CloudMinds
+- Dreame Technology
+- DeepRobotics
+- DJI
+- Narwal Robotics
+- Gaussian Robotics
+- Keenon Robotics
+- Pudu Robotics
+- Star Dynamics
+- Galbot (Galaxy General)
+- Perceptin Technology
+
+**ERP / Enterprise Services**
+- Yonyou (YonSuite/BIP) ⭐
+- Kingdee (Cosmic/Constellation) ⭐
+- Inspur Group (GS Cloud)
+- Digiwin Software
+- Hand Enterprise Solutions
+- Weaver Network (OA)
+- Seeyon
+- Landray Software
+
+**SaaS / Cloud Services**
+- Feishu / Lark (ByteDance) ⭐
+- DingTalk (Alibaba) ⭐
+- WeCom (Tencent) ⭐
+- Jiandaoyun
+- Youzan
+- Weimob
+- Fenxiang Sales
+- Beisen Cloud
+
 
 </td>
 <td>

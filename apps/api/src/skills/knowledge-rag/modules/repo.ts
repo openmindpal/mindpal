@@ -413,7 +413,8 @@ export async function searchChunksHybrid(params: {
           SELECT
             c.id, c.document_id, c.document_version, c.chunk_index, c.start_offset, c.end_offset, c.snippet, c.created_at,
             NULL::int AS match_pos,
-            c.embedding_minhash
+            c.embedding_minhash,
+            c.citation_refs, c.source_page, c.source_section, c.hierarchy_path
           FROM knowledge_chunks c
           WHERE c.tenant_id = $1 AND c.space_id = $2
             AND ($5::uuid[] IS NULL OR c.document_id = ANY($5::uuid[]))
@@ -451,7 +452,8 @@ export async function searchChunksHybrid(params: {
       SELECT
         id, document_id, document_version, chunk_index, start_offset, end_offset, snippet, created_at,
         POSITION(lower($3) IN lower(snippet)) AS match_pos,
-        embedding_minhash
+        embedding_minhash,
+        citation_refs, source_page, source_section, hierarchy_path
       FROM knowledge_chunks
       WHERE tenant_id = $1 AND space_id = $2 AND snippet ILIKE ('%' || $3 || '%')
         AND ($5::uuid[] IS NULL OR document_id = ANY($5::uuid[]))
@@ -513,7 +515,8 @@ export async function searchChunksHybrid(params: {
             SELECT
               id, document_id, document_version, chunk_index, start_offset, end_offset, snippet, created_at,
               NULL::int AS match_pos,
-              embedding_minhash
+              embedding_minhash,
+              citation_refs, source_page, source_section, hierarchy_path
             FROM knowledge_chunks
             WHERE tenant_id = $1 AND space_id = $2
               AND id = ANY($3::uuid[])
@@ -1130,6 +1133,7 @@ export async function resolveEvidenceRef(params: {
   spaceId: string;
   subjectId: string;
   sourceRef: { documentId: string; version: number; chunkId: string };
+  opts?: { includeVersionHistory?: boolean };
 }) {
   const res = await params.pool.query(
     `
@@ -1141,6 +1145,9 @@ export async function resolveEvidenceRef(params: {
         c.start_offset,
         c.end_offset,
         c.snippet,
+        c.citation_refs,
+        c.source_page,
+        c.source_section,
         d.title AS document_title,
         d.source_type AS document_source_type
       FROM knowledge_chunks c
@@ -1163,7 +1170,27 @@ export async function resolveEvidenceRef(params: {
     [params.tenantId, params.spaceId, params.sourceRef.chunkId, params.sourceRef.documentId, params.sourceRef.version, params.subjectId],
   );
   if (!res.rowCount) return null;
-  return res.rows[0] as any;
+  const row = res.rows[0] as any;
+
+  // 版本历史查询
+  if (params.opts?.includeVersionHistory && row.document_id) {
+    const { rows: versions } = await params.pool.query(
+      `
+        SELECT version, status, updated_at
+        FROM knowledge_documents
+        WHERE id = $1 AND tenant_id = $2
+        ORDER BY version DESC
+      `,
+      [row.document_id, params.tenantId],
+    );
+    row.versionHistory = versions.map((v: any) => ({
+      version: v.version,
+      status: v.status,
+      updatedAt: v.updated_at,
+    }));
+  }
+
+  return row;
 }
 
 export async function resolveEvidenceRefByChunkId(params: { pool: Pool; tenantId: string; spaceId: string; subjectId: string; chunkId: string }) {
@@ -1177,6 +1204,9 @@ export async function resolveEvidenceRefByChunkId(params: { pool: Pool; tenantId
         c.start_offset,
         c.end_offset,
         c.snippet,
+        c.citation_refs,
+        c.source_page,
+        c.source_section,
         d.title AS document_title,
         d.source_type AS document_source_type
       FROM knowledge_chunks c

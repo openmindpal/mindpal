@@ -50,7 +50,7 @@ export function invalidateRuleCache(tenantId?: string, ruleType?: string): void 
 /*  Types                                                               */
 /* ================================================================== */
 
-export type ApprovalRuleType = "tool_execution" | "changeset_gate" | "eval_admission";
+export type ApprovalRuleType = "tool_execution" | "changeset_gate" | "eval_admission" | "debate_config";
 
 export type RiskLevel = "low" | "medium" | "high";
 

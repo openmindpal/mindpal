@@ -602,3 +602,45 @@ CREATE INDEX IF NOT EXISTS idx_debate_consensus_evo_debate
   ON debate_consensus_evolution (debate_id, tenant_id, step);
 
 COMMENT ON TABLE debate_consensus_evolution IS 'v2: 辩论过程中的共识演化追踪';
+
+-- ============ merged from 032_collab_knowledge_enhance.sql (collab部分) ============
+-- 协作层：envelopes 消息去重约束 + runs 恢复字段补齐
+
+-- ── collab_envelopes: 去重约束 ─────────────────────────────
+
+-- 先补齐 message_id 列（业务侧消息标识，区别于服务端 envelope_id）
+ALTER TABLE collab_envelopes
+  ADD COLUMN IF NOT EXISTS message_id TEXT;
+
+-- 先清理已有重复行，仅保留每组最早一条（仅当 message_id 非空时去重）
+WITH dups AS (
+  SELECT envelope_id,
+         ROW_NUMBER() OVER (
+           PARTITION BY collab_run_id, message_id
+           ORDER BY created_at ASC, envelope_id ASC
+         ) AS rn
+  FROM collab_envelopes
+  WHERE message_id IS NOT NULL
+)
+DELETE FROM collab_envelopes
+WHERE envelope_id IN (SELECT envelope_id FROM dups WHERE rn > 1);
+
+-- 添加联合唯一约束（消息去重 DB 兜底，message_id 为 NULL 时不约束）
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'uq_collab_envelopes_run_msg'
+  ) THEN
+    ALTER TABLE collab_envelopes
+      ADD CONSTRAINT uq_collab_envelopes_run_msg
+      UNIQUE (collab_run_id, message_id);
+  END IF;
+END $$;
+
+-- ── collab_runs: 恢复字段 ──────────────────────────────────
+
+ALTER TABLE collab_runs
+  ADD COLUMN IF NOT EXISTS checkpoint_state JSONB,
+  ADD COLUMN IF NOT EXISTS heartbeat_at    TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS resume_count    INT NOT NULL DEFAULT 0;

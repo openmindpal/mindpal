@@ -13,13 +13,14 @@
  * - loopAutoReflexion.ts — 自动反思
  */
 import crypto from "node:crypto";
-import type { GoalGraph, WorldState, AgentTracingContext } from "@openslin/shared";
+import { performance } from "node:perf_hooks";
+import type { GoalGraph, WorldState, AgentTracingContext, FailureDiagnosis, SemanticAuditEntry } from "@openslin/shared";
 import { ErrorCategory, resolveNumber, startAgentTracing, startIteration, startPhase, endPhase, endAgentTracing } from "@openslin/shared";
 import { startSpan as otelStartSpan } from "../lib/tracing";
 import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, recallProceduralStrategies, type EnabledTool } from "../modules/agentContext";
 import { upsertTaskState } from "../modules/memory/repo";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
-import { writeCheckpoint, finalizeCheckpoint, startHeartbeat, registerProcess, updateProcessStatus, AGENT_LOOP_FULL_CHECKPOINT_INTERVAL } from "./loopCheckpoint";
+import { writeCheckpoint, finalizeCheckpoint, startHeartbeat, registerProcess, updateProcessStatus, AGENT_LOOP_FULL_CHECKPOINT_INTERVAL, type WriteCheckpointParams } from "./loopCheckpoint";
 import { acquireLoopSlot } from "./priorityScheduler";
 import { decomposeGoal } from "./goalDecomposer";
 import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations, extractWorldState } from "./worldStateExtractor";
@@ -43,6 +44,7 @@ import { handleDoneAction, handleToolCallAction } from "./loopActHandlers";
 import { getCacheConfig, cacheGet, cacheSet, prepareCacheKey, getLightIterationConfig, isLightIteration } from "./loopCacheConfig";
 import { getMaxStepSeq, upsertGoalGraph, deletePendingSteps } from "./agentLoopRepo";
 import { initializeLoopState, finalizeLoopProcess, type LoopState } from "./loopLifecycle";
+import { turboSkipFastCheckpoint, turboSkipDecisionRetry } from "./loopTurboMode";
 
 /* ── re-export（外部文件 import from "./agentLoop"） ── */
 export type { AgentDecisionAction, AgentDecision, StepObservation, AgentLoopParams, ExecutionConstraints, AgentLoopResult } from "./loopTypes";
@@ -132,11 +134,15 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
   const { loopId, observations, subjectPayload } = s;
   let { iterations, succeededSteps, failedSteps, lastDecision, currentSeq } = s;
   let { memoryContext, taskHistory, knowledgeContext, strategyContext, goalGraph, worldState } = s;
+  const { informationGaps } = s;
   const executionConstraints = s.executionConstraints ?? undefined;
   const { toolDiscovery, auditCtx, loopStartedAt } = s;
 
   let _loopFinalResult: AgentLoopResult | null = null;
   const budget: LoopBudget = createDefaultBudget();
+  const failureDiagnoses: FailureDiagnosis[] = [];
+  const semanticAuditTrail: SemanticAuditEntry[] = [];
+  let degradedCompletion = false;
 
   /* ── Agent Tracing 初始化（静默失败，不影响主流程） ── */
   let tracingCtx: AgentTracingContext | null = null;
@@ -186,6 +192,12 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     if (completedStepsSummary) {
       progressLines.push(`\n已完成步骤摘要:\n${completedStepsSummary}`);
     }
+    if (failureDiagnoses.length > 0) {
+      const diagSummary = failureDiagnoses
+        .map(d => `- [${d.failureType}] goal=${d.affectedGoalId.slice(0, 40)} retryable=${d.isRetryable}: ${d.rootCause.slice(0, 120)}`)
+        .join("\n");
+      progressLines.push(`\n失败诊断 (${failureDiagnoses.length}):\n${diagSummary}`);
+    }
 
     const progressSummary = progressLines.join("\n");
     const degradedMessage = `${message}\n---\n优雅降级: 已保留中间结果\n${progressSummary}`;
@@ -227,6 +239,20 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       }
 
       iterations++;
+      const iterStart = performance.now();
+
+      // ── 首次迭代后解析目标分解结果（异步延迟加载） ──
+      if (iterations === 2 && s.goalDecompPromise) {
+        try {
+          const decompResult = await s.goalDecompPromise;
+          if (decompResult.graph) {
+            goalGraph = decompResult.graph;
+          }
+          s.goalDecompPromise = null; // 清除引用，避免重复 await
+        } catch (e: any) {
+          app.log.warn({ err: e?.message, runId }, "[AgentLoop] 延迟加载 GoalGraph 失败（继续使用纯文本目标）");
+        }
+      }
 
       // ── Tracing: 迭代开始 ──
       try { if (tracingCtx) startIteration(tracingCtx, iterations); } catch { /* noop */ }
@@ -284,6 +310,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           worldStateContext: iterCtx.worldStateContext,
           environmentContext: iterCtx.environmentContext,
           dynamicStrategyContext: iterCtx.dynamicStrategyContext,
+          informationGaps,
           defaultModelRef,
           forcePurpose,
         });
@@ -324,6 +351,12 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
 
       // ── 决策质量评估：低置信度重试/升级模型（可选增强，不阻塞主流程） ──
       try {
+        // 快速模型不触发决策质量重试（降低延迟）
+        const isFastTier = currentModelUsed.includes("fast");
+        if (isFastTier || turboSkipDecisionRetry()) {
+          // 附加基础质量评分但跳过重试
+          decision.qualityScore = { confidence: -1, retryCount: 0, modelUsed: currentModelUsed, skippedReason: "fast_tier" } as any;
+        } else {
         const rawJsonMatch = modelOutputText.match(/\{[\s\S]*\}/);
         const parsedRaw = rawJsonMatch ? JSON.parse(rawJsonMatch[0]) : {};
         let confidence = extractConfidenceFromOutput(modelOutputText, parsedRaw);
@@ -353,6 +386,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
               worldStateContext: iterCtx.worldStateContext,
               environmentContext: iterCtx.environmentContext,
               dynamicStrategyContext: iterCtx.dynamicStrategyContext,
+              informationGaps,
               defaultModelRef,
               forcePurpose,
             });
@@ -386,6 +420,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         // P6: 决策质量细粒度打点
         if (decisionRetryCount > 0) app.metrics.incThinkRetryCount({ count: decisionRetryCount });
         if (confidence >= 0) app.metrics.setThinkConfidence({ confidence });
+        }
       } catch (qualityErr: unknown) {
         // 决策质量评估为可选增强，失败不阻塞主流程
         app.log.warn({ err: (qualityErr as Error)?.message, runId, iteration: iterations }, "[AgentLoop] 决策质量评估异常（不影响执行）");
@@ -605,6 +640,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         }
 
         case "tool_call": {
+          const originalToolRef = decision.toolRef ?? "";
           const tcResult = await handleToolCallAction({
             app, pool, queue, subject: subject as any,
             traceId, runId, jobId: jobId ?? "", loopId, goal, iterations,
@@ -620,6 +656,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             observations.push(tcResult.failObs);
             failedSteps++;
             currentSeq++;
+            if (tcResult.diagnosis) failureDiagnoses.push(tcResult.diagnosis);
             continue;
           }
           // executed
@@ -630,6 +667,39 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           if (onStepComplete) await onStepComplete(tcResult.obs, decision);
           worldState = tcResult.worldState;
           goalGraph = tcResult.goalGraph;
+          if (tcResult.diagnosis) failureDiagnoses.push(tcResult.diagnosis);
+
+          // ── fallback 后目标重评估 ──
+          if (tcResult.fallbackImpact) {
+            const fbImpact = tcResult.fallbackImpact;
+            // 追加语义审计条目
+            if (fbImpact.impact !== "none") {
+              semanticAuditTrail.push({
+                timestamp: new Date().toISOString(),
+                originalToolId: originalToolRef,
+                fallbackToolId: decision.toolRef ?? "",
+                impact: fbImpact,
+                goalId: runId,
+              });
+            }
+            if (fbImpact.impact === "degraded") {
+              degradedCompletion = true;
+              app.log.info({ runId, iteration: iterations, reason: fbImpact.reason }, "[AgentLoop] Fallback 导致精度降级，标记 degradedCompletion");
+            } else if (fbImpact.impact === "goal_unreachable") {
+              const driftDiagnosis: FailureDiagnosis = {
+                failureType: "tool_semantic_drift",
+                affectedGoalId: runId,
+                rootCause: fbImpact.reason,
+                isRetryable: false,
+                suggestedActions: [{ type: "abort_branch", reason: fbImpact.reason }],
+              };
+              failureDiagnoses.push(driftDiagnosis);
+              app.log.warn({ runId, iteration: iterations, reason: fbImpact.reason }, "[AgentLoop] Fallback 导致目标不可达，触发重规划");
+              // 清除 pending 步骤，下一轮 LLM 将收到 failureDiagnoses 上下文并重新决策
+              await deletePendingSteps(pool, runId);
+              continue; // 跳到下一轮循环，让 LLM 根据 failureDiagnoses 重规划
+            }
+          }
           break;
         }
 
@@ -661,7 +731,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       const checkpointTier: "fast" | "full" = (isPhaseTransition || iterations % AGENT_LOOP_FULL_CHECKPOINT_INTERVAL === 0 || iterations === 1)
         ? "full" : "fast";
 
-      await writeCheckpoint({
+      const checkpointParams: WriteCheckpointParams = {
         pool, loopId,
         tenantId: subject.tenantId, spaceId: subject.spaceId ?? null,
         runId, jobId, taskId,
@@ -671,15 +741,30 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         subjectPayload, locale, authorization, traceId,
         defaultModelRef: defaultModelRef ?? null,
         decisionContext: { executionConstraints: executionConstraints ?? null },
-        // P1-8 FIX: 常规 checkpoint 也保存缓存字段，避免恢复时丢失上下文
         toolDiscoveryCache: toolDiscovery as any,
         memoryContext: memoryContext ?? null,
         taskHistory: taskHistory ?? null,
         knowledgeContext: knowledgeContext ?? null,
         status: "running",
-      }, checkpointTier).catch((e: unknown) => {
-        app.log.warn({ err: (e as Error)?.message, runId, loopId, iteration: iterations }, "[AgentLoop] checkpoint 写入失败（不阻塞主循环）");
-      });
+      };
+
+      const ckptStart = performance.now();
+      if (checkpointTier === "fast" && turboSkipFastCheckpoint()) {
+        // turbo mode: 完全跳过 fast tier 检查点写入
+      } else if (checkpointTier === "fast") {
+        // fast tier 异步写入，不阻塞主循环
+        writeCheckpoint(checkpointParams, "fast").catch((e: unknown) => {
+          app.log.warn({ err: (e as Error)?.message, runId, loopId, iteration: iterations }, "[AgentLoop] fast checkpoint 写入失败（不阻塞主循环）");
+        });
+      } else {
+        // full tier 仍然 await（保证恢复一致性）
+        await writeCheckpoint(checkpointParams, "full").catch((e: unknown) => {
+          app.log.warn({ err: (e as Error)?.message, runId, loopId, iteration: iterations }, "[AgentLoop] full checkpoint 写入失败（不阻塞主循环）");
+        });
+      }
+      const ckptDur = Math.round(performance.now() - ckptStart);
+      const totalDur = Math.round(performance.now() - iterStart);
+      app.log.debug('[perf] iteration=%d checkpoint=%dms total=%dms', iterations, ckptDur, totalDur);
     }
 
     // 达到最大迭代次数
@@ -702,6 +787,32 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     onLoopEnd?.(result);
     return result;
   } finally {
+    // ── 语义偏移审计报告（覆盖所有退出路径） ──
+    if (semanticAuditTrail.length > 0) {
+      const unreachableCount = semanticAuditTrail.filter(e => e.impact.impact === "goal_unreachable").length;
+      const degradedCount = semanticAuditTrail.filter(e => e.impact.impact === "degraded").length;
+      const needsHumanConfirmation = unreachableCount > 0;
+      app.log.info({
+        type: "semantic_drift_report",
+        runId,
+        totalFallbacks: semanticAuditTrail.length,
+        unreachable: unreachableCount,
+        degraded: degradedCount,
+        degradedCompletion,
+        needsHumanConfirmation,
+        trail: semanticAuditTrail,
+      }, "[AgentLoop] 语义偏移审计报告");
+      if (needsHumanConfirmation && _loopFinalResult) {
+        (_loopFinalResult as any).needsHumanConfirmation = true;
+        (_loopFinalResult as any).semanticAuditTrail = semanticAuditTrail;
+      }
+    }
+
+    // 将 degradedCompletion 标记写入最终结果，供上层感知精度降级
+    if (degradedCompletion && _loopFinalResult) {
+      (_loopFinalResult as any).degradedCompletion = true;
+    }
+
     // ── Tracing: 结束 Agent Loop 追踪（静默失败） ──
     try {
       if (tracingCtx) {

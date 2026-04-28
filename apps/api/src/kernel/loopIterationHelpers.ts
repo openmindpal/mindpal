@@ -7,6 +7,7 @@
  * - Verifier 校验
  */
 import crypto from "node:crypto";
+import { performance } from "node:perf_hooks";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { GoalGraph, WorldState } from "@openslin/shared";
@@ -18,6 +19,118 @@ import type { StepObservation, ExecutionConstraints } from "./loopTypes";
 import { buildThinkPrompt } from "./loopThinkDecide";
 import { selectPurposeTier, tryDynamicModelRoute } from "./loopModelRouter";
 import { detectIntentBoundary, type IntentDriftResult } from "./intentAnchoringService";
+import { turboSkipIntentDrift, turboSkipStrategyRecall } from "./loopTurboMode";
+
+/* ================================================================== */
+/*  迭代上下文构建 — 辅助函数                                              */
+/* ================================================================== */
+
+/** 环境状态查询 */
+async function fetchEnvironmentContext(params: {
+  pool: Pool;
+  subject: { tenantId: string; spaceId: string };
+  iterations: number;
+  worldState: WorldState | null;
+}): Promise<{ environmentContext: string | undefined; updatedWorldState: WorldState | null }> {
+  const { pool, subject, iterations } = params;
+  let worldState = params.worldState;
+  try {
+    const envSummary = await getEnvironmentSummary({
+      pool, tenantId: subject.tenantId, spaceId: subject.spaceId,
+    });
+    if (envSummary.totalEntities > 0 || envSummary.activeConstraints > 0) {
+      const lines: string[] = [];
+      lines.push(`Entities: ${envSummary.totalEntities} total (${envSummary.onlineEntities} online, ${envSummary.degradedEntities} degraded, ${envSummary.offlineEntities} offline)`);
+      if (envSummary.activeConstraints > 0) lines.push(`⚠️ Active constraints: ${envSummary.activeConstraints} (${envSummary.criticalConstraints} critical)`);
+      if (envSummary.degradedEntities > 0) lines.push(`⚠️ Some environment entities are degraded — consider fallback strategies`);
+      if (envSummary.offlineEntities > 0) lines.push(`❌ Some environment entities are offline — avoid depending on them`);
+      const environmentContext = lines.join("\n");
+
+      if (worldState && (envSummary.degradedEntities > 0 || envSummary.criticalConstraints > 0)) {
+        const { upsertFact } = await import("@openslin/shared");
+        const now = new Date().toISOString();
+        worldState = upsertFact(worldState, {
+          factId: crypto.randomUUID(), category: "observation",
+          key: `env:summary:iteration:${iterations}`,
+          statement: `Environment: ${envSummary.totalEntities} entities (${envSummary.degradedEntities} degraded, ${envSummary.offlineEntities} offline), ${envSummary.criticalConstraints} critical constraints`,
+          value: envSummary, confidence: 1.0, valid: true, recordedAt: now,
+        });
+      }
+      return { environmentContext, updatedWorldState: worldState };
+    }
+    return { environmentContext: undefined, updatedWorldState: worldState };
+  } catch {
+    return { environmentContext: undefined, updatedWorldState: worldState };
+  }
+}
+
+/** 动态策略检索 */
+async function fetchDynamicStrategy(params: {
+  pool: Pool;
+  subject: { tenantId: string; spaceId: string; subjectId: string };
+  goal: string;
+  iterations: number;
+  observations: StepObservation[];
+  strategyContext: string | undefined;
+  auditCtx: { traceId: string } | undefined;
+  log: FastifyInstance["log"];
+  runId: string;
+}): Promise<string | undefined> {
+  const { pool, subject, goal, iterations, observations, strategyContext, auditCtx, log, runId } = params;
+  if (!(iterations > 1 && iterations % 3 === 0) || turboSkipStrategyRecall(iterations)) return strategyContext;
+  try {
+    const recentObsSummary = observations.slice(-3).map(o => `- ${o.toolRef}`).join('\n');
+    const freshStrategyRecall = await recallProceduralStrategies({
+      pool, tenantId: subject.tenantId, spaceId: subject.spaceId,
+      goal: `${goal}\n\nCurrent observations:\n${recentObsSummary}`,
+      auditContext: { ...auditCtx, subjectId: subject.subjectId },
+    });
+    if (freshStrategyRecall.strategyCount > 0) {
+      log.info({ runId, iteration: iterations, strategyCount: freshStrategyRecall.strategyCount }, "[AgentLoop] P2-1: 动态检索到新的procedural策略");
+      return freshStrategyRecall.text || undefined;
+    }
+    return strategyContext;
+  } catch (err: any) {
+    log.warn({ err: err?.message, runId, iteration: iterations }, "[AgentLoop] 动态策略检索失败（不影响执行）");
+    return strategyContext;
+  }
+}
+
+/** 意图漂移检测 */
+async function fetchIntentDrift(params: {
+  pool: Pool;
+  subject: { tenantId: string; spaceId: string; subjectId: string };
+  runId: string;
+  goal: string;
+  iterations: number;
+  observations: StepObservation[];
+  log: FastifyInstance["log"];
+}): Promise<IntentDriftResult | null> {
+  const { pool, subject, runId, goal, iterations, observations, log } = params;
+  if (iterations <= 1 || turboSkipIntentDrift(iterations)) return null;
+  try {
+    const lastObs = observations[observations.length - 1];
+    const currentSignal = lastObs
+      ? `Tool: ${lastObs.toolRef}, Status: ${lastObs.status}, Output: ${JSON.stringify(lastObs.outputDigest ?? {}).slice(0, 200)}`
+      : goal;
+    const intentDrift = await detectIntentBoundary({
+      pool,
+      tenantId: subject.tenantId,
+      spaceId: subject.spaceId,
+      subjectId: subject.subjectId,
+      runId,
+      currentMessage: currentSignal,
+      originalGoal: goal,
+    });
+    if (intentDrift.drifted) {
+      log.warn({ runId, iteration: iterations, driftScore: intentDrift.driftScore, reason: intentDrift.reason }, "[AgentLoop] Think 阶段检测到意图漂移");
+    }
+    return intentDrift;
+  } catch (err: any) {
+    log.warn({ err: err?.message, runId, iteration: iterations }, "[AgentLoop] 意图漂移检测失败（不影响执行）");
+    return null;
+  }
+}
 
 /* ================================================================== */
 /*  迭代上下文构建                                                       */
@@ -69,76 +182,24 @@ export async function buildIterationContext(params: {
     worldStateContext = worldStateToPromptText(worldState, 1000);
   }
 
-  // 环境状态摘要
+  // 并行执行环境查询、策略检索、意图漂移检测
+  const ctxBuildStart = performance.now();
+  const [envResult, strategyResult, driftResult] = await Promise.allSettled([
+    fetchEnvironmentContext({ pool, subject, iterations, worldState }),
+    fetchDynamicStrategy({ pool, subject: subject as any, goal, iterations, observations, strategyContext, auditCtx, log, runId }),
+    fetchIntentDrift({ pool, subject: subject as any, runId, goal, iterations, observations, log }),
+  ]);
+  const ctxBuildDur = Math.round(performance.now() - ctxBuildStart);
+  log.debug('[perf] context_build=%dms', ctxBuildDur);
+
   let environmentContext: string | undefined;
-  try {
-    const envSummary = await getEnvironmentSummary({
-      pool, tenantId: subject.tenantId, spaceId: subject.spaceId,
-    });
-    if (envSummary.totalEntities > 0 || envSummary.activeConstraints > 0) {
-      const lines: string[] = [];
-      lines.push(`Entities: ${envSummary.totalEntities} total (${envSummary.onlineEntities} online, ${envSummary.degradedEntities} degraded, ${envSummary.offlineEntities} offline)`);
-      if (envSummary.activeConstraints > 0) lines.push(`⚠️ Active constraints: ${envSummary.activeConstraints} (${envSummary.criticalConstraints} critical)`);
-      if (envSummary.degradedEntities > 0) lines.push(`⚠️ Some environment entities are degraded — consider fallback strategies`);
-      if (envSummary.offlineEntities > 0) lines.push(`❌ Some environment entities are offline — avoid depending on them`);
-      environmentContext = lines.join("\n");
-
-      if (worldState && (envSummary.degradedEntities > 0 || envSummary.criticalConstraints > 0)) {
-        const { upsertFact } = await import("@openslin/shared");
-        const now = new Date().toISOString();
-        worldState = upsertFact(worldState, {
-          factId: crypto.randomUUID(), category: "observation",
-          key: `env:summary:iteration:${iterations}`,
-          statement: `Environment: ${envSummary.totalEntities} entities (${envSummary.degradedEntities} degraded, ${envSummary.offlineEntities} offline), ${envSummary.criticalConstraints} critical constraints`,
-          value: envSummary, confidence: 1.0, valid: true, recordedAt: now,
-        });
-      }
-    }
-  } catch { /* 环境状态获取失败不影响主流程 */ }
-
-  // 动态策略检索
-  let dynamicStrategyContext = strategyContext;
-  if (iterations > 1 && iterations % 3 === 0) {
-    try {
-      const recentObsSummary = observations.slice(-3).map(o => `- ${o.toolRef}`).join('\n');
-      const freshStrategyRecall = await recallProceduralStrategies({
-        pool, tenantId: subject.tenantId, spaceId: subject.spaceId,
-        goal: `${goal}\n\nCurrent observations:\n${recentObsSummary}`,
-        auditContext: { ...auditCtx, subjectId: subject.subjectId },
-      });
-      if (freshStrategyRecall.strategyCount > 0) {
-        dynamicStrategyContext = freshStrategyRecall.text || undefined;
-        log.info({ runId, iteration: iterations, strategyCount: freshStrategyRecall.strategyCount }, "[AgentLoop] P2-1: 动态检索到新的procedural策略");
-      }
-    } catch (err: any) {
-      log.warn({ err: err?.message, runId, iteration: iterations }, "[AgentLoop] 动态策略检索失败（不影响执行）");
-    }
+  if (envResult.status === "fulfilled") {
+    environmentContext = envResult.value.environmentContext;
+    worldState = envResult.value.updatedWorldState;
   }
 
-  // Think 阶段：意图漂移检测
-  let intentDrift: IntentDriftResult | null = null;
-  if (iterations > 1) {
-    try {
-      const lastObs = observations[observations.length - 1];
-      const currentSignal = lastObs
-        ? `Tool: ${lastObs.toolRef}, Status: ${lastObs.status}, Output: ${JSON.stringify(lastObs.outputDigest ?? {}).slice(0, 200)}`
-        : goal;
-      intentDrift = await detectIntentBoundary({
-        pool,
-        tenantId: subject.tenantId,
-        spaceId: subject.spaceId,
-        subjectId: subject.subjectId,
-        runId,
-        currentMessage: currentSignal,
-        originalGoal: goal,
-      });
-      if (intentDrift.drifted) {
-        log.warn({ runId, iteration: iterations, driftScore: intentDrift.driftScore, reason: intentDrift.reason }, "[AgentLoop] Think 阶段检测到意图漂移");
-      }
-    } catch (err: any) {
-      log.warn({ err: err?.message, runId, iteration: iterations }, "[AgentLoop] 意图漂移检测失败（不影响执行）");
-    }
-  }
+  const dynamicStrategyContext = strategyResult.status === "fulfilled" ? strategyResult.value : strategyContext;
+  const intentDrift = driftResult.status === "fulfilled" ? driftResult.value : null;
 
   return { goalGraphContext, worldStateContext, environmentContext, dynamicStrategyContext, updatedWorldState: worldState, intentDrift };
 }
@@ -170,6 +231,8 @@ export async function invokeLlmForDecision(params: {
   worldStateContext: string | undefined;
   environmentContext: string | undefined;
   dynamicStrategyContext: string | undefined;
+  /** P2-召回反哺: 信息缺口 */
+  informationGaps: string[] | undefined;
   defaultModelRef: string | undefined;
   /** 决策质量重试时，强制使用指定的 purpose tier（为升级模型） */
   forcePurpose?: string;
@@ -191,6 +254,7 @@ export async function invokeLlmForDecision(params: {
     memoryContext, taskHistory,
     knowledgeContext: [knowledgeContext, goalGraphContext, worldStateContext].filter(Boolean).join("\n\n") || undefined,
     strategyContext: dynamicStrategyContext, environmentContext,
+    informationGaps: params.informationGaps,
   });
 
   // 动态能力画像路由

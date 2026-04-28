@@ -813,14 +813,88 @@
   background: #dc2626;
 }
 
-/* ─── Attachment Toolbar ─────────────────────────────────────────── */
+/* ─── Plus Toggle Button (minimal mode) ─────────────────────────── */
 
-.attachToolbar {
+.plusToggleBtn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px 12px 6px;
-  border-top: 1px solid var(--sl-border, #e5e7eb);
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--sl-border, #e5e7eb);
+  background: transparent;
+  color: var(--sl-muted, #6b7280);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  flex-shrink: 0;
+}
+
+.plusToggleBtn:hover {
+  border-color: var(--sl-accent-border, #93c5fd);
+  color: var(--sl-accent, #3b82f6);
+  background: var(--sl-accent-bg, #eff6ff);
+}
+
+.plusToggleBtnActive {
+  border-color: var(--sl-accent, #3b82f6);
+  color: var(--sl-accent, #3b82f6);
+  background: color-mix(in srgb, var(--sl-accent) 10%, transparent);
+}
+
+/* ─── Expanded Tool Panel ───────────────────────────────────────── */
+
+.toolPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sl-border, #e5e7eb);
+  animation: toolPanelSlideIn 0.15s ease-out;
+}
+
+@keyframes toolPanelSlideIn {
+  from { opacity: 0; max-height: 0; }
+  to   { opacity: 1; max-height: 200px; }
+}
+
+.toolPanelSection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolPanelRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.toolPanelIconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--sl-radius-2, 6px);
+  color: var(--sl-fg-secondary, #64748b);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.toolPanelIconBtn:hover {
+  background: var(--sl-surface-muted, #f1f5f9);
+  color: var(--sl-accent, #3b82f6);
+}
+
+.toolPanelIconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .attachMenu {
