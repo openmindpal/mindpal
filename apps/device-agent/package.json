@@ -16,6 +16,7 @@
     "lint": "node -e \"process.exit(0)\""
   },
   "dependencies": {
+    "@openslin/device-agent-sdk": "workspace:*",
     "@openslin/shared": "workspace:*",
     "playwright-core": "^1.52.0"
   },

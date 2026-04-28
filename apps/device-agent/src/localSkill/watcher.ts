@@ -5,8 +5,8 @@
  */
 import fs from "node:fs";
 import { loadLocalSkills, scanSkillDirs } from "./loader";
-import { disposePlugin } from "../kernel/pluginLifecycle";
-import { listPlugins } from "../kernel/capabilityRegistry";
+import { disposePlugin } from "@openslin/device-agent-sdk";
+import { listPlugins } from "@openslin/device-agent-sdk";
 
 // ── 内部状态 ──────────────────────────────────────────────
 

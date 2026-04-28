@@ -6,6 +6,7 @@ import { t } from "@/lib/i18n";
 import type { IntentMode } from "@/lib/types";
 import type { ChatAttachment } from "./homeHelpers";
 import type { ModelBinding } from "./useChatSession";
+import VideoPreview from "./VideoPreview";
 import { ModeSelector } from "@/components/flow/RunStatusIndicator";
 import { IconSliders } from "./HomeIcons";
 import { AUDIO_ACCEPT, DOC_ACCEPT, IMAGE_ACCEPT, VIDEO_ACCEPT } from "./useAttachments";
@@ -43,6 +44,14 @@ export interface ChatInputAreaProps {
   startVoice: () => void;
   toggleConversation: () => void;
   stopSpeaking: () => void;
+  /* Video capture */
+  videoActive: boolean;
+  videoStream: MediaStream | null;
+  videoSupported: boolean;
+  startVideo: () => void;
+  stopVideo: () => void;
+  captureFrame: () => string | null;
+  onVideoCaptureFrame: () => void;
   /* Model picker */
   bindings: ModelBinding[];
   selectedModelRef: string;
@@ -66,6 +75,7 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
     execMode, setExecMode, inputRef, onKeyDown, send, abortRef,
     attachments, removeAttachment, imageInputRef, docInputRef, audioInputRef, videoInputRef, handleImageSelect, handleDocSelect, handleAudioSelect, handleVideoSelect,
     voiceListening, voiceInterim, voiceConversation, speaking, startVoice, toggleConversation, stopSpeaking,
+    videoActive, videoStream, videoSupported, startVideo, stopVideo, captureFrame, onVideoCaptureFrame,
     bindings, selectedModelRef, setSelectedModelRef,
     modelPickerOpen, setModelPickerOpen, modelPickerTitle, modelPickerRef,
     activeQueueCount = 0, queuedCount = 0, showStop,
@@ -161,6 +171,13 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
         </div>
       )}
 
+      {/* Video preview */}
+      {videoActive && videoStream && (
+        <div style={{ marginBottom: 6 }}>
+          <VideoPreview locale={locale} videoStream={videoStream} videoActive={videoActive} onCapture={onVideoCaptureFrame} onStop={stopVideo} />
+        </div>
+      )}
+
       {/* Attachment toolbar */}
       <div className={styles.attachToolbar}>
         <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} multiple hidden onChange={handleImageSelect} />
@@ -233,6 +250,33 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
             </>
           )}
         </button>
+        {videoSupported && (
+          <button
+            className={`${styles.attachBtn} ${videoActive ? styles.attachBtnRecording : ""}`}
+            onClick={() => {
+              if (videoActive) stopVideo();
+              else startVideo();
+            }}
+            title={videoActive ? t(locale, "chat.video.stop") : t(locale, "chat.video.camera")}
+            disabled={busy}
+          >
+            {videoActive ? (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="5" width="15" height="14" rx="2" /><polygon points="16 12 21 9 21 15 16 12" />
+                </svg>
+                <span style={{ color: "#ef4444" }}>{t(locale, "chat.video.stop")}</span>
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="5" width="15" height="14" rx="2" /><polygon points="16 12 21 9 21 15 16 12" />
+                </svg>
+                <span>{t(locale, "chat.video.camera")}</span>
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       {/* Voice listening hints */}

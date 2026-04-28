@@ -9,8 +9,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import type { CapabilityDescriptor } from "../kernel";
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "../pluginRegistry";
+import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
 import { commandExists, runProcess } from "./pluginUtils";
 
 // ── 状态 ─────────────────────────────────────────────────────────

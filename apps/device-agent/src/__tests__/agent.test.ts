@@ -3,10 +3,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { DeviceAgentConfig } from "../config";
-import { heartbeatOnce, runOnce } from "../agent";
-import { registerPlugin, clearPlugins } from "../pluginRegistry";
+import type { DeviceAgentConfig } from "@openslin/device-agent-sdk";
+import { heartbeatOnce, runOnce } from "@openslin/device-agent-sdk";
+import { registerPlugin, clearAll as clearPlugins } from "@openslin/device-agent-sdk";
 import desktopPlugin from "../plugins/desktopPlugin";
+import { setBuiltinToolPlugin } from "@openslin/device-agent-sdk";
+import builtinToolPlugin from "../plugins/builtinToolPlugin";
 
 function json(res: http.ServerResponse, status: number, body: any) {
   const txt = JSON.stringify(body ?? {});
@@ -40,6 +42,8 @@ describe("device-agent", () => {
     // 注册内置桌面插件（测试需要）
     clearPlugins();
     registerPlugin(desktopPlugin);
+    // SDK提取后需手动注入内置工具插件（noop/echo）
+    setBuiltinToolPlugin(builtinToolPlugin);
 
     server = http.createServer(async (req, res) => {
       const url = req.url ?? "/";

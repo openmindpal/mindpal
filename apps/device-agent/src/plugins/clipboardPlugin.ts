@@ -2,8 +2,8 @@
  * 剪贴板子插件 — 处理 device.clipboard.read / device.clipboard.write
  */
 import childProcess from "node:child_process";
-import type { CapabilityDescriptor } from "../kernel";
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "../pluginRegistry";
+import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
 import { sha256_8, runPowerShell, runPowerShellJson } from "./pluginUtils";
 
 // ── 工具实现 ──────────────────────────────────────────────────────

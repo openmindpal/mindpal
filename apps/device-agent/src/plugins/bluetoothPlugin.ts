@@ -8,8 +8,8 @@
  *
  * @layer plugin
  */
-import type { CapabilityDescriptor } from "../kernel";
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "../pluginRegistry";
+import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
 import { commandExists, runProcess, runPowerShell, runPowerShellJson } from "./pluginUtils";
 
 // ── 类型定义 ──────────────────────────────────────────────────────

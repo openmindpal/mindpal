@@ -12,8 +12,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import type { CapabilityDescriptor } from "../kernel";
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "../pluginRegistry";
+import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
 import { commandExists, runProcess, runPowerShell, runPowerShellJson } from "./pluginUtils";
 
 // ── 类型定义 ──────────────────────────────────────────────────────
@@ -30,6 +30,21 @@ interface ProbeResult {
 
 let _probe: ProbeResult = { captureBackend: "none", playbackBackend: "none" };
 const _tmpFiles: Set<string> = new Set();
+
+// ── 播放进程跟踪 ─────────────────────────────────────────────────
+
+let currentPlayProcess: ChildProcess | null = null;
+
+function runTrackedPlay(cmd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
+    currentPlayProcess = child;
+    let stderr = "";
+    child.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+    child.on("close", (code) => { currentPlayProcess = null; resolve({ code: code ?? 1, stdout: "", stderr }); });
+    child.on("error", (err) => { currentPlayProcess = null; resolve({ code: 1, stdout: "", stderr: err.message }); });
+  });
+}
 
 // ── 流式音频状态 ─────────────────────────────────────────────────
 
@@ -210,7 +225,7 @@ async function execAudioPlay(ctx: ToolExecutionContext): Promise<ToolExecutionRe
       // ffplay 可能不存在，直接用 ffmpeg decode 验证；尝试 ffplay
       const ffplayExists: boolean = await commandExists("ffplay");
       if (ffplayExists) {
-        const playResult = await runProcess("ffplay", ["-nodisp", "-autoexit", targetFile]);
+        const playResult = await runTrackedPlay("ffplay", ["-nodisp", "-autoexit", targetFile]);
         if (playResult.code !== 0) {
           return { status: "failed", errorCategory: "device_error", outputDigest: { reason: "ffplay_failed", stderr: playResult.stderr.slice(0, 500) } };
         }
@@ -221,17 +236,17 @@ async function execAudioPlay(ctx: ToolExecutionContext): Promise<ToolExecutionRe
       const escaped: string = targetFile.replaceAll("'", "''");
       await runPowerShell(`(New-Object System.Media.SoundPlayer '${escaped}').PlaySync()`);
     } else if (_probe.playbackBackend === "afplay") {
-      const result = await runProcess("afplay", [targetFile]);
+      const result = await runTrackedPlay("afplay", [targetFile]);
       if (result.code !== 0) {
         return { status: "failed", errorCategory: "device_error", outputDigest: { reason: "afplay_failed", stderr: result.stderr.slice(0, 500) } };
       }
     } else if (_probe.playbackBackend === "aplay") {
-      const result = await runProcess("aplay", [targetFile]);
+      const result = await runTrackedPlay("aplay", [targetFile]);
       if (result.code !== 0) {
         return { status: "failed", errorCategory: "device_error", outputDigest: { reason: "aplay_failed", stderr: result.stderr.slice(0, 500) } };
       }
     } else if (_probe.playbackBackend === "paplay") {
-      const result = await runProcess("paplay", [targetFile]);
+      const result = await runTrackedPlay("paplay", [targetFile]);
       if (result.code !== 0) {
         return { status: "failed", errorCategory: "device_error", outputDigest: { reason: "paplay_failed", stderr: result.stderr.slice(0, 500) } };
       }
@@ -450,11 +465,22 @@ async function handleStreamStop(_ctx: ToolExecutionContext): Promise<ToolExecuti
   return { status: "succeeded", outputDigest: { stopped: true } };
 }
 
+// ── device.audio.stop 实现 ────────────────────────────────────────
+
+async function execAudioStop(_ctx: ToolExecutionContext): Promise<ToolExecutionResult> {
+  if (currentPlayProcess) {
+    currentPlayProcess.kill("SIGTERM");
+    currentPlayProcess = null;
+  }
+  return { status: "succeeded", outputDigest: { stopped: true } };
+}
+
 // ── 路由表 ────────────────────────────────────────────────────────
 
 const TOOL_HANDLERS: Record<string, (ctx: ToolExecutionContext) => Promise<ToolExecutionResult>> = {
   "device.audio.capture": execAudioCapture,
   "device.audio.play": execAudioPlay,
+  "device.audio.stop": execAudioStop,
   "device.audio.devices": execAudioDevices,
   "device.audio.stream_start": handleStreamStart,
   "device.audio.stream_read": handleStreamRead,
@@ -475,6 +501,13 @@ const AUDIO_CAPABILITIES: CapabilityDescriptor[] = [
     toolRef: "device.audio.play",
     riskLevel: "low",
     description: "播放音频",
+    version: "1.0.0",
+    tags: ["audio", "playback"],
+  },
+  {
+    toolRef: "device.audio.stop",
+    riskLevel: "low",
+    description: "停止当前正在播放的音频",
     version: "1.0.0",
     tags: ["audio", "playback"],
   },
@@ -515,7 +548,7 @@ const audioPlugin: DeviceToolPlugin = {
   version: "1.0.0",
   source: "builtin",
   toolPrefixes: ["device.audio.*"],
-  toolNames: ["device.audio.capture", "device.audio.play", "device.audio.devices", "device.audio.stream_start", "device.audio.stream_read", "device.audio.stream_stop"],
+  toolNames: ["device.audio.capture", "device.audio.play", "device.audio.stop", "device.audio.devices", "device.audio.stream_start", "device.audio.stream_read", "device.audio.stream_stop"],
   capabilities: AUDIO_CAPABILITIES,
   resourceLimits: { maxMemoryMb: 50, maxCpuPercent: 15 },
   deviceTypeResourceProfiles: {
@@ -554,6 +587,10 @@ const audioPlugin: DeviceToolPlugin = {
 
   async dispose(): Promise<void> {
     console.warn("[audio] cleaning up temporary files...");
+    if (currentPlayProcess) {
+      currentPlayProcess.kill();
+      currentPlayProcess = null;
+    }
     if (streamProcess) {
       streamProcess.kill();
       streamProcess = null;

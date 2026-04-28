@@ -4,20 +4,25 @@
  * 实现语音对话闭环：VAD → STT → Agent Loop → TTS
  * 状态机：idle → listening → detecting → transcribing → thinking → speaking → listening
  *
+ * 对话消息通过 WebSocket device_query 通道发送，自动集成长期记忆、知识RAG、会话持久化。
+ * 视频帧缓存为 latestFrame，在发送对话消息时作为多模态附件附带。
+ * STT / TTS 保留 HTTP 调用（纯媒体处理端点）。
+ *
  * @layer plugin
  */
+import crypto from "node:crypto";
 import http from "node:http";
 import https from "node:https";
-import fs from "node:fs/promises";
 
 import type {
   DeviceToolPlugin,
   ToolExecutionContext,
   ToolExecutionResult,
   DeviceMessageContext,
-} from "../pluginRegistry";
-import type { CapabilityDescriptor } from "../kernel/types";
-import { findPluginForTool } from "../kernel/capabilityRegistry";
+} from "@openslin/device-agent-sdk";
+import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
+import { findPluginForTool, getMultimodalCapabilities, getActiveWebSocketAgent } from "@openslin/device-agent-sdk";
+import type { DeviceAttachment } from "@openslin/shared";
 
 // ── 类型定义 ──────────────────────────────────────────────────────
 
@@ -30,22 +35,100 @@ let idleCounter = 0;
 let vadThreshold = Number(process.env.DEVICE_AGENT_VAD_THRESHOLD) || 500;
 let idleTimeoutMs = Number(process.env.DEVICE_AGENT_DIALOG_IDLE_TIMEOUT_MS) || 60000;
 let responseTimeoutMs = 15000;
-const captureIntervalMs = 3000;
 
+// pendingResponse 仅供 onMessage 兼容旧 dialog.response 路径
 let pendingResponse: { resolve: (text: string) => void } | null = null;
+let videoFrameTimer: ReturnType<typeof setInterval> | null = null;
+
+/** 会话级 conversationId — 对话启动时生成，idle 超时后清除 */
+let conversationId: string | null = null;
+
+/** 最新视频帧缓存 — 由定时器更新，发送对话消息时附带 */
+let latestFrame: { base64: string; format: string } | null = null;
 
 // ── VAD 实现（零依赖，纯计算） ────────────────────────────────────
 
-function detectVoiceActivity(pcmBuffer: Buffer, threshold: number): boolean {
-  if (!pcmBuffer || pcmBuffer.length < 2) return false;
+function calcRms(pcm: Buffer): number {
   let sumSquares = 0;
-  const sampleCount = pcmBuffer.length / 2;
-  for (let i = 0; i < pcmBuffer.length; i += 2) {
-    const sample = pcmBuffer.readInt16LE(i);
+  const sampleCount = pcm.length / 2;
+  for (let i = 0; i < pcm.length; i += 2) {
+    const sample = pcm.readInt16LE(i);
     sumSquares += sample * sample;
   }
-  const rms = Math.sqrt(sumSquares / sampleCount);
-  return rms > threshold;
+  return sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
+}
+
+/** 自适应 VAD —— EMA平滑 + 动态阈值 + 静默追踪，零外部依赖 */
+class AdaptiveVad {
+  private emaEnergy = 0;
+  private ambientEnergy = 0;
+  private speechStartedAt = 0;
+  private silenceSince = 0;
+  private readonly smoothingFactor: number;
+  private readonly silenceThresholdMs: number;
+  private readonly adaptiveRatio = 2.5;
+
+  constructor(cfg?: { silenceThresholdMs?: number; smoothingFactor?: number }) {
+    this.smoothingFactor = cfg?.smoothingFactor ?? 0.3;
+    this.silenceThresholdMs = cfg?.silenceThresholdMs ?? 600;
+  }
+
+  reset(): void {
+    this.emaEnergy = 0;
+    this.ambientEnergy = 0;
+    this.speechStartedAt = 0;
+    this.silenceSince = 0;
+  }
+
+  feed(pcm: Buffer, now: number): "speech_start" | "speech_continue" | "speech_end" | "silence" {
+    const rms = calcRms(pcm);
+    this.emaEnergy = this.smoothingFactor * rms + (1 - this.smoothingFactor) * this.emaEnergy;
+
+    if (!this.speechStartedAt) {
+      this.ambientEnergy = 0.05 * rms + 0.95 * this.ambientEnergy;
+    }
+
+    const threshold = Math.max(this.ambientEnergy * this.adaptiveRatio, 300);
+    const isSpeech = this.emaEnergy > threshold;
+
+    if (isSpeech) {
+      this.silenceSince = 0;
+      if (!this.speechStartedAt) { this.speechStartedAt = now; return "speech_start"; }
+      return "speech_continue";
+    }
+
+    if (this.speechStartedAt) {
+      if (!this.silenceSince) this.silenceSince = now;
+      if (now - this.silenceSince >= this.silenceThresholdMs) {
+        this.speechStartedAt = 0;
+        this.silenceSince = 0;
+        return "speech_end";
+      }
+      return "speech_continue";
+    }
+    return "silence";
+  }
+}
+
+// ── 句子提取工具 ──────────────────────────────────────────────────
+
+function extractSentences(buf: string): { sentences: string[]; remainder: string } {
+  const re = /[^。！？!?\n]+[。！？!?\n]+/g;
+  const sentences: string[] = [];
+  let last = 0;
+  for (const m of buf.matchAll(re)) {
+    sentences.push(m[0].trim());
+    last = (m.index ?? 0) + m[0].length;
+  }
+  return { sentences, remainder: buf.slice(last) };
+}
+
+// ── 流式管道类型 ──────────────────────────────────────────────────
+
+interface StreamingPipeline {
+  abort: AbortController;
+  done: Promise<void>;
+  fullText: () => string;
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────────────
@@ -76,43 +159,7 @@ function httpRequest(
   });
 }
 
-// ── 音频采集 ──────────────────────────────────────────────────────
-
-async function captureShortAudio(): Promise<{ filePath: string; base64: string; pcmBuffer: Buffer }> {
-  const audioPlugin = findPluginForTool("device.audio.capture");
-  if (!audioPlugin) throw new Error("audio plugin not available");
-
-  const result = await audioPlugin.execute({
-    toolName: "device.audio.capture",
-    input: { durationMs: captureIntervalMs, format: "wav", sampleRate: 16000, channels: 1 },
-    cfg: { apiBase: "", deviceToken: "" },
-    execution: { deviceExecutionId: "dialog-capture", toolRef: "device.audio.capture" },
-    policy: null,
-    requireUserPresence: false,
-    confirmFn: async () => true,
-  } as ToolExecutionContext);
-
-  if (result.status !== "succeeded" || !result.outputDigest) {
-    throw new Error("audio capture failed");
-  }
-
-  const digest = result.outputDigest as Record<string, any>;
-  const filePath: string = digest.filePath ?? "";
-  const base64: string = digest.base64 ?? "";
-
-  // 从 wav 文件读取 PCM 数据（跳过 44 字节 WAV 头）
-  let pcmBuffer: Buffer;
-  try {
-    const wavBuf = await fs.readFile(filePath);
-    pcmBuffer = wavBuf.subarray(44);
-  } catch {
-    pcmBuffer = Buffer.from(base64, "base64").subarray(44);
-  }
-
-  return { filePath, base64, pcmBuffer };
-}
-
-// ── 云端通信 ──────────────────────────────────────────────────────
+// ── 云端通信（保留 STT / TTS 的 HTTP 调用）─────────────────────────
 
 async function sendAudioForTranscription(
   cfg: { apiBase: string; deviceToken: string },
@@ -133,24 +180,6 @@ async function sendAudioForTranscription(
   } catch (err: any) {
     console.error("[dialogEngine] transcription request failed:", err?.message);
     return null;
-  }
-}
-
-async function sendMessageToCloud(
-  cfg: { apiBase: string; deviceToken: string },
-  text: string,
-): Promise<void> {
-  try {
-    await httpRequest(`${cfg.apiBase}/device-agent/dialog/message`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${cfg.deviceToken}`,
-      },
-      body: JSON.stringify({ text, source: "voice" }),
-    });
-  } catch (err: any) {
-    console.error("[dialogEngine] send message failed:", err?.message);
   }
 }
 
@@ -176,16 +205,161 @@ async function requestTts(
   }
 }
 
-// ── 云端回复接收 ──────────────────────────────────────────────────
+// ── WebSocket device_query 消息发送 ──────────────────────────────
 
-function waitForResponse(timeoutMs: number): Promise<string | null> {
-  return new Promise((resolve) => {
-    pendingResponse = { resolve: resolve as (text: string) => void };
-    setTimeout(() => {
-      pendingResponse = null;
-      resolve(null);
-    }, timeoutMs);
-  });
+async function sendMessageToCloud(
+  cfg: { apiBase: string; deviceToken: string },
+  text: string,
+): Promise<StreamingPipeline | null> {
+  const wsAgent = getActiveWebSocketAgent();
+  if (wsAgent) {
+    const attachments: DeviceAttachment[] = [];
+    if (latestFrame) {
+      attachments.push({
+        type: "image",
+        mimeType: `image/${latestFrame.format}`,
+        dataUrl: `data:image/${latestFrame.format};base64,${latestFrame.base64}`,
+      });
+      latestFrame = null;
+    }
+
+    // 流式管道状态
+    const sentenceQueue: string[] = [];
+    const abortCtrl = new AbortController();
+    let streamBuffer = "";
+    let fullAccum = "";
+    let streamDone = false;
+
+    // 简单的 Promise 通知机制：生产者 resolve → 消费者被唤醒
+    let notifyResolve: (() => void) | null = null;
+    function notify(): void {
+      if (notifyResolve) {
+        const r = notifyResolve;
+        notifyResolve = null;
+        r();
+      }
+    }
+    function waitForSentence(): Promise<void> {
+      if (sentenceQueue.length > 0 || streamDone || abortCtrl.signal.aborted) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => {
+        notifyResolve = resolve;
+        // 超时保护，避免永久挂起
+        const timer = setTimeout(() => { notifyResolve = null; resolve(); }, 10000);
+        const orig = notifyResolve;
+        notifyResolve = () => { clearTimeout(timer); orig?.(); notifyResolve = null; resolve(); };
+      });
+    }
+
+    // 在 abort 时也唤醒等待
+    abortCtrl.signal.addEventListener("abort", () => notify(), { once: true });
+
+    try {
+      await wsAgent.sendMultimodalQuery(
+        text,
+        attachments.length > 0 ? attachments : undefined,
+        {
+          onChunk: (chunk: string) => {
+            if (abortCtrl.signal.aborted) return;
+            fullAccum += chunk;
+            streamBuffer += chunk;
+            const { sentences, remainder } = extractSentences(streamBuffer);
+            streamBuffer = remainder;
+            if (sentences.length > 0) {
+              sentenceQueue.push(...sentences);
+              notify();
+            }
+          },
+          onDone: () => {
+            // 将剩余文本推入队列
+            if (streamBuffer.trim()) {
+              sentenceQueue.push(streamBuffer.trim());
+              streamBuffer = "";
+            }
+            streamDone = true;
+            notify();
+          },
+          onError: (error: string) => {
+            console.error("[dialogEngine] device_query error:", error);
+            streamDone = true;
+            notify();
+          },
+        },
+        conversationId ?? undefined,
+      );
+
+      // 启动流式 TTS 消费管道（后台任务）
+      const pipelineDone = streamTtsPipeline(cfg, sentenceQueue, abortCtrl.signal, waitForSentence)
+        .catch((err: any) => console.error("[dialogEngine] streamTtsPipeline error:", err?.message));
+
+      return {
+        abort: abortCtrl,
+        done: pipelineDone as Promise<void>,
+        fullText: () => fullAccum,
+      };
+    } catch (err: any) {
+      console.error("[dialogEngine] WS sendMultimodalQuery failed, falling back to HTTP:", err?.message);
+      abortCtrl.abort();
+    }
+  }
+
+  // HTTP fallback（WS 不可用时）— 保持同步模式
+  try {
+    const resp = await httpRequest(`${cfg.apiBase}/device-agent/dialog/message`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${cfg.deviceToken}`,
+      },
+      body: JSON.stringify({ text, source: "voice", conversationId }),
+    });
+    // HTTP fallback 返回完整文本，同步 TTS 播放
+    if (resp.statusCode === 200) {
+      try {
+        const data = JSON.parse(resp.body);
+        const replyText = typeof data.reply === "string" ? data.reply : "";
+        if (replyText) {
+          await playTtsAudio(cfg, replyText);
+        }
+      } catch { /* 解析失败，静默忽略 */ }
+    }
+  } catch (err: any) {
+    console.error("[dialogEngine] send message failed:", err?.message);
+  }
+  return null;
+}
+
+// ── 流式 TTS 管道 ────────────────────────────────────────────────
+
+async function streamTtsPipeline(
+  cfg: { apiBase: string; deviceToken: string },
+  sentenceQueue: string[],
+  signal: AbortSignal,
+  waitForSentence: () => Promise<void>,
+): Promise<void> {
+  const audioPlugin = findPluginForTool("device.audio.play");
+  if (!audioPlugin) return;
+  while (!signal.aborted) {
+    if (sentenceQueue.length === 0) {
+      await waitForSentence();
+      if (signal.aborted) break;
+      continue;
+    }
+    const sentence = sentenceQueue.shift()!;
+    if (!sentence.trim()) continue;
+    const audio = await requestTts(cfg, sentence);
+    if (signal.aborted || !audio) break;
+    await audioPlugin.execute({
+      toolName: "device.audio.play",
+      input: { base64: audio, format: "wav" },
+      cfg: { apiBase: "", deviceToken: "" },
+      execution: { deviceExecutionId: "dialog-tts", toolRef: "device.audio.play" },
+      policy: null,
+      requireUserPresence: false,
+      confirmFn: async () => true,
+    } as ToolExecutionContext);
+  }
 }
 
 // ── TTS 播放 ──────────────────────────────────────────────────────
@@ -209,47 +383,211 @@ async function playTtsAudio(
   } as ToolExecutionContext);
 }
 
+/** 中止当前活跃的 TTS 流管道并停止播放 */
+async function abortActivePipeline(
+  pipeline: StreamingPipeline | null,
+): Promise<void> {
+  if (!pipeline) return;
+  pipeline.abort.abort();
+  const stopPlugin = findPluginForTool("device.audio.stop");
+  if (stopPlugin) {
+    try {
+      await stopPlugin.execute({
+        toolName: "device.audio.stop",
+        input: {},
+        cfg: { apiBase: "", deviceToken: "" },
+        execution: { deviceExecutionId: `audio-stop-${Date.now()}`, toolRef: "device.audio.stop" },
+        policy: null,
+        requireUserPresence: false,
+        confirmFn: async () => true,
+      } as ToolExecutionContext);
+    } catch { /* 停止失败不中断 */ }
+  }
+}
+
 // ── 对话循环 ──────────────────────────────────────────────────────
 
 async function dialogLoop(cfg: { apiBase: string; deviceToken: string }): Promise<void> {
+  // 从元数据读取 VAD / 视频流配置
+  const multimodalCaps = getMultimodalCapabilities();
+  const vadCfg = multimodalCaps?.multimodalConfig?.vad;
+  const vad = new AdaptiveVad({
+    silenceThresholdMs: vadCfg?.silenceThresholdMs ?? 600,
+    smoothingFactor: vadCfg?.energySmoothingFactor ?? 0.3,
+  });
+
+  // 尝试启动音频流式采集
+  const streamStartPlugin = findPluginForTool("device.audio.stream_start");
+  if (streamStartPlugin) {
+    try {
+      await streamStartPlugin.execute({
+        toolName: "device.audio.stream_start",
+        input: { sampleRate: 16000, channels: 1, chunkMs: 200 },
+        cfg: { apiBase: cfg.apiBase, deviceToken: cfg.deviceToken },
+        execution: { deviceExecutionId: `stream-start-${Date.now()}`, toolRef: "device.audio.stream_start" },
+        policy: null,
+        requireUserPresence: false,
+        confirmFn: async () => true,
+      } as ToolExecutionContext);
+    } catch (err: any) {
+      console.error("[dialogEngine] stream_start failed, falling back to legacy loop:", err?.message);
+    }
+  }
+
+  // 轻量级视频帧缓存（可选）— 定时采集最新帧到 latestFrame
+  const videoStreamCfg = multimodalCaps?.multimodalConfig?.videoStream;
+  if (videoStreamCfg?.supported) {
+    const intervalMs = videoStreamCfg.frameIntervalMs ?? 1000;
+    const cameraPlugin = findPluginForTool("device.camera.capture");
+    if (cameraPlugin) {
+      videoFrameTimer = setInterval(async () => {
+        if (dialogState === "idle") return;
+        try {
+          const result = await cameraPlugin.execute({
+            toolName: "device.camera.capture",
+            input: {
+              width: videoStreamCfg.maxFrameWidth ?? 640,
+              format: videoStreamCfg.format ?? "jpeg",
+            },
+            cfg: { apiBase: cfg.apiBase, deviceToken: cfg.deviceToken },
+            execution: { deviceExecutionId: `video-frame-${Date.now()}`, toolRef: "device.camera.capture" },
+            policy: null,
+            requireUserPresence: false,
+            confirmFn: async () => true,
+          } as ToolExecutionContext);
+          const digest = result?.outputDigest as Record<string, any> | undefined;
+          if (digest?.base64) {
+            latestFrame = {
+              base64: digest.base64 as string,
+              format: videoStreamCfg.format ?? "jpeg",
+            };
+          }
+        } catch {
+          /* 帧丢弃，不中断对话 */
+        }
+      }, intervalMs);
+    }
+  }
+
+  // 事件驱动主循环：高频 stream_read + AdaptiveVad
+  const speechBuffers: Buffer[] = [];
+  let activePipeline: StreamingPipeline | null = null;
+
   while (dialogState !== "idle") {
     try {
-      // 1. listening: 录制短片段
-      dialogState = "listening";
-      const audioResult = await captureShortAudio();
+      // 流式路径：读取最新 chunk
+      const streamPlugin = findPluginForTool("device.audio.stream_read");
+      if (!streamPlugin) { await sleep(200); continue; }
+      const readResult = await streamPlugin.execute({
+        toolName: "device.audio.stream_read",
+        input: { maxChunks: 1, encoding: "base64" },
+        cfg: { apiBase: cfg.apiBase, deviceToken: cfg.deviceToken },
+        execution: { deviceExecutionId: `stream-read-${Date.now()}`, toolRef: "device.audio.stream_read" },
+        policy: null,
+        requireUserPresence: false,
+        confirmFn: async () => true,
+      } as ToolExecutionContext);
 
-      // 2. detecting: VAD检测
-      dialogState = "detecting";
-      const hasVoice = detectVoiceActivity(audioResult.pcmBuffer, vadThreshold);
-      if (!hasVoice) {
-        idleCounter += captureIntervalMs;
-        if (idleCounter > idleTimeoutMs) {
-          dialogState = "idle";
-          console.warn("[dialogEngine] idle timeout, stopping dialog loop");
+      const chunks = (readResult?.outputDigest as Record<string, any>)?.chunks as string[] | undefined;
+      if (!chunks?.length) { await sleep(100); continue; }
+
+      const pcm = Buffer.from(chunks[0], "base64");
+      const now = Date.now();
+      const vadEvent = vad.feed(pcm, now);
+
+      switch (vadEvent) {
+        case "speech_start":
+          // 打断：speaking 状态下检测到用户说话，中止 TTS
+          if (dialogState === "speaking" && activePipeline) {
+            await abortActivePipeline(activePipeline);
+            activePipeline = null;
+          }
+          dialogState = "listening";
+          idleCounter = 0;
+          speechBuffers.length = 0;
+          speechBuffers.push(pcm);
+          break;
+        case "speech_continue":
+          speechBuffers.push(pcm);
+          break;
+        case "speech_end": {
+          // 打断检测：如果正在播放 TTS，先中止
+          if (activePipeline) {
+            await abortActivePipeline(activePipeline);
+            activePipeline = null;
+          }
+
+          dialogState = "transcribing";
+          const fullAudio = Buffer.concat(speechBuffers);
+          speechBuffers.length = 0;
+          const base64Audio = fullAudio.toString("base64");
+
+          const transcript = await sendAudioForTranscription(cfg, { base64: base64Audio });
+          if (transcript) {
+            dialogState = "thinking";
+            const pipeline = await sendMessageToCloud(cfg, transcript);
+            if (pipeline) {
+              // 流式模式：非阻塞 TTS
+              dialogState = "speaking";
+              activePipeline = pipeline;
+              pipeline.done.then(() => {
+                if (dialogState === "speaking" && activePipeline === pipeline) {
+                  dialogState = "listening";
+                  activePipeline = null;
+                }
+              }).catch(() => {
+                if (dialogState === "speaking" && activePipeline === pipeline) {
+                  dialogState = "listening";
+                  activePipeline = null;
+                }
+              });
+              vad.reset();
+              break;
+            }
+            // HTTP fallback 已在 sendMessageToCloud 内同步播放完成
+          }
+          dialogState = "listening";
+          activePipeline = null;
+          vad.reset();
           break;
         }
-        continue;
+        case "silence":
+          idleCounter += 200; // 每 chunk ≈ 200ms
+          if (idleCounter > idleTimeoutMs) {
+            dialogState = "idle";
+            conversationId = null;
+            console.warn("[dialogEngine] idle timeout, stopping dialog loop");
+          }
+          break;
       }
-      idleCounter = 0;
 
-      // 3. transcribing: 上报音频到云端STT
-      dialogState = "transcribing";
-      const transcript = await sendAudioForTranscription(cfg, audioResult);
-      if (!transcript) continue;
-
-      // 4. thinking: 发送文本到云端Agent Loop
-      dialogState = "thinking";
-      await sendMessageToCloud(cfg, transcript);
-
-      // 5. speaking: 等待云端回复，TTS播放
-      dialogState = "speaking";
-      const response = await waitForResponse(responseTimeoutMs);
-      if (response) {
-        await playTtsAudio(cfg, response);
-      }
+      await sleep(50);
     } catch (err: any) {
       console.error("[dialogEngine] loop error:", err?.message);
       await sleep(1000);
+    }
+  }
+
+  // 对话结束：清理音频流和视频帧定时器
+  latestFrame = null;
+  if (videoFrameTimer) {
+    clearInterval(videoFrameTimer);
+    videoFrameTimer = null;
+  }
+  const stopPlugin = findPluginForTool("device.audio.stream_stop");
+  if (stopPlugin) {
+    try {
+      await stopPlugin.execute({
+        toolName: "device.audio.stream_stop",
+        input: {},
+        cfg: { apiBase: cfg.apiBase, deviceToken: cfg.deviceToken },
+        execution: { deviceExecutionId: `stream-stop-${Date.now()}`, toolRef: "device.audio.stream_stop" },
+        policy: null,
+        requireUserPresence: false,
+        confirmFn: async () => true,
+      } as ToolExecutionContext);
+    } catch (err: any) {
+      console.error("[dialogEngine] stream_stop failed:", err?.message);
     }
   }
 }
@@ -278,27 +616,34 @@ async function execDialogStart(ctx: ToolExecutionContext): Promise<ToolExecution
   idleCounter = 0;
   dialogState = "listening";
 
+  // 生成或复用 conversationId
+  if (!conversationId) {
+    conversationId = crypto.randomUUID();
+  }
+
   // 不 await，后台运行
   dialogLoop(ctx.cfg).catch((err) => {
     console.error("[dialogEngine] dialogLoop unexpected exit:", err?.message);
     dialogState = "idle";
   });
 
-  return { status: "succeeded", outputDigest: { started: true, state: "listening" } };
+  return { status: "succeeded", outputDigest: { started: true, state: "listening", conversationId } };
 }
 
 async function execDialogStop(_ctx: ToolExecutionContext): Promise<ToolExecutionResult> {
   dialogState = "idle";
   idleCounter = 0;
   pendingResponse = null;
+  latestFrame = null;
   return { status: "succeeded", outputDigest: { stopped: true } };
 }
 
 async function execDialogStatus(_ctx: ToolExecutionContext): Promise<ToolExecutionResult> {
   const audioAvailable = !!findPluginForTool("device.audio.capture");
+  const wsAvailable = !!getActiveWebSocketAgent();
   return {
     status: "succeeded",
-    outputDigest: { state: dialogState, idleCounter, vadThreshold, idleTimeoutMs, responseTimeoutMs, audioAvailable },
+    outputDigest: { state: dialogState, idleCounter, vadThreshold, idleTimeoutMs, responseTimeoutMs, audioAvailable, wsAvailable, conversationId },
   };
 }
 
@@ -345,7 +690,8 @@ async function execute(ctx: ToolExecutionContext): Promise<ToolExecutionResult> 
 }
 
 async function onMessage(ctx: DeviceMessageContext): Promise<void> {
-  if (ctx.topic === "dialog.response" && pendingResponse) {
+  // 兼容 dialog.response（旧路径）和 device_response（新 WS 路径）
+  if ((ctx.topic === "dialog.response" || ctx.topic === "device_response") && pendingResponse) {
     const text = typeof ctx.payload?.text === "string" ? ctx.payload.text : "";
     pendingResponse.resolve(text);
     pendingResponse = null;
@@ -360,6 +706,12 @@ async function dispose(): Promise<void> {
   dialogState = "idle";
   pendingResponse = null;
   idleCounter = 0;
+  conversationId = null;
+  latestFrame = null;
+  if (videoFrameTimer) {
+    clearInterval(videoFrameTimer);
+    videoFrameTimer = null;
+  }
   console.warn("[dialogEngine] disposed");
 }
 
@@ -372,7 +724,7 @@ const dialogEnginePlugin: DeviceToolPlugin = {
   toolPrefixes: ["device.dialog.*"],
   toolNames: ["device.dialog.start", "device.dialog.stop", "device.dialog.status", "device.dialog.say"],
   capabilities: DIALOG_CAPABILITIES,
-  messageTopics: ["dialog.response", "local.output"],
+  messageTopics: ["dialog.response", "device_response", "local.output"],
   resourceLimits: { maxMemoryMb: 30, maxCpuPercent: 15 },
   deviceTypeResourceProfiles: {
     iot: { maxMemoryMb: 15, maxCpuPercent: 10 },

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import type { ToolExecutionContext } from "../pluginRegistry";
+import type { ToolExecutionContext } from "@openslin/device-agent-sdk";
 
 const {
   spawnMock,
@@ -75,9 +75,10 @@ vi.mock("node:fs/promises", () => ({
   readFile: readFileMock,
 }));
 
-vi.mock("../api", () => ({
-  apiPostJson: apiPostJsonMock,
-}));
+vi.mock("@openslin/device-agent-sdk", async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return { ...actual, apiPostJson: apiPostJsonMock };
+});
 
 vi.mock("../plugins/localVision", () => ({
   captureScreen: captureScreenMock,

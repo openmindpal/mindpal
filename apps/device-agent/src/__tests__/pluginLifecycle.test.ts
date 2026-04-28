@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { clearAll } from "../kernel/capabilityRegistry";
+import { clearAll } from "@openslin/device-agent-sdk";
 import {
   initPlugin,
   disposePlugin,
@@ -16,8 +16,8 @@ import {
   healthcheckPlugin,
   healthcheckAllPlugins,
   setOnCapabilityChanged,
-} from "../kernel/pluginLifecycle";
-import type { DeviceToolPlugin } from "../kernel/types";
+} from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin } from "@openslin/device-agent-sdk";
 
 // Mock capabilityProbe to return null (no device probe by default)
 vi.mock("../plugins/capabilityProbe", () => ({
@@ -101,7 +101,7 @@ describe("pluginLifecycle — 初始化", () => {
   });
 
   it("registers explicit capabilities during init", async () => {
-    const { getCapability } = await import("../kernel/capabilityRegistry");
+    const { getCapability } = await import("@openslin/device-agent-sdk");
     const plugin = makePlugin({
       name: "cap-plug",
       toolPrefixes: ["device.cap"],

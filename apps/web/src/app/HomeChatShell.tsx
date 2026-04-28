@@ -283,6 +283,19 @@ export default function HomeChatShell(props: { locale: string }) {
               handleImageSelect={exec.handleImageSelect} handleDocSelect={exec.handleDocSelect} handleAudioSelect={exec.handleAudioSelect} handleVideoSelect={exec.handleVideoSelect}
               voiceListening={exec.voiceListening} voiceInterim={exec.voiceInterim} voiceConversation={exec.voiceConversation} speaking={exec.speaking}
               startVoice={exec.startVoice} toggleConversation={exec.toggleConversation} stopSpeaking={exec.stopSpeaking}
+              videoActive={exec.videoActive} videoStream={exec.videoStream} videoSupported={exec.videoSupported}
+              startVideo={exec.startVideo} stopVideo={exec.stopVideo} captureFrame={exec.captureFrame}
+              onVideoCaptureFrame={() => {
+                const dataUrl = exec.captureFrame();
+                if (dataUrl) {
+                  const byteStr = atob(dataUrl.split(",")[1]);
+                  const bytes = new Uint8Array(byteStr.length);
+                  for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
+                  const blob = new Blob([bytes], { type: "image/jpeg" });
+                  const file = new File([blob], `camera_frame_${Date.now()}.jpg`, { type: "image/jpeg" });
+                  exec.addAttachment(file, "image");
+                }
+              }}
               bindings={conv.bindings} selectedModelRef={conv.selectedModelRef} setSelectedModelRef={conv.setSelectedModelRef}
               modelPickerOpen={conv.modelPickerOpen} setModelPickerOpen={conv.setModelPickerOpen} modelPickerTitle={conv.modelPickerTitle} modelPickerRef={conv.modelPickerRef}
               activeQueueCount={taskQueue.queueState.activeCount} queuedCount={taskQueue.queueState.queuedCount}

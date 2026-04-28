@@ -16,14 +16,32 @@ export type ImageContentPart = {
 /** 音频内容片段 */
 export type AudioContentPart = {
   type: "input_audio";
-  input_audio: { data: string; format: "wav" | "mp3" | "ogg" | "webm" | "m4a" | "flac" | "aac" };
+  input_audio: {
+    data: string;
+    format: "wav" | "mp3" | "ogg" | "webm" | "m4a" | "flac" | "aac";
+    duration?: number;     // ms，音频时长
+    sampleRate?: number;   // Hz，采样率
+    interim?: boolean;     // 是否为增量识别中间结果
+  };
 };
 
 /** 视频内容片段 */
 export type VideoContentPart = {
   type: "video_url";
-  video_url: { url: string };
+  video_url: {
+    url: string;
+    timestamp?: number;    // Unix ms，帧采集时间
+    duration?: number;     // ms，视频时长
+    frameRate?: number;    // fps
+  };
 };
+
+/** 设备流式响应协议 —— 替代200字符伪分块，支持真流式转发 */
+export type DeviceStreamEvent =
+  | { type: "device_stream_start"; sessionId: string; streamId: string }
+  | { type: "device_stream_delta"; sessionId: string; streamId: string; delta: string }
+  | { type: "device_stream_end";   sessionId: string; streamId: string; fullText?: string }
+  | { type: "device_stream_error"; sessionId: string; streamId: string; error: string };
 
 /** 多模态内容片段（兼容主流多模态协议） */
 export type ContentPart = TextContentPart | ImageContentPart | AudioContentPart | VideoContentPart;

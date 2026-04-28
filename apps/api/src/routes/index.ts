@@ -29,6 +29,7 @@ import { scimRoutes } from "./scimRoutes";
 import { notificationPreferenceRoutes } from "./notificationPreferences";
 import { spacesRoutes } from "./spaces";
 import { skillLifecycleRoutes } from "./extended";
+import { audioRoutes } from "./audio";
 
 // ── 核心数据路由 ──
 async function coreDataRoutes(app: FastifyInstance) {
@@ -82,6 +83,11 @@ async function skillRoutes(app: FastifyInstance) {
   app.register(skillLifecycleRoutes);
 }
 
+// ── 音频服务路由 ──
+async function audioGroup(app: FastifyInstance) {
+  app.register(audioRoutes);
+}
+
 export async function registerAllRoutes(app: FastifyInstance): Promise<void> {
   await app.register(systemRoutes);
   await app.register(identityRoutes);
@@ -90,4 +96,5 @@ export async function registerAllRoutes(app: FastifyInstance): Promise<void> {
   await app.register(executionRoutes);
   await app.register(collabRoutes);
   await app.register(skillRoutes);
+  await app.register(audioGroup);
 }

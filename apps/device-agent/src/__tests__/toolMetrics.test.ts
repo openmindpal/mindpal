@@ -7,8 +7,8 @@ import {
   exportMetricsSnapshot,
   resetMetrics,
   setMetricsWindow,
-} from "../kernel/toolMetrics";
-import type { ToolMetricsSample } from "../kernel/toolMetrics";
+} from "@openslin/device-agent-sdk";
+import type { ToolMetricsSample } from "@openslin/device-agent-sdk";
 
 beforeEach(() => {
   resetMetrics();

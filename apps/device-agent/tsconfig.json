@@ -6,7 +6,7 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "references": [{ "path": "../../packages/shared" }],
+  "references": [{ "path": "../../packages/shared" }, { "path": "../../packages/device-agent-sdk" }],
   "include": ["src/**/*.ts"]
 }
 

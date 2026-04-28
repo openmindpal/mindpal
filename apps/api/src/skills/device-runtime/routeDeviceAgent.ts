@@ -8,6 +8,7 @@ import { consumeDevicePairing } from "./modules/pairingRepo";
 import { randomCode, sha256Hex } from "./modules/crypto";
 import crypto from "node:crypto";
 import { createArtifact } from "../artifact-manager/modules/artifactRepo";
+import { transcribeAudio, synthesizeSpeech } from "../../modules/audioService";
 
 function requireDevice(req: any) {
   const device = req.ctx.device;
@@ -250,6 +251,34 @@ export const deviceAgentRoutes: FastifyPluginAsync = async (app) => {
 
     req.ctx.audit!.outputDigest = { deviceId: device.deviceId, disabledToolsCount: body.disabledTools.length };
     return { ok: true, synced: body.disabledTools.length };
+  });
+
+  // ── STT：语音转文本 ──────────────────────────────────────────
+  app.post("/device-agent/dialog/transcribe", async (req) => {
+    setAuditContext(req, { resourceType: "device", action: "dialog.transcribe" });
+    const device = requireDevice(req);
+    const body = z.object({
+      audioBase64: z.string().min(8),
+      format: z.string().max(20).optional(),
+      sampleRate: z.number().int().positive().optional(),
+    }).parse(req.body);
+    const result = await transcribeAudio({
+      audioBase64: body.audioBase64,
+      format: body.format,
+      sampleRate: body.sampleRate,
+    });
+    req.ctx.audit!.outputDigest = { deviceId: device.deviceId, hasTranscript: Boolean(result.transcript) };
+    return result;
+  });
+
+  // ── TTS：文本转语音 ──────────────────────────────────────────
+  app.post("/device-agent/dialog/tts", async (req) => {
+    setAuditContext(req, { resourceType: "device", action: "dialog.tts" });
+    const device = requireDevice(req);
+    const body = z.object({ text: z.string().min(1).max(5000) }).parse(req.body);
+    const result = await synthesizeSpeech({ text: body.text });
+    req.ctx.audit!.outputDigest = { deviceId: device.deviceId, textLen: body.text.length, hasAudio: Boolean(result.audioBase64) };
+    return result;
   });
 
   app.post("/device-agent/evidence/upload", async (req, reply) => {

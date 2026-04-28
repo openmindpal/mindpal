@@ -1,20 +1,86 @@
 #!/usr/bin/env node
 import os from "node:os";
+import path from "node:path";
 import { parseCli, getStringOpt } from "./cli";
-import { defaultConfigPath, loadConfigFile, saveConfigFile, killExistingInstance, acquireLock, releaseLock } from "./config";
-import type { DeviceType } from "./config";
-import { apiPostJson } from "./api";
-import { runLoop } from "./agent";
+import { defaultConfigPath, loadConfigFile, saveConfigFile, killExistingInstance, acquireLock, releaseLock } from "@openslin/device-agent-sdk";
+import type { DeviceType, DeviceAgentFullConfig } from "@openslin/device-agent-sdk";
+import { apiPostJson } from "@openslin/device-agent-sdk";
+import { runLoop } from "@openslin/device-agent-sdk";
 import { confirmPrompt } from "./prompt";
-import { safeError, safeLog, sha256_8 } from "./log";
+import { safeError, safeLog, sha256_8 } from "@openslin/device-agent-sdk";
 import { resolveDeviceAgentEnv } from "./deviceAgentEnv";
-import { listPlugins } from "./kernel/capabilityRegistry";
+import {
+  listPlugins,
+  initAudit, cleanupOldAuditLogs,
+  initPlugin,
+  initSessionManager, shutdownSessionManager,
+  initPolicyCache,
+  assertKernelManifest, assertPluginBoundary,
+  initAccessControl, cleanupExpiredContexts,
+  getDefaultExecutionSession,
+  setVisionProvider,
+  setStreamingHandlers,
+} from "@openslin/device-agent-sdk";
 import { loadPluginsFromDir } from "./pluginRegistry";
-import { initAudit, cleanupOldAuditLogs } from "./kernel/audit";
-import { initPlugin } from "./kernel/pluginLifecycle";
-import { initSessionManager, shutdownSessionManager } from "./kernel/session";
-import { initPolicyCache } from "./kernel/auth";
-import { assertKernelManifest, assertPluginBoundary } from "./kernel";
+import {
+  handleStreamingStart,
+  handleStreamingStep,
+  handleStreamingStop,
+  handleStreamingPause,
+  handleStreamingResume,
+} from "./wsStreamingHandlers";
+
+// ── 注入 SDK 通信层的应用层依赖 ──────────────────────────────────
+
+/**
+ * 注入 VisionProvider（截图/OCR能力）到 SDK streamingExecutor。
+ * 延迟导入 localVision，避免在不需要 GUI 的设备类型上加载原生依赖。
+ */
+async function injectVisionProvider() {
+  try {
+    const localVision = await import("./plugins/localVision");
+    setVisionProvider({
+      captureScreen: localVision.captureScreen,
+      cleanupCapture: localVision.cleanupCapture,
+      ocrScreen: async (capture) => {
+        const results = await localVision.ocrScreen(capture as any);
+        // 适配 localVision.OcrMatch (bbox-based) → SDK OcrMatch (x/y-based)
+        return results.map((r: any) => ({
+          x: r.bbox?.x ?? 0,
+          y: r.bbox?.y ?? 0,
+          text: r.text,
+          confidence: r.confidence,
+        }));
+      },
+      findTextInOcrResults: (results, text, options) => {
+        // localVision.findTextInOcrResults 期望 bbox-based OcrMatch，这里转换回去
+        const adapted = results.map((r: any) => ({
+          text: r.text ?? "",
+          confidence: r.confidence ?? 0,
+          bbox: { x: r.x ?? 0, y: r.y ?? 0, w: 0, h: 0 },
+        }));
+        const match = localVision.findTextInOcrResults(adapted, text, options);
+        if (!match) return null;
+        return { x: match.bbox?.x ?? 0, y: match.bbox?.y ?? 0, confidence: match.confidence };
+      },
+    });
+  } catch (e: any) {
+    safeError(`vision_provider_inject_failed: ${e?.message ?? "unknown"}`);
+  }
+}
+
+/**
+ * 注入 StreamingHandlers（流式处理回调）到 SDK websocketClient。
+ */
+function injectStreamingHandlers() {
+  setStreamingHandlers({
+    handleStreamingStart,
+    handleStreamingStep,
+    handleStreamingStop,
+    handleStreamingPause,
+    handleStreamingResume,
+  });
+}
 
 function resolveApiBase(opts: Record<string, string | boolean>) {
   return getStringOpt(opts, "apiBase") || resolveDeviceAgentEnv().apiBase;
@@ -26,7 +92,7 @@ function resolveApiBase(opts: Record<string, string | boolean>) {
  */
 async function initDeviceRuntime(cfg: { deviceId: string; deviceToken: string; apiBase?: string; os?: string; agentVersion?: string }, apiBase: string) {
   assertKernelManifest();
-  assertPluginBoundary();
+  assertPluginBoundary(path.resolve(__dirname, ".."));
   const daCfg = resolveDeviceAgentEnv();
 
   // 初始化审计日志
@@ -35,14 +101,12 @@ async function initDeviceRuntime(cfg: { deviceId: string; deviceToken: string; a
 
   // 访问控制与任务队列：按需加载（轻量模式可跳过）
   if (!daCfg.lightweight) {
-    const { initAccessControl, cleanupExpiredContexts } = await import("./kernel/auth");
     initAccessControl({
       secretKey: daCfg.secretKey,
       policy: { maxContextAge: 3600_000 },
     });
     cleanupExpiredContexts();
 
-    const { getDefaultExecutionSession } = await import("./kernel/session");
     getDefaultExecutionSession().initTaskQueue({ maxQueueSize: 100, defaultPriority: "normal", defaultTimeoutMs: 60_000, maxRetries: 3 });
   }
 
@@ -56,7 +120,7 @@ async function initDeviceRuntime(cfg: { deviceId: string; deviceToken: string; a
     os: cfg.os,
     agentVersion: cfg.agentVersion,
   }, async (body) => {
-    const { apiPostJson } = await import("./api");
+    const { apiPostJson } = await import("@openslin/device-agent-sdk");
     return apiPostJson({ apiBase, path: "/device-agent/heartbeat", token: cfg.deviceToken, body });
   });
 
@@ -131,7 +195,7 @@ async function cmdPair(opts: Record<string, string | boolean>) {
     ? { builtinPlugins: cloudPluginPolicy.builtinPlugins ?? [], pluginDirs: cloudPluginPolicy.pluginDirs ?? [], skillDirs: cloudPluginPolicy.skillDirs ?? [], updatedAt: new Date().toISOString(), source: "cloud" as const }
     : { builtinPlugins: getDefaultPluginsForDeviceType(deviceType), skillDirs: [], updatedAt: new Date().toISOString(), source: "local" as const };
 
-  await saveConfigFile(cfgPath, { apiBase, deviceId, deviceToken, enrolledAt: new Date().toISOString(), deviceType, os: osName, agentVersion: v, pluginConfig });
+  await saveConfigFile(cfgPath, { apiBase, deviceId, deviceToken, enrolledAt: new Date().toISOString(), deviceType, os: osName, agentVersion: v, pluginConfig } as DeviceAgentFullConfig);
   safeLog(`paired: deviceId=${deviceId} tokenSha256_8=${sha256_8(deviceToken)} config=${cfgPath} capabilities=${capabilities.length} pluginSource=${pluginConfig.source}`);
 }
 
@@ -305,7 +369,7 @@ async function main() {
     // 运行模式：从配置文件读取插件元数据
     const cfgPath = getStringOpt(options, "config") || defaultConfigPath();
     try {
-      const cfg = await loadConfigFile(cfgPath);
+      const cfg = await loadConfigFile(cfgPath) as DeviceAgentFullConfig | null;
       if (cfg?.pluginConfig) {
         // 配置文件中有明确的 pluginConfig → 使用它（可能来自云端策略下发）
         builtinPlugins = cfg.pluginConfig.builtinPlugins ?? [];
@@ -342,6 +406,10 @@ async function main() {
   }
 
   await initPlugins(builtinPlugins, pluginDirs, skillDirs);
+
+  // ── 注入应用层依赖到 SDK 通信层 ──────────────────────────
+  await injectVisionProvider();
+  injectStreamingHandlers();
 
   try {
     if (command === "pair") await cmdPair(options);

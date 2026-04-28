@@ -333,6 +333,9 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
                 allowedModalities: protocolCtx.multimodalCapabilities.modalities,
                 maxFileSizeBytes: protocolCtx.multimodalCapabilities.multimodalConfig?.maxFileSize ?? 5_000_000,
                 supportedFormats: protocolCtx.multimodalCapabilities.multimodalConfig?.supportedFormats ?? {},
+                streaming: protocolCtx.multimodalCapabilities.multimodalConfig?.streaming ?? null,
+                vad: protocolCtx.multimodalCapabilities.multimodalConfig?.vad ?? null,
+                videoStream: protocolCtx.multimodalCapabilities.multimodalConfig?.videoStream ?? null,
               } : null,
             };
 
@@ -565,7 +568,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
           case "device_query": {
             touchDeviceHeartbeat(deviceId);
             const queryPayload = msg as unknown as DeviceMultimodalQuery;
-            processDeviceQuery({
+            const deviceQueryParams = {
               ws: socket as any,
               payload: queryPayload,
               deviceRecord: {
@@ -581,7 +584,10 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
               },
               pool: app.db,
               app,
-            }).catch((err) => {
+            };
+
+            // 始终走流式路径
+            processDeviceQuery(deviceQueryParams).catch((err) => {
               _logger.error("device_query processing failed", { deviceId, error: err?.message });
               try {
                 socket.send(JSON.stringify({

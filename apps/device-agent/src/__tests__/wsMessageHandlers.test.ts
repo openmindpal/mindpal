@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-// ── Mock 外部依赖 ──────────────────────────────────────────────
+// ── Mock SDK 内部依赖模块（迁移后路径） ──────────────────────────
 
 vi.mock("@openslin/shared", () => ({
   classifyError: vi.fn((err: any) => ({
@@ -13,33 +13,90 @@ vi.mock("@openslin/shared", () => ({
   injectTraceHeaders: vi.fn(() => ({})),
 }));
 
-vi.mock("../log", () => ({
+// Mock SDK 内核日志模块
+vi.mock("../../../../packages/device-agent-sdk/src/kernel/log", () => ({
   safeLog: vi.fn(),
   safeError: vi.fn(),
   sha256_8: vi.fn((s: string) => s.slice(0, 8).padEnd(8, "0")),
+  deviceLogger: { info: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../executors", () => ({
+// Mock SDK 内核任务执行器
+vi.mock("../../../../packages/device-agent-sdk/src/kernel/taskExecutor", () => ({
   executeDeviceTool: vi.fn(async () => ({ status: "succeeded" as const, outputDigest: { ok: true } })),
 }));
 
-vi.mock("../api", () => ({
+// Mock SDK 内核能力注册表
+vi.mock("../../../../packages/device-agent-sdk/src/kernel/capabilityRegistry", () => ({
+  dispatchMessageToPlugins: vi.fn(async () => {}),
+  registerCapability: vi.fn(),
+  registerCapabilities: vi.fn(),
+  unregisterCapability: vi.fn(),
+  unregisterPluginCapabilities: vi.fn(),
+  getCapability: vi.fn(),
+  findCapabilitiesByPrefix: vi.fn(() => []),
+  findCapabilitiesByRiskLevel: vi.fn(() => []),
+  findCapabilitiesByTag: vi.fn(() => []),
+  listCapabilities: vi.fn(() => []),
+  getToolRiskLevel: vi.fn(),
+  registerPlugin: vi.fn(),
+  unregisterPlugin: vi.fn(),
+  findPluginForTool: vi.fn(() => null),
+  listPlugins: vi.fn(() => []),
+  clearAll: vi.fn(),
+  registerToolAlias: vi.fn(),
+  registerToolAliases: vi.fn(),
+  registerPrefixRule: vi.fn(),
+  registerPrefixRules: vi.fn(),
+  resolveToolAlias: vi.fn(),
+  listToolAliases: vi.fn(() => []),
+  listPrefixRules: vi.fn(() => []),
+  loadAliasesFromFile: vi.fn(),
+  loadAliasesFromEnv: vi.fn(),
+  initToolAliases: vi.fn(),
+  exportCapabilityManifest: vi.fn(() => []),
+  getMultimodalCapabilities: vi.fn(() => []),
+}));
+
+// Mock SDK 传输层 HTTP 客户端
+vi.mock("../../../../packages/device-agent-sdk/src/transport/httpClient", () => ({
   apiPostJson: vi.fn(async () => ({ status: 200, json: {} })),
 }));
 
-vi.mock("../kernel/auth", () => ({
+// Mock SDK 内核认证模块
+vi.mock("../../../../packages/device-agent-sdk/src/kernel/auth", () => ({
   syncPolicyToCache: vi.fn(async () => {}),
+  initAccessControl: vi.fn(),
+  getAccessPolicy: vi.fn(),
+  generateCallerToken: vi.fn(),
+  verifyCallerToken: vi.fn(),
+  isCallerAllowed: vi.fn(),
+  isToolAllowed: vi.fn(),
+  extractCallerFromRequest: vi.fn(),
+  getOrCreateContext: vi.fn(),
+  getContext: vi.fn(),
+  destroyContext: vi.fn(),
+  cleanupExpiredContexts: vi.fn(),
+  getContextState: vi.fn(),
+  setContextState: vi.fn(),
+  deleteContextState: vi.fn(),
+  getAccessStats: vi.fn(),
+  initPolicyCache: vi.fn(),
+  cachePolicy: vi.fn(),
+  getCachedPolicy: vi.fn(),
+  hasCachedPolicy: vi.fn(),
+  isCachedToolAllowed: vi.fn(),
+  getCachedPolicyForExecution: vi.fn(),
+  clearPolicyCache: vi.fn(),
+  buildOfflineClaim: vi.fn(),
+  getPolicyCacheStatus: vi.fn(),
 }));
 
-vi.mock("../pluginRegistry", () => ({
-  dispatchMessageToPlugins: vi.fn(async () => {}),
-}));
-
-import { sendTaskResult, handleDeviceMessage, handleTaskPending, type WsTaskContext } from "../wsMessageHandlers";
-import { safeError } from "../log";
-import { dispatchMessageToPlugins } from "../pluginRegistry";
-import { executeDeviceTool } from "../executors";
-import { apiPostJson } from "../api";
+import { sendTaskResult, handleDeviceMessage, handleTaskPending, type WsTaskContext } from "@openslin/device-agent-sdk";
+import { safeError } from "../../../../packages/device-agent-sdk/src/kernel/log";
+import { dispatchMessageToPlugins } from "../../../../packages/device-agent-sdk/src/kernel/capabilityRegistry";
+import { executeDeviceTool } from "../../../../packages/device-agent-sdk/src/kernel/taskExecutor";
+import { apiPostJson } from "../../../../packages/device-agent-sdk/src/transport/httpClient";
 
 function makeCtx(overrides?: Partial<WsTaskContext>): WsTaskContext {
   return {

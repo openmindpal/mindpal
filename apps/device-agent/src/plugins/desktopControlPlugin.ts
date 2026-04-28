@@ -2,8 +2,8 @@
  * 桌面控制子插件 — 处理 device.desktop.* 工具
  * 包含：launch / screenshot / ocr / window / mouse / keyboard / drag / file.dialog
  */
-import type { CapabilityDescriptor } from "../kernel";
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "../pluginRegistry";
+import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
 import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 import {
   clickMouse,
@@ -14,11 +14,7 @@ import {
   ocrScreen,
   cleanupCapture,
 } from "./localVision";
-import {
-  getOrCreateSession,
-  touchSession,
-  getActiveSessionByType,
-} from "../sessionManager";
+import { getOrCreateSession, touchSession, getActiveSessionByType } from "@openslin/device-agent-sdk";
 import { finiteNumberOrUndefined, sleep, runPowerShell, runProcess, commandExists, runOsaScript } from "./pluginUtils";
 
 // ── 桌面会话便捷函数 ────────────────────────────────────────────

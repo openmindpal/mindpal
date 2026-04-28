@@ -1,5 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
-import { executeDeviceTool } from "./executors";
+import { describe, expect, it, vi, beforeAll } from "vitest";
+import { executeDeviceTool } from "@openslin/device-agent-sdk";
+import { setBuiltinToolPlugin } from "@openslin/device-agent-sdk";
+import builtinToolPlugin from "./plugins/builtinToolPlugin";
+
+beforeAll(() => {
+  setBuiltinToolPlugin(builtinToolPlugin);
+});
 
 describe("executeDeviceTool confirmation", () => {
   it("requires double confirmation when uiPolicy.confirmationMode=double", async () => {

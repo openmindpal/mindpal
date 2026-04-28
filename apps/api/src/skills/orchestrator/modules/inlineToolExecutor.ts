@@ -181,6 +181,15 @@ export function classifyToolCalls(
   const enabledToolRefSet = new Set(enabledTools.map(t => t.toolRef));
   const enabledToolMap = new Map(enabledTools.map(t => [t.toolRef, t]));
 
+  function needsApproval(meta: typeof enabledTools[number] | undefined): boolean {
+    return !!meta && shouldRequireApproval({
+      approvalRequired: meta.def.approvalRequired,
+      riskLevel: meta.def.riskLevel,
+      sourceLayer: meta.def.sourceLayer,
+      scope: meta.def.scope,
+    });
+  }
+
   for (const tc of toolCalls) {
     const tool = enabledToolMap.get(tc.toolRef);
     // 标记了 execution:separate-pipeline 的工具有独立管线，单独提取
@@ -192,12 +201,7 @@ export function classifyToolCalls(
     if (isInlineEligible(tc.toolRef, enabledTools)) {
       // 即使 read+low，也检查工具定义是否显式要求审批
       const toolMeta = enabledToolMap.get(tc.toolRef);
-      if (toolMeta && shouldRequireApproval({
-        approvalRequired: toolMeta.def.approvalRequired,
-        riskLevel: toolMeta.def.riskLevel,
-        sourceLayer: toolMeta.def.sourceLayer,
-        scope: toolMeta.def.scope,
-      })) {
+      if (needsApproval(toolMeta)) {
         upgradeTools.push(tc);  // 显式要求审批的工具不走内联，升级到 workflow 路径
       } else {
         inlineTools.push(tc);
@@ -205,12 +209,7 @@ export function classifyToolCalls(
     } else if (inlineWritableEntities && isInlineWriteEligible(tc.toolRef, tc.inputDraft, inlineWritableEntities, enabledTools)) {
       // 安全写入白名单实体 → 仍需检查审批策略
       const toolMeta = enabledToolMap.get(tc.toolRef);
-      if (toolMeta && shouldRequireApproval({
-        approvalRequired: toolMeta.def.approvalRequired,
-        riskLevel: toolMeta.def.riskLevel,
-        sourceLayer: toolMeta.def.sourceLayer,
-        scope: toolMeta.def.scope,
-      })) {
+      if (needsApproval(toolMeta)) {
         upgradeTools.push(tc);  // 显式要求审批的工具不走内联，升级到 workflow 路径
       } else {
         inlineTools.push(tc);
@@ -399,14 +398,20 @@ async function executeMemoryRead(
   const limit = typeof input?.limit === "number" && Number.isFinite(input.limit)
     ? Math.max(1, Math.min(20, input.limit)) : 10;
 
+  // types 优先，type 作为 fallback
+  const rawTypes = Array.isArray(input?.types) ? input.types.map(String).filter(Boolean) : null;
+  const types = rawTypes?.length ? rawTypes : (typeof input?.type === "string" && input.type ? [input.type] : undefined);
+  const primaryType = types?.[0];
+  
   if (!query) {
-    // 空 query → 列出最近记忆（如“显示我的记忆”）
+    // 空 query → 列出最近记忆（如"显示我的记忆"）
     const entries = await listMemoryEntries({
       pool: ctx.pool,
       tenantId: ctx.tenantId,
       spaceId: ctx.spaceId,
       subjectId: ctx.subjectId,
       scope,
+      type: primaryType,
       limit,
       offset: 0,
     });
@@ -431,6 +436,7 @@ async function executeMemoryRead(
     subjectId: ctx.subjectId,
     query,
     scope,
+    types,
     limit,
   });
 }

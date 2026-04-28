@@ -11,6 +11,7 @@ import type { IntentMode } from "@/lib/types";
 import type { FlowMessage } from "../homeHelpers";
 import useVoiceInput from "../useVoiceInput";
 import useVoiceTTS from "../useVoiceTTS";
+import useVideoCapture from "../useVideoCapture";
 import useAttachments from "../useAttachments";
 import useToolExecution from "../useToolExecution";
 import useSendMessage from "../useSendMessage";
@@ -48,7 +49,7 @@ export function useExecutionFlow(params: UseExecutionFlowParams) {
 
   const {
     attachments, setAttachments, imageInputRef, docInputRef, audioInputRef, videoInputRef,
-    removeAttachment, handleImageSelect, handleDocSelect, handleAudioSelect, handleVideoSelect,
+    addAttachment, removeAttachment, handleImageSelect, handleDocSelect, handleAudioSelect, handleVideoSelect,
   } = useAttachments({ locale });
 
   const sendRef = useRef<(msg: string) => void>(() => {});
@@ -59,6 +60,7 @@ export function useExecutionFlow(params: UseExecutionFlowParams) {
 
   const { voiceListening, voiceInterim, voiceConversation, startVoice, toggleConversation } = useVoiceInput({ locale, setDraft, onAutoSend });
   const { speaking, speak, stopSpeaking, checkTTSReady } = useVoiceTTS();
+  const { videoActive, videoStream, videoSupported, startVideo, stopVideo, captureFrame } = useVideoCapture();
   const { executeToolInline } = useToolExecution({ locale, setToolExecStates });
 
   // TTS readiness check
@@ -100,10 +102,11 @@ export function useExecutionFlow(params: UseExecutionFlowParams) {
 
   return {
     draft, setDraft, execMode, setExecMode, busy, inputRef,
-    attachments, removeAttachment, imageInputRef, docInputRef, audioInputRef, videoInputRef,
+    attachments, addAttachment, removeAttachment, imageInputRef, docInputRef, audioInputRef, videoInputRef,
     handleImageSelect, handleDocSelect, handleAudioSelect, handleVideoSelect,
     voiceListening, voiceInterim, voiceConversation, speaking,
     startVoice, toggleConversation, stopSpeaking,
+    videoActive, videoStream, videoSupported, startVideo, stopVideo, captureFrame,
     executeToolInline, send, onKeyDown,
   };
 }

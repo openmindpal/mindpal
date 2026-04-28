@@ -15,7 +15,7 @@ const plugin: BuiltinSkillPlugin = {
         action: "read",
         riskLevel: "low",
         extraPermissions: [{ resourceType: "memory", action: "read" }],
-        inputSchema: { fields: { query: { type: "string", required: true }, scope: { type: "string" }, type: { type: "string" }, limit: { type: "number" } } },
+        inputSchema: { fields: { query: { type: "string", required: true }, scope: { type: "string" }, type: { type: "string" }, types: { type: "json", description: "可选，指定要查询的记忆类型列表，如 ['user_info', 'identity', 'hobby']；types 优先，type 作为 fallback" }, limit: { type: "number" } } },
         outputSchema: { fields: { entries: { type: "json" } } },
       },
       {

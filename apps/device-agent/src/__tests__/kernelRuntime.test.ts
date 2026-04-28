@@ -1,9 +1,9 @@
 import path from "node:path";
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { clearAll, getCapability } from "../kernel/capabilityRegistry";
-import { initPlugin, getPluginState, disposeAllPlugins } from "../kernel/pluginLifecycle";
-import { assertKernelManifest, validatePluginBoundary } from "../kernel";
-import { getHeartbeatStatus, initSessionManager, sendHeartbeat, shutdownSessionManager } from "../kernel/session";
+import { clearAll, getCapability } from "@openslin/device-agent-sdk";
+import { initPlugin, getPluginState, disposeAllPlugins } from "@openslin/device-agent-sdk";
+import { assertKernelManifest, validatePluginBoundary } from "@openslin/device-agent-sdk";
+import { getHeartbeatStatus, initSessionManager, sendHeartbeat, shutdownSessionManager } from "@openslin/device-agent-sdk";
 import desktopPlugin from "../plugins/desktopPlugin";
 import guiAutomationPlugin from "../plugins/guiAutomationPlugin";
 
@@ -75,7 +75,9 @@ describe("kernel runtime", () => {
   it("validates manifest and plugin boundary declarations against the source tree", () => {
     const baseDir = path.resolve(__dirname, "..");
 
-    expect(() => assertKernelManifest(baseDir)).not.toThrow();
+    // kernel modules now live in SDK; use default path (SDK internal)
+    expect(() => assertKernelManifest()).not.toThrow();
+    // plugin files still live in device-agent src
     expect(validatePluginBoundary(baseDir)).toEqual([]);
   });
 

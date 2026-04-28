@@ -1,8 +1,9 @@
 /**
  * 浏览器自动化子插件 — 处理 device.browser.* 工具
  */
-import type { CapabilityDescriptor } from "../kernel";
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "../pluginRegistry";
+import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
+import { getOrCreateSession, touchSession, getActiveSessionByType } from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
 import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 import {
   captureScreen,
@@ -34,11 +35,6 @@ import {
   initPerceptionProviders,
   getActiveProviderName,
 } from "./perceptionRouter";
-import {
-  getOrCreateSession,
-  touchSession,
-  getActiveSessionByType,
-} from "../sessionManager";
 import { getHost, sleep } from "./pluginUtils";
 import {
   getScreenObservation,

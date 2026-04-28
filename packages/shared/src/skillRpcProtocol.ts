@@ -68,6 +68,25 @@ export interface DeviceMultimodalCapabilities {
   multimodalConfig?: {
     maxFileSize?: number;
     supportedFormats?: Partial<Record<DeviceModality, string[]>>;
+    /** 流式交互配置 */
+    streaming?: {
+      supported: boolean;
+      maxConcurrentStreams?: number;
+    };
+    /** VAD（语音活动检测）配置 —— 元数据驱动 */
+    vad?: {
+      enabled: boolean;
+      silenceThresholdMs?: number;
+      energySmoothingFactor?: number;
+      adaptiveThreshold?: boolean;
+    };
+    /** 轻量级视频帧流配置 */
+    videoStream?: {
+      supported: boolean;
+      frameIntervalMs?: number;
+      maxFrameWidth?: number;
+      format?: "jpeg" | "png";
+    };
   };
 }
 
@@ -76,6 +95,12 @@ export interface DeviceMultimodalPolicy {
   allowedModalities: DeviceModality[];
   maxFileSizeBytes: number;
   supportedFormats: Partial<Record<DeviceModality, string[]>>;
+  /** 流式策略下发 */
+  streaming?: { supported: boolean; maxConcurrentStreams?: number } | null;
+  /** VAD 策略下发 */
+  vad?: { enabled: boolean; silenceThresholdMs?: number; energySmoothingFactor?: number; adaptiveThreshold?: boolean } | null;
+  /** 视频帧流策略下发 */
+  videoStream?: { supported: boolean; frameIntervalMs?: number; maxFrameWidth?: number; format?: "jpeg" | "png" } | null;
 }
 
 /** 设备多模态附件 */

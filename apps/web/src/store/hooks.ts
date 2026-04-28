@@ -35,7 +35,7 @@ export function usePollableState<T>(
   deps: unknown[] = []
 ) {
   const { data, loading, error, refresh } = useServerState(fetcher, deps);
-  const timerRef = useRef<ReturnType<typeof setInterval>>();
+  const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   useEffect(() => {
     timerRef.current = setInterval(refresh, intervalMs);

@@ -1,8 +1,84 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
-// ── Mock 外部依赖 ──────────────────────────────────────────────
+// ── Mock SDK 内部依赖模块（迁移后路径） ──────────────────────────
 
-vi.mock("../plugins/localVision", () => ({
+const { mockExecuteNativeGuiAction } = vi.hoisted(() => ({
+  mockExecuteNativeGuiAction: vi.fn(async (_action: string, _target?: any, _params?: any) => {
+    return { detail: { key: _params?.key, keys: _params?.keys } };
+  }),
+}));
+
+// Mock SDK 内核 GUI Action Kernel
+vi.mock("../../../../packages/device-agent-sdk/src/kernel/guiActionKernel", () => ({
+  executeNativeGuiAction: mockExecuteNativeGuiAction,
+  SCREEN_CHANGING_ACTIONS: new Set(["click", "doubleClick", "type", "pressKey", "pressCombo", "scroll"]),
+}));
+
+// Mock SDK 内核审计模块
+vi.mock("../../../../packages/device-agent-sdk/src/kernel/audit", () => ({
+  logAuditEvent: vi.fn(async () => "evt-mock"),
+  uploadArtifact: vi.fn(async () => ({ artifactId: "art-1", storageRef: "file://art", hash: "abc", sizeBytes: 0 })),
+  initAudit: vi.fn(),
+  getAuditDir: vi.fn(),
+  isAuditEnabled: vi.fn(() => false),
+  auditToolStart: vi.fn(),
+  auditToolSuccess: vi.fn(),
+  auditToolFailed: vi.fn(),
+  auditToolDenied: vi.fn(),
+  cleanupOldAuditLogs: vi.fn(),
+  readAuditLogs: vi.fn(),
+  recordReplayTrace: vi.fn(),
+}));
+
+// Mock SDK 内核能力注册表
+vi.mock("../../../../packages/device-agent-sdk/src/kernel/capabilityRegistry", () => ({
+  registerCapabilities: vi.fn(),
+  dispatchMessageToPlugins: vi.fn(async () => {}),
+  registerCapability: vi.fn(),
+  unregisterCapability: vi.fn(),
+  unregisterPluginCapabilities: vi.fn(),
+  getCapability: vi.fn(),
+  findCapabilitiesByPrefix: vi.fn(() => []),
+  findCapabilitiesByRiskLevel: vi.fn(() => []),
+  findCapabilitiesByTag: vi.fn(() => []),
+  listCapabilities: vi.fn(() => []),
+  getToolRiskLevel: vi.fn(),
+  registerPlugin: vi.fn(),
+  unregisterPlugin: vi.fn(),
+  findPluginForTool: vi.fn(() => null),
+  listPlugins: vi.fn(() => []),
+  clearAll: vi.fn(),
+  registerToolAlias: vi.fn(),
+  registerToolAliases: vi.fn(),
+  registerPrefixRule: vi.fn(),
+  registerPrefixRules: vi.fn(),
+  resolveToolAlias: vi.fn(),
+  listToolAliases: vi.fn(() => []),
+  listPrefixRules: vi.fn(() => []),
+  loadAliasesFromFile: vi.fn(),
+  loadAliasesFromEnv: vi.fn(),
+  initToolAliases: vi.fn(),
+  exportCapabilityManifest: vi.fn(() => []),
+  getMultimodalCapabilities: vi.fn(() => []),
+}));
+
+// Mock SDK OCR 缓存服务
+vi.mock("../../../../packages/device-agent-sdk/src/kernel/ocrCacheService", () => ({
+  OcrCacheService: vi.fn(),
+  getOcrCacheService: vi.fn(() => ({
+    get: vi.fn(() => null),
+    set: vi.fn(),
+    invalidate: vi.fn(),
+    invalidateAll: vi.fn(),
+    clear: vi.fn(),
+  })),
+  resetOcrCacheService: vi.fn(),
+}));
+
+import { createStreamingExecutor, setVisionProvider, type StreamingEvent } from "@openslin/device-agent-sdk";
+
+// 提供测试用 VisionProvider
+const mockVisionProvider = {
   captureScreen: vi.fn(async () => ({ filePath: "/tmp/screen.png", width: 1920, height: 1080 })),
   cleanupCapture: vi.fn(async () => {}),
   ocrScreen: vi.fn(async () => []),
@@ -14,29 +90,13 @@ vi.mock("../plugins/localVision", () => ({
   pressCombo: vi.fn(async () => {}),
   moveMouse: vi.fn(async () => {}),
   scroll: vi.fn(async () => {}),
-}));
-
-vi.mock("../kernel/audit", () => ({
-  logAuditEvent: vi.fn(async () => "evt-mock"),
-  uploadArtifact: vi.fn(async () => ({ artifactId: "art-1", storageRef: "file://art", hash: "abc", sizeBytes: 0 })),
-}));
-
-vi.mock("../kernel/capabilityRegistry", () => ({
-  registerCapabilities: vi.fn(),
-}));
-
-vi.mock("../plugins/guiTypes", () => ({
-  isTargetCoord: (t: any) => typeof t?.x === "number" && typeof t?.y === "number" && !("xPercent" in t),
-  isTargetPercent: (t: any) => typeof t?.xPercent === "number",
-  isTargetText: (t: any) => typeof t?.text === "string",
-}));
-
-import { createStreamingExecutor, type StreamingEvent } from "../streamingExecutor";
-import { pressKey } from "../plugins/localVision";
+};
 
 describe("StreamingExecutor", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.clearAllMocks();
+    setVisionProvider(mockVisionProvider as any);
   });
 
   afterEach(() => {
@@ -70,11 +130,11 @@ describe("StreamingExecutor", () => {
     expect(executor.state).toBe("stopped");
     expect(executor.completedSteps).toBe(2);
     expect(executor.failedSteps).toBe(0);
-    expect(pressKey).toHaveBeenCalledTimes(2);
+    expect(mockExecuteNativeGuiAction).toHaveBeenCalledTimes(2);
   });
 
   it("stopOnError causes transition to error state on step failure", async () => {
-    vi.mocked(pressKey).mockRejectedValueOnce(new Error("key fail"));
+    mockExecuteNativeGuiAction.mockRejectedValueOnce(new Error("key fail"));
 
     const executor = createStreamingExecutor({ stopOnError: true, interStepDelayMs: 0 });
     const events: StreamingEvent[] = [];
@@ -91,7 +151,9 @@ describe("StreamingExecutor", () => {
   });
 
   it("skips failed step and continues when stopOnError is false", async () => {
-    vi.mocked(pressKey).mockRejectedValueOnce(new Error("fail")).mockResolvedValueOnce(undefined);
+    mockExecuteNativeGuiAction
+      .mockRejectedValueOnce(new Error("fail"))
+      .mockResolvedValueOnce({ detail: { key: undefined, keys: undefined } });
 
     const executor = createStreamingExecutor({ stopOnError: false, interStepDelayMs: 0 });
     executor.start();

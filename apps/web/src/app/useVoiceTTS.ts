@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { apiFetch } from "@/lib/api";
 
 export interface VoiceTTSState {
   speaking: boolean;
@@ -18,7 +19,7 @@ export default function useVoiceTTS(): VoiceTTSState {
 
   const checkTTSReady = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch("/api/voice");
+      const res = await apiFetch("/audio/capabilities");
       if (!res.ok) {
         setTtsReady(false);
         return false;
@@ -57,7 +58,7 @@ export default function useVoiceTTS(): VoiceTTSState {
     setSpeaking(true);
 
     try {
-      const res = await fetch("/api/tts", {
+      const res = await apiFetch("/audio/speech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: truncated, voice: voice ?? undefined }),

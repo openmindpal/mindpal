@@ -308,7 +308,7 @@ const MEMORY_CLASS_WEIGHT: Record<string, number> = {
 };
 
 /**
- * 计算单条记忆候选的 Rerank 得分（12 因子统一公式）。
+ * 计算单条记忆候选的 Rerank 得分（16 因子统一公式）。
  *
  * 因子清单：
  *  1. sLex × 1.2       词法匹配
@@ -319,10 +319,14 @@ const MEMORY_CLASS_WEIGHT: Record<string, number> = {
  *  6. confidence       置信度 × 30d半衰期 × 0.15
  *  7. versionBoost     factVersion / 10, max 0.1
  *  8. conflictPenalty  未解决冲突 -0.2
- *  9. classBoost       procedural=0.2, semantic=0.1
+ *  9. classBoost       procedural=0.15, semantic=0.15
  * 10. decayBoost       (decayScore - 0.5) × 0.2
  * 11. distilledPenalty 已蒸馏源 -0.15
  * 12. priorityBoost    (priority/100) × 0.08
+ * 13. globalBoost      全局作用域 +0.1
+ * 14. profileBoost     profile类型 +0.5
+ * 15. shortTextBoost   短文本(≤120) +0.25
+ * 16. titleMatchBoost  标题精确匹配 +0.3
  */
 export function computeMemoryRerankScore(
   c: MemoryRerankInput,
@@ -368,15 +372,18 @@ export function computeMemoryRerankScore(
   const priorityBoost = (prio / 100) * 0.08;
   // 13. Global scope boost（全局记忆优先级微增）
   const globalBoost = c.scope === "global" ? 0.1 : 0;
-  // 14. Profile 类加权 (P2 fix: 短文本档案类记忆补偿)
+  // 14. Profile 类加权（短字段档案类记忆补偿，需抵消词法失配劣势）
   const PROFILE_TYPES = new Set(["identity", "profile", "user_info", "contact"]);
-  const profileBoost = (c.type && PROFILE_TYPES.has(c.type)) ? 0.25 : 0;
-  // 15. 短文本补偿 (title非空且内容极短时加权)
-  const shortTextBoost = (c.title && c.contentText.length <= 50) ? 0.1 : 0;
+  const profileBoost = (c.type && PROFILE_TYPES.has(c.type)) ? 0.5 : 0;
+  // 15. 短文本补偿（标题非空且内容较短时加权，与 profileBoost 叠加生效）
+  const shortTextBoost = (c.title && c.contentText.length <= 120) ? 0.25 : 0;
+  // 16. 标题精确匹配加分（查询词命中标题，帮助"姓名：伏城"等标题明确的记忆提权）
+  const titleMatchBoost = (title && queryLower.length >= 1 && title.includes(queryLower)) ? 0.3 : 0;
 
   return sLex * 1.2 + sVec + sDense * 1.5 + recencyBoost * 0.05 + bothBonus
     + confidenceBoost + versionBoost + conflictPenalty + classBoost + decayBoost
-    + distilledPenalty + priorityBoost + globalBoost + profileBoost + shortTextBoost;
+    + distilledPenalty + priorityBoost + globalBoost + profileBoost + shortTextBoost
+    + titleMatchBoost;
 }
 
 /* ══════════════════════════════════════════════════════════════════

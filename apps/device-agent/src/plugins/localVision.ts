@@ -427,3 +427,17 @@ export async function scroll(direction: "up" | "down", clicks: number = 3): Prom
     await spawnAsync("xdotool", ["click", btn]);
   }
 }
+
+// ── 自动注入 GUI 实现到 SDK 内核 ────────────────────────────────
+
+import { setNativeGuiProvider } from "@openslin/device-agent-sdk";
+
+setNativeGuiProvider({
+  clickMouse,
+  doubleClick,
+  typeText,
+  pressKey,
+  pressCombo,
+  moveMouse,
+  scroll,
+});

@@ -69,6 +69,11 @@ function i18nText(v: unknown, locale: string): string {
   return String(v);
 }
 
+/** 按中英文标点将文本拆分为子句 */
+function splitBySentence(text: string, maxParts = 4): string[] {
+  return text.split(/[？?。！!；;，,\n]+/).map(s => s.trim()).filter(s => s.length > 2).slice(0, maxParts);
+}
+
 // ─── 查询分解 ─────────────────────────────────────────────────────
 
 /**
@@ -85,11 +90,7 @@ async function decomposeQuery(message: string): Promise<string[] | null> {
     // 设置 2 秒超时 via AbortController
 
     // 降级方案：标点分割
-    const parts = message
-      .split(/[？?。！!；;，,\n]+/)
-      .map(s => s.trim())
-      .filter(s => s.length > 2)
-      .slice(0, 4);
+    const parts = splitBySentence(message);
     return parts.length > 1 ? parts : null;
   } catch {
     return null; // 超时或失败时返回 null
@@ -129,7 +130,7 @@ export async function recallRelevantMemory(params: {
         spaceId: params.spaceId,
         subjectId: params.subjectId,
         query: q,
-        limit: Math.ceil(limit / queries.length) + 2,
+        limit: Math.max(Math.ceil(limit / queries.length) + 2, 10),
       }),
     );
     const searchResults = await Promise.all(searchPromises);
@@ -163,11 +164,7 @@ export async function recallRelevantMemory(params: {
         }
         // 降级到标点分割
         if (!subQueries || subQueries.length === 0) {
-          subQueries = params.message
-            .split(/[？?。！!；;，,\n]+/)
-            .filter(s => s.trim().length > 2)
-            .map(s => s.trim())
-            .slice(0, 4);
+          subQueries = splitBySentence(params.message);
         }
         if (subQueries.length > 0) {
           const retryPromises = subQueries.map(q =>
@@ -205,14 +202,29 @@ export async function recallRelevantMemory(params: {
     const recalledIds = evidence.map(e => e.id);
     touchMemoryAccess({ pool: params.pool, tenantId: params.tenantId, memoryIds: recalledIds }).catch(() => {});
 
+    // 截断优先级排序：identity/profile/user_info 类型优先保留，其余按 score 原序
+    const priorityTypes = new Set(["identity", "profile", "user_info"]);
+    const sorted = [...evidence].sort((a, b) => {
+      const ap = priorityTypes.has(a.type) ? 1 : 0;
+      const bp = priorityTypes.has(b.type) ? 1 : 0;
+      return bp - ap; // 优先类型排前，同优先级保持原有 score 顺序（stable sort）
+    });
+
     let totalChars = 0;
     const lines: string[] = [];
-    for (const e of evidence) {
+    for (const e of sorted) {
       let line = `- [记忆 #${e.id}] 类型: ${e.type ?? "memory"}${e.title ? ", 标题: " + e.title : ""}, 内容: ${e.snippet}`;
       if (e.conflictMarker && e.resolutionStatus === "pending") {
         line += ` [⚠ 存在冲突，需用户确认]`;
       }
-      if (totalChars + line.length > MEMORY_RECALL_MAX_CHARS) break;
+      if (totalChars + line.length > MEMORY_RECALL_MAX_CHARS) {
+        // 预算不足时压缩 snippet 而非直接丢弃
+        const compressed = `- [记忆 #${e.id}] 类型: ${e.type ?? "memory"}${e.title ? ", 标题: " + e.title : ""}, 内容: ${e.snippet.slice(0, 100)}…`;
+        if (totalChars + compressed.length > MEMORY_RECALL_MAX_CHARS) break;
+        lines.push(compressed);
+        totalChars += compressed.length;
+        continue;
+      }
       lines.push(line);
       totalChars += line.length;
     }

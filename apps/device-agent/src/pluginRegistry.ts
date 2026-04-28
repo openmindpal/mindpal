@@ -1,24 +1,9 @@
 /**
- * Device-Agent Plugin Registry — 设备代理插件注册中心
- *
- * 重新导出内核接口 + 提供外部目录加载能力。
+ * Device-Agent Plugin Registry — 外部插件目录加载
  */
-
-// ── 从内核重新导出 ────────────────────────────────────
-export {
-  registerPlugin,
-  unregisterPlugin,
-  findPluginForTool,
-  listPlugins,
-  clearAll as clearPlugins,
-  dispatchMessageToPlugins,
-} from "./kernel/capabilityRegistry";
-export { initPlugin, disposeAllPlugins } from "./kernel/pluginLifecycle";
-export type { ToolExecutionContext, ToolExecutionResult, DeviceMessageContext, DeviceToolPlugin } from "./kernel/types";
-
-import { initPlugin } from "./kernel/pluginLifecycle";
-import type { DeviceToolPlugin } from "./kernel/types";
-import type { PluginManifest } from "./kernel/pluginSandbox";
+import { initPlugin } from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin } from "@openslin/device-agent-sdk";
+import type { PluginManifest } from "@openslin/device-agent-sdk";
 
 // ── 外部插件加载 ──────────────────────────────────────────────
 

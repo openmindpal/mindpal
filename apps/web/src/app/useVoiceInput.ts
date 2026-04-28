@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { t } from "@/lib/i18n";
+import { apiFetch } from "@/lib/api";
 
 /* Web Speech API type shims — avoids (window as any) */
 interface SpeechRecognitionEvent {
@@ -27,6 +28,18 @@ declare global {
     SpeechRecognition?: SpeechRecognitionCtor;
     webkitSpeechRecognition?: SpeechRecognitionCtor;
   }
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      resolve(dataUrl.split(",")[1]);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 export interface VoiceInputState {
@@ -63,12 +76,15 @@ export default function useVoiceInput(opts: {
     const timeoutId = setTimeout(() => controller.abort(), WHISPER_TIMEOUT_MS);
 
     try {
-      const formData = new FormData();
-      formData.append("file", audioBlob, "recording.webm");
-      formData.append("language", locale.startsWith("en") ? "en" : "zh");
-      const res = await fetch("/api/voice", {
+      const audioBase64 = await blobToBase64(audioBlob);
+      const res = await apiFetch("/audio/transcribe", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audioBase64,
+          language: locale.startsWith("en") ? "en" : "zh",
+          format: "webm",
+        }),
         signal: controller.signal,
       });
       if (!res.ok) {
