@@ -2973,6 +2973,7 @@
   "gov.knowledgeDocs.col.sourceType": "来源类型",
   "gov.knowledgeDocs.col.version": "版本",
   "gov.knowledgeDocs.col.status": "状态",
+  "gov.knowledgeDocs.col.indexStatus": "索引",
   "gov.knowledgeDocs.col.updatedAt": "更新时间",
   "gov.knowledgeDocs.col.actions": "操作",
   "gov.knowledgeDocs.detail": "详情",

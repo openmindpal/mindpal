@@ -96,7 +96,7 @@ const memoryTypeRiskRegistry = new Map<string, "low" | "medium" | "high">([
   // 低风险
   ["preference", "low"], ["setting", "low"], ["note", "low"], ["reminder", "low"],
   // 中风险
-  ["fact", "medium"], ["identity", "medium"], ["profile", "medium"], ["user_profile", "medium"], ["contact", "medium"], ["address", "medium"], ["interest", "medium"],
+  ["fact", "medium"], ["identity", "medium"], ["profile", "medium"], ["user_profile", "medium"], ["personal_info", "medium"], ["contact", "medium"], ["address", "medium"], ["interest", "medium"],
   // 高风险
   ["relationship", "high"], ["credential", "high"], ["secret", "high"], ["financial", "high"], ["medical", "high"], ["biometric", "high"],
 ]);
@@ -121,6 +121,7 @@ export function registerMemoryTypeRisk(type: string, level: "low" | "medium" | "
 export function getMemoryTypeRisk(type: string): "low" | "medium" | "high" | undefined {
   return memoryTypeRiskRegistry.get(type.toLowerCase());
 }
+
 
 /** 默认风险等级（未知类型按 medium 处理） */
 export const DEFAULT_RISK_LEVEL: "low" | "medium" | "high" = "medium";
@@ -324,9 +325,8 @@ const MEMORY_CLASS_WEIGHT: Record<string, number> = {
  * 11. distilledPenalty 已蒸馏源 -0.15
  * 12. priorityBoost    (priority/100) × 0.08
  * 13. globalBoost      全局作用域 +0.1
- * 14. profileBoost     profile类型 +0.5
- * 15. shortTextBoost   短文本(≤120) +0.25
- * 16. titleMatchBoost  标题精确匹配 +0.3
+ * 14. shortTextBoost   短文本(≤120) +0.25
+ * 15. titleMatchBoost  标题精确匹配 +0.3
  */
 export function computeMemoryRerankScore(
   c: MemoryRerankInput,
@@ -372,17 +372,22 @@ export function computeMemoryRerankScore(
   const priorityBoost = (prio / 100) * 0.08;
   // 13. Global scope boost（全局记忆优先级微增）
   const globalBoost = c.scope === "global" ? 0.1 : 0;
-  // 14. Profile 类加权（短字段档案类记忆补偿，需抵消词法失配劣势）
-  const PROFILE_TYPES = new Set(["identity", "profile", "user_info", "contact"]);
-  const profileBoost = (c.type && PROFILE_TYPES.has(c.type)) ? 0.5 : 0;
-  // 15. 短文本补偿（标题非空且内容较短时加权，与 profileBoost 叠加生效）
+  // 14. 短文本补偿（标题非空且内容较短时加权）
   const shortTextBoost = (c.title && c.contentText.length <= 120) ? 0.25 : 0;
-  // 16. 标题精确匹配加分（查询词命中标题，帮助"姓名：伏城"等标题明确的记忆提权）
-  const titleMatchBoost = (title && queryLower.length >= 1 && title.includes(queryLower)) ? 0.3 : 0;
+  // 15. 标题精确匹配加分（查询词命中标题，帮助"姓名：伏城"等标题明确的记忆提权）
+  // 双向子串匹配：取较短串在较长串中的包含比率，数据驱动、零硬编码
+  let titleMatchBoost = 0;
+  if (title && queryLower.length >= 1) {
+    const shorter = title.length <= queryLower.length ? title : queryLower;
+    const longer = title.length <= queryLower.length ? queryLower : title;
+    if (longer.includes(shorter)) {
+      titleMatchBoost = 0.3 * (shorter.length / longer.length);
+    }
+  }
 
   return sLex * 1.2 + sVec + sDense * 1.5 + recencyBoost * 0.05 + bothBonus
     + confidenceBoost + versionBoost + conflictPenalty + classBoost + decayBoost
-    + distilledPenalty + priorityBoost + globalBoost + profileBoost + shortTextBoost
+    + distilledPenalty + priorityBoost + globalBoost + shortTextBoost
     + titleMatchBoost;
 }
 

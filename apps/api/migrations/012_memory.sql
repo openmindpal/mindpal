@@ -239,3 +239,8 @@ CREATE INDEX IF NOT EXISTS idx_memory_provenance_type ON memory_entries (provena
 ALTER TABLE memory_entries
   ALTER COLUMN conflict_marker TYPE UUID[]
   USING CASE WHEN conflict_marker IS NOT NULL THEN ARRAY[conflict_marker] ELSE NULL END;
+
+-- ── Performance: 为 embedding_model_ref 添加条件索引，加速 Stage 2b dense vector 检索 ──
+CREATE INDEX IF NOT EXISTS idx_memory_entries_embedding_model_ref
+  ON memory_entries (tenant_id, space_id, embedding_model_ref)
+  WHERE embedding_vector IS NOT NULL AND deleted_at IS NULL;

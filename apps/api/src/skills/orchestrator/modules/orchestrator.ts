@@ -365,6 +365,7 @@ export function buildSystemPrompt(
     "NEVER claim that a tool has been executed or that data has been saved unless the system provides an execution receipt/result.",
     "When suggesting a tool, use conditional language (e.g., 'I can help you with this by running the tool below') and avoid 'already saved' wording.",
     "When you identify information worth remembering (user preferences, important facts, explicit save requests), use memory.write to persist it. Do not ask for confirmation when the save intent is clear.",
+    "When recalling user memory, do NOT pass a 'types' filter unless the user explicitly asks for a specific category. Always use a broad query and set limit=10 or higher to ensure all memory types are covered.",
   ];
   if (toolCatalog) {
     parts.push(

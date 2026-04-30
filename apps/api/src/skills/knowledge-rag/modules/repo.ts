@@ -66,6 +66,7 @@ export type KnowledgeDocumentRow = {
   status: string;
   createdAt: string;
   updatedAt: string;
+  indexStatus?: string | null;
 };
 
 export type KnowledgeIndexJobRow = {
@@ -94,6 +95,7 @@ function toDoc(r: any): KnowledgeDocumentRow {
     status: r.status,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    indexStatus: r.index_status || null,
   };
 }
 
@@ -1024,33 +1026,36 @@ export async function listDocuments(params: {
 }) {
   const args: any[] = [params.tenantId, params.spaceId];
   let idx = 3;
-  const where: string[] = ["tenant_id = $1", "space_id = $2"];
+  const where: string[] = ["kd.tenant_id = $1", "kd.space_id = $2"];
   if (params.status) {
-    where.push(`status = $${idx++}`);
+    where.push(`kd.status = $${idx++}`);
     args.push(params.status);
   }
   if (params.sourceType) {
-    where.push(`source_type = $${idx++}`);
+    where.push(`kd.source_type = $${idx++}`);
     args.push(params.sourceType);
   }
   if (params.search) {
-    where.push(`title ILIKE ('%' || $${idx++} || '%')`);
+    where.push(`kd.title ILIKE ('%' || $${idx++} || '%')`);
     args.push(params.search);
   }
   args.push(params.limit);
   args.push(params.offset);
   const res = await params.pool.query(
     `
-      SELECT id, tenant_id, space_id, version, title, source_type, tags, content_digest, status, visibility, owner_subject_id, created_at, updated_at
-      FROM knowledge_documents
+      SELECT kd.id, kd.tenant_id, kd.space_id, kd.version, kd.title, kd.source_type, kd.tags, kd.content_digest, kd.status, kd.visibility, kd.owner_subject_id, kd.created_at, kd.updated_at,
+             kij.status AS index_status
+      FROM knowledge_documents kd
+      LEFT JOIN knowledge_index_jobs kij
+        ON kd.id = kij.document_id AND kd.version = kij.document_version
       WHERE ${where.join(" AND ")}
-      ORDER BY updated_at DESC
+      ORDER BY kd.updated_at DESC
       LIMIT $${idx++} OFFSET $${idx++}
     `,
     args,
   );
   const countRes = await params.pool.query(
-    `SELECT count(*)::int AS total FROM knowledge_documents WHERE ${where.slice(0, where.length).join(" AND ")}`,
+    `SELECT count(*)::int AS total FROM knowledge_documents kd WHERE ${where.slice(0, where.length).join(" AND ")}`,
     args.slice(0, args.length - 2),
   );
   return {

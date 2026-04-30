@@ -890,7 +890,11 @@ export function formatInlineResultsForLLM(
   results: InlineToolResult[],
   locale: string,
 ): string {
-  if (!results.length) return "";
+  if (!results.length) {
+    return locale !== "en-US"
+      ? "## 工具执行结果\n工具调用已完成但未产生结果数据。\n"
+      : "## Tool Execution Results\nTool calls completed but produced no result data.\n";
+  }
 
   const zh = locale !== "en-US";
   const parts: string[] = [

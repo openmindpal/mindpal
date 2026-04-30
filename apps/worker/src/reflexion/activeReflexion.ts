@@ -645,15 +645,14 @@ export async function tickActiveReflexion(params: { pool: Pool }): Promise<Activ
       for (const candidate of strategyCandidates) {
         if (strategiesWritten >= MAX_STRATEGIES_PER_TICK) break;
 
-        // 按 fingerprint 去重：使用参数化查询防止 SQL 注入
-        const fpPattern = `%"fingerprint":"${candidate.fingerprint.replace(/[%_\\"']/g, "")}"% `;
+        // 按 fingerprint 去重：使用 JSONB 原生操作
         const existing = await pool.query(
           `SELECT id FROM memory_entries
            WHERE type = 'strategy' AND memory_class = 'procedural'
              AND deleted_at IS NULL
-             AND source_ref::text LIKE $1
+             AND source_ref @> $1::jsonb
            LIMIT 1`,
-          [fpPattern.trim()],
+          [JSON.stringify({ fingerprint: candidate.fingerprint })],
         );
         if (existing.rowCount && existing.rowCount > 0) continue;
 

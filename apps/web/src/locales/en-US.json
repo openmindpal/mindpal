@@ -2980,6 +2980,7 @@
   "gov.knowledgeDocs.col.sourceType": "Source Type",
   "gov.knowledgeDocs.col.version": "Version",
   "gov.knowledgeDocs.col.status": "Status",
+  "gov.knowledgeDocs.col.indexStatus": "Index",
   "gov.knowledgeDocs.col.updatedAt": "Updated At",
   "gov.knowledgeDocs.col.actions": "Actions",
   "gov.knowledgeDocs.detail": "Detail",

@@ -586,7 +586,10 @@ export async function handleStreamAnswerMode(params: {
     // 将工具结果注入 LLM 做二次回复
     const toolResultText = formatInlineResultsForLLM(inlineResults, locale);
     savedToolContext = toolResultText;
-    if (toolResultText) {
+    const effectiveToolResultText = toolResultText || (locale !== "en-US"
+      ? "## 工具执行结果\n工具已执行但未返回有效数据。\n"
+      : "## Tool Execution Results\nTools executed but returned no valid data.\n");
+    {
       sse.sendEvent("status", { phase: "thinking" });
       const followUpFilter = new ToolCallFilter((text) => sse.sendEvent("delta", { text }));
       try {
@@ -598,7 +601,7 @@ export async function handleStreamAnswerMode(params: {
             messages: [
               ...modelMessages,
               { role: "assistant", content: fullText },
-              { role: "user", content: toolResultText + (locale !== "en-US"
+              { role: "user", content: effectiveToolResultText + (locale !== "en-US"
                 ? "\n\n请基于上面的工具返回数据，直接向用户展示结果。用自然语言组织数据，不要提及工具调用过程。如果数据为空，不要报告搜索结果为0或候选条目数量，只需自然地告知用户暂无相关信息并继续对话。"
                 : "\n\nBased on the tool results above, present the data to the user directly. Organize it in natural language. If empty, do NOT mention search result counts or candidate numbers — simply tell the user naturally that no relevant information was found and continue the conversation.") },
             ],

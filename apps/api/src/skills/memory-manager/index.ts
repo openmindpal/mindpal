@@ -15,27 +15,27 @@ const plugin: BuiltinSkillPlugin = {
         action: "read",
         riskLevel: "low",
         extraPermissions: [{ resourceType: "memory", action: "read" }],
-        inputSchema: { fields: { query: { type: "string", required: true }, scope: { type: "string" }, type: { type: "string" }, types: { type: "json", description: "可选，指定要查询的记忆类型列表，如 ['user_info', 'identity', 'hobby']；types 优先，type 作为 fallback" }, limit: { type: "number" } } },
+        inputSchema: { fields: { query: { type: "string", required: true, description: "搜索关键词。传空字符串则列出最近记忆。支持中文关键词匹配" }, scope: { type: "string" }, type: { type: "string", description: "可选。按类型过滤记忆，留空搜索所有类型。仅在用户明确要求特定类型时传入" }, types: { type: "json", description: "可选。按类型过滤记忆的数组形式，留空搜索所有类型。仅在用户明确要求时传入。types 优先，type 作为 fallback" }, limit: { type: "number", description: "返回数量限制，默认10，建议搜索时设为10-20以确保覆盖" } } },
         outputSchema: { fields: { entries: { type: "json" } } },
       },
       {
         name: "memory.write",
         displayName: { "zh-CN": "写入/修改记忆", "en-US": "Write/Update memory" },
         description: {
-          "zh-CN": "写入或修改长期记忆条目。不传 id 则新建；传入 id 则定向更新已有条目（风险等级根据记忆类型动态评估：preference=low, fact/identity=medium, relationship/credential=high）",
-          "en-US": "Write or update a long-term memory entry. Omit id to create; provide id to update an existing entry (risk level dynamically evaluated by type: preference=low, fact/identity=medium, relationship/credential=high)",
+          "zh-CN": "写入或修改长期记忆条目。不传 id 则新建；传入 id 则定向更新已有条目。风险等级根据记忆类型和内容动态评估",
+          "en-US": "Write or update a long-term memory entry. Omit id to create; provide id to update an existing entry. Risk level is dynamically evaluated based on memory type and content",
         },
         scope: "write",
         resourceType: "memory",
         action: "write",
-        /** 静态声明为 medium，实际运行时根据 type 动态评估；preference/setting=low, fact/identity=medium, relationship/credential/secret=high */
+        /** 静态声明为 medium，实际运行时根据 type 和内容动态评估 */
         riskLevel: "medium",
         extraPermissions: [{ resourceType: "memory", action: "write" }],
         inputSchema: {
           fields: {
             id: { type: "string", description: "已有记忆条目 ID（传入则更新该条目，不传则新建）" },
             scope: { type: "string" },
-            type: { type: "string", required: true, description: "记忆类型：preference(low)/fact(medium)/identity(medium)/relationship(high)/credential(high)" },
+            type: { type: "string", required: true, description: "记忆分类类型，自由文本。如 preference、identity、fact 等，支持任意自定义类型" },
             title: { type: "string" },
             contentText: { type: "string", required: true },
             writeIntent: { type: "json", required: true, description: "写入意图: {policy, approvalId?, confirmationRef?}" },

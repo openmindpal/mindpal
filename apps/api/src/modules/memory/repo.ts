@@ -16,7 +16,8 @@ import {
   type MemoryScope,
   DEFAULT_SOURCE_TRUST_MAP,
 } from "@openslin/shared";
-import { encryptMemoryContent, decryptMemoryContent } from "./memoryEncryption";
+import { encryptMemoryContent, decryptMemoryContent, decryptMemoryContents } from "./memoryEncryption";
+import { cacheGet, cacheSet } from "../../kernel/loopCacheConfig.js";
 
 export type { WriteProof, WriteIntent, MemoryRiskEvaluation, MemoryScope } from "@openslin/shared";
 export { evaluateMemoryRisk, MEMORY_TYPE_RISK_LEVELS } from "@openslin/shared";
@@ -1075,6 +1076,66 @@ export async function exportAndClearMemory(params: {
   });
 }
 
+// ── Embedding 配置与缓存工具函数 ──
+
+interface EmbeddingConfig {
+  endpoint: string | null;
+  apiKey: string | null;
+  model: string;
+  dimensions: number;
+  timeoutMs: number;
+}
+
+function resolveEmbeddingConfig(): EmbeddingConfig {
+  const endpoint = String(process.env.MEMORY_EMBEDDING_ENDPOINT ?? process.env.KNOWLEDGE_EMBEDDING_ENDPOINT ?? "").trim() || null;
+  return {
+    endpoint,
+    apiKey: endpoint ? (String(process.env.MEMORY_EMBEDDING_API_KEY ?? process.env.KNOWLEDGE_EMBEDDING_API_KEY ?? "").trim() || null) : null,
+    model: String(process.env.MEMORY_EMBEDDING_MODEL ?? process.env.KNOWLEDGE_EMBEDDING_MODEL ?? "text-embedding-3-small").trim(),
+    dimensions: Math.max(64, Math.min(4096, Number(process.env.MEMORY_EMBEDDING_DIMENSIONS ?? process.env.KNOWLEDGE_EMBEDDING_DIMENSIONS ?? 1536))),
+    timeoutMs: Math.max(1000, Number(process.env.MEMORY_EMBEDDING_TIMEOUT_MS ?? process.env.KNOWLEDGE_EMBEDDING_TIMEOUT_MS ?? 5000)),
+  };
+}
+
+function simpleQueryHash(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+async function fetchQueryEmbedding(config: EmbeddingConfig, query: string): Promise<number[] | null> {
+  if (!config.endpoint) return null;
+
+  const cacheKey = `emb:${simpleQueryHash(query)}:${config.model}:${config.dimensions}`;
+  const cached = cacheGet<number[]>(cacheKey);
+  if (cached) return cached;
+
+  const url = config.endpoint.replace(/\/$/, "") + "/v1/embeddings";
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (config.apiKey) headers["authorization"] = `Bearer ${config.apiKey}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  try {
+    const payload: any = { input: [query], model: config.model };
+    if (config.dimensions) payload.dimensions = config.dimensions;
+    const embRes = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload), signal: controller.signal });
+    if (embRes.ok) {
+      const embJson = (await embRes.json()) as Record<string, unknown>;
+      const firstData = Array.isArray(embJson?.data) && embJson.data[0];
+      if (firstData && Array.isArray(firstData.embedding)) {
+        const vec = firstData.embedding as number[];
+        cacheSet(cacheKey, vec, 3_600_000);
+        return vec;
+      }
+    }
+  } catch {
+    // 静默降级
+  } finally {
+    clearTimeout(timer);
+  }
+  return null;
+}
+
 /**
  * 混合检索记忆：lexical(ILIKE) + semantic(minhash overlap / dense vector) 双通道，加权 rerank。
  * - Stage 1：ILIKE 关键词召回（兼容旧数据与精确匹配场景）
@@ -1116,109 +1177,84 @@ export async function searchMemory(params: {
   const scopeArgs = [...baseArgs];
   const scopeNextIdx = idx;
 
-  // ── Stage 1: Lexical (ILIKE) 召回 — 分段匹配，支持多问句/长查询 ──
+  // ── 统一 Embedding 配置，一次性获取 ──
+  const embConfig = resolveEmbeddingConfig();
+
+  // ── Stage 1: Lexical (ILIKE) 召回 ──
   const lexLimit = Math.max(params.limit, params.limit * 3);
-  let lexSegments = params.query.split(/[？?；;，,、]/).map(s => s.trim()).filter(s => s.length >= 2);
-  if (lexSegments.length === 1 && lexSegments[0]!.length > 30) {
-    lexSegments = lexSegments[0]!.split(/\s+/).map(s => s.trim()).filter(s => s.length >= 2);
-  }
-  if (!lexSegments.length) lexSegments = [params.query];
-  lexSegments = lexSegments.slice(0, 10);
-  const lexPatterns = lexSegments.map(s => `%${escapeIlikePat(s)}%`);
+  const lexPattern = `%${escapeIlikePat(params.query)}%`;
   const lexIdx = scopeNextIdx;
-  const lexRes = await params.pool.query(
+
+  // ── Stage 2a: Semantic (minhash overlap) 召回 ──
+  const qMinhash = computeMinhash(params.query);
+  const vecLimit = Math.max(params.limit, params.limit * 3);
+  const vecIdx = scopeNextIdx;
+
+  // ── 并行执行 Stage 1、Stage 2a、Embedding 获取 ──
+  const lexPromise = params.pool.query(
     `
       SELECT *, 'lexical' AS _stage
       FROM memory_entries
       WHERE ${scopeWhereClause}
-        AND (content_text ILIKE ANY($${lexIdx}::text[]) OR COALESCE(title,'') ILIKE ANY($${lexIdx}::text[]))
+        AND (content_text ILIKE $${lexIdx} OR COALESCE(title,'') ILIKE $${lexIdx})
       ORDER BY created_at DESC
       LIMIT $${lexIdx + 1}
     `,
-    [...scopeArgs, lexPatterns, lexLimit],
+    [...scopeArgs, lexPattern, lexLimit],
   );
 
-  // ── Stage 2: Semantic (minhash overlap) 召回 ──
-  const qMinhash = computeMinhash(params.query);
-  const vecLimit = Math.max(params.limit, params.limit * 3);
-  let vecRows: any[] = [];
-  try {
-    const vecIdx = scopeNextIdx;
-    const vecRes = await params.pool.query(
-      `
-        SELECT *, 'vector' AS _stage, embedding_minhash
-        FROM memory_entries
-        WHERE ${scopeWhereClause}
-          AND embedding_minhash IS NOT NULL
-          AND embedding_minhash && $${vecIdx}::int[]
-        ORDER BY embedding_updated_at DESC NULLS LAST
-        LIMIT $${vecIdx + 1}
-      `,
-      [...scopeArgs, qMinhash, vecLimit],
-    );
-    vecRows = vecRes.rows as Record<string, unknown>[];
-  } catch (err) {
-        _logger.warn("MinHash vector recall failed, falling back to lexical only", { err: (err as Error)?.message });
-  }
+  const vecPromise = (async () => {
+    try {
+      const vecRes = await params.pool.query(
+        `
+          SELECT *, 'vector' AS _stage, embedding_minhash
+          FROM memory_entries
+          WHERE ${scopeWhereClause}
+            AND embedding_minhash IS NOT NULL
+            AND embedding_minhash && $${vecIdx}::int[]
+          ORDER BY embedding_updated_at DESC NULLS LAST
+          LIMIT $${vecIdx + 1}
+        `,
+        [...scopeArgs, qMinhash, vecLimit],
+      );
+      return vecRes.rows as Record<string, unknown>[];
+    } catch (err) {
+      _logger.warn("MinHash vector recall failed, falling back to lexical only", { err: (err as Error)?.message });
+      return [] as Record<string, unknown>[];
+    }
+  })();
+
+  const embPromise = fetchQueryEmbedding(embConfig, params.query);
+
+  const [lexRes, vecRows, queryEmbeddingVec] = await Promise.all([lexPromise, vecPromise, embPromise]);
 
   // ── Stage 2b: Dense vector cosine 召回（蒸馏产物密集向量通道） ──
   let denseRows: any[] = [];
-  let queryEmbeddingVec: number[] | null = null;
   try {
-    const embEndpoint = String(process.env.MEMORY_EMBEDDING_ENDPOINT ?? process.env.KNOWLEDGE_EMBEDDING_ENDPOINT ?? "").trim();
-    if (embEndpoint) {
-      const embApiKey = String(process.env.MEMORY_EMBEDDING_API_KEY ?? process.env.KNOWLEDGE_EMBEDDING_API_KEY ?? "").trim() || null;
-      const embModel = String(process.env.MEMORY_EMBEDDING_MODEL ?? process.env.KNOWLEDGE_EMBEDDING_MODEL ?? "text-embedding-3-small").trim();
-      const embDim = Math.max(64, Math.min(4096, Number(process.env.MEMORY_EMBEDDING_DIMENSIONS ?? process.env.KNOWLEDGE_EMBEDDING_DIMENSIONS ?? 1536)));
-      const embTimeout = Math.max(1000, Number(process.env.MEMORY_EMBEDDING_TIMEOUT_MS ?? process.env.KNOWLEDGE_EMBEDDING_TIMEOUT_MS ?? 5000));
-
-      // 获取查询向量
-      const url = embEndpoint.replace(/\/$/, "") + "/v1/embeddings";
-      const headers: Record<string, string> = { "content-type": "application/json" };
-      if (embApiKey) headers["authorization"] = `Bearer ${embApiKey}`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), embTimeout);
-      try {
-        const payload: any = { input: [params.query], model: embModel };
-        if (embDim) payload.dimensions = embDim;
-        const embRes = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload), signal: controller.signal });
-        if (embRes.ok) {
-          const embJson = (await embRes.json()) as Record<string, unknown>;
-          const firstData = Array.isArray(embJson?.data) && embJson.data[0];
-          if (firstData && Array.isArray(firstData.embedding)) {
-            queryEmbeddingVec = firstData.embedding as number[];
-          }
-        }
-      } finally {
-        clearTimeout(timer);
-      }
-
-      // 使用 query embedding 对带有 dense vector 的记忆做 cosine 相似度排序
-      if (queryEmbeddingVec && queryEmbeddingVec.length > 0) {
-        const denseModelRef = `${embModel}:${embDim}`;
-        const denseIdx = scopeNextIdx;
-        const denseRes = await params.pool.query(
-          `
-            SELECT *, 'dense_vector' AS _stage, embedding_vector
-            FROM memory_entries
-            WHERE ${scopeWhereClause}
-              AND embedding_vector IS NOT NULL
-              AND embedding_model_ref = $${denseIdx}
-            ORDER BY embedding_updated_at DESC NULLS LAST
-            LIMIT $${denseIdx + 1}
-          `,
-          [...scopeArgs, denseModelRef, vecLimit],
-        );
-        denseRows = (denseRes.rows as Record<string, unknown>[]).map((r) => {
-          // 解析 JSONB 向量并计算 cosine 相似度
-          let vec: number[] = [];
-          try {
-            vec = typeof r.embedding_vector === "string" ? JSON.parse(r.embedding_vector) : (Array.isArray(r.embedding_vector) ? r.embedding_vector : []);
-          } catch (err) { _logger.warn("embedding_vector JSON.parse failed", { err: (err as Error)?.message }); vec = []; }
-          const cosine = cosineSimilarity(queryEmbeddingVec!, vec);
-          return { ...r, _dense_score: cosine };
-        }).filter((r) => r._dense_score > (Number(process.env.MEMORY_DENSE_COSINE_THRESHOLD) || 0.25)); // 过滤低相似度
-      }
+    if (queryEmbeddingVec && queryEmbeddingVec.length > 0) {
+      const denseModelRef = `${embConfig.model}:${embConfig.dimensions}`;
+      const denseIdx = scopeNextIdx;
+      const denseRes = await params.pool.query(
+        `
+          SELECT *, 'dense_vector' AS _stage, embedding_vector
+          FROM memory_entries
+          WHERE ${scopeWhereClause}
+            AND embedding_vector IS NOT NULL
+            AND embedding_model_ref = $${denseIdx}
+          ORDER BY embedding_updated_at DESC NULLS LAST
+          LIMIT $${denseIdx + 1}
+        `,
+        [...scopeArgs, denseModelRef, vecLimit],
+      );
+      denseRows = (denseRes.rows as Record<string, unknown>[]).map((r) => {
+        // 解析 JSONB 向量并计算 cosine 相似度
+        let vec: number[] = [];
+        try {
+          vec = typeof r.embedding_vector === "string" ? JSON.parse(r.embedding_vector) : (Array.isArray(r.embedding_vector) ? r.embedding_vector : []);
+        } catch (err) { _logger.warn("embedding_vector JSON.parse failed", { err: (err as Error)?.message }); vec = []; }
+        const cosine = cosineSimilarity(queryEmbeddingVec!, vec);
+        return { ...r, _dense_score: cosine };
+      }).filter((r) => r._dense_score > (Number(process.env.MEMORY_DENSE_COSINE_THRESHOLD) || 0.25)); // 过滤低相似度
     }
   } catch (err) {
         _logger.warn("Dense vector recall failed, falling back to other channels", { err: (err as Error)?.message });
@@ -1229,35 +1265,10 @@ export async function searchMemory(params: {
   try {
     const pgvectorEnabled = String(process.env.MEMORY_PGVECTOR_ENABLED ?? "").trim().toLowerCase();
     if (pgvectorEnabled === "true" || pgvectorEnabled === "1") {
-      // 需要查询向量（复用 Stage 2b 获取的 queryEmbeddingVec，或重新获取）
+      // 复用已获取的 queryEmbeddingVec，若为空则重试
       let pgQueryVec = queryEmbeddingVec;
       if (!pgQueryVec) {
-        const embEndpoint = String(process.env.MEMORY_EMBEDDING_ENDPOINT ?? process.env.KNOWLEDGE_EMBEDDING_ENDPOINT ?? "").trim();
-        if (embEndpoint) {
-          const embApiKey = String(process.env.MEMORY_EMBEDDING_API_KEY ?? process.env.KNOWLEDGE_EMBEDDING_API_KEY ?? "").trim() || null;
-          const embModel = String(process.env.MEMORY_EMBEDDING_MODEL ?? process.env.KNOWLEDGE_EMBEDDING_MODEL ?? "text-embedding-3-small").trim();
-          const embDim = Math.max(64, Math.min(4096, Number(process.env.MEMORY_EMBEDDING_DIMENSIONS ?? process.env.KNOWLEDGE_EMBEDDING_DIMENSIONS ?? 1536)));
-          const embTimeout = Math.max(1000, Number(process.env.MEMORY_EMBEDDING_TIMEOUT_MS ?? process.env.KNOWLEDGE_EMBEDDING_TIMEOUT_MS ?? 5000));
-          const url = embEndpoint.replace(/\/$/, "") + "/v1/embeddings";
-          const headers: Record<string, string> = { "content-type": "application/json" };
-          if (embApiKey) headers["authorization"] = `Bearer ${embApiKey}`;
-          const ctrl = new AbortController();
-          const tmr = setTimeout(() => ctrl.abort(), embTimeout);
-          try {
-            const payload: any = { input: [params.query], model: embModel };
-            if (embDim) payload.dimensions = embDim;
-            const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload), signal: ctrl.signal });
-            if (resp.ok) {
-              const json = (await resp.json()) as Record<string, unknown>;
-              const d0 = Array.isArray(json?.data) && json.data[0];
-              if (d0 && Array.isArray(d0.embedding)) {
-                pgQueryVec = d0.embedding as number[];
-              }
-            }
-          } finally {
-            clearTimeout(tmr);
-          }
-        }
+        pgQueryVec = await fetchQueryEmbedding(embConfig, params.query);
       }
 
       if (pgQueryVec && pgQueryVec.length > 0) {
@@ -1370,19 +1381,20 @@ export async function searchMemory(params: {
   scored.sort((a, b) => (b._score as number) - (a._score as number));
   const topEntries = scored.slice(0, params.limit).map((r) => toEntry(r));
 
-  // ── 正式解密：通过 API 侧 memoryEncryption 桥接层对密文透明解密 ──
-  const evidence: Array<{ id: string; type: string; scope: string; title: string | null; snippet: string; createdAt: string; conflictMarker: string[] | null; resolutionStatus: string | null }> = [];
-  for (const e of topEntries) {
-    const decrypted = await decryptMemoryContent({
-      pool: params.pool,
-      tenantId: params.tenantId,
-      value: e.contentText,
-      options: { onFailure: "placeholder" },
-    });
+  // ── 正式解密：通过批量解密函数对密文透明解密 ──
+  const decryptMap = await decryptMemoryContents({
+    pool: params.pool,
+    tenantId: params.tenantId,
+    entries: topEntries.map(e => ({ key: e.id, value: e.contentText })),
+    options: { onFailure: "placeholder" },
+  });
+
+  const evidence = topEntries.map(e => {
+    const decrypted = decryptMap.get(e.id) ?? "";
     const snippetRaw = (e.title ? `${e.title}\n` : "") + decrypted;
     const clipped = snippetRaw.slice(0, 500);
     const redacted = redactValue(clipped);
-    evidence.push({
+    return {
       id: e.id,
       type: e.type,
       scope: e.scope,
@@ -1391,8 +1403,8 @@ export async function searchMemory(params: {
       createdAt: e.createdAt,
       conflictMarker: e.conflictMarker,
       resolutionStatus: e.resolutionStatus != null ? String(e.resolutionStatus) : null,
-    });
-  }
+    };
+  });
 
   return {
     evidence,

@@ -8,7 +8,7 @@ import { Badge, Card, PageHeader, Table, StructuredData, getHelpHref } from "@/c
 import { type ApiError, toApiError, errText } from "@/lib/apiError";
 import { numberField, stringField, toDisplayText, toRecord } from "@/lib/viewData";
 
-type DocRow = { id: string; title: string; sourceType: string; version: number; status: string; contentDigest: string; tags: unknown; createdAt: string; updatedAt: string };
+type DocRow = { id: string; title: string; sourceType: string; version: number; status: string; contentDigest: string; tags: unknown; createdAt: string; updatedAt: string; indexStatus?: string | null };
 type DocsResp = ApiError & { documents?: DocRow[]; total?: number };
 
 type InitialData = { status: number; json: unknown };
@@ -30,6 +30,7 @@ function normalizeDocsResp(value: unknown): DocsResp | null {
           tags: row.tags ?? null,
           createdAt: toDisplayText(row.createdAt),
           updatedAt: toDisplayText(row.updatedAt),
+          indexStatus: typeof row.indexStatus === "string" ? row.indexStatus : null,
         });
         return acc;
       }, [])
@@ -377,13 +378,14 @@ export default function KnowledgeDocumentsClient(props: { locale: string; initia
               <th align="left">{t(props.locale, "gov.knowledgeDocs.col.sourceType")}</th>
               <th align="left">{t(props.locale, "gov.knowledgeDocs.col.version")}</th>
               <th align="left">{t(props.locale, "gov.knowledgeDocs.col.status")}</th>
+              <th align="left">{t(props.locale, "gov.knowledgeDocs.col.indexStatus")}</th>
               <th align="left">{t(props.locale, "gov.knowledgeDocs.col.updatedAt")}</th>
               <th align="left">{t(props.locale, "gov.knowledgeDocs.col.actions")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--sl-muted)", padding: 24, fontStyle: "italic" }}>{t(props.locale, "widget.noData")}</td></tr>
                 ) : paged.map((r, idx) => {
               const id = r.id || String(idx);
               return (
@@ -395,6 +397,20 @@ export default function KnowledgeDocumentsClient(props: { locale: string; initia
                   <td>{toDisplayText(r.version ?? "-")}</td>
                   <td>
                     <Badge>{statusLabel(r.status || "-", props.locale)}</Badge>
+                  </td>
+                  <td>
+                    <Badge tone={
+                      r.indexStatus === "succeeded" ? "success"
+                      : r.indexStatus === "failed" ? "danger"
+                      : r.indexStatus === "queued" || r.indexStatus === "running" ? "warning"
+                      : "neutral"
+                    }>
+                      {r.indexStatus === "succeeded" ? (props.locale === "en-US" ? "Indexed" : "已索引")
+                       : r.indexStatus === "queued" ? (props.locale === "en-US" ? "Queued" : "待索引")
+                       : r.indexStatus === "running" ? (props.locale === "en-US" ? "Indexing" : "索引中")
+                       : r.indexStatus === "failed" ? (props.locale === "en-US" ? "Failed" : "索引失败")
+                       : (props.locale === "en-US" ? "Pending" : "待处理")}
+                    </Badge>
                   </td>
                   <td>{fmtDateTime(r.updatedAt, props.locale)}</td>
                   <td>

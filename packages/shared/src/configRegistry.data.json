@@ -221,5 +221,10 @@
   { "envKey": "SCHEDULER_MAX_CONCURRENT_PER_TENANT", "level": "runtime", "valueType": "number", "defaultValue": "20", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Maximum concurrent agent loops per tenant" },
   { "envKey": "SCHEDULER_MAX_CONCURRENT_PER_SPACE", "level": "runtime", "valueType": "number", "defaultValue": "10", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Maximum concurrent agent loops per space" },
   { "envKey": "SCHEDULER_PREEMPTION_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "3", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Priority gap threshold to allow task preemption" },
-  { "envKey": "INTENT_CN_COMPOUND_WORDS", "level": "runtime", "valueType": "string", "defaultValue": "", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Comma-separated extra Chinese compound words for intent keyword extraction" }
+  { "envKey": "INTENT_CN_COMPOUND_WORDS", "level": "runtime", "valueType": "string", "defaultValue": "", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Comma-separated extra Chinese compound words for intent keyword extraction" },
+
+  { "envKey": "STRATEGY_RECALL_CONFIDENCE_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.65", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Minimum confidence for unconditional strategy recall (below this, requires minhash similarity match)" },
+  { "envKey": "STRATEGY_RECALL_LIMIT", "level": "runtime", "valueType": "number", "defaultValue": "5", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Maximum number of procedural strategies recalled per iteration" },
+  { "envKey": "STRATEGY_RECALL_MAX_CHARS", "level": "runtime", "valueType": "number", "defaultValue": "2000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Maximum total characters for recalled strategy text" },
+  { "envKey": "STRATEGY_RECALL_DECAY_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.1", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Minimum decay_score for strategy to be eligible for recall" }
 ]

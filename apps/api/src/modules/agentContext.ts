@@ -53,8 +53,10 @@ const KNOWLEDGE_RECALL_LIMIT = 3;
 const KNOWLEDGE_RECALL_MAX_CHARS = 2000;
 
 /** P2: 策略记忆召回配置 */
-const STRATEGY_RECALL_LIMIT = 5;
-const STRATEGY_RECALL_MAX_CHARS = 2000;
+const STRATEGY_RECALL_LIMIT = Math.max(1, Number(process.env.STRATEGY_RECALL_LIMIT) || 5);
+const STRATEGY_RECALL_MAX_CHARS = Math.max(200, Number(process.env.STRATEGY_RECALL_MAX_CHARS) || 2000);
+const CONFIDENCE_THRESHOLD = Math.max(0, Number(process.env.STRATEGY_RECALL_CONFIDENCE_THRESHOLD) || 0.65);
+const DECAY_THRESHOLD = Math.max(0, Number(process.env.STRATEGY_RECALL_DECAY_THRESHOLD) || 0.1);
 
 function knowledgeRecallLimit() {
   const raw = Number(process.env.AGENT_KNOWLEDGE_RECALL_LIMIT ?? String(KNOWLEDGE_RECALL_LIMIT));
@@ -172,6 +174,48 @@ async function decomposeQuery(message: string, app?: FastifyInstance): Promise<D
     implicitConstraints: [],
   };
   return fallback;
+}
+
+// ─── 交错轮询截断算法 ─────────────────────────────────────────────
+
+/**
+ * 交错轮询合并：按 type 分组，每轮从每个类型组取 1 条，
+ * 组间按最高分（score 字段）降序排列，确保高相关性类型优先。
+ * 第 1 轮 = 每组 top-1，第 2 轮 = 每组 top-2，依次类推。
+ */
+export function interleavedRoundRobin<T extends { type?: string | null; score?: number }>(
+  items: T[],
+): T[] {
+  // 按 type 分组，每组内保持原始顺序
+  const byType = new Map<string, T[]>();
+  for (const e of items) {
+    const key = (e.type as string) ?? "memory";
+    if (!byType.has(key)) byType.set(key, []);
+    byType.get(key)!.push(e);
+  }
+
+  const sorted: T[] = [];
+  let round = 0;
+  let added = true;
+  while (added) {
+    added = false;
+    const groups = [...byType.entries()]
+      .filter(([, arr]) => arr.length > round)
+      .sort((a, b) => {
+        // 按各组最高分（第 0 条）降序排列
+        const scoreA = (a[1][0] as any)?.score ?? 0;
+        const scoreB = (b[1][0] as any)?.score ?? 0;
+        return scoreB - scoreA;
+      });
+    for (const [, arr] of groups) {
+      if (round < arr.length) {
+        sorted.push(arr[round]!);
+        added = true;
+      }
+    }
+    round++;
+  }
+  return sorted;
 }
 
 // ─── 记忆召回 ─────────────────────────────────────────────────────
@@ -293,8 +337,6 @@ export async function recallRelevantMemory(params: {
     // ─── P2: 分层召回与相关性过滤 ───
     // 1. 相关性评分：使用 minhash overlap 作为轻量相关性指标
     const queryMinhash = computeMinhash(params.message.slice(0, 500));
-    const RELEVANCE_THRESHOLD = 0.3;
-
     const scoredEvidence = allEvidence.map(e => {
       // 基于 snippet 文本计算 minhash overlap 作为相关性分数
       const snippetText = (e.title ? e.title + " " : "") + (e.snippet ?? "");
@@ -305,7 +347,13 @@ export async function recallRelevantMemory(params: {
       const lexicalHit = snippetText.toLowerCase().includes(queryLower) ? 0.4 : 0;
       const relevanceScore = Math.min(1, minhashScore + lexicalHit);
       return { ...e, _relevanceScore: relevanceScore };
-    }).filter(e => e._relevanceScore >= RELEVANCE_THRESHOLD);
+    });
+
+    // 自适应阈值：取最高分的一定比例作为截断线
+    const scores = scoredEvidence.map(e => e._relevanceScore);
+    const maxScore = Math.max(...scores, 0.01);
+    const adaptiveThreshold = maxScore * 0.3;
+    const filtered = scoredEvidence.filter(e => e._relevanceScore >= adaptiveThreshold);
 
     // 2. 分层注入：按 priority 标签分组（由 decomposeQuery 二阶段检索赋予）
     // evidence 来自不同子查询——使用查询顺序推断优先级
@@ -317,11 +365,11 @@ export async function recallRelevantMemory(params: {
     }
 
     // 标记 evidence 的优先级：基于其 snippet 与各 sub-query 的匹配度
-    type PrioritizedEvidence = typeof scoredEvidence[number] & { _priority: 'critical' | 'supporting' | 'other' };
+    type PrioritizedEvidence = typeof filtered[number] & { _priority: 'critical' | 'supporting' | 'other' };
     let prioritized: PrioritizedEvidence[];
 
     if (decomposed && decomposed.subQueries.length > 1) {
-      prioritized = scoredEvidence.map(e => {
+      prioritized = filtered.map(e => {
         const snippetLower = ((e.title ?? "") + " " + (e.snippet ?? "")).toLowerCase();
         let bestPriority: 'other' = 'other';
         for (const sq of decomposed!.subQueries) {
@@ -335,7 +383,7 @@ export async function recallRelevantMemory(params: {
       });
     } else {
       // 无分解结果时，全部视为 critical
-      prioritized = scoredEvidence.map(e => ({ ...e, _priority: 'critical' as const }));
+      prioritized = filtered.map(e => ({ ...e, _priority: 'critical' as const }));
     }
 
     // 3. 按 priority 分组并按预算分配结果数
@@ -372,13 +420,8 @@ export async function recallRelevantMemory(params: {
     const recalledIds = evidence.map(e => e.id);
     touchMemoryAccess({ pool: params.pool, tenantId: params.tenantId, memoryIds: recalledIds }).catch(() => {});
 
-    // 截断优先级排序：identity/profile/user_info 类型优先保留，其余按分层顺序
-    const priorityTypes = new Set(["identity", "profile", "user_info"]);
-    const sorted = [...evidence].sort((a, b) => {
-      const ap = priorityTypes.has(a.type) ? 1 : 0;
-      const bp = priorityTypes.has(b.type) ? 1 : 0;
-      return bp - ap; // 优先类型排前，同优先级保持分层注入顺序
-    });
+    // ── 相关性优先 + 类型多样性交错轮询 ──
+    const sorted = interleavedRoundRobin(evidence);
 
     let totalChars = 0;
     const lines: string[] = [];
@@ -491,10 +534,10 @@ export async function recallProceduralStrategies(params: {
          AND memory_class = 'procedural'
          AND type = 'strategy'
          AND deleted_at IS NULL
-         AND decay_score > 0.1
+         AND decay_score > $3
        ORDER BY confidence DESC, created_at DESC
-       LIMIT $3`,
-      [params.tenantId, params.spaceId, limit],
+       LIMIT $4`,
+      [params.tenantId, params.spaceId, DECAY_THRESHOLD, limit],
     );
 
     const rows = res.rows ?? [];
@@ -503,7 +546,7 @@ export async function recallProceduralStrategies(params: {
     // 元数据过滤：高置信度无条件保留 + minhash 语义匹配
     const goalMinhash = computeMinhash(goalSlice);
     const relevant = rows.filter(r => {
-      if (r.confidence >= 0.8) return true;
+      if (r.confidence >= CONFIDENCE_THRESHOLD) return true;
       const mh = Array.isArray(r.embedding_minhash) ? r.embedding_minhash : [];
       const strategyOverlap = Number(process.env.MEMORY_STRATEGY_OVERLAP_THRESHOLD) || 0.15;
       if (mh.length && minhashOverlapScore(goalMinhash, mh) >= strategyOverlap) return true;

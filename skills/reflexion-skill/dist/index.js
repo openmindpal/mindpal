@@ -156,7 +156,6 @@ function reflectLocal(goal, outcome, steps, totalDurationMs, opts) {
   }
 
   const successRate = totalSteps > 0 ? succeeded / totalSteps : 0;
-  const confidence = outcome === "succeeded" ? 0.6 : failed > 0 ? 0.7 : 0.5;
 
   const lesson = outcome === "succeeded"
     ? `任务"${(goal || "").slice(0, 30)}"成功，${succeeded}步完成，成功率${Math.round(successRate * 100)}%`
@@ -178,8 +177,20 @@ function reflectLocal(goal, outcome, steps, totalDurationMs, opts) {
     if (outcome === "succeeded" && totalSteps > 0 && totalSteps <= 8) {
       parts.push(`当前工具链路有效（${succeeded}/${totalSteps} 成功），可作为同类任务的参考执行路径`);
     }
+    if (parts.length === 0 && totalSteps > 0) {
+      const toolChain = [...new Set(steps.map(s => s.toolRef).filter(Boolean))];
+      if (toolChain.length > 0) {
+        parts.push(
+          `工具链路[${toolChain.slice(0, 3).join(",")}]在此类任务中表现良好` +
+          `（${succeeded}/${totalSteps}成功，耗时${Math.round((totalDurationMs || 0) / 1000)}s），可作为同类任务首选方案`
+        );
+      }
+    }
     strategy = parts.length > 0 ? parts.join("；") : lesson;
   }
+
+  const baseConf = outcome === 'succeeded' ? 0.7 : failed > 0 ? 0.65 : 0.5;
+  const successBonus = totalSteps > 0 ? (succeeded / totalSteps) * 0.15 : 0;
 
   return {
     reflection: {
@@ -191,7 +202,7 @@ function reflectLocal(goal, outcome, steps, totalDurationMs, opts) {
     },
     lesson: lesson.slice(0, 200),
     strategy: strategy.slice(0, 400),
-    confidence,
+    confidence: Math.min(0.9, baseConf + successBonus),
   };
 }
 
