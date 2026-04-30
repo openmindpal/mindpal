@@ -7,13 +7,16 @@
 import { runAgentLoop } from "./agentLoop";
 import type { CollabAgentRole, AgentState, CollabOrchestratorParams } from "./collabTypes";
 import { readCollabEnvelopes, buildEnvelopeContext, writeCollabEnvelope } from "./collabEnvelope";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, collabConfig } from "@openslin/shared";
 
 const logger = new StructuredLogger({ module: "collabStrategies" });
 
 // ── 结果注入校验 ────────────────────────────────────────────────
 
-const MAX_ENVELOPE_SIZE = 1_048_576; // 1MB default, metadata-driven
+/** Envelope 结果最大字节数（governance > env > default 三级配置） */
+function getMaxEnvelopeSize(): number {
+  return collabConfig("COLLAB_MAX_ENVELOPE_SIZE");
+}
 
 function validateEnvelope(envelope: unknown): { valid: boolean; reason?: string } {
   if (!envelope || typeof envelope !== "object") return { valid: false, reason: "envelope_null_or_invalid" };
@@ -21,7 +24,7 @@ function validateEnvelope(envelope: unknown): { valid: boolean; reason?: string 
   if (!e.agentId || typeof e.agentId !== "string") return { valid: false, reason: "missing_agentId" };
   if (e.result === undefined) return { valid: false, reason: "missing_result" };
   const size = JSON.stringify(e.result).length;
-  if (size > MAX_ENVELOPE_SIZE) return { valid: false, reason: `result_too_large(${size}>${MAX_ENVELOPE_SIZE})` };
+  if (size > getMaxEnvelopeSize()) return { valid: false, reason: `result_too_large(${size}>${getMaxEnvelopeSize()})` };
   return { valid: true };
 }
 

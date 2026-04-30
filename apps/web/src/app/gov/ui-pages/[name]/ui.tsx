@@ -41,9 +41,6 @@ function normalizePagePayload(value: unknown) {
 }
 
 function inferSource(name: string, draft: any, released: any): string {
-  if (name.startsWith("nl2ui.")) return "nl2ui";
-  const p = draft?.params ?? released?.params;
-  if (p?.nl2uiConfig) return "nl2ui";
   if (name.match(/^[a-z_]+\.(list|detail|new|edit)$/)) return "template";
   return "manual";
 }
@@ -180,9 +177,7 @@ export default function GovUiPageDetailClient(props: { locale: string; name: str
     });
   }
 
-  const sourceStyle: React.CSSProperties = source === "nl2ui"
-    ? { background: "#ede9fe", color: "#7c3aed", padding: "2px 8px", borderRadius: 4, fontSize: 12 }
-    : source === "template"
+  const sourceStyle: React.CSSProperties = source === "template"
     ? { background: "#dcfce7", color: "#16a34a", padding: "2px 8px", borderRadius: 4, fontSize: 12 }
     : { background: "#f1f5f9", color: "#64748b", padding: "2px 8px", borderRadius: 4, fontSize: 12 };
 

@@ -6,7 +6,7 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import type { GoalGraph, WorldState, FailureDiagnosis, FallbackImpact } from "@openslin/shared";
+import type { GoalGraph, WorldState, FailureDiagnosis, FallbackImpact, ReplanAction } from "@openslin/shared";
 import { ErrorCategory } from "@openslin/shared";
 import type { AgentDecision, StepObservation, ExecutionConstraints } from "./loopTypes";
 import type { VerificationResult } from "./verifierAgent";
@@ -272,6 +272,21 @@ export async function handleToolCallAction(params: {
 /*  失败诊断生成                                                        */
 /* ================================================================== */
 
+/** P0: 基于失败类型生成建议恢复动作（框架模板，具体值由后续 LLM 填充） */
+function buildSuggestedActions(failureType: string, isRetryable: boolean): ReplanAction[] {
+  if (!isRetryable) return [{ type: "abort_branch", reason: failureType }];
+  const ACTIONS_BY_TYPE: Record<string, ReplanAction[]> = {
+    permission_denied:  [{ type: "substitute_tool", toolId: "" }],
+    tool_unavailable:   [{ type: "substitute_tool", toolId: "" }],
+    precondition_unmet: [{ type: "retry_with_params", params: {} }],
+    timeout:            [{ type: "retry_with_params", params: { timeout_multiplier: 2 } }],
+    output_invalid:     [{ type: "decompose_further", subGoals: [] }],
+    environment_changed:[{ type: "skip_and_compensate", compensationPlan: "" }],
+    collab_error:       [{ type: "retry_with_params", params: {} }],
+  };
+  return ACTIONS_BY_TYPE[failureType] ?? [];
+}
+
 /** errorCategory → failureType 映射表 */
 const ERROR_CATEGORY_TO_FAILURE: Record<string, { failureType: string; isRetryable: boolean }> = {
   [ErrorCategory.GOVERNANCE_DENIED]:       { failureType: "permission_denied",  isRetryable: false },
@@ -307,6 +322,6 @@ function diagnoseFailure(
     affectedGoalId: goalId,
     rootCause,
     isRetryable,
-    suggestedActions: [],
+    suggestedActions: buildSuggestedActions(failureType, isRetryable),
   };
 }

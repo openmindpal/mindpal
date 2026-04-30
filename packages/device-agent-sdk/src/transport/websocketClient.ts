@@ -27,6 +27,9 @@ import {
   type DeviceAttachment,
   type DeviceMultimodalCapabilities,
   type DeviceMultimodalPolicy,
+  type DeviceCapabilityDescriptor,
+  type SensorCapability,
+  type ActuatorCapability,
   // V2 安全握手
   type DeviceSecurityPolicy,
   type HandshakeSecurityExt,
@@ -136,6 +139,8 @@ export class WebSocketDeviceAgent {
   /** P2: 服务端下发的多模态策略 */
   private _multimodalPolicy: DeviceMultimodalPolicy | null = null;
   private _multimodalCapabilities: DeviceMultimodalCapabilities | null = null;
+  /** P3: OS级设备能力描述符 */
+  private _capabilityDescriptor: DeviceCapabilityDescriptor | null = null;
   private _deviceResponseCallbacks = new Map<string, {
     onChunk: (chunk: string) => void;
     onDone: () => void;
@@ -312,6 +317,16 @@ export class WebSocketDeviceAgent {
 
   setMultimodalCapabilities(caps: DeviceMultimodalCapabilities): void {
     this._multimodalCapabilities = caps;
+  }
+
+  /** P3: 设置 OS级设备能力描述符（端侧探测后调用） */
+  setCapabilityDescriptor(desc: DeviceCapabilityDescriptor): void {
+    this._capabilityDescriptor = desc;
+  }
+
+  /** P3: 获取当前设备能力描述符 */
+  get capabilityDescriptor(): DeviceCapabilityDescriptor | null {
+    return this._capabilityDescriptor;
   }
 
   get multimodalPolicy(): DeviceMultimodalPolicy | null {
@@ -493,6 +508,7 @@ export class WebSocketDeviceAgent {
     const handshake: ProtocolHandshake & {
       multimodalCapabilities?: DeviceMultimodalCapabilities;
       securityExt?: HandshakeSecurityExt;
+      capabilityDescriptor?: DeviceCapabilityDescriptor;
     } = {
       type: "protocol.handshake",
       protocolVersion: DEVICE_PROTOCOL_VERSION,
@@ -501,6 +517,10 @@ export class WebSocketDeviceAgent {
     };
     if (this._multimodalCapabilities) {
       handshake.multimodalCapabilities = this._multimodalCapabilities;
+    }
+    // P3: 携带 OS级设备能力描述符
+    if (this._capabilityDescriptor) {
+      handshake.capabilityDescriptor = this._capabilityDescriptor;
     }
     try {
       const keyPair = generateECDHKeyPair();
@@ -726,4 +746,41 @@ export async function createWebSocketDeviceAgent(
   const agent = new WebSocketDeviceAgent(config, confirmFn);
   await agent.connect();
   return agent;
+}
+
+// ────────────────────────────────────────────────────────────────
+// P3: 端侧设备能力探测
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * 端侧设备能力探测——通过环境变量/配置判断设备能力，不做实际硬件检测。
+ * 生成 DeviceCapabilityDescriptor 用于 WS 握手时上报云端。
+ */
+export function probeDeviceModalities(): DeviceCapabilityDescriptor {
+  const sensors: SensorCapability[] = [];
+  const actuators: ActuatorCapability[] = [];
+
+  // 检测麦克风（设备代理默认有音频能力）
+  sensors.push({ type: "microphone", id: "mic_default", config: { sampleRate: 16000, channels: 1 } });
+
+  // 检测扬声器
+  actuators.push({ type: "speaker", id: "spk_default", config: {} });
+
+  // 检测摄像头（通过环境变量判断）
+  if (process.env.DEVICE_HAS_CAMERA !== "false") {
+    sensors.push({ type: "camera", id: "cam_default", config: { resolution: "640x480", fps: 30 } });
+  }
+
+  // 设备类型从环境变量读取
+  const deviceType = (process.env.DEVICE_TYPE as DeviceCapabilityDescriptor["deviceType"]) || "generic";
+
+  return {
+    deviceType,
+    capabilities: {
+      sensors,
+      actuators,
+      compute: { edgeInferenceMs: parseInt(process.env.EDGE_INFERENCE_MS ?? "100", 10) },
+    },
+    protocols: ["v1"],
+  };
 }

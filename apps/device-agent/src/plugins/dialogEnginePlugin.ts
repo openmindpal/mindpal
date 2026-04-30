@@ -58,7 +58,13 @@ function calcRms(pcm: Buffer): number {
   return sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
 }
 
-/** 自适应 VAD —— EMA平滑 + 动态阈值 + 静默追踪，零外部依赖 */
+/** VAD feed() 返回值类型 */
+interface VadResult {
+  event: "speech_start" | "speech_continue" | "speech_end" | "silence";
+  confidence: number;
+}
+
+/** 自适应 VAD —— EMA平滑 + 环境自适应阈值 + 静默追踪 + 置信度评分，零外部依赖 */
 class AdaptiveVad {
   private emaEnergy = 0;
   private ambientEnergy = 0;
@@ -66,11 +72,33 @@ class AdaptiveVad {
   private silenceSince = 0;
   private readonly smoothingFactor: number;
   private readonly silenceThresholdMs: number;
-  private readonly adaptiveRatio = 2.5;
+  private adaptiveRatio = 2.5;
 
-  constructor(cfg?: { silenceThresholdMs?: number; smoothingFactor?: number }) {
+  // 环境噪声基线
+  private noiseFloor = 0;
+  private readonly noiseCalibrationMs: number;
+  private calibrationSamples: number[] = [];
+  private calibrated = false;
+
+  // 动态灵敏度
+  private readonly sensitivityProfile: "quiet" | "normal" | "noisy" | "auto";
+
+  // 语音段追踪
+  private speechSegmentStart = 0;
+  private readonly minSpeechDurationMs: number;
+
+  constructor(cfg?: {
+    silenceThresholdMs?: number;
+    smoothingFactor?: number;
+    noiseCalibrationMs?: number;
+    minSpeechDurationMs?: number;
+    sensitivityProfile?: "quiet" | "normal" | "noisy" | "auto";
+  }) {
     this.smoothingFactor = cfg?.smoothingFactor ?? 0.3;
     this.silenceThresholdMs = cfg?.silenceThresholdMs ?? 600;
+    this.noiseCalibrationMs = cfg?.noiseCalibrationMs ?? 3000;
+    this.minSpeechDurationMs = cfg?.minSpeechDurationMs ?? 200;
+    this.sensitivityProfile = cfg?.sensitivityProfile ?? "auto";
   }
 
   reset(): void {
@@ -78,10 +106,45 @@ class AdaptiveVad {
     this.ambientEnergy = 0;
     this.speechStartedAt = 0;
     this.silenceSince = 0;
+    this.speechSegmentStart = 0;
+    // 保留校准结果，无需重新校准
   }
 
-  feed(pcm: Buffer, now: number): "speech_start" | "speech_continue" | "speech_end" | "silence" {
+  /** 根据灵敏度档位和噪声基线计算自适应比率 */
+  private computeAdaptiveRatio(): number {
+    if (this.sensitivityProfile !== "auto") {
+      switch (this.sensitivityProfile) {
+        case "quiet": return 2.0;
+        case "normal": return 2.5;
+        case "noisy": return 3.5;
+      }
+    }
+    // auto模式：根据noiseFloor动态计算
+    if (this.noiseFloor < 500) return 2.0;      // 安静环境
+    if (this.noiseFloor < 2000) return 2.5;     // 普通环境
+    return 3.5;                                  // 嘈杂环境
+  }
+
+  feed(pcm: Buffer, now: number): VadResult {
     const rms = calcRms(pcm);
+
+    // ── 校准阶段：收集环境噪声样本 ──
+    if (!this.calibrated) {
+      this.calibrationSamples.push(rms);
+      // 假设每次 feed 间隔约 200ms（与 stream_read chunkMs 对齐）
+      const elapsedMs = this.calibrationSamples.length * 200;
+      if (elapsedMs >= this.noiseCalibrationMs) {
+        this.noiseFloor = this.calibrationSamples.reduce((a, b) => a + b, 0) / this.calibrationSamples.length;
+        this.calibrated = true;
+        this.calibrationSamples = []; // 释放内存
+        this.adaptiveRatio = this.computeAdaptiveRatio();
+        // 以 noiseFloor 初始化 ambientEnergy
+        this.ambientEnergy = this.noiseFloor;
+      }
+      return { event: "silence", confidence: 0 };
+    }
+
+    // ── 核心 EMA 平滑（保持不变） ──
     this.emaEnergy = this.smoothingFactor * rms + (1 - this.smoothingFactor) * this.emaEnergy;
 
     if (!this.speechStartedAt) {
@@ -90,23 +153,39 @@ class AdaptiveVad {
 
     const threshold = Math.max(this.ambientEnergy * this.adaptiveRatio, 300);
     const isSpeech = this.emaEnergy > threshold;
+    const confidence = threshold > 0 ? Math.min(1, Math.max(0, (rms - threshold) / threshold)) : 0;
+
+    let event: VadResult["event"];
 
     if (isSpeech) {
       this.silenceSince = 0;
-      if (!this.speechStartedAt) { this.speechStartedAt = now; return "speech_start"; }
-      return "speech_continue";
+      if (!this.speechStartedAt) {
+        this.speechStartedAt = now;
+        this.speechSegmentStart = now;
+        event = "speech_start";
+      } else {
+        event = "speech_continue";
+      }
+      return { event, confidence };
     }
 
     if (this.speechStartedAt) {
       if (!this.silenceSince) this.silenceSince = now;
       if (now - this.silenceSince >= this.silenceThresholdMs) {
+        // 语音段时长检查
+        const speechDuration = now - this.speechSegmentStart;
         this.speechStartedAt = 0;
         this.silenceSince = 0;
-        return "speech_end";
+        this.speechSegmentStart = 0;
+        if (speechDuration < this.minSpeechDurationMs) {
+          // 短于最小时长，视为噪声脉冲
+          return { event: "silence", confidence: 0 };
+        }
+        return { event: "speech_end", confidence };
       }
-      return "speech_continue";
+      return { event: "speech_continue", confidence };
     }
-    return "silence";
+    return { event: "silence", confidence: 0 };
   }
 }
 
@@ -414,6 +493,9 @@ async function dialogLoop(cfg: { apiBase: string; deviceToken: string }): Promis
   const vad = new AdaptiveVad({
     silenceThresholdMs: vadCfg?.silenceThresholdMs ?? 600,
     smoothingFactor: vadCfg?.energySmoothingFactor ?? 0.3,
+    noiseCalibrationMs: vadCfg?.noiseCalibrationMs ?? 3000,
+    minSpeechDurationMs: vadCfg?.minSpeechDurationMs ?? 200,
+    sensitivityProfile: vadCfg?.sensitivityProfile ?? "auto",
   });
 
   // 尝试启动音频流式采集
@@ -493,7 +575,7 @@ async function dialogLoop(cfg: { apiBase: string; deviceToken: string }): Promis
 
       const pcm = Buffer.from(chunks[0], "base64");
       const now = Date.now();
-      const vadEvent = vad.feed(pcm, now);
+      const { event: vadEvent } = vad.feed(pcm, now);
 
       switch (vadEvent) {
         case "speech_start":

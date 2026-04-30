@@ -26,13 +26,10 @@ function makeCtx(overrides: Partial<SSEEventContext> = {}): SSEEventContext {
     setPendingToolSuggestions: vi.fn(),
     streamHasError: false,
     setStreamHasError: vi.fn(),
-    hasNl2uiResult: false,
-    setHasNl2uiResult: vi.fn(),
     hasTaskCreated: false,
     setHasTaskCreated: vi.fn(),
     hasStructuredFlowItems: false,
     setHasStructuredFlowItems: vi.fn(),
-    setNl2uiLoading: vi.fn(),
     setFlow: vi.fn(),
     setConversationId: vi.fn(),
     setActiveTask: vi.fn(),
@@ -138,21 +135,6 @@ describe("handleSSEEvent: taskCreated", () => {
     const ctx = makeCtx();
     handleSSEEvent("taskCreated", { taskId: "task-1" }, ctx);
     expect(ctx.setActiveTask).not.toHaveBeenCalled();
-  });
-});
-
-/* ═══════════ SSE nl2uiStatus event ═══════════ */
-describe("handleSSEEvent: nl2uiStatus", () => {
-  it("should set loading true on started", () => {
-    const ctx = makeCtx();
-    handleSSEEvent("nl2uiStatus", { phase: "started" }, ctx);
-    expect(ctx.setNl2uiLoading).toHaveBeenCalledWith(true);
-  });
-
-  it("should set loading false on done", () => {
-    const ctx = makeCtx();
-    handleSSEEvent("nl2uiStatus", { phase: "done" }, ctx);
-    expect(ctx.setNl2uiLoading).toHaveBeenCalledWith(false);
   });
 });
 

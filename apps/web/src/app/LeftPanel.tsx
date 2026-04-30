@@ -1,17 +1,14 @@
 "use client";
 
-import { Suspense, lazy, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { t } from "@/lib/i18n";
 import type { WorkspaceTab, RecentEntry } from "./homeHelpers";
 import ArtifactPreview from "@/components/artifact/ArtifactPreview";
-import { type Nl2UiConfig } from "@/components/nl2ui/DynamicBlockRenderer";
 import {
   IconClose, IconExternal, IconChevronLeft, IconPage, IconPin, IconDragHandle,
 } from "./HomeIcons";
 import styles from "@/styles/page.module.css";
-
-const DynamicBlockRenderer = lazy(() => import("@/components/nl2ui/DynamicBlockRenderer"));
 
 export interface LeftPanelProps {
   locale: string;
@@ -146,7 +143,7 @@ export default function LeftPanel(props: LeftPanelProps) {
               </button>
             </div>
           </div>
-          {/* Render artifact preview, nl2ui preview, or iframe */}
+          {/* Render artifact preview or iframe */}
           {visibleTab.kind === "artifact" && visibleTab.meta?.artifactData !== undefined ? (
             <div className={styles.panelContent}>
               <ArtifactPreview
@@ -154,16 +151,6 @@ export default function LeftPanel(props: LeftPanelProps) {
                 data={visibleTab.meta.artifactData}
                 locale={locale}
               />
-            </div>
-          ) : visibleTab.kind === "nl2uiPreview" && visibleTab.meta?.nl2uiConfig ? (
-            <div className={styles.panelContent}>
-              <Suspense fallback={<div style={{ padding: 16, color: "var(--sl-muted)" }}>{t(locale, "nl2ui.generating")}</div>}>
-                <DynamicBlockRenderer
-                  config={visibleTab.meta.nl2uiConfig as Nl2UiConfig}
-                  readOnly={false}
-                  locale={locale}
-                />
-              </Suspense>
             </div>
           ) : visibleTab.url ? (
             <iframe className={styles.panelFrame} src={visibleTab.url} title={visibleTab.name} sandbox="allow-scripts allow-same-origin" />

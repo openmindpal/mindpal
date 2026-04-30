@@ -1,41 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { fmtDateTime } from "@/lib/fmtDateTime";
 import { t, statusLabel } from "@/lib/i18n";
 import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { pickStr, shortId, statusTone, formatTime } from "@/lib/taskUIUtils";
 import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import { usePaginatedList } from "@/hooks/usePaginatedList";
 
 const STATUS_OPTIONS = ["running", "succeeded", "failed", "canceled", "queued", "pending", "created", "compensating", "needs_approval", "paused"] as const;
 
 type RunRow = Record<string, unknown>;
 type RunsListResponse = ApiError & { runs?: RunRow[] };
-
-function pickStr(v: unknown) {
-  return v != null ? String(v) : "";
-}
-
-function shortId(v: unknown) {
-  const s = pickStr(v);
-  if (s.length <= 16) return s;
-  return `${s.slice(0, 8)}…${s.slice(-4)}`;
-}
-
-function statusTone(s: string): "neutral" | "success" | "warning" | "danger" {
-  if (s === "succeeded") return "success";
-  if (s === "failed" || s === "canceled") return "danger";
-  if (s === "running" || s === "queued" || s === "pending" || s === "created" || s === "compensating" || s === "needs_approval") return "warning";
-  return "neutral";
-}
-
-function formatTime(v: unknown, locale: string) {
-  const formatted = fmtDateTime(v, locale);
-  if (formatted !== "—") return formatted;
-  const s = pickStr(v);
-  return s || "—";
-}
 
 export default function RunsClient(props: {
   locale: string;
@@ -43,55 +20,33 @@ export default function RunsClient(props: {
   initialStatus: number;
   initialQuery: { status?: string; updatedFrom?: string; updatedTo?: string; limit?: string };
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
   const initialRuns = (props.initial as RunsListResponse | null)?.runs;
-  const [runs, setRuns] = useState<RunRow[]>(Array.isArray(initialRuns) ? initialRuns : []);
 
   const [status, setStatus] = useState<string>(props.initialQuery.status ?? "");
   const [updatedFrom, setUpdatedFrom] = useState<string>(props.initialQuery.updatedFrom ?? "");
   const [updatedTo, setUpdatedTo] = useState<string>(props.initialQuery.updatedTo ?? "");
   const [limit, setLimit] = useState<string>(props.initialQuery.limit ?? "20");
-  const [page, setPage] = useState<number>(0);
 
-  const pageSize = useMemo(() => { const n = Number(limit); return Number.isFinite(n) && n > 0 ? n : 20; }, [limit]);
+  const initialPageSize = useMemo(() => { const n = Number(limit); return Number.isFinite(n) && n > 0 ? n : 20; }, [limit]);
 
-  const runRows = useMemo(() => runs, [runs]);
-
-  const load = useCallback(async function () {
-    setError("");
-    setBusy(true);
-    try {
+  const { data: runRows, page, setPage, pageSize, busy, error, refresh } = usePaginatedList<RunRow>({
+    fetchFn: async ({ limit: lim, offset }) => {
       const q = new URLSearchParams();
       if (status.trim()) q.set("status", status.trim());
       if (updatedFrom.trim()) q.set("updatedFrom", updatedFrom.trim());
       if (updatedTo.trim()) q.set("updatedTo", updatedTo.trim());
       const n = Number(limit);
       if (Number.isFinite(n) && n > 0) q.set("limit", String(n));
-      q.set("offset", String(page * pageSize));
+      q.set("offset", String(offset));
       const res = await apiFetch(`/runs?${q.toString()}`, { locale: props.locale, cache: "no-store" });
       const json: unknown = await res.json().catch(() => null);
-      if (!res.ok) throw toApiError(json);
+      if (!res.ok) throw new Error(errText(props.locale, toApiError(json)));
       const out = (json as RunsListResponse) ?? {};
-      setRuns(Array.isArray(out.runs) ? out.runs : []);
-    } catch (e: unknown) {
-      setError(errText(props.locale, toApiError(e)));
-    } finally {
-      setBusy(false);
-    }
-  }, [status, updatedFrom, updatedTo, limit, page, pageSize, props.locale]);
-
-  /* Auto-reload when page changes (but skip initial render) */
-  const [initialized, setInitialized] = useState(false);
-  useEffect(() => {
-    if (!initialized) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- skip initial render, mark as initialized
-      setInitialized(true); return;
-    }
-    load();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+      return Array.isArray(out.runs) ? out.runs : [];
+    },
+    pageSize: initialPageSize,
+    initialData: Array.isArray(initialRuns) ? initialRuns : [],
+  });
 
   return (
     <div style={{ padding: 24, display: "grid", gap: 16 }}>
@@ -99,7 +54,7 @@ export default function RunsClient(props: {
         title={t(props.locale, "runs.title")}
         description={error || undefined}
         actions={
-          <button disabled={busy} onClick={load}>
+          <button disabled={busy} onClick={refresh}>
             {busy ? t(props.locale, "action.loading") : t(props.locale, "action.refresh")}
           </button>
         }
@@ -127,7 +82,7 @@ export default function RunsClient(props: {
             <input value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="20" />
           </label>
           <div style={{ display: "flex", gap: 12 }}>
-            <button disabled={busy} onClick={load}>
+            <button disabled={busy} onClick={refresh}>
               {t(props.locale, "action.load")}
             </button>
           </div>

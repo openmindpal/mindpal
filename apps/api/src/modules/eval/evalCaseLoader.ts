@@ -16,7 +16,7 @@ import * as path from "path";
 import { StructuredLogger } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "evalCaseLoader" });
-import type { IntentEvalCase, Nl2UiEvalCase, KnowledgeEvalCase, DecomposeEvalCase, EvalCase } from "./evalSuite";
+import type { IntentEvalCase, KnowledgeEvalCase, DecomposeEvalCase, EvalCase } from "./evalSuite";
 
 /* ================================================================== */
 /*  1. JSON 结构类型                                                      */
@@ -36,18 +36,6 @@ interface IntentEvalCaseJson {
     expectedBehavior?: string;
     /** 端到端：验收标准 */
     acceptanceCriteria?: string;
-  };
-}
-
-interface Nl2UiEvalCaseJson {
-  id: string;
-  input: string;
-  expected: {
-    layout?: string;
-    containsComponents?: string[];
-    dataBindingEntities?: string[];
-    minConfidence?: number;
-    pageType?: "local" | "business";
   };
 }
 
@@ -88,7 +76,6 @@ interface EvalCasesJson {
   description?: string;
   updatedAt?: string;
   intent?: IntentEvalCaseJson[];
-  nl2ui?: Nl2UiEvalCaseJson[];
   knowledge?: KnowledgeEvalCaseJson[];
   decompose?: DecomposeEvalCaseJson[];
 }
@@ -103,7 +90,6 @@ interface EvalCaseSnapshot {
   loadedAt: number;
   source: "json" | "default" | "runtime_appended";
   intentCases: IntentEvalCase[];
-  nl2uiCases: Nl2UiEvalCase[];
   knowledgeCases: KnowledgeEvalCase[];
   decomposeCases: DecomposeEvalCase[];
 }
@@ -129,10 +115,6 @@ function loadJsonEvalCases(filePath: string): EvalCasesJson | null {
 /** 将 JSON 意图用例转换为带 category 的 TypeScript 类型 */
 function toIntentEvalCases(items: IntentEvalCaseJson[]): IntentEvalCase[] {
   return items.map((c) => ({ ...c, category: "intent" as const }));
-}
-
-function toNl2UiEvalCases(items: Nl2UiEvalCaseJson[]): Nl2UiEvalCase[] {
-  return items.map((c) => ({ ...c, category: "nl2ui" as const }));
 }
 
 function toKnowledgeEvalCases(items: KnowledgeEvalCaseJson[]): KnowledgeEvalCase[] {
@@ -170,12 +152,11 @@ export function initEvalCaseLoader(): EvalCaseSnapshot {
       loadedAt: Date.now(),
       source: "json",
       intentCases: json.intent ? toIntentEvalCases(json.intent) : [],
-      nl2uiCases: json.nl2ui ? toNl2UiEvalCases(json.nl2ui) : [],
       knowledgeCases: json.knowledge ? toKnowledgeEvalCases(json.knowledge) : [],
       decomposeCases: json.decompose ? toDecomposeEvalCases(json.decompose) : [],
     };
     if (process.env.NODE_ENV !== "production") {
-      const total = _snapshot.intentCases.length + _snapshot.nl2uiCases.length
+      const total = _snapshot.intentCases.length
         + _snapshot.knowledgeCases.length + _snapshot.decomposeCases.length;
           _logger.info("Loaded eval cases", { version: _snapshot.version, total, jsonPath });
     }
@@ -184,14 +165,13 @@ export function initEvalCaseLoader(): EvalCaseSnapshot {
 
   // fallback 到编译时默认值
   const {
-    intentEvalCases, nl2uiEvalCases, knowledgeEvalCases, decomposeEvalCases,
+    intentEvalCases, knowledgeEvalCases, decomposeEvalCases,
   } = require("./evalCases");
   _snapshot = {
     version: 0,
     loadedAt: Date.now(),
     source: "default",
     intentCases: intentEvalCases,
-    nl2uiCases: nl2uiEvalCases,
     knowledgeCases: knowledgeEvalCases,
     decomposeCases: decomposeEvalCases,
   };
@@ -224,7 +204,6 @@ export function appendEvalCases(cases: EvalCase[]): void {
   for (const c of cases) {
     switch (c.category) {
       case "intent": snap.intentCases.push(c as IntentEvalCase); break;
-      case "nl2ui": snap.nl2uiCases.push(c as Nl2UiEvalCase); break;
       case "knowledge": snap.knowledgeCases.push(c as KnowledgeEvalCase); break;
       case "decompose": snap.decomposeCases.push(c as DecomposeEvalCase); break;
     }
@@ -239,7 +218,6 @@ export function getAllEvalCases(): EvalCase[] {
   const snap = getEvalCaseSnapshot();
   return [
     ...snap.intentCases,
-    ...snap.nl2uiCases,
     ...snap.knowledgeCases,
     ...snap.decomposeCases,
   ];
@@ -248,11 +226,10 @@ export function getAllEvalCases(): EvalCase[] {
 /**
  * 按分类获取评测用例
  */
-export function getEvalCasesByCategory(category: "intent" | "nl2ui" | "knowledge" | "decompose"): EvalCase[] {
+export function getEvalCasesByCategory(category: "intent" | "knowledge" | "decompose"): EvalCase[] {
   const snap = getEvalCaseSnapshot();
   switch (category) {
     case "intent": return snap.intentCases;
-    case "nl2ui": return snap.nl2uiCases;
     case "knowledge": return snap.knowledgeCases;
     case "decompose": return snap.decomposeCases;
     default: return [];
@@ -266,7 +243,7 @@ export function getEvalCaseLoaderStatus(): {
   version: number;
   source: string;
   loadedAt: number;
-  counts: { intent: number; nl2ui: number; knowledge: number; decompose: number; total: number };
+  counts: { intent: number; knowledge: number; decompose: number; total: number };
 } {
   const snap = getEvalCaseSnapshot();
   return {
@@ -275,10 +252,9 @@ export function getEvalCaseLoaderStatus(): {
     loadedAt: snap.loadedAt,
     counts: {
       intent: snap.intentCases.length,
-      nl2ui: snap.nl2uiCases.length,
       knowledge: snap.knowledgeCases.length,
       decompose: snap.decomposeCases.length,
-      total: snap.intentCases.length + snap.nl2uiCases.length
+      total: snap.intentCases.length
         + snap.knowledgeCases.length + snap.decomposeCases.length,
     },
   };

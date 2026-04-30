@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiFetch, text } from "../../../lib/api";
 import { t } from "../../../lib/i18n";
 import type { FieldDef, EffectiveSchema } from "../../../lib/types";
-import { ReferencePicker } from "../../../components/nl2ui/ReferencePicker";
+import { ReferencePicker } from "../../../components/ui/ReferencePicker";
 
 function isWritable(schema: EffectiveSchema | null, k: string) {
   const f = schema?.fields?.[k];
@@ -189,12 +189,8 @@ export default function EntityEditForm(props: {
             <label key={k} style={{ display: "grid", gap: 6, marginBottom: 12 }}>
               <div style={{ fontWeight: 600 }}>{text(fields[k]?.displayName ?? k, props.locale) || k}</div>
               <ReferencePicker
-                fieldDef={{
-                  referenceEntity: fields[k]?.referenceEntity ?? "",
-                  required: fields[k]?.required,
-                  extensions: (fields[k] as any)?.extensions,
-                }}
-                value={values[k] as string | undefined}
+                options={[]}
+                value={String(values[k] ?? "")}
                 onChange={(val) => {
                   setValues((s) => ({ ...s, [k]: val }));
                   setFieldErrors((v) => {
@@ -205,7 +201,6 @@ export default function EntityEditForm(props: {
                 }}
                 disabled={saving}
                 placeholder={`${t(props.locale, "common.search")} ${fields[k]?.referenceEntity ?? "..."}`}
-                cascadeFilter={cascadeFilter}
               />
               {ferr ? <div style={{ color: "crimson" }}>{ferr}</div> : null}
             </label>

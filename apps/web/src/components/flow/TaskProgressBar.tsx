@@ -1,33 +1,11 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { type TaskProgress, type FrontendTaskQueueEntry } from "@/app/homeHelpers";
+import { type TaskProgress, type FrontendTaskQueueEntry, friendlyToolName } from "@/app/homeHelpers";
 import { t } from "@/lib/i18n";
+import { statusIcon, statusLabel } from "@/lib/taskUIUtils";
 import { getPhaseLabel, isPhaseTerminal } from "@/lib/types";
 import styles from "@/styles/flow.module.css";
-
-/* ── Helpers ─── */
-
-function statusIcon(status: string): string {
-  switch (status) {
-    case "succeeded": return "✅";
-    case "failed": return "❌";
-    case "canceled": case "deadletter": return "⛔";
-    case "running": return "⏳";
-    default: return "⏳";
-  }
-}
-
-function statusLabel(status: string, locale: string): string {
-  const keys: Record<string, string> = {
-    succeeded: "run.phase.succeeded",
-    failed: "run.phase.failed",
-    running: "run.phase.running",
-    canceled: "run.phase.canceled",
-    deadletter: "taskProgress.status.deadletter",
-  };
-  return keys[status] ? t(locale, keys[status]) : status;
-}
 
 /* ── Chevron icon ─── */
 
@@ -126,7 +104,7 @@ export function TaskProgressBar({ progress, locale, onStop, onContinue, onRetry,
                   <div className={styles.stepItem}>
                     <span className={`${styles.stepIcon} ${s.status === "succeeded" || s.status === "failed" ? styles.stepIconDone : ""}`}>{statusIcon(s.status)}</span>
                     <span className={styles.stepSeq}>{s.seq}</span>
-                    <span className={styles.stepToolRef}>{s.toolRef}</span>
+                    <span className={styles.stepToolRef}>{friendlyToolName(locale, s.toolRef)}</span>
                     <span className={`${styles.stepStatus} ${
                       s.status === "succeeded" ? styles.stepStatusSucceeded
                       : s.status === "failed" ? styles.stepStatusFailed

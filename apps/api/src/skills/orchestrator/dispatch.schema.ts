@@ -19,6 +19,8 @@ export const dispatchRequestSchema = z.object({
   conversationId: z.string().min(1).max(200).optional(),
   /** 用户显式指定的模式 */
   mode: z.enum(["auto", "answer", "execute", "collab"]).optional(),
+  /** 调用场景标识，用于控制后置增强功能（如 Schema-UI）的触发策略 */
+  contextType: z.enum(["home_chat", "workspace", "workbench"]).optional(),
   /** 语言 */
   locale: z.string().optional(),
   /** 用户选择的默认模型（可选） */
@@ -120,8 +122,6 @@ export interface DispatchResponse {
   turnId?: string;
   /** UI 指令 */
   uiDirective?: any;
-  /** NL2UI 生成结果（内联执行时返回） */
-  nl2uiResult?: any;
   /** 即时动作回执（不创建 workflow） */
   actionReceipt?: {
     status: "completed" | "suggested";

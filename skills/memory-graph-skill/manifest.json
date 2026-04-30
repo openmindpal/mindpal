@@ -39,6 +39,13 @@
       }
     }
   },
+  "semanticMeta": {
+    "operationType": "query",
+    "precisionLevel": "exact",
+    "sideEffects": [],
+    "semanticEquivalents": [],
+    "notEquivalentTo": []
+  },
   "engines": { "node": ">=18.0.0" },
   "entry": "dist/index.js"
 }

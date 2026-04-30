@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { t } from "@/lib/i18n";
@@ -19,6 +19,8 @@ type PendingApproval = {
   status: string;
   toolRef: string | null;
   requestedAt: string;
+  humanSummary?: string;
+  taskGoal?: string;
 };
 
 type FailedRun = {
@@ -47,9 +49,9 @@ type PendingActionItem =
   | { type: "failed_run"; data: FailedRun }
   | { type: "deadletter"; data: DeadletterStep };
 
-/* ─── Display limit ─── */
+/* ─── Per-group display limit ─── */
 
-const DISPLAY_LIMIT = 15;
+const GROUP_LIMIT = 5;
 
 /* ─── Helper: human-readable label for failed runs ─── */
 
@@ -81,12 +83,13 @@ function ActionItem(props: {
   if (item.type === "approval") {
     const { data } = item;
     const href = `/gov/approvals/${encodeURIComponent(data.approvalId)}?lang=${encodeURIComponent(locale)}`;
+    const label = data.humanSummary || data.taskGoal || formatToolRefLocalized(data.toolRef, locale) || t(locale, "pendingActions.type.approval");
     return (
       <div className={styles.paqActionItem}>
         <span className={`${styles.statusDot} ${styles.statusDotOrange}`} />
         <Link href={href} className={styles.paqActionContent}>
-          <span className={`${styles.actionLabel} ${styles.truncate}`}>
-            {formatToolRefLocalized(data.toolRef, locale) || t(locale, "pendingActions.type.approval")}
+          <span className={`${styles.actionLabel} ${styles.truncate}`} title={label}>
+            {label}
           </span>
         </Link>
         <span className={styles.paqActionTime}>{timeAgo(data.requestedAt, locale, "pendingActions")}</span>
@@ -254,8 +257,28 @@ export default function PendingActionsQueue(props: {
     onBadgeUpdate?.(itemCount);
   }, [itemCount, onBadgeUpdate]);
 
-  const displayItems = items.slice(0, DISPLAY_LIMIT);
-  const overflowCount = itemCount > DISPLAY_LIMIT ? itemCount - DISPLAY_LIMIT : 0;
+  /* ─── Split items into typed groups ─── */
+  const groups = useMemo(() => {
+    const approvals: PendingActionItem[] = [];
+    const failedRuns: PendingActionItem[] = [];
+    const deadletters: PendingActionItem[] = [];
+    for (const it of items) {
+      if (it.type === "approval") approvals.push(it);
+      else if (it.type === "failed_run") failedRuns.push(it);
+      else deadletters.push(it);
+    }
+    return [
+      { key: "approval" as const, label: t(locale, "pendingActions.group.approval") || "待审批", items: approvals, dot: styles.statusDotOrange },
+      { key: "failed_run" as const, label: t(locale, "pendingActions.group.failedRun") || "失败任务", items: failedRuns, dot: styles.statusDotRed },
+      { key: "deadletter" as const, label: t(locale, "pendingActions.group.deadletter") || "死信队列", items: deadletters, dot: styles.statusDotGray },
+    ].filter((g) => g.items.length > 0);
+  }, [items, locale]);
+
+  // Collapse / expand state per group
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggleCollapse = (key: string) => setCollapsed((p) => ({ ...p, [key]: !p[key] }));
+  const toggleExpand = (key: string) => setExpanded((p) => ({ ...p, [key]: !p[key] }));
 
   /* ─── Inline quick actions ─── */
 
@@ -330,27 +353,55 @@ export default function PendingActionsQueue(props: {
 
       {!loading && !error && items.length > 0 && (
         <div className={styles.paqActionList}>
-          {/* eslint-disable-next-line react-hooks/refs -- read errorMsgs ref for display */}
-          {displayItems.map((item, idx) => {
-            const id = getItemId(item);
+          {groups.map((group) => {
+            const isCollapsed = !!collapsed[group.key];
+            const isExpanded = !!expanded[group.key];
+            const visibleItems = isExpanded ? group.items : group.items.slice(0, GROUP_LIMIT);
+            const overflowN = group.items.length - GROUP_LIMIT;
             return (
-              <ActionItem
-                key={`${item.type}_${id}_${idx}`}
-                item={item}
-                locale={locale}
-                state={(actionStates[id] ?? "idle") as ActionStatus}
-                errorMsg={errorMsgs.current[id]}
-                onApprove={(aid) => handleApproval(aid, "approve")}
-                onReject={(aid) => handleApproval(aid, "reject")}
-                onRetryRun={handleRetryRun}
-              />
+              <div key={group.key} className={styles.paqGroup}>
+                <button
+                  className={styles.paqGroupHeader}
+                  onClick={() => toggleCollapse(group.key)}
+                  aria-expanded={!isCollapsed}
+                >
+                  <span className={`${styles.statusDot} ${group.dot}`} />
+                  <span className={styles.paqGroupTitle}>{group.label}</span>
+                  <span className={styles.paqGroupBadge}>{group.items.length}</span>
+                  <span className={`${styles.paqGroupArrow} ${isCollapsed ? "" : styles.paqGroupArrowOpen}`}>
+                    <IconChevronRight />
+                  </span>
+                </button>
+                {!isCollapsed && (
+                  <>
+                    {visibleItems.map((item, idx) => {
+                      const id = getItemId(item);
+                      return (
+                        <ActionItem
+                          key={`${item.type}_${id}_${idx}`}
+                          item={item}
+                          locale={locale}
+                          state={(actionStates[id] ?? "idle") as ActionStatus}
+                          errorMsg={errorMsgs.current[id]}
+                          onApprove={(aid) => handleApproval(aid, "approve")}
+                          onReject={(aid) => handleApproval(aid, "reject")}
+                          onRetryRun={handleRetryRun}
+                        />
+                      );
+                    })}
+                    {!isExpanded && overflowN > 0 && (
+                      <button
+                        className={styles.paqShowMore}
+                        onClick={() => toggleExpand(group.key)}
+                      >
+                        {(t(locale, "pendingActions.showMore") || "查看更多 (还有{n}项)").replace("{n}", String(overflowN))}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             );
           })}
-          {overflowCount > 0 && (
-            <div className={styles.overflowHint}>
-              {t(locale, "pendingActions.moreItems").replace("{n}", String(overflowCount))}
-            </div>
-          )}
         </div>
       )}
     </div>

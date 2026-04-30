@@ -45,6 +45,8 @@ import {
   startHeartbeatCleanup,
   startCrossNodeSubscriber,
   setRegistryRedis,
+  pushToDevice,
+  getDeviceConnection,
 } from "./deviceWsRegistry";
 import { subscribeDeviceChannels, type DeviceMessage } from "./modules/deviceMessageBus";
 import {
@@ -60,6 +62,8 @@ import {
   type D2DEnvelope,
 } from "./modules/crossDeviceBus";
 import { processDeviceQuery } from "./deviceMultimodalHandler";
+import { deviceCapabilityRegistry } from "./deviceCapabilityRegistry";
+import type { DeviceCapabilityDescriptor, DeviceCommand, DeviceCommandAck } from "@openslin/shared";
 
 function requireDeviceFromReq(req: any) {
   const device = req.ctx?.device;
@@ -103,7 +107,15 @@ interface DeviceWsProtocolContext {
   multimodalCapabilities?: DeviceMultimodalCapabilities;
   /** V2 安全会话 ID（存在即表示当前连接走 V2） */
   secureSessionId?: string;
+  /** OS级设备能力描述符（握手时上报） */
+  capabilityDescriptor?: DeviceCapabilityDescriptor;
 }
+
+// ── 命令 ACK 等待队列（进程级） ─────────────────────────────────
+const pendingCommands = new Map<
+  string,
+  { resolve: (ack: DeviceCommandAck) => void; timer: ReturnType<typeof setTimeout> }
+>();
 
 export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
   // 进程级：启动心跳超时清理
@@ -114,6 +126,60 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
     setRegistryRedis((app as any).redis);
     startCrossNodeSubscriber().catch(() => {});
   } catch { /* ignore */ }
+
+  // ── POST /device-agent/command — Skill 调用的统一设备命令端点 ─────
+  app.post("/device-agent/command", async (req, reply) => {
+    const cmd = req.body as DeviceCommand;
+    if (!cmd?.commandId || !cmd?.targetDeviceId || !cmd?.action) {
+      return reply.status(400).send({
+        commandId: cmd?.commandId ?? "",
+        status: "rejected",
+        latencyMs: 0,
+        result: { error: "Missing required fields: commandId, targetDeviceId, action" },
+      } satisfies DeviceCommandAck);
+    }
+
+    const conn = getDeviceConnection(cmd.targetDeviceId);
+    if (!conn || (conn.socket as any).readyState !== 1) {
+      return reply.status(404).send({
+        commandId: cmd.commandId,
+        status: "rejected",
+        latencyMs: 0,
+        result: { error: "Device not connected" },
+      } satisfies DeviceCommandAck);
+    }
+
+    const sendTs = Date.now();
+
+    // 通过 WS 转发命令到设备
+    try {
+      conn.socket.send(JSON.stringify({ type: "device_command", ...cmd }));
+    } catch (err: any) {
+      return reply.status(502).send({
+        commandId: cmd.commandId,
+        status: "failed",
+        latencyMs: Date.now() - sendTs,
+        result: { error: `WS send failed: ${err?.message}` },
+      } satisfies DeviceCommandAck);
+    }
+
+    // 等待设备 ACK（超时保护）
+    const ttl = cmd.ttlMs ?? 10_000;
+    const ack = await new Promise<DeviceCommandAck>((resolve) => {
+      const timer = setTimeout(() => {
+        pendingCommands.delete(cmd.commandId);
+        resolve({
+          commandId: cmd.commandId,
+          status: "failed",
+          latencyMs: ttl,
+          result: { error: "Command timeout" },
+        });
+      }, ttl);
+      pendingCommands.set(cmd.commandId, { resolve, timer });
+    });
+
+    return reply.send(ack);
+  });
 
   app.get("/device-agent/ws", { websocket: true }, (socket /* WebSocket */, req) => {
     // ── 鉴权 ──────────────────────────────────────────────────────
@@ -256,6 +322,20 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
               protocolCtx.multimodalCapabilities = rawCaps;
             }
 
+            // P3: 注册 OS级设备能力描述符到 deviceCapabilityRegistry
+            const capDesc = (handshake as any).capabilityDescriptor as DeviceCapabilityDescriptor | undefined
+              ?? rawCaps?.capabilityDescriptor;
+            if (capDesc && capDesc.deviceType && capDesc.capabilities) {
+              protocolCtx.capabilityDescriptor = capDesc;
+              deviceCapabilityRegistry.register(deviceId, capDesc);
+              _logger.info("device capability registered", {
+                deviceId,
+                deviceType: capDesc.deviceType,
+                sensors: capDesc.capabilities.sensors.map(s => s.type),
+                actuators: capDesc.capabilities.actuators.map(a => a.type),
+              });
+            }
+
             // ── V2 安全握手检测 ────────────────────────────────
             const securityExt = (handshake as any).securityExt as HandshakeSecurityExt | undefined;
             let securityAckExt: HandshakeAckSecurityExt | undefined;
@@ -323,20 +403,33 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
               _logger.info("V2 secure handshake established", { deviceId, sessionId });
             }
 
+            // P3: 用 deviceCapabilityRegistry 协商的策略覆盖/补充默认多模态策略
+            const negotiatedCapPolicy = protocolCtx.capabilityDescriptor
+              ? deviceCapabilityRegistry.negotiatePolicy(deviceId)
+              : {};
+
+            const baseMultimodalPolicy = protocolCtx.multimodalCapabilities ? {
+              allowedModalities: protocolCtx.multimodalCapabilities.modalities,
+              maxFileSizeBytes: protocolCtx.multimodalCapabilities.multimodalConfig?.maxFileSize ?? 5_000_000,
+              supportedFormats: protocolCtx.multimodalCapabilities.multimodalConfig?.supportedFormats ?? {},
+              streaming: protocolCtx.multimodalCapabilities.multimodalConfig?.streaming ?? null,
+              vad: protocolCtx.multimodalCapabilities.multimodalConfig?.vad ?? null,
+              videoStream: protocolCtx.multimodalCapabilities.multimodalConfig?.videoStream ?? null,
+            } : null;
+
+            // 合并策略：协商策略覆盖设备声明的默认值
+            const mergedPolicy = baseMultimodalPolicy
+              ? { ...baseMultimodalPolicy, ...negotiatedCapPolicy }
+              : (Object.keys(negotiatedCapPolicy).length > 0
+                ? { allowedModalities: negotiatedCapPolicy.allowedModalities ?? [], maxFileSizeBytes: 5_000_000, supportedFormats: {}, ...negotiatedCapPolicy }
+                : null);
+
             const ack: ProtocolHandshakeAck & { securityExt?: HandshakeAckSecurityExt } = {
               type: "protocol.handshake.ack",
               negotiatedVersion: negotiated ?? DEVICE_PROTOCOL_VERSION,
               serverVersion: DEVICE_PROTOCOL_VERSION,
               compatible,
-              // P2: 下发多模态策略（元数据驱动，仅当设备声明了多模态能力时才返回）
-              multimodalPolicy: protocolCtx.multimodalCapabilities ? {
-                allowedModalities: protocolCtx.multimodalCapabilities.modalities,
-                maxFileSizeBytes: protocolCtx.multimodalCapabilities.multimodalConfig?.maxFileSize ?? 5_000_000,
-                supportedFormats: protocolCtx.multimodalCapabilities.multimodalConfig?.supportedFormats ?? {},
-                streaming: protocolCtx.multimodalCapabilities.multimodalConfig?.streaming ?? null,
-                vad: protocolCtx.multimodalCapabilities.multimodalConfig?.vad ?? null,
-                videoStream: protocolCtx.multimodalCapabilities.multimodalConfig?.videoStream ?? null,
-              } : null,
+              multimodalPolicy: mergedPolicy as any,
             };
 
             // V2: 附加安全扩展并签名
@@ -386,6 +479,7 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
 
           case "heartbeat":
             touchDeviceHeartbeat(deviceId);
+            deviceCapabilityRegistry.heartbeat(deviceId);
             // 回复心跳 ACK
             try { socket.send(JSON.stringify({ type: "heartbeat", payload: { ts: Date.now() } })); } catch { /* ignore */ }
             break;
@@ -658,6 +752,26 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
             break;
           }
 
+          // ── 设备命令 ACK（设备→云端） ──────────────────────
+          case "device_command_ack": {
+            touchDeviceHeartbeat(deviceId);
+            const ackCommandId = String(msg?.commandId ?? "");
+            const pending = pendingCommands.get(ackCommandId);
+            if (pending) {
+              clearTimeout(pending.timer);
+              pendingCommands.delete(ackCommandId);
+              pending.resolve({
+                commandId: ackCommandId,
+                status: msg?.status ?? "completed",
+                latencyMs: typeof msg?.latencyMs === "number" ? msg.latencyMs : 0,
+                result: msg?.result,
+              } as DeviceCommandAck);
+            } else {
+              _logger.warn("device_command_ack: no pending command", { deviceId, commandId: ackCommandId });
+            }
+            break;
+          }
+
           default:
             _logger.info("unknown message type", { type, deviceId });
         }
@@ -693,6 +807,8 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
       clearTimeout(handshakeTimeout);
       // V2: 清理安全会话
       clearDeviceSessions(deviceId);
+      // P3: 注销设备能力
+      deviceCapabilityRegistry.unregister(deviceId);
       unregisterDeviceConnection(deviceId, socket as any);
       _logger.info("disconnected", { deviceId });
     });

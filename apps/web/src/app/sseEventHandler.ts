@@ -18,13 +18,10 @@ export interface SSEEventContext {
   setPendingToolSuggestions: (s: any[]) => void;
   streamHasError: boolean;
   setStreamHasError: (v: boolean) => void;
-  hasNl2uiResult: boolean;
-  setHasNl2uiResult: (v: boolean) => void;
   hasTaskCreated: boolean;
   setHasTaskCreated: (v: boolean) => void;
   hasStructuredFlowItems: boolean;
   setHasStructuredFlowItems: (v: boolean) => void;
-  setNl2uiLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setFlow: React.Dispatch<React.SetStateAction<ChatFlowItem[]>>;
   setConversationId: React.Dispatch<React.SetStateAction<string>>;
   setActiveTask: React.Dispatch<React.SetStateAction<{ taskId: string; runId: string; taskState: TaskState } | null>>;
@@ -34,6 +31,10 @@ export interface SSEEventContext {
   lastRetryMsgRef: React.MutableRefObject<string | null>;
   /** 用户选定的模型（用于检测是否发生了自动切换） */
   selectedModelRef?: string;
+  /** 流式 TTS：每次 delta 增量文本回调 */
+  onStreamDelta?: (chunk: string) => void;
+  /** 流式 TTS：流结束回调 */
+  onStreamDone?: () => void;
 }
 
 /**
@@ -43,38 +44,17 @@ export function handleSSEEvent(evtName: string, data: any, ctx: SSEEventContext)
   const { replyId, message, locale, conversationId } = ctx;
 
   switch (evtName) {
-    case "delta":
-      ctx.accumulatedText += data.text ?? "";
+    case "delta": {
+      const deltaText = data.text ?? "";
+      ctx.accumulatedText += deltaText;
       ctx.setAccumulatedText(ctx.accumulatedText);
       ctx.syncReplyText(ctx.accumulatedText);
+      if (deltaText && ctx.onStreamDelta) ctx.onStreamDelta(deltaText);
       break;
+    }
     case "toolSuggestions":
       ctx.pendingToolSuggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
       ctx.setPendingToolSuggestions(ctx.pendingToolSuggestions);
-      break;
-    case "nl2uiStatus":
-      if (data.phase === "started") ctx.setNl2uiLoading(true);
-      if (data.phase === "done") ctx.setNl2uiLoading(false);
-      break;
-    case "nl2uiResult":
-      if (data.config) {
-        ctx.hasNl2uiResult = true;
-        ctx.setHasNl2uiResult(true);
-        ctx.setNl2uiLoading(false);
-        ctx.setFlow((prev) => [...prev, {
-          kind: "nl2uiResult" as const, id: nextId("n"), role: "assistant" as const,
-          config: data.config, userInput: message, suggestions: [], createdAt: Date.now(),
-        }]);
-      }
-      break;
-    case "nl2uiError":
-      ctx.setNl2uiLoading(false);
-      ctx.setFlow((prev) => [...prev, {
-        kind: "error", id: nextId("e"), role: "assistant",
-        errorCode: String(data.errorCode ?? "NL2UI_ERROR"),
-        message: errorMessageText(locale, data.message),
-        traceId: String(data.traceId ?? ""),
-      }]);
       break;
     case "taskCreated":
       if (data.taskId && data.runId) {
@@ -141,6 +121,7 @@ export function handleSSEEvent(evtName: string, data: any, ctx: SSEEventContext)
       }]);
       break;
     case "done": {
+      if (ctx.onStreamDone) ctx.onStreamDone();
       const doneConvId = data.conversationId;
       if (doneConvId) ctx.setConversationId(doneConvId);
       // Model auto-switch detection: when actual model differs from user selection, add lightweight notification
@@ -235,6 +216,33 @@ export function handleSSEEvent(evtName: string, data: any, ctx: SSEEventContext)
     case "runSummary": {
       ctx.hasStructuredFlowItems = true;
       ctx.setHasStructuredFlowItems(true);
+      break;
+    }
+    /* ── Schema-UI events ── */
+    case "schemaUiStatus": {
+      const phase = String(data.phase ?? "");
+      if (phase) {
+        ctx.setFlow((prev) => prev.map((it) =>
+          it.id === replyId ? { ...it, phase: `schemaUi:${phase}` } : it
+        ));
+      }
+      break;
+    }
+    case "schemaUiResult": {
+      ctx.hasStructuredFlowItems = true;
+      ctx.setHasStructuredFlowItems(true);
+      ctx.setFlow((prev) => [...prev, {
+        kind: "schemaUiResult" as const,
+        id: nextId("sui"),
+        role: "assistant" as const,
+        config: data.config ?? null,
+        createdAt: Date.now(),
+      }]);
+      break;
+    }
+    case "schemaUiError": {
+      // Schema-UI 是非关键附加功能，失败时静默降级，不显示错误气泡
+      console.warn("Schema-UI generation failed (non-critical):", data);
       break;
     }
   }

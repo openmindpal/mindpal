@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { t } from "@/lib/i18n";
 import type { IntentMode } from "@/lib/types";
@@ -51,7 +51,11 @@ export interface ChatInputAreaProps {
   startVideo: () => void;
   stopVideo: () => void;
   captureFrame: () => string | null;
-  onVideoCaptureFrame: () => void;
+  onVideoCaptureFrame?: () => void;
+  /* Video streaming */
+  streaming?: boolean;
+  startStreaming?: (opts?: any) => void;
+  stopStreaming?: () => void;
   /* Model picker */
   bindings: ModelBinding[];
   selectedModelRef: string;
@@ -76,35 +80,27 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
     attachments, removeAttachment, imageInputRef, docInputRef, audioInputRef, videoInputRef, handleImageSelect, handleDocSelect, handleAudioSelect, handleVideoSelect,
     voiceListening, voiceInterim, voiceConversation, speaking, startVoice, toggleConversation, stopSpeaking,
     videoActive, videoStream, videoSupported, startVideo, stopVideo, captureFrame, onVideoCaptureFrame,
+    streaming, startStreaming, stopStreaming,
     bindings, selectedModelRef, setSelectedModelRef,
     modelPickerOpen, setModelPickerOpen, modelPickerTitle, modelPickerRef,
     activeQueueCount = 0, queuedCount = 0, showStop,
   } = props;
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const attachMenuRef = useRef<HTMLDivElement>(null);
-  const [toolPanelOpen, setToolPanelOpen] = useState(false);
-  const toolPanelRef = useRef<HTMLDivElement>(null);
+
 
   /* Close menus on outside click / Escape */
   useEffect(() => {
-    if (!attachMenuOpen && !modelPickerOpen && !toolPanelOpen) return;
+    if (!attachMenuOpen && !modelPickerOpen) return;
     const onPointerDown = (event: MouseEvent) => {
       if (attachMenuOpen && attachMenuRef.current && !attachMenuRef.current.contains(event.target as Node)) {
         setAttachMenuOpen(false);
-      }
-      if (toolPanelOpen && toolPanelRef.current && !toolPanelRef.current.contains(event.target as Node)) {
-        // check if click was on the plus toggle button itself (handled by onClick)
-        const target = event.target as HTMLElement;
-        if (!target.closest(`.${styles.plusToggleBtn}`)) {
-          setToolPanelOpen(false);
-        }
       }
     };
     const onKeyDownWindow = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (modelPickerOpen) setModelPickerOpen(false);
         if (attachMenuOpen) setAttachMenuOpen(false);
-        if (toolPanelOpen) setToolPanelOpen(false);
       }
     };
     document.addEventListener("mousedown", onPointerDown);
@@ -113,7 +109,7 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
       document.removeEventListener("mousedown", onPointerDown);
       window.removeEventListener("keydown", onKeyDownWindow);
     };
-  }, [attachMenuOpen, modelPickerOpen, setModelPickerOpen, toolPanelOpen]);
+  }, [attachMenuOpen, modelPickerOpen, setModelPickerOpen]);
 
   const openPicker = (kind: "image" | "document" | "audio" | "video") => {
     setAttachMenuOpen(false);
@@ -123,7 +119,6 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
     else videoInputRef.current?.click();
   };
 
-  const toggleToolPanel = useCallback(() => setToolPanelOpen((v) => !v), []);
 
   /* ── Render: Send / Stop button ── */
   const renderSendBtn = () => {
@@ -162,9 +157,8 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
       <input ref={audioInputRef} type="file" accept={AUDIO_ACCEPT} multiple hidden onChange={handleAudioSelect} />
       <input ref={videoInputRef} type="file" accept={VIDEO_ACCEPT} multiple hidden onChange={handleVideoSelect} />
 
-      {/* ── Expanded Tool Panel (above textarea) ── */}
-      {toolPanelOpen && (
-        <div ref={toolPanelRef} className={styles.toolPanel}>
+      {/* ── Tool Panel (always visible above textarea) ── */}
+        <div className={styles.toolPanel}>
           {/* Mode selector */}
           <div className={styles.toolPanelSection}>
             <ModeSelector mode={execMode} onChange={setExecMode} locale={locale} disabled={busy} />
@@ -177,136 +171,7 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
             )}
           </div>
 
-          {/* Attachment buttons row */}
-          <div className={styles.toolPanelRow}>
-            <div ref={attachMenuRef} className={styles.attachMenu}>
-              <button
-                className={styles.toolPanelIconBtn}
-                onClick={() => setAttachMenuOpen((v) => !v)}
-                disabled={busy}
-                title="@"
-              >
-                <span className={styles.attachAtSymbol}>@</span>
-              </button>
-              {attachMenuOpen && (
-                <div className={styles.attachMenuDropdown}>
-                  <button type="button" className={styles.attachMenuItem} onClick={() => openPicker("image")} title={t(locale, "chat.attach.imageTypes")}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-                    </svg>
-                    <span>{t(locale, "chat.attach.imageShort")}</span>
-                  </button>
-                  <button type="button" className={styles.attachMenuItem} onClick={() => openPicker("document")} title={t(locale, "chat.attach.docTypes")}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-                    </svg>
-                    <span>{t(locale, "chat.attach.documentShort")}</span>
-                  </button>
-                  <button type="button" className={styles.attachMenuItem} onClick={() => openPicker("audio")} title={t(locale, "chat.attach.audioTypes")}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
-                    </svg>
-                    <span>{t(locale, "chat.attach.audioShort")}</span>
-                  </button>
-                  <button type="button" className={styles.attachMenuItem} onClick={() => openPicker("video")} title={t(locale, "chat.attach.videoTypes")}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="5" width="15" height="14" rx="2" /><polygon points="16 12 21 9 21 15 16 12" />
-                    </svg>
-                    <span>{t(locale, "chat.attach.videoShort")}</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Voice */}
-            <button
-              className={`${styles.toolPanelIconBtn} ${voiceConversation ? styles.attachBtnRecording : ""}`}
-              onClick={() => {
-                if (speaking) stopSpeaking();
-                toggleConversation();
-                if (!voiceConversation) {
-                  setTimeout(() => startVoice(), 100);
-                }
-              }}
-              title={voiceConversation ? t(locale, "chat.voice.stopConversation") : t(locale, "chat.voice.startConversation")}
-              disabled={busy}
-            >
-              {voiceConversation ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
-                </svg>
-              )}
-            </button>
-
-            {/* Video */}
-            {videoSupported && (
-              <button
-                className={`${styles.toolPanelIconBtn} ${videoActive ? styles.attachBtnRecording : ""}`}
-                onClick={() => { if (videoActive) stopVideo(); else startVideo(); }}
-                title={videoActive ? t(locale, "chat.video.stop") : t(locale, "chat.video.camera")}
-                disabled={busy}
-              >
-                {videoActive ? (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="5" width="15" height="14" rx="2" /><polygon points="16 12 21 9 21 15 16 12" />
-                  </svg>
-                ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="5" width="15" height="14" rx="2" /><polygon points="16 12 21 9 21 15 16 12" />
-                  </svg>
-                )}
-              </button>
-            )}
-
-            {/* Model picker */}
-            {bindings.length > 0 && (
-              <div
-                ref={modelPickerRef}
-                className={`${styles.modelPicker} ${busy || bindings.length <= 1 ? styles.modelPickerDisabled : ""}`}
-              >
-                <button
-                  type="button"
-                  className={`${styles.toolPanelIconBtn} ${modelPickerOpen ? styles.modelPickerTriggerActive : ""}`}
-                  onClick={() => { if (!busy && bindings.length > 1) setModelPickerOpen((v) => !v); }}
-                  title={modelPickerTitle}
-                >
-                  <IconSliders />
-                </button>
-                {modelPickerOpen && (
-                  <>
-                    <div className={styles.modelPickerOverlay} onClick={() => setModelPickerOpen(false)} />
-                    <div className={styles.modelPickerDropdown}>
-                      <div className={styles.modelPickerHeader}>{t(locale, "home.modelPicker")}</div>
-                      <div className={styles.modelPickerList}>
-                        {bindings.map((b) => (
-                          <div
-                            key={b.modelRef}
-                            className={`${styles.modelPickerItem} ${b.modelRef === selectedModelRef ? styles.modelPickerItemActive : ""}`}
-                            onClick={() => { setSelectedModelRef(b.modelRef); setModelPickerOpen(false); }}
-                          >
-                            <span className={styles.modelPickerItemDot} />
-                            <span className={styles.modelPickerItemInfo}>
-                              <span className={styles.modelPickerItemModel}>{b.model}</span>
-                              <span className={styles.modelPickerItemProvider}>{b.provider}</span>
-                            </span>
-                            <span className={styles.modelPickerItemCheck}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
         </div>
-      )}
 
       {/* ── Textarea ── */}
       <textarea
@@ -356,7 +221,7 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
       {/* Video preview */}
       {videoActive && videoStream && (
         <div style={{ marginBottom: 6 }}>
-          <VideoPreview locale={locale} videoStream={videoStream} videoActive={videoActive} onCapture={onVideoCaptureFrame} onStop={stopVideo} />
+          <VideoPreview locale={locale} videoStream={videoStream} videoActive={videoActive} onCapture={onVideoCaptureFrame} onStop={stopVideo} streaming={streaming} />
         </div>
       )}
 
@@ -374,37 +239,155 @@ export default function ChatInputArea(props: ChatInputAreaProps) {
         <div className={styles.voiceInlineHint}><span className={styles.voiceInlineDot} />{t(locale, "chat.voice.thinkingHint")}</div>
       )}
 
-      {/* ── Bottom actions bar: + button, queue indicator, send/stop ── */}
+      {/* ── Bottom actions bar: left (@) | right (voice + video + model + queue + send) ── */}
       <div className={styles.inputActions}>
-        {/* Plus toggle button */}
-        <button
-          type="button"
-          className={`${styles.plusToggleBtn} ${toolPanelOpen ? styles.plusToggleBtnActive : ""}`}
-          onClick={toggleToolPanel}
-          title={toolPanelOpen ? t(locale, "common.close") : t(locale, "common.more")}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            style={{ transition: "transform 0.2s ease", transform: toolPanelOpen ? "rotate(45deg)" : "none" }}
+        {/* LEFT side: @ button */}
+        <div className={styles.inputActionsLeft}>
+          <div ref={attachMenuRef} className={styles.attachMenu}>
+            <button
+              className={styles.toolPanelIconBtn}
+              onClick={() => setAttachMenuOpen((v) => !v)}
+              disabled={busy}
+              title="@"
+            >
+              <span className={styles.attachAtSymbol}>@</span>
+            </button>
+            {attachMenuOpen && (
+              <div className={styles.attachMenuDropdown}>
+                <button type="button" className={styles.attachMenuItem} onClick={() => openPicker("image")} title={t(locale, "chat.attach.imageTypes")}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                  </svg>
+                  <span>{t(locale, "chat.attach.imageShort")}</span>
+                </button>
+                <button type="button" className={styles.attachMenuItem} onClick={() => openPicker("document")} title={t(locale, "chat.attach.docTypes")}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+                  </svg>
+                  <span>{t(locale, "chat.attach.documentShort")}</span>
+                </button>
+                <button type="button" className={styles.attachMenuItem} onClick={() => openPicker("audio")} title={t(locale, "chat.attach.audioTypes")}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+                  </svg>
+                  <span>{t(locale, "chat.attach.audioShort")}</span>
+                </button>
+                <button type="button" className={styles.attachMenuItem} onClick={() => openPicker("video")} title={t(locale, "chat.attach.videoTypes")}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="5" width="15" height="14" rx="2" /><polygon points="16 12 21 9 21 15 16 12" />
+                  </svg>
+                  <span>{t(locale, "chat.attach.videoShort")}</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT side: voice + video + model + queue + send */}
+        <div className={styles.inputActionsRight}>
+          {/* Voice */}
+          <button
+            className={`${styles.toolPanelIconBtn} ${voiceConversation ? styles.attachBtnRecording : ""}`}
+            onClick={() => {
+              if (speaking) stopSpeaking();
+              toggleConversation();
+              if (!voiceConversation) {
+                setTimeout(() => startVoice(), 100);
+              }
+            }}
+            title={voiceConversation ? t(locale, "chat.voice.stopConversation") : t(locale, "chat.voice.startConversation")}
+            disabled={busy}
           >
-            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        </button>
+            {voiceConversation ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            )}
+          </button>
 
-        {/* P1-19: Queue status indicator */}
-        {(activeQueueCount > 0 || queuedCount > 0) && (
-          <span style={{
-            display: "inline-flex", alignItems: "center", gap: 4,
-            fontSize: 11, color: "#6b7280", padding: "2px 8px",
-            background: "#f3f4f6", borderRadius: 12, whiteSpace: "nowrap",
-          }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: activeQueueCount > 0 ? "#3b82f6" : "#9ca3af" }} />
-            {activeQueueCount > 0 && `${activeQueueCount} ${t(locale, "taskQueue.running")}`}
-            {activeQueueCount > 0 && queuedCount > 0 && " \u00b7 "}
-            {queuedCount > 0 && `${queuedCount} ${t(locale, "taskQueue.queued")}`}
-          </span>
-        )}
+          {/* Video */}
+          {videoSupported && (
+            <button
+              className={`${styles.toolPanelIconBtn} ${videoActive ? styles.attachBtnRecording : ""}`}
+              onClick={() => { if (videoActive) stopVideo(); else startVideo(); }}
+              title={videoActive ? t(locale, "chat.video.stop") : t(locale, "chat.video.camera")}
+              disabled={busy}
+            >
+              {videoActive ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="5" width="15" height="14" rx="2" /><polygon points="16 12 21 9 21 15 16 12" />
+                </svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="5" width="15" height="14" rx="2" /><polygon points="16 12 21 9 21 15 16 12" />
+                </svg>
+              )}
+            </button>
+          )}
 
-        {renderSendBtn()}
+          {/* Model picker */}
+          {bindings.length > 0 && (
+            <div
+              ref={modelPickerRef}
+              className={`${styles.modelPicker} ${busy || bindings.length <= 1 ? styles.modelPickerDisabled : ""}`}
+            >
+              <button
+                type="button"
+                className={`${styles.toolPanelIconBtn} ${modelPickerOpen ? styles.modelPickerTriggerActive : ""}`}
+                onClick={() => { if (!busy && bindings.length > 1) setModelPickerOpen((v) => !v); }}
+                title={modelPickerTitle}
+              >
+                <IconSliders />
+              </button>
+              {modelPickerOpen && (
+                <>
+                  <div className={styles.modelPickerOverlay} onClick={() => setModelPickerOpen(false)} />
+                  <div className={styles.modelPickerDropdown}>
+                    <div className={styles.modelPickerHeader}>{t(locale, "home.modelPicker")}</div>
+                    <div className={styles.modelPickerList}>
+                      {bindings.map((b) => (
+                        <div
+                          key={b.modelRef}
+                          className={`${styles.modelPickerItem} ${b.modelRef === selectedModelRef ? styles.modelPickerItemActive : ""}`}
+                          onClick={() => { setSelectedModelRef(b.modelRef); setModelPickerOpen(false); }}
+                        >
+                          <span className={styles.modelPickerItemDot} />
+                          <span className={styles.modelPickerItemInfo}>
+                            <span className={styles.modelPickerItemModel}>{b.model}</span>
+                            <span className={styles.modelPickerItemProvider}>{b.provider}</span>
+                          </span>
+                          <span className={styles.modelPickerItemCheck}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* P1-19: Queue status indicator */}
+          {(activeQueueCount > 0 || queuedCount > 0) && (
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              fontSize: 11, color: "#6b7280", padding: "2px 8px",
+              background: "#f3f4f6", borderRadius: 12, whiteSpace: "nowrap",
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: activeQueueCount > 0 ? "#3b82f6" : "#9ca3af" }} />
+              {activeQueueCount > 0 && `${activeQueueCount} ${t(locale, "taskQueue.running")}`}
+              {activeQueueCount > 0 && queuedCount > 0 && " \u00b7 "}
+              {queuedCount > 0 && `${queuedCount} ${t(locale, "taskQueue.queued")}`}
+            </span>
+          )}
+
+          {renderSendBtn()}
+        </div>
       </div>
     </div>
   );

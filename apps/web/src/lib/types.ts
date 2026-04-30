@@ -171,7 +171,6 @@ export type DispatchResponse = ApiError & {
   taskState?: TaskState;
   turnId?: string;
   uiDirective?: unknown;
-  nl2uiResult?: unknown;
   actionReceipt?: {
     status: "completed" | "suggested";
     toolCount?: number;

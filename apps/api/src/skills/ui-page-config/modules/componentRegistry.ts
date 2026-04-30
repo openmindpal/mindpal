@@ -21,11 +21,6 @@ const SEED_DEFAULTS: UiComponentSpec[] = [
   { componentId: "Chart.Pie", allowedPageTypes: ["dashboard"], maxPerPage: 10 },
   { componentId: "Widget.Summary", allowedPageTypes: ["dashboard", "entity.list"], maxPerPage: 6 },
   { componentId: "Widget.Markdown", allowedPageTypes: ["dashboard", "entity.detail"], maxPerPage: 5 },
-  { componentId: "FlowRenderer", allowedPageTypes: ["dashboard", "entity.detail"], maxPerPage: 4, requiredProps: ["config"] },
-  { componentId: "FlowDiagram", allowedPageTypes: ["dashboard", "entity.detail"], maxPerPage: 4, requiredProps: ["config"] },
-  { componentId: "ProcessFlow", allowedPageTypes: ["dashboard", "entity.detail"], maxPerPage: 4, requiredProps: ["config"] },
-  { componentId: "AnimatedList", allowedPageTypes: ["dashboard", "entity.list", "entity.detail"], maxPerPage: 6 },
-  { componentId: "AnimatedCards", allowedPageTypes: ["dashboard", "entity.list", "entity.detail"], maxPerPage: 6 },
 ];
 
 /* ─── Dynamic registry from DB (governance) ─── */

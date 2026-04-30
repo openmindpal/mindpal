@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import type { ToolPublish } from "./toolModel";
+import type { ToolSemanticMeta } from "@openslin/shared";
 
 type Q = Pool | PoolClient;
 
@@ -42,6 +43,8 @@ export type ToolDefinition = {
   extraPermissions: Array<{ resourceType: string; action: string }>;
   /** 工具执行超时时间(毫秒)，来自 tool_definitions.execution_timeout_ms，默认120秒 */
   executionTimeoutMs: number;
+  /** P4: 工具语义元数据 */
+  semanticMeta: ToolSemanticMeta | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -125,6 +128,7 @@ function toDef(r: any): ToolDefinition {
     lastUsedAt: r.last_used_at ?? null,
     extraPermissions: Array.isArray(r.extra_permissions) ? r.extra_permissions : [],
     executionTimeoutMs: r.execution_timeout_ms ?? 120_000,
+    semanticMeta: r.semantic_meta ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

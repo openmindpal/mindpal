@@ -1228,89 +1228,96 @@ export async function searchMemory(params: {
 
   const [lexRes, vecRows, queryEmbeddingVec] = await Promise.all([lexPromise, vecPromise, embPromise]);
 
-  // ── Stage 2b: Dense vector cosine 召回（蒸馏产物密集向量通道） ──
-  let denseRows: any[] = [];
-  try {
-    if (queryEmbeddingVec && queryEmbeddingVec.length > 0) {
-      const denseModelRef = `${embConfig.model}:${embConfig.dimensions}`;
-      const denseIdx = scopeNextIdx;
-      const denseRes = await params.pool.query(
-        `
-          SELECT *, 'dense_vector' AS _stage, embedding_vector
-          FROM memory_entries
-          WHERE ${scopeWhereClause}
-            AND embedding_vector IS NOT NULL
-            AND embedding_model_ref = $${denseIdx}
-          ORDER BY embedding_updated_at DESC NULLS LAST
-          LIMIT $${denseIdx + 1}
-        `,
-        [...scopeArgs, denseModelRef, vecLimit],
-      );
-      denseRows = (denseRes.rows as Record<string, unknown>[]).map((r) => {
-        // 解析 JSONB 向量并计算 cosine 相似度
-        let vec: number[] = [];
-        try {
-          vec = typeof r.embedding_vector === "string" ? JSON.parse(r.embedding_vector) : (Array.isArray(r.embedding_vector) ? r.embedding_vector : []);
-        } catch (err) { _logger.warn("embedding_vector JSON.parse failed", { err: (err as Error)?.message }); vec = []; }
-        const cosine = cosineSimilarity(queryEmbeddingVec!, vec);
-        return { ...r, _dense_score: cosine };
-      }).filter((r) => r._dense_score > (Number(process.env.MEMORY_DENSE_COSINE_THRESHOLD) || 0.25)); // 过滤低相似度
-    }
-  } catch (err) {
-        _logger.warn("Dense vector recall failed, falling back to other channels", { err: (err as Error)?.message });
-  }
-
-  // ── Stage 3: pgvector 向量检索（如果 pgvector 扩展可用） ──
-  let pgvectorRows: any[] = [];
-  try {
-    const pgvectorEnabled = String(process.env.MEMORY_PGVECTOR_ENABLED ?? "").trim().toLowerCase();
-    if (pgvectorEnabled === "true" || pgvectorEnabled === "1") {
-      // 复用已获取的 queryEmbeddingVec，若为空则重试
-      let pgQueryVec = queryEmbeddingVec;
-      if (!pgQueryVec) {
-        pgQueryVec = await fetchQueryEmbedding(embConfig, params.query);
-      }
-
-      if (pgQueryVec && pgQueryVec.length > 0) {
-        const pgvStartedAt = Date.now();
-        const vecStr = `[${pgQueryVec.join(",")}]`;
-        const topK = Math.max(params.limit, params.limit * 3);
-        const distOp = String(process.env.PGVECTOR_DISTANCE_METRIC ?? "cosine").trim();
-        const op = distOp === "l2" ? "<->" : distOp === "inner_product" ? "<#>" : "<=>";
-        const scoreExpr = op === "<=>" ? `1 - (mv.embedding ${op} $${scopeNextIdx}::vector)` : `-(mv.embedding ${op} $${scopeNextIdx}::vector)`;
-
-        const pgRes = await params.pool.query(
+  // ── Stage 2b + Stage 3: 并行执行 Dense vector 与 pgvector 检索（两者互不依赖，都只依赖 queryEmbeddingVec） ──
+  const densePromise = (async (): Promise<any[]> => {
+    try {
+      if (queryEmbeddingVec && queryEmbeddingVec.length > 0) {
+        const denseModelRef = `${embConfig.model}:${embConfig.dimensions}`;
+        const denseIdx = scopeNextIdx;
+        const denseRes = await params.pool.query(
           `
-            SELECT me.*, 'pgvector' AS _stage,
-                   ${scoreExpr} AS _pgvector_score
-            FROM memory_vectors mv
-            JOIN memory_entries me ON me.id = mv.memory_id AND me.deleted_at IS NULL
-            WHERE me.tenant_id = $1
-              AND me.space_id = $2
-              AND (me.expires_at IS NULL OR me.expires_at > now())
-            ORDER BY mv.embedding ${op} $${scopeNextIdx}::vector
-            LIMIT $${scopeNextIdx + 1}
+            SELECT *, 'dense_vector' AS _stage, embedding_vector
+            FROM memory_entries
+            WHERE ${scopeWhereClause}
+              AND embedding_vector IS NOT NULL
+              AND embedding_model_ref = $${denseIdx}
+            ORDER BY embedding_updated_at DESC NULLS LAST
+            LIMIT $${denseIdx + 1}
           `,
-          [params.tenantId, params.spaceId, vecStr, topK],
+          [...scopeArgs, denseModelRef, vecLimit],
         );
-        pgvectorRows = pgRes.rows as Record<string, unknown>[];
-        const pgvLatency = Date.now() - pgvStartedAt;
-        _logger.info("pgvector memory recall completed", {
-          module: "memory",
-          action: "pgvector_recall",
-          resultCount: pgvectorRows.length,
-          latencyMs: pgvLatency,
-        });
+        return (denseRes.rows as Record<string, unknown>[]).map((r) => {
+          // 解析 JSONB 向量并计算 cosine 相似度
+          let vec: number[] = [];
+          try {
+            vec = typeof r.embedding_vector === "string" ? JSON.parse(r.embedding_vector) : (Array.isArray(r.embedding_vector) ? r.embedding_vector : []);
+          } catch (err) { _logger.warn("embedding_vector JSON.parse failed", { err: (err as Error)?.message }); vec = []; }
+          const cosine = cosineSimilarity(queryEmbeddingVec!, vec);
+          return { ...r, _dense_score: cosine };
+        }).filter((r) => r._dense_score > (Number(process.env.MEMORY_DENSE_COSINE_THRESHOLD) || 0.25)); // 过滤低相似度
       }
+      return [];
+    } catch (err) {
+      _logger.warn("Dense vector recall failed, falling back to other channels", { err: (err as Error)?.message });
+      return [];
     }
-  } catch (err) {
-    // 向量检索失败时静默降级，继续使用 keyword + minhash 结果
-    _logger.warn("pgvector memory recall failed, falling back to keyword + minhash", {
-      module: "memory",
-      action: "vector_search_fallback",
-      error: (err as Error)?.message,
-    });
-  }
+  })();
+
+  const pgvectorPromise = (async (): Promise<any[]> => {
+    try {
+      const pgvectorEnabled = String(process.env.MEMORY_PGVECTOR_ENABLED ?? "").trim().toLowerCase();
+      if (pgvectorEnabled === "true" || pgvectorEnabled === "1") {
+        // 复用已获取的 queryEmbeddingVec，若为空则重试
+        let pgQueryVec = queryEmbeddingVec;
+        if (!pgQueryVec) {
+          pgQueryVec = await fetchQueryEmbedding(embConfig, params.query);
+        }
+
+        if (pgQueryVec && pgQueryVec.length > 0) {
+          const pgvStartedAt = Date.now();
+          const vecStr = `[${pgQueryVec.join(",")}]`;
+          const topK = Math.max(params.limit, params.limit * 3);
+          const distOp = String(process.env.PGVECTOR_DISTANCE_METRIC ?? "cosine").trim();
+          const op = distOp === "l2" ? "<->" : distOp === "inner_product" ? "<#>" : "<=>";
+          const scoreExpr = op === "<=>" ? `1 - (mv.embedding ${op} $${scopeNextIdx}::vector)` : `-(mv.embedding ${op} $${scopeNextIdx}::vector)`;
+
+          const pgRes = await params.pool.query(
+            `
+              SELECT me.*, 'pgvector' AS _stage,
+                     ${scoreExpr} AS _pgvector_score
+              FROM memory_vectors mv
+              JOIN memory_entries me ON me.id = mv.memory_id AND me.deleted_at IS NULL
+              WHERE me.tenant_id = $1
+                AND me.space_id = $2
+                AND (me.expires_at IS NULL OR me.expires_at > now())
+              ORDER BY mv.embedding ${op} $${scopeNextIdx}::vector
+              LIMIT $${scopeNextIdx + 1}
+            `,
+            [params.tenantId, params.spaceId, vecStr, topK],
+          );
+          const pgvLatency = Date.now() - pgvStartedAt;
+          _logger.info("pgvector memory recall completed", {
+            module: "memory",
+            action: "pgvector_recall",
+            resultCount: (pgRes.rows as any[]).length,
+            latencyMs: pgvLatency,
+          });
+          return pgRes.rows as Record<string, unknown>[];
+        }
+      }
+      return [];
+    } catch (err) {
+      // 向量检索失败时静默降级，继续使用 keyword + minhash 结果
+      _logger.warn("pgvector memory recall failed, falling back to keyword + minhash", {
+        module: "memory",
+        action: "vector_search_fallback",
+        error: (err as Error)?.message,
+      });
+      return [];
+    }
+  })();
+
+  const [denseRows, pgvectorRows] = await Promise.all([densePromise, pgvectorPromise]);
 
   // ── Merge + Dedup ──
   const seen = new Map<string, any>();
@@ -1758,38 +1765,46 @@ export async function updateMemoryConfidenceFromFacts(
 }
 
 /**
- * 确认或拒绝待确认的记忆（user_confirmed 闭环）
+ * P3: 确认或拒绝待确认的记忆（user_confirmed 策略闭环）
+ * confirm: 提升 confidence 和 source_trust，标记 resolved
+ * reject: 降低 confidence，标记 rejected
+ *
+ * 增强版：支持 tenantId 隔离、source_trust 提升、结构化返回值
  */
-export async function confirmPendingMemory(
+export async function confirmOrRejectMemory(
   pool: Pool,
+  tenantId: string,
   memoryId: string,
-  confirmed: boolean,
-): Promise<void> {
-  if (confirmed) {
-    // 确认：提升 confidence，标记为 resolved
-    await pool.query(
-      `UPDATE memory_entries
-       SET confidence = LEAST(confidence + 0.2, 1.0),
-           resolution_status = 'resolved',
-           arbitration_strategy = 'user_confirmed',
-           arbitrated_at = now(),
-           updated_at = now()
-       WHERE id = $1 AND deleted_at IS NULL`,
-      [memoryId],
-    );
-  } else {
-    // 拒绝：大幅降低 confidence
-    await pool.query(
-      `UPDATE memory_entries
-       SET confidence = GREATEST(confidence - 0.5, 0.0),
-           resolution_status = 'superseded',
-           arbitration_strategy = 'user_confirmed',
-           arbitrated_at = now(),
-           updated_at = now()
-       WHERE id = $1 AND deleted_at IS NULL`,
-      [memoryId],
-    );
-  }
+  decision: "confirm" | "reject",
+): Promise<{ updated: boolean }> {
+  const result = decision === "confirm"
+    ? await pool.query(
+        `UPDATE memory_entries
+         SET resolution_status = 'resolved',
+             arbitration_strategy = 'user_confirmed',
+             confidence = LEAST(confidence + 0.2, 1.0),
+             source_trust = GREATEST(source_trust, 75),
+             arbitrated_at = now(),
+             updated_at = now()
+         WHERE tenant_id = $1 AND id = $2::uuid
+           AND resolution_status = 'pending' AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, memoryId],
+      )
+    : await pool.query(
+        `UPDATE memory_entries
+         SET resolution_status = 'rejected',
+             arbitration_strategy = 'user_confirmed',
+             confidence = GREATEST(confidence - 0.3, 0.05),
+             arbitrated_at = now(),
+             updated_at = now()
+         WHERE tenant_id = $1 AND id = $2::uuid
+           AND resolution_status = 'pending' AND deleted_at IS NULL
+         RETURNING id`,
+        [tenantId, memoryId],
+      );
+
+  return { updated: (result.rowCount ?? 0) > 0 };
 }
 
 /**

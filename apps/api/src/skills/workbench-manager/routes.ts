@@ -12,7 +12,7 @@ function resolveScope(subject: { tenantId: string; spaceId?: string | null }) {
 
 export const workbenchRoutes: FastifyPluginAsync = async (app) => {
   // ⚠️ DEPRECATED: Workbench 插件管理功能已废弃
-  // 现在用户可以直接在 /workbench 可视化编辑或使用 NL2UI 生成
+  // 现在用户可以直接在 /workbench 可视化编辑或使用 Schema-UI 生成
   
   app.post("/workbenches", async (req) => {
     setAuditContext(req, { resourceType: "workbench", action: "plugin.create" });

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiFetch, text } from "../../../../lib/api";
 import { t } from "../../../../lib/i18n";
 import type { FieldDef, EffectiveSchema, UiFormUi } from "../../../../lib/types";
-import { ReferencePicker } from "../../../../components/nl2ui/ReferencePicker";
+import { ReferencePicker } from "../../../../components/ui/ReferencePicker";
 
 const isFieldWritable = (def: FieldDef | undefined) =>
   (def?.extensions?.["io.openslin.access"] as any)?.writable !== false;
@@ -267,12 +267,8 @@ export function EntityForm(props: Props) {
                       {def.required && writable ? " *" : ""}
                     </div>
                     <ReferencePicker
-                      fieldDef={{
-                        referenceEntity: def.referenceEntity ?? "",
-                        required: def.required,
-                        extensions: def.extensions,
-                      }}
-                      value={values[name] as string | undefined}
+                      options={[]}
+                      value={String(values[name] ?? "")}
                       onChange={(val) => {
                         setValues((v) => ({ ...v, [name]: val }));
                         setFieldErrors((s) => {
@@ -283,7 +279,6 @@ export function EntityForm(props: Props) {
                       }}
                       disabled={!writable || submitting}
                       placeholder={`${t(props.locale, "common.search")} ${def.referenceEntity ?? "..."}`}
-                      cascadeFilter={cascadeFilter}
                     />
                     {ferr ? <div style={{ color: "crimson" }}>{ferr}</div> : null}
                   </label>

@@ -3,8 +3,7 @@
  *
  * 为以下核心能力提供标准化评测：
  * 1. 意图分析 (Intent Analysis) — 用户输入→意图分类+工具推荐
- * 2. NL2UI (Natural Language to UI) — 用户输入→界面配置生成
- * 3. 知识检索 (Knowledge RAG) — 用户查询→知识文档检索
+ * 2. 知识检索 (Knowledge RAG) — 用户查询→知识文档检索
  *
  * 每个 eval case 定义：
  * - input: 用户输入
@@ -32,25 +31,6 @@ export interface IntentEvalCase {
     expectedBehavior?: string;
     /** 端到端：验收标准（如 "回复包含 ML 概念解释" / "成功调用 entity.create"） */
     acceptanceCriteria?: string;
-  };
-}
-
-/** NL2UI评测用例 */
-export interface Nl2UiEvalCase {
-  id: string;
-  category: "nl2ui";
-  input: string;
-  expected: {
-    /** 期望的布局类型 */
-    layout?: string;
-    /** 期望包含的组件类型 */
-    containsComponents?: string[];
-    /** 期望的数据绑定实体名 */
-    dataBindingEntities?: string[];
-    /** 最低置信度 */
-    minConfidence?: number;
-    /** 期望页面类型 */
-    pageType?: "local" | "business";
   };
 }
 
@@ -104,7 +84,7 @@ export interface DecomposeEvalCase {
   };
 }
 
-export type EvalCase = IntentEvalCase | Nl2UiEvalCase | KnowledgeEvalCase | DecomposeEvalCase;
+export type EvalCase = IntentEvalCase | KnowledgeEvalCase | DecomposeEvalCase;
 
 /** 单个用例的评测结果 */
 export interface EvalCaseResult {
@@ -269,57 +249,6 @@ export function judgeIntentResult(evalCase: IntentEvalCase, actual: any): EvalCa
   return { caseId: evalCase.id, category: "intent", passed, scores, failureReasons: failures, latencyMs: 0 };
 }
 
-/** NL2UI评判器 */
-export function judgeNl2UiResult(evalCase: Nl2UiEvalCase, actual: any): EvalCaseResult {
-  const scores: Record<string, number> = {};
-  const failures: string[] = [];
-
-  // 1. 布局匹配
-  if (evalCase.expected.layout) {
-    const layoutMatch = actual?.layout === evalCase.expected.layout;
-    scores["layout_match"] = layoutMatch ? 1.0 : 0.0;
-    if (!layoutMatch) failures.push(`布局不匹配: 期望=${evalCase.expected.layout}, 实际=${actual?.layout}`);
-  }
-
-  // 2. 组件包含
-  if (evalCase.expected.containsComponents) {
-    const actualComponents = Array.isArray(actual?.panels)
-      ? actual.panels.flatMap((p: any) => Array.isArray(p.components) ? p.components.map((c: any) => c.componentId) : [])
-      : [];
-    const matched = evalCase.expected.containsComponents.filter((c) => actualComponents.includes(c));
-    scores["component_coverage"] = evalCase.expected.containsComponents.length > 0
-      ? matched.length / evalCase.expected.containsComponents.length
-      : 1.0;
-    if (matched.length < evalCase.expected.containsComponents.length) {
-      failures.push(`组件缺失: 期望${evalCase.expected.containsComponents.join(",")}, 缺少${evalCase.expected.containsComponents.filter((c) => !actualComponents.includes(c)).join(",")}`);
-    }
-  }
-
-  // 3. 数据绑定
-  if (evalCase.expected.dataBindingEntities) {
-    const actualEntities = Array.isArray(actual?.dataBindings)
-      ? actual.dataBindings.map((db: any) => db.entityName)
-      : [];
-    const matched = evalCase.expected.dataBindingEntities.filter((e) => actualEntities.includes(e));
-    scores["data_binding"] = evalCase.expected.dataBindingEntities.length > 0
-      ? matched.length / evalCase.expected.dataBindingEntities.length
-      : 1.0;
-    if (matched.length < evalCase.expected.dataBindingEntities.length) {
-      failures.push(`数据绑定缺失: 期望实体${evalCase.expected.dataBindingEntities.join(",")}`);
-    }
-  }
-
-  // 4. 置信度
-  if (evalCase.expected.minConfidence) {
-    const conf = actual?.metadata?.confidence ?? 0;
-    scores["confidence"] = conf >= evalCase.expected.minConfidence ? 1.0 : conf / evalCase.expected.minConfidence;
-    if (conf < evalCase.expected.minConfidence) failures.push(`置信度不足: ${conf} < ${evalCase.expected.minConfidence}`);
-  }
-
-  const passed = failures.length === 0;
-  return { caseId: evalCase.id, category: "nl2ui", passed, scores, failureReasons: failures, latencyMs: 0 };
-}
-
 /** 知识检索评判器 */
 export function judgeKnowledgeResult(evalCase: KnowledgeEvalCase, actual: any): EvalCaseResult {
   const scores: Record<string, number> = {};
@@ -360,8 +289,6 @@ export function judgeEvalCase(evalCase: EvalCase, actualOutput: any): EvalCaseRe
   switch (evalCase.category) {
     case "intent":
       return judgeIntentResult(evalCase as IntentEvalCase, actualOutput);
-    case "nl2ui":
-      return judgeNl2UiResult(evalCase as Nl2UiEvalCase, actualOutput);
     case "knowledge":
       return judgeKnowledgeResult(evalCase as KnowledgeEvalCase, actualOutput);
     case "decompose":

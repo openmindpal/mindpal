@@ -61,7 +61,7 @@ function extractComponentIdsFromUi(ui: any): string[] {
 }
 
 export const uiRoutes: FastifyPluginAsync = async (app) => {
-  // ⚠️ DEPRECATED: 以下 API 已废弃，请使用 NL2UI 相关 API
+  // ⚠️ DEPRECATED: 以下 API 已废弃
   // 旧的 UI 配置管理功能已被移除，改为 AI 驱动的自然语言生成模式
   
   async function validateDraft(

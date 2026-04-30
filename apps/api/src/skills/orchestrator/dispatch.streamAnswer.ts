@@ -5,15 +5,14 @@
  * 仅处理对话与即时动作，不在前端/answer 层自动升级为 workflow
  */
 import crypto from "node:crypto";
-import { redactValue, parseDocument, dataUrlToBuffer, StructuredLogger, resolveNumber } from "@openslin/shared";
+import { redactValue, parseDocument, dataUrlToBuffer, StructuredLogger, resolveNumber, toContentParts, type UnifiedAttachment } from "@openslin/shared";
 import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 
 const _logger = new StructuredLogger({ module: "api:dispatch.streamAnswer" });
-import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRecentTasks, type ContextMeta, shouldTriggerEventDrivenSummary } from "./modules/orchestrator";
+import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRecentTasks, type ContextMeta, shouldTriggerEventDrivenSummary, buildSessionStateContext } from "./modules/orchestrator";
 import { createOrchestratorTurn } from "./modules/turnRepo";
 import { getSessionContext, upsertSessionContext, type SessionMessage } from "../../modules/memory/sessionContextRepo";
 import { digestParams, sha256Hex } from "../../lib/digest";
-import { generateUiFromNaturalLanguage, prefetchNl2UiContext } from "../nl2ui-generator/modules/generator";
 import { parseToolCallsFromOutput } from "../../lib/llm";
 import { invokeModelChatUpstreamStream } from "../model-gateway/modules/invokeChatUpstreamStream";
 import { ToolCallFilter } from "./dispatch.helpers";
@@ -21,6 +20,7 @@ import { type SseHandle, wrapSseWithEventBus } from "./dispatch.streamHelpers";
 import type { DispatchRequest } from "./dispatch.schema";
 import { executeInlineTools, formatInlineResultsForLLM, loadInlineWritableEntities } from "./modules/inlineToolExecutor";
 import { resolveExecutionClassFromSuggestions } from "./dispatch.executionPolicy";
+import { generateSchemaUi } from "../schema-ui-generator/modules/generator";
 
 /* ------------------------------------------------------------------ */
 /*  流式 answer 模式入口                                                */
@@ -208,11 +208,15 @@ export async function handleStreamAnswerMode(params: {
       .filter((m: any) => m.content),
   ];
 
+  // SessionState 槽位恢复：将结构化会话状态注入 LLM 上下文
+  const sessionStateCtx = buildSessionStateContext(prevSession?.context?.sessionState);
+  if (sessionStateCtx) {
+    modelMessages.push({ role: "system", content: `## Session State\n${sessionStateCtx}` });
+  }
+
   // 多模态附件处理
-  const imageAttachments = (body.attachments ?? []).filter(a => a.type === "image" && a.dataUrl);
-  const voiceAttachments = (body.attachments ?? []).filter(a => a.type === "voice" && a.dataUrl);
-  const videoAttachments = (body.attachments ?? []).filter(a => a.type === "video" && a.dataUrl);
   const docAttachments = (body.attachments ?? []).filter(a => a.type === "document");
+  const nonDocAttachments = (body.attachments ?? []).filter(a => a.type !== "document" && a.dataUrl);
 
   let augmentedUserContent = userContent;
   if (docAttachments.length > 0) {
@@ -245,22 +249,20 @@ export async function handleStreamAnswerMode(params: {
     augmentedUserContent = (augmentedUserContent ? augmentedUserContent + "\n\n" : "") + docParts.join("\n\n");
   }
 
-  if (imageAttachments.length > 0 || voiceAttachments.length > 0 || videoAttachments.length > 0) {
-    const contentParts: Array<{type: string; [k: string]: any}> = [];
-    for (const att of imageAttachments) {
-      contentParts.push({ type: "image_url", image_url: { url: att.dataUrl!, detail: "auto" } });
-    }
-    for (const att of voiceAttachments) {
-      const format = normalizeAudioAttachmentFormat(att.mimeType, att.name);
-      contentParts.push({ type: "input_audio", input_audio: { data: extractBase64Payload(att.dataUrl!), format } });
-    }
-    for (const att of videoAttachments) {
-      contentParts.push({ type: "video_url", video_url: { url: att.dataUrl! } });
-    }
+  // 将非文档附件转为 UnifiedAttachment，通过 shared 层统一转换为 ContentPart
+  const unifiedAtts: UnifiedAttachment[] = nonDocAttachments.map((a: any) => ({
+    type: a.type as UnifiedAttachment["type"],
+    mimeType: a.mimeType || "application/octet-stream",
+    name: a.name,
+    dataUrl: a.dataUrl,
+  }));
+  const multimodalParts = toContentParts(unifiedAtts);
+
+  if (multimodalParts.length > 0) {
     if (augmentedUserContent) {
-      contentParts.push({ type: "text", text: augmentedUserContent });
+      multimodalParts.push({ type: "text", text: augmentedUserContent });
     }
-    modelMessages.push({ role: "user", content: contentParts });
+    modelMessages.push({ role: "user", content: multimodalParts });
   } else {
     modelMessages.push({ role: "user", content: augmentedUserContent });
   }
@@ -308,6 +310,31 @@ export async function handleStreamAnswerMode(params: {
       ?? (out.replyText as Record<string, string>)?.["zh-CN"] ?? "";
     fullText = replyText;
     sse.sendEvent("delta", { text: replyText });
+  }
+
+  // ━━━ Schema-UI 生成（LLM流完成后，异步检测 UI 意图） ━━━
+  // Schema-UI 触发策略：仅在非首页轻量对话场景且流无错误时触发
+  const enableSchemaUi = body.contextType !== "home_chat" && !streamError;
+
+  if (enableSchemaUi) {
+    sse.sendEvent("schemaUiStatus", { phase: "started" });
+    try {
+      const schemaUiConfig = await generateSchemaUi({
+        userInput: message,
+        tenantId: subject.tenantId,
+        userId: subject.subjectId,
+        modelRef: body.defaultModelRef ?? undefined,
+        app,
+      });
+      if (schemaUiConfig) {
+        sse.sendEvent("schemaUiResult", { config: schemaUiConfig });
+      }
+      sse.sendEvent("schemaUiStatus", { phase: "done" });
+    } catch (schemaUiErr: any) {
+      // Schema-UI 是非关键附加功能，失败时仅记录日志，不向前端发送错误事件
+      app.log.warn({ err: schemaUiErr, traceId }, "[dispatch.streamAnswer] Schema-UI generation failed (non-critical, suppressed)");
+      sse.sendEvent("schemaUiStatus", { phase: "done" });
+    }
   }
 
   // --- Tier-2 结果消费：LLM流式调用完成后，补充获取未在短等待窗口内到达的增强上下文 ---
@@ -676,62 +703,6 @@ export async function handleStreamAnswerMode(params: {
     });
   }
 
-  if (resolution.separatePipelineTool) {
-    sse.sendEvent("nl2uiStatus", { phase: "started" });
-    const keepaliveTimer = setInterval(() => {
-      try { sse.sendEvent("keepalive", { ts: Date.now() }); } catch {}
-    }, 8_000);
-    try {
-      const nl2uiPrefetched = await prefetchNl2UiContext(app.db, { userId: subject.subjectId || "anonymous", tenantId: subject.tenantId }, message);
-      const nl2uiUserInput = typeof resolution.separatePipelineTool.inputDraft?.userInput === "string" ? resolution.separatePipelineTool.inputDraft.userInput : message;
-      const cfg = await generateUiFromNaturalLanguage(
-        app.db,
-        { userInput: nl2uiUserInput, context: { userId: subject.subjectId || "anonymous", tenantId: subject.tenantId, spaceId: subject.spaceId || undefined } },
-        { app, authorization: authorization ?? "", traceId, defaultModelRef: body.defaultModelRef },
-        nl2uiPrefetched,
-      );
-      if (cfg) {
-        sse.sendEvent("nl2uiResult", { config: cfg });
-      } else {
-        app.log.warn({ traceId }, "[NL2UI] generateUiFromNaturalLanguage 返回 null");
-        sse.sendEvent("nl2uiError", {
-          errorCode: "NL2UI_NO_RESULT",
-          message: { "zh-CN": "界面生成未返回结果，请尝试更明确地描述您需要的界面", "en-US": "UI generation returned no result. Please describe the desired UI more specifically." },
-          traceId,
-        });
-      }
-    } catch (err: unknown) {
-      const errObj = err as Record<string, unknown> | null;
-      if (errObj && typeof errObj === "object" && errObj.statusCode === 429) {
-        sse.sendEvent("nl2uiError", (errObj.payload as Record<string, unknown>) ?? { errorCode: "RATE_LIMITED", message: { "zh-CN": "请求过于频繁，请稍后重试", "en-US": "Too many requests" }, traceId });
-      } else {
-        // 提取具体错误码和详细信息，避免吞掉诊断线索
-        const payload = errObj && typeof errObj === "object" ? (errObj.payload as Record<string, unknown> | null) : null;
-        const errMessage = err instanceof Error ? err.message : String(err ?? "");
-        const errErrorCode = errObj && typeof errObj === "object" ? String(errObj.errorCode ?? "") : "";
-        const specificErrorCode = payload?.errorCode ?? (errErrorCode ? String(errErrorCode) : "NL2UI_ERROR");
-        const specificMsgZh = (payload?.message as Record<string, string> | undefined)?.["zh-CN"] ?? payload?.message ?? errMessage ?? "界面生成异常";
-        const specificMsgEn = (payload?.message as Record<string, string> | undefined)?.["en-US"] ?? "UI generation error";
-        app.log.error({
-          traceId,
-          errorCode: specificErrorCode,
-          statusCode: errObj && typeof errObj === "object" ? (errObj.statusCode as number | null) ?? null : null,
-          errMessage: errMessage ?? null,
-          payloadMessage: typeof specificMsgZh === "string" ? specificMsgZh : JSON.stringify(specificMsgZh),
-          stack: err instanceof Error ? err.stack?.split?.("\n")?.slice(0, 3)?.join(" | ") ?? null : null,
-        }, "[NL2UI] 界面生成异常 — 详细诊断");
-        sse.sendEvent("nl2uiError", {
-          errorCode: specificErrorCode,
-          message: { "zh-CN": typeof specificMsgZh === "string" ? specificMsgZh : "界面生成异常，请稍后重试", "en-US": typeof specificMsgEn === "string" ? specificMsgEn : "UI generation error" },
-          traceId,
-        });
-      }
-    } finally {
-      clearInterval(keepaliveTimer);
-      sse.sendEvent("nl2uiStatus", { phase: "done" });
-    }
-  }
-
   // 完成事件
   const turn = await createOrchestratorTurn({
     pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId ?? null, subjectId: subject.subjectId,
@@ -749,24 +720,7 @@ export async function handleStreamAnswerMode(params: {
   sse.sendEvent("done", { turnId: turn.turnId, conversationId, executionClass: resolution.executionClass, ...(actualModelRef ? { actualModelRef } : {}) });
 }
 
-function extractBase64Payload(dataUrl: string) {
-  const match = /^data:[^;]+;base64,(.+)$/i.exec(String(dataUrl ?? "").trim());
-  return match?.[1] ?? String(dataUrl ?? "");
-}
-
-function normalizeAudioAttachmentFormat(mimeType?: string, name?: string) {
-  const mime = String(mimeType ?? "").toLowerCase();
-  if (mime.includes("wav")) return "wav";
-  if (mime.includes("mpeg") || mime.includes("mp3")) return "mp3";
-  if (mime.includes("opus")) return "opus";
-  if (mime.includes("ogg")) return "ogg";
-  if (mime.includes("aac")) return "aac";
-  if (mime.includes("webm")) return "webm";
-  if (mime.includes("flac")) return "flac";
-  const ext = String(name ?? "").split(".").pop()?.toLowerCase();
-  if (ext === "wav" || ext === "mp3" || ext === "ogg" || ext === "webm" || ext === "flac" || ext === "aac" || ext === "opus") return ext;
-  return "wav";
-}
+// extractBase64Payload 和 normalizeAudioAttachmentFormat 已迁移至 @openslin/shared（attachmentProcessor）
 
 /**
  * P1-3: 从用户消息中提取多维度查询片段，用于激活 additionalQueries 并行记忆检索。

@@ -14,7 +14,10 @@ import {
   StructuredLogger,
   type DeviceMultimodalQuery,
   type DeviceAttachment,
-  type DeviceModality,
+  validateAttachmentBatch,
+  DEFAULT_MULTIMODAL_CAPABILITIES,
+  type UnifiedAttachment,
+  type MultimodalCapabilities,
 } from "@openslin/shared";
 
 import { orchestrateChatTurn } from "../orchestrator/modules/orchestrator";
@@ -30,21 +33,7 @@ function safeSend(ws: WsLike, data: DeviceStreamEvent | Record<string, unknown>)
   } catch { /* WS 发送失败忽略 */ }
 }
 
-// ── 大文件限制 ──────────────────────────────────────────────────
-
-/** 默认最大附件大小：5MB（base64 编码后约 6.67MB dataUrl） */
-const DEFAULT_MAX_FILE_SIZE = 5_000_000;
-
-/** dataUrl base64 上限（含 header，约 20MB 安全余量） */
-const MAX_DATA_URL_LENGTH = 20_000_000;
-
-// ── 默认支持格式 ────────────────────────────────────────────────
-
-const DEFAULT_SUPPORTED_FORMATS: Record<DeviceModality, string[]> = {
-  image: ["image/jpeg", "image/png", "image/webp", "image/gif"],
-  audio: ["audio/wav", "audio/mp3", "audio/mpeg", "audio/ogg", "audio/webm"],
-  video: ["video/mp4", "video/webm"],
-};
+// 大文件限制和默认支持格式已迁移至 @openslin/shared（DEFAULT_MULTIMODAL_CAPABILITIES）
 
 // ── 类型定义 ────────────────────────────────────────────────────
 
@@ -70,13 +59,12 @@ export interface ProcessDeviceQueryParams {
   app: any; // FastifyInstance
 }
 
-// ── 附件校验 ────────────────────────────────────────────────────
+// ── 设备能力解析（元数据驱动） ──────────────────────────────────
 
-function validateAttachments(
-  attachments: DeviceAttachment[],
-  deviceRecord: DeviceRecord,
-): { valid: boolean; error?: string } {
-  // 从设备 metadata 读取多模态配置（元数据驱动）
+/**
+ * 从设备元数据构建 MultimodalCapabilities（保持元数据驱动，DEFAULT_MULTIMODAL_CAPABILITIES 仅作兜底）
+ */
+function getDeviceCapabilities(deviceRecord: DeviceRecord): MultimodalCapabilities {
   const meta = deviceRecord.metadata as Record<string, unknown> | null;
 
   // 优先按 DeviceMultimodalCapabilities 结构解析
@@ -88,50 +76,33 @@ function validateAttachments(
 
   const effectiveCfg = cfgFromCaps ?? legacyCfg ?? null;
 
-  const maxFileSize = Number(effectiveCfg?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE);
-  const allowedModalities = Array.isArray(caps?.modalities)
-    ? (caps!.modalities as string[])
-    : null;
-  const supportedFormats = (effectiveCfg?.supportedFormats ?? DEFAULT_SUPPORTED_FORMATS) as Record<string, string[]>;
+  if (!caps && !effectiveCfg) return DEFAULT_MULTIMODAL_CAPABILITIES;
 
-  for (const att of attachments) {
-    // 模态校验（如果设备声明了能力则严格校验）
-    const modalityKey = att.type === "voice" ? "audio" : att.type;
-    if (allowedModalities && !allowedModalities.includes(modalityKey) && !allowedModalities.includes(att.type)) {
-      return { valid: false, error: `设备不支持 ${att.type} 模态` };
-    }
+  const modalities = (Array.isArray(caps?.modalities) ? caps!.modalities : DEFAULT_MULTIMODAL_CAPABILITIES.modalities) as MultimodalCapabilities["modalities"];
+  const fmts = effectiveCfg?.supportedFormats;
+  const maxSize = effectiveCfg?.maxFileSize;
 
-    // 大小校验（dataUrl 长度粗略估算原始大小：base64 约为原始的 4/3）
-    if (att.dataUrl) {
-      if (att.dataUrl.length > MAX_DATA_URL_LENGTH) {
-        return { valid: false, error: `附件 ${att.name ?? att.type} 超过大小限制（>50MB 拒绝）` };
-      }
-      // 估算原始字节数
-      const base64Part = att.dataUrl.includes(",") ? att.dataUrl.split(",")[1] : att.dataUrl;
-      const estimatedBytes = Math.ceil((base64Part?.length ?? 0) * 3 / 4);
-      if (estimatedBytes > maxFileSize) {
-        return { valid: false, error: `附件 ${att.name ?? att.type} 超过大小限制（${Math.round(maxFileSize / 1_000_000)}MB）` };
-      }
-    }
-
-    // 格式校验
-    const allowed = supportedFormats[modalityKey] ?? DEFAULT_SUPPORTED_FORMATS[modalityKey as DeviceModality] ?? [];
-    if (allowed.length > 0 && att.mimeType && !allowed.includes(att.mimeType)) {
-      return { valid: false, error: `不支持的文件格式: ${att.mimeType}` };
-    }
-  }
-
-  return { valid: true };
-}
-
-// ── 核心处理函数 ────────────────────────────────────────────────
-
-/**
- * 提取 base64 payload（去掉 dataUrl header）
- */
-function extractBase64Payload(dataUrl: string): string {
-  const idx = dataUrl.indexOf(",");
-  return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
+  return {
+    modalities,
+    constraints: {
+      image: {
+        maxFileSizeBytes: maxSize != null ? Number(maxSize) : DEFAULT_MULTIMODAL_CAPABILITIES.constraints.image?.maxFileSizeBytes,
+        supportedMimeTypes: fmts?.image ?? DEFAULT_MULTIMODAL_CAPABILITIES.constraints.image?.supportedMimeTypes,
+      },
+      audio: {
+        maxFileSizeBytes: maxSize != null ? Number(maxSize) : DEFAULT_MULTIMODAL_CAPABILITIES.constraints.audio?.maxFileSizeBytes,
+        supportedMimeTypes: fmts?.audio ?? DEFAULT_MULTIMODAL_CAPABILITIES.constraints.audio?.supportedMimeTypes,
+      },
+      video: {
+        maxFileSizeBytes: maxSize != null ? Number(maxSize) : DEFAULT_MULTIMODAL_CAPABILITIES.constraints.video?.maxFileSizeBytes,
+        supportedMimeTypes: fmts?.video ?? DEFAULT_MULTIMODAL_CAPABILITIES.constraints.video?.supportedMimeTypes,
+      },
+      document: {
+        maxFileSizeBytes: maxSize != null ? Number(maxSize) : DEFAULT_MULTIMODAL_CAPABILITIES.constraints.document?.maxFileSizeBytes,
+        supportedMimeTypes: fmts?.document ?? DEFAULT_MULTIMODAL_CAPABILITIES.constraints.document?.supportedMimeTypes,
+      },
+    },
+  };
 }
 
 /**
@@ -152,16 +123,24 @@ export async function processDeviceQuery(params: ProcessDeviceQueryParams): Prom
     return;
   }
 
-  // 2. 附件校验（复用现有 validateAttachments）
+  // 2. 附件校验（使用 shared 层统一校验函数）
   if (attachments && attachments.length > 0) {
-    const validation = validateAttachments(attachments, deviceRecord);
-    if (!validation.valid) {
+    const unifiedAtts: UnifiedAttachment[] = attachments.map((a: DeviceAttachment) => ({
+      type: a.type as UnifiedAttachment["type"],
+      mimeType: a.mimeType,
+      name: a.name,
+      dataUrl: a.dataUrl,
+    }));
+    const deviceCaps = getDeviceCapabilities(deviceRecord);
+    const { errors } = validateAttachmentBatch(unifiedAtts, deviceCaps);
+    if (errors.length > 0) {
+      const errorMsg = errors.join("; ");
       _logger.warn("attachment validation failed", {
         deviceId: deviceRecord.deviceId,
-        error: validation.error,
+        error: errorMsg,
       });
-      safeSend(ws, { type: "device_stream_error", sessionId, streamId, error: validation.error ?? "invalid attachments" });
-      safeSend(ws, { type: "device_response", sessionId, error: validation.error ?? "invalid attachments", done: true });
+      safeSend(ws, { type: "device_stream_error", sessionId, streamId, error: errorMsg });
+      safeSend(ws, { type: "device_response", sessionId, error: errorMsg, done: true });
       return;
     }
   }

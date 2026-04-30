@@ -318,7 +318,7 @@ async function detectIntentWithLLM(
 
   const availableToolsText = context?.availableTools
     ? `可用工具: ${context.availableTools.join(", ")}`
-    : "可用工具: nl2ui.generate, entity.read, entity.create, workflow.approve, collab.propose";
+    : "可用工具: entity.read, entity.create, workflow.approve, collab.propose";
 
   const prompt = `你是一个意图分析专家。请分析用户的输入，判断其意图类型并推荐合适的工具。
 
@@ -345,7 +345,7 @@ ${historyText || "(无)"}
   "reasoning": "简要说明为什么判断为该意图",
   "suggestedTools": [  // 推荐的工具列表（chat 意图可为空数组）
     {
-      "toolRef": "nl2ui.generate@1.0",
+      "toolRef": "entity.read@1.0",
       "inputDraft": { "userInput": "显示我的笔记" },
       "confidence": 0.9,
       "reasoning": "用户明确要求显示界面"
@@ -427,7 +427,7 @@ async function detectIntentWithModelGateway(params: {
 
   const availableToolsText = params.context?.availableTools
     ? `可用工具: ${params.context.availableTools.join(", ")}`
-    : "可用工具: nl2ui.generate, entity.read, entity.create, workflow.approve, collab.propose";
+    : "可用工具: entity.read, entity.create, workflow.approve, collab.propose";
 
   const subject: LlmSubject = {
     tenantId,
@@ -457,7 +457,7 @@ ${historyText || "(无)"}
   "reasoning": "简要说明为什么判断为该意图",
   "suggestedTools": [
     {
-      "toolRef": "nl2ui.generate@1.0",
+      "toolRef": "entity.read@1.0",
       "inputDraft": { "userInput": "显示我的笔记" },
       "confidence": 0.9,
       "reasoning": "用户明确要求显示界面"
@@ -517,7 +517,7 @@ function generateToolSuggestions(
   switch (intent) {
     case "ui":
       suggestions.push({
-        toolRef: "nl2ui.generate@1.0",
+        toolRef: "ui.page.generate@1.0",
         inputDraft: { userInput: message },
         confidence: 0.9,
         reasoning: "用户请求生成可视化界面",

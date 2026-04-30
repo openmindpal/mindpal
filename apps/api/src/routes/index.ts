@@ -30,6 +30,7 @@ import { notificationPreferenceRoutes } from "./notificationPreferences";
 import { spacesRoutes } from "./spaces";
 import { skillLifecycleRoutes } from "./extended";
 import { audioRoutes } from "./audio";
+import { memoryRoutes } from "./memory";
 
 // ── 核心数据路由 ──
 async function coreDataRoutes(app: FastifyInstance) {
@@ -83,6 +84,11 @@ async function skillRoutes(app: FastifyInstance) {
   app.register(skillLifecycleRoutes);
 }
 
+// ── 记忆管理路由 ──
+async function memoryGroup(app: FastifyInstance) {
+  app.register(memoryRoutes);
+}
+
 // ── 音频服务路由 ──
 async function audioGroup(app: FastifyInstance) {
   app.register(audioRoutes);
@@ -97,4 +103,5 @@ export async function registerAllRoutes(app: FastifyInstance): Promise<void> {
   await app.register(collabRoutes);
   await app.register(skillRoutes);
   await app.register(audioGroup);
+  await app.register(memoryGroup);
 }

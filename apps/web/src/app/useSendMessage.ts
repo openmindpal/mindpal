@@ -21,7 +21,6 @@ export interface UseSendMessageParams {
   selectedModelRef: string;
   setBusy: React.Dispatch<React.SetStateAction<boolean>>;
   setFlow: React.Dispatch<React.SetStateAction<ChatFlowItem[]>>;
-  setNl2uiLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setActiveTask: React.Dispatch<React.SetStateAction<{ taskId: string; runId: string; taskState: TaskState } | null>>;
   setTaskProgress: React.Dispatch<React.SetStateAction<TaskProgress | null>>;
   pollTaskState: (runId: string) => Promise<void>;
@@ -31,6 +30,12 @@ export interface UseSendMessageParams {
   lastRetryMsgRef: React.MutableRefObject<string | null>;
   /** P1-11: 当前活跃的任务 ID 列表（用于多任务上下文） */
   activeTaskIds?: string[];
+  /** 流式 TTS：每次 delta 增量文本回调 */
+  onStreamDelta?: (chunk: string) => void;
+  /** 流式 TTS：流结束回调 */
+  onStreamDone?: () => void;
+  /** 场景化上下文类型，用于后端跳过不必要的 Schema-UI 生成 */
+  contextType?: "home_chat" | "workspace" | "workbench";
 }
 
 /**
@@ -41,10 +46,13 @@ export default function useSendMessage(params: UseSendMessageParams) {
   const {
     locale, draft, setDraft, attachments, setAttachments,
     conversationId, setConversationId, execMode, selectedModelRef,
-    setBusy, setFlow, setNl2uiLoading,
+    setBusy, setFlow,
     setActiveTask, setTaskProgress, pollTaskState,
     inputRef, abortRef, retryCountRef, lastRetryMsgRef,
     activeTaskIds,
+    onStreamDelta,
+    onStreamDone,
+    contextType,
   } = params;
 
   const send = useCallback(async (overrideMsg?: string, opts?: { appendUser?: boolean }) => {
@@ -84,8 +92,6 @@ export default function useSendMessage(params: UseSendMessageParams) {
       setFlow((prev) => [...prev, userFlowItem]);
     }
 
-    setNl2uiLoading(false);
-
     const replyId = nextId("m");
     setFlow((prev) => [...prev, { kind: "message", id: replyId, role: "assistant", text: "", createdAt: Date.now() }]);
 
@@ -115,6 +121,8 @@ export default function useSendMessage(params: UseSendMessageParams) {
           // P1-11: 多任务上下文
           ...(activeTaskIds && activeTaskIds.length > 0 ? { activeTaskIds } : {}),
           ...(conversationId.trim() ? { sessionQueueContext: { sessionId: conversationId.trim() } } : {}),
+          // Schema-UI 场景化触发：传递上下文类型供后端判断是否跳过 Schema-UI
+          ...(contextType ? { contextType } : {}),
         }),
         signal: controller.signal,
       });
@@ -168,7 +176,6 @@ export default function useSendMessage(params: UseSendMessageParams) {
       let accumulatedText = "";
       let streamHasError = false;
       let pendingToolSuggestions: any[] = [];
-      let hasNl2uiResult = false;
       let hasTaskCreated = false;
       let hasStructuredFlowItems = false;
 
@@ -232,16 +239,16 @@ export default function useSendMessage(params: UseSendMessageParams) {
               setPendingToolSuggestions: (s: any[]) => { pendingToolSuggestions = s; },
               streamHasError,
               setStreamHasError: (v: boolean) => { streamHasError = v; },
-              hasNl2uiResult,
-              setHasNl2uiResult: (v: boolean) => { hasNl2uiResult = v; },
               hasTaskCreated,
               setHasTaskCreated: (v: boolean) => { hasTaskCreated = v; },
               hasStructuredFlowItems,
               setHasStructuredFlowItems: (v: boolean) => { hasStructuredFlowItems = v; },
-              setNl2uiLoading, setFlow, setConversationId,
+              setFlow, setConversationId,
               setActiveTask, setTaskProgress, pollTaskState,
               retryCountRef, lastRetryMsgRef,
               selectedModelRef,
+              onStreamDelta,
+              onStreamDone,
             };
             handleSSEEvent(evtName, data, sseCtx);
           } catch (parseErr) {
@@ -252,7 +259,7 @@ export default function useSendMessage(params: UseSendMessageParams) {
 
       flushPendingSync();
 
-      if (!accumulatedText && !streamHasError && !hasNl2uiResult && !hasTaskCreated && pendingToolSuggestions.length === 0) {
+      if (!accumulatedText && !streamHasError && !hasTaskCreated && pendingToolSuggestions.length === 0) {
         setFlow((prev) => prev.map((it) =>
           it.id === replyId
             ? { ...it, text: t(locale, "chat.noResponse") }
@@ -261,7 +268,7 @@ export default function useSendMessage(params: UseSendMessageParams) {
         lastRetryMsgRef.current = message;
       }
 
-      if (!accumulatedText && (hasNl2uiResult || hasTaskCreated || pendingToolSuggestions.length > 0 || hasStructuredFlowItems)) {
+      if (!accumulatedText && (hasTaskCreated || pendingToolSuggestions.length > 0 || hasStructuredFlowItems)) {
         setFlow((prev) => prev.filter((it) => it.id !== replyId));
       }
 
@@ -303,9 +310,11 @@ export default function useSendMessage(params: UseSendMessageParams) {
     setConversationId,
     setDraft,
     setFlow,
-    setNl2uiLoading,
     setTaskProgress,
     activeTaskIds,
+    onStreamDelta,
+    onStreamDone,
+    contextType,
   ]);
 
   return { send };

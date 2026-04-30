@@ -1,15 +1,15 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import Image from "next/image";
 import { t } from "@/lib/i18n";
 import { safeJsonString } from "@/lib/apiError";
 import { type ToolSuggestion } from "@/lib/types";
-import { type Nl2UiConfig } from "@/components/nl2ui/DynamicBlockRenderer";
 import {
-  type ChatFlowItem, type FlowDirective, type FlowNl2UiResult,
+  type ChatFlowItem, type FlowDirective,
   type FlowApprovalNode, type FlowTaskQueueEvent, type FlowArtifactCard,
+  type FlowSchemaUiResult,
   type ToolExecState, type WorkspaceTab,
   friendlyErrorMessage,
 } from "./homeHelpers";
@@ -18,35 +18,30 @@ import { IconExternal, IconPanel } from "./HomeIcons";
 import FlowMarkdown from "@/components/flow/FlowMarkdown";
 import { FlowToolSuggestions } from "@/components/flow/FlowToolSuggestions";
 import { FlowTaskQueueEvent as FlowTaskQueueEventBlock } from "@/components/flow/FlowTaskQueueEvent";
-import { FlowNl2uiResult } from "@/components/flow/FlowNl2uiResult";
 import { FlowArtifactCard as FlowArtifactCardBlock } from "@/components/flow/FlowArtifactCard";
+const LazyFlowSchemaUiResult = lazy(() => import("@/components/flow/FlowSchemaUiResult"));
 import styles from "@/styles/page.module.css";
 
 export interface ChatFlowRendererProps {
   locale: string;
   flow: ChatFlowItem[];
   busy: boolean;
-  nl2uiLoading: boolean;
   toolExecStates: Record<string, ToolExecState>;
   directiveNav: Record<string, { status: string; hint?: string }>;
-  savedPages: Record<string, { pageName: string; pageUrl: string }>;
-  savingPageId: string | null;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   send: (msg?: string, opts?: { appendUser?: boolean }) => void;
   executeToolInline: (flowItemId: string, idx: number, s: ToolSuggestion) => void;
   openDirective: (it: FlowDirective, mode?: "panel" | "navigate") => void;
   openInWorkspace: (tab: { kind: WorkspaceTab["kind"]; name: string; url: string; meta?: WorkspaceTab["meta"] }) => void;
-  saveAsPage: (flowItemId: string, config: Nl2UiConfig, userInput: string) => void;
-  setMaximizedNl2ui: (item: FlowNl2UiResult | null) => void;
   onApprovalDecision?: (approvalId: string, decision: "approve" | "reject") => void;
 }
 
 export default function ChatFlowRenderer(props: ChatFlowRendererProps) {
   const {
-    locale, flow, busy, nl2uiLoading, toolExecStates, directiveNav,
-    savedPages, savingPageId, scrollRef,
+    locale, flow, busy, toolExecStates, directiveNav,
+    scrollRef,
     send, executeToolInline, openDirective,
-    openInWorkspace, saveAsPage, setMaximizedNl2ui,
+    openInWorkspace,
     onApprovalDecision,
   } = props;
 
@@ -95,21 +90,17 @@ export default function ChatFlowRenderer(props: ChatFlowRendererProps) {
       ts={itemTimestamps[it.id]}
       toolExecStates={toolExecStates}
       directiveNav={directiveNav}
-      savedPages={savedPages}
-      savingPageId={savingPageId}
       send={send}
       executeToolInline={executeToolInline}
       openDirective={openDirective}
       openInWorkspace={openInWorkspace}
-      saveAsPage={saveAsPage}
-      setMaximizedNl2ui={setMaximizedNl2ui}
       onApprovalDecision={onApprovalDecision}
       onImageClick={setLightboxSrc}
       registerTimestamp={registerTimestamp}
     />
   ), [locale, busy, lastAssistantId, itemTimestamps, toolExecStates, directiveNav,
-      savedPages, savingPageId, send, executeToolInline, openDirective,
-      openInWorkspace, saveAsPage, setMaximizedNl2ui, onApprovalDecision, registerTimestamp]);
+      send, executeToolInline, openDirective,
+      openInWorkspace, onApprovalDecision, registerTimestamp]);
 
   /* ── Tail overlay (loading indicators) ── */
   const tailOverlay = (
@@ -123,26 +114,8 @@ export default function ChatFlowRenderer(props: ChatFlowRendererProps) {
         </div>
       )}
 
-      {/* Loading skeletons */}
-      {busy && nl2uiLoading && (
-        <div className={styles.nl2uiSkeleton}>
-          <div className={styles.nl2uiSkeletonHeader}>
-            <div className={styles.nl2uiSkeletonBar} style={{ width: 60 }} />
-            <div className={styles.nl2uiSkeletonBar} style={{ width: 48 }} />
-            <div className={styles.nl2uiSkeletonBar} style={{ width: 72 }} />
-          </div>
-          <div className={styles.nl2uiSkeletonBody}>
-            <div className={styles.nl2uiSkeletonRow}><div className={styles.nl2uiSkeletonCell} /><div className={styles.nl2uiSkeletonCell} /><div className={styles.nl2uiSkeletonCell} /></div>
-            <div className={styles.nl2uiSkeletonRow}><div className={styles.nl2uiSkeletonCell} style={{ height: 24 }} /><div className={styles.nl2uiSkeletonCell} style={{ height: 24 }} /><div className={styles.nl2uiSkeletonCell} style={{ height: 24 }} /></div>
-            <div className={styles.nl2uiSkeletonRow}><div className={styles.nl2uiSkeletonCell} style={{ height: 24 }} /><div className={styles.nl2uiSkeletonCell} style={{ height: 24 }} /><div className={styles.nl2uiSkeletonCell} style={{ height: 24 }} /></div>
-          </div>
-          <div className={styles.nl2uiSkeletonLabel}>
-            <span className={styles.nl2uiSkeletonDot} />
-            {t(locale, "nl2ui.generating")}
-          </div>
-        </div>
-      )}
-      {busy && !nl2uiLoading && <div className={styles.typing}><span /><span /><span /></div>}
+      {/* Loading indicator */}
+      {busy && <div className={styles.typing}><span /><span /><span /></div>}
     </>
   );
 
@@ -185,8 +158,8 @@ export default function ChatFlowRenderer(props: ChatFlowRendererProps) {
 
 /* ─── Memoized single flow bubble (avoids re-rendering unchanged messages during streaming) ─── */
 const MemoizedFlowBubble = memo(function FlowBubble({
-  it, locale, busy, isStreaming, ts, toolExecStates, directiveNav, savedPages, savingPageId,
-  send, executeToolInline, openDirective, openInWorkspace, saveAsPage, setMaximizedNl2ui,
+  it, locale, busy, isStreaming, ts, toolExecStates, directiveNav,
+  send, executeToolInline, openDirective, openInWorkspace,
   onApprovalDecision, onImageClick, registerTimestamp,
 }: {
   it: ChatFlowItem;
@@ -196,14 +169,10 @@ const MemoizedFlowBubble = memo(function FlowBubble({
   ts?: number;
   toolExecStates: Record<string, ToolExecState>;
   directiveNav: Record<string, { status: string; hint?: string }>;
-  savedPages: Record<string, { pageName: string; pageUrl: string }>;
-  savingPageId: string | null;
   send: (msg?: string, opts?: { appendUser?: boolean }) => void;
   executeToolInline: (flowItemId: string, idx: number, s: ToolSuggestion) => void;
   openDirective: (it: FlowDirective, mode?: "panel" | "navigate") => void;
   openInWorkspace: (tab: { kind: WorkspaceTab["kind"]; name: string; url: string; meta?: WorkspaceTab["meta"] }) => void;
-  saveAsPage: (flowItemId: string, config: Nl2UiConfig, userInput: string) => void;
-  setMaximizedNl2ui: (item: FlowNl2UiResult | null) => void;
   onApprovalDecision?: (approvalId: string, decision: "approve" | "reject") => void;
   onImageClick?: (src: string) => void;
   registerTimestamp: (id: string) => void;
@@ -214,7 +183,6 @@ const MemoizedFlowBubble = memo(function FlowBubble({
     styles.bubble,
     isUser ? styles.bubbleUser : styles.bubbleAssistant,
     it.kind === "error" ? styles.bubbleError : "",
-    it.kind === "nl2uiResult" ? styles.bubbleNl2ui : "",
     it.kind === "toolSuggestions" ? styles.bubbleToolSuggestion : "",
     it.kind === "approvalNode" ? styles.bubbleApproval : "",
     it.kind === "taskQueueEvent" ? styles.bubbleTaskQueueEvent ?? "" : "",
@@ -328,12 +296,9 @@ const MemoizedFlowBubble = memo(function FlowBubble({
 
       {/* ── Error ── */}
       {it.kind === "error" && (() => {
-        const isNl2uiError = String(it.errorCode ?? "").startsWith("NL2UI_");
         return (
           <div className={styles.bubbleText}>
-            {isNl2uiError
-              ? <>{it.message || t(locale, "chat.nl2ui.error.default")}</>
-              : <>{friendlyErrorMessage(locale, it.errorCode, it.message)}</>}
+            {friendlyErrorMessage(locale, it.errorCode, it.message)}
             {it.traceId ? <span className={styles.traceId}>{t(locale, "chat.requestId")}{it.traceId}</span> : null}
             {it.retryMessage ? (
               <div className={styles.inlineBtnGroup}>
@@ -380,19 +345,6 @@ const MemoizedFlowBubble = memo(function FlowBubble({
         </div>
       )}
 
-      {/* ── NL2UI Result ── */}
-      {it.kind === "nl2uiResult" && (
-        <FlowNl2uiResult
-          locale={locale}
-          it={it}
-          savedPages={savedPages}
-          savingPageId={savingPageId}
-          openInWorkspace={openInWorkspace}
-          saveAsPage={saveAsPage}
-          setMaximizedNl2ui={setMaximizedNl2ui}
-        />
-      )}
-
       {/* ── Timestamp for non-message items ── */}
       {it.kind === "error" && ts && <RelativeTime ts={it.createdAt ?? ts} locale={locale} />}
 
@@ -425,6 +377,13 @@ const MemoizedFlowBubble = memo(function FlowBubble({
       {/* ── Artifact Card (产物卡片：预览 + 下载) ── */}
       {it.kind === "artifactCard" && (
         <FlowArtifactCardBlock it={it as FlowArtifactCard} locale={locale} openInWorkspace={openInWorkspace} />
+      )}
+
+      {/* ── Schema-UI Result (JSON Schema驱动的结构化UI) ── */}
+      {it.kind === "schemaUiResult" && (
+        <Suspense fallback={<span style={{ opacity: 0.5, fontSize: "0.875rem" }}>Loading…</span>}>
+          <LazyFlowSchemaUiResult config={(it as FlowSchemaUiResult).config as import("@openslin/shared").SchemaUiConfig} />
+        </Suspense>
       )}
     </div>
   );

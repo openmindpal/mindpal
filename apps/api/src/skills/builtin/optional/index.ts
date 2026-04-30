@@ -2,7 +2,6 @@
  * Builtin Optional Layer — Standard platform capabilities, can be disabled.
  *
  * These skills are registered by default but can be disabled via DISABLED_BUILTIN_SKILLS:
- * - nl2ui.generator: Natural language to UI generation
  * - ui.page.config: UI page configuration
  * - workbench.manager: Workbench management
  * - oauth.provider: OAuth authentication
@@ -18,7 +17,6 @@
  * - rbac.manager: Role-based access control
  */
 
-export { default as nl2uiGenerator } from "../../nl2ui-generator";
 export { default as intentAnalyzer } from "../../intent-analyzer";
 export { default as uiPageConfig } from "../../ui-page-config";
 export { default as workbenchManager } from "../../workbench-manager";

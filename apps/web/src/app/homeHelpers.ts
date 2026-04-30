@@ -6,7 +6,6 @@
 import { t } from "@/lib/i18n";
 import { isPlainObject } from "@/lib/apiError";
 import { type ToolSuggestion, type ExecuteResponse } from "@/lib/types";
-import { type Nl2UiConfig } from "@/components/nl2ui/DynamicBlockRenderer";
 
 /* ─── Flow types ─────────────────────────────────────────────────────── */
 
@@ -23,17 +22,10 @@ export type ChatAttachment = {
   duration?: number;
 };
 
-export type FlowMessage = { id: string; role: "user" | "assistant"; text: string; attachments?: ChatAttachment[]; createdAt?: number; /** Real-time processing phase from backend (e.g. started/classified/thinking/planning/executing/reviewing) */ phase?: string; /** Model auto-switch notification text (shown when backend falls back to a backup model) */ modelSwitchNote?: string };
+export type FlowMessage = { id: string; role: "user" | "assistant"; text: string; attachments?: ChatAttachment[]; createdAt?: number; /** Real-time processing phase from backend (e.g. started/classified/thinking/planning/executing/reviewing) */ phase?: string; /** Model auto-switch notification text (shown when backend falls back to a backup model) */ modelSwitchNote?: string; /** Schema-UI structured result from backend */ schemaUiResult?: unknown };
 export type FlowError = { id: string; role: "assistant"; errorCode: string; message: string; traceId: string; retryMessage?: string; createdAt?: number };
 export type UiDirectiveTarget = { kind: "page"; name: string } | { kind: "workbench"; key: string };
 export type FlowDirective = { id: string; role: "assistant"; kind: "uiDirective"; directive: unknown; target: UiDirectiveTarget | null; createdAt?: number };
-export type FlowNl2UiResult = {
-  id: string; role: "assistant"; kind: "nl2uiResult";
-  config: Nl2UiConfig;
-  userInput: string;
-  suggestions: string[];
-  createdAt?: number;
-};
 export type FlowToolSuggestions = { id: string; role: "assistant"; kind: "toolSuggestions"; suggestions: ToolSuggestion[]; turnId?: string; createdAt?: number };
 
 /** Approval node - represents an approval request */
@@ -68,15 +60,24 @@ export type FlowArtifactCard = {
   createdAt?: number;
 };
 
+/** Schema-UI structured result card */
+export type FlowSchemaUiResult = {
+  id: string;
+  role: "assistant";
+  kind: "schemaUiResult";
+  config: unknown;
+  createdAt?: number;
+};
+
 export type ChatFlowItem =
   | ({ kind: "message" } & FlowMessage)
   | ({ kind: "error" } & FlowError)
   | FlowDirective
-  | FlowNl2UiResult
   | FlowToolSuggestions
   | FlowApprovalNode
   | FlowTaskQueueEvent
-  | FlowArtifactCard;
+  | FlowArtifactCard
+  | FlowSchemaUiResult;
 
 /** Single step entry for the task progress bar (dual-track output) */
 export type TaskStepEntry = {
@@ -171,7 +172,7 @@ export type FlowTaskQueueEvent = {
 
 export type WorkspaceTab = {
   id: string;
-  kind: "page" | "workbench" | "runDetail" | "approvalDetail" | "knowledgeResult" | "artifact" | "nl2uiPreview";
+  kind: "page" | "workbench" | "runDetail" | "approvalDetail" | "knowledgeResult" | "artifact";
   name: string;
   url: string;
   meta?: {
@@ -179,7 +180,6 @@ export type WorkspaceTab = {
     approvalId?: string;
     artifactType?: "json" | "table" | "chart" | "markdown" | "file" | "text";
     artifactData?: unknown;
-    nl2uiConfig?: unknown; // For nl2uiPreview kind
   };
 };
 

@@ -17,7 +17,7 @@ import { safeError, safeLog, sha256_8 } from "../kernel/log";
 import { executeDeviceTool } from "../kernel/taskExecutor";
 import { disposeAllPlugins } from "../kernel/pluginLifecycle";
 import { syncPolicyToCache, getCachedPolicy, isCachedToolAllowed } from "../kernel/auth";
-import { WebSocketDeviceAgent } from "./websocketClient";
+import { WebSocketDeviceAgent, probeDeviceModalities } from "./websocketClient";
 
 export type DeviceExecution = {
   deviceExecutionId: string;
@@ -167,6 +167,11 @@ export async function runLoop(params: {
 
   if (transport !== 'http') {
     wsClient = new WebSocketDeviceAgent(params.cfg, params.confirmFn);
+
+    // P3: 探测设备能力并设置到 WS 客户端，握手时自动携带
+    const capDesc = probeDeviceModalities();
+    wsClient.setCapabilityDescriptor(capDesc);
+    log(`[agent] 设备能力探测完成: type=${capDesc.deviceType} sensors=${capDesc.capabilities.sensors.map(s => s.type).join(',')}`);
 
     wsClient.onDisconnect(() => {
       if (currentTransport === 'ws') {

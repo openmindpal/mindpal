@@ -431,8 +431,31 @@ export async function replanOnFailure(params: {
     ? appendDiagnosisSummary(params.goal, params.diagnosis)
     : params.goal;
 
+  // P0: 查询同类型历史重规划经验作为 few-shot 上下文
+  let episodeHint = "";
+  if (params.pool && params.diagnosis?.failureType) {
+    try {
+      const episodesRes = await params.pool.query(
+        `SELECT strategy, outcome, feasibility_score
+         FROM replan_episodes
+         WHERE tenant_id = $1 AND diagnosis->>'failureType' = $2
+         ORDER BY created_at DESC LIMIT 5`,
+        [params.tenantId, params.diagnosis.failureType],
+      );
+      if (episodesRes.rows.length > 0) {
+        episodeHint = "\n[Historical replan experience for this failure type]: " +
+          episodesRes.rows.map((e: any) =>
+            `Strategy "${e.strategy}" \u2192 ${e.outcome}` +
+            (e.feasibility_score != null ? ` (feasibility: ${e.feasibility_score})` : ""),
+          ).join("; ");
+      }
+    } catch { /* non-blocking */ }
+  }
+
+  const goalWithEpisodes = effectiveGoal + episodeHint;
+
   let attempt = 0;
-  let result = await buildHeuristicPlan({ ...params, goal: effectiveGoal });
+  let result = await buildHeuristicPlan({ ...params, goal: goalWithEpisodes });
 
   while (result.planSteps.length === 0 && attempt < maxAttempts && replanBudget > 0) {
     attempt++;
@@ -445,7 +468,7 @@ export async function replanOnFailure(params: {
 
     const relaxedParams = {
       ...params,
-      goal: effectiveGoal,
+      goal: goalWithEpisodes,
       // Broaden scope: relax allowed tools on retry
       allowedTools: config.broadenScopeOnReplan ? null : params.allowedTools,
       // Slightly increase step budget on retry

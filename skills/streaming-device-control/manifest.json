@@ -26,7 +26,7 @@
   "io": {
     "inputSchema": {
       "fields": {
-        "command": { "type": "string", "required": true, "description": "控制指令类型: start_stream | stop_stream | send_command" },
+        "command": { "type": "string", "required": true, "description": "控制指令类型: start_stream | stop_stream | send_command | emergency_stop" }
         "deviceId": { "type": "string", "required": true, "description": "目标设备 ID" },
         "frequency": { "type": "number", "description": "传感器数据采样频率(Hz)，默认 100" },
         "payload": { "type": "json", "description": "指令载荷数据" },

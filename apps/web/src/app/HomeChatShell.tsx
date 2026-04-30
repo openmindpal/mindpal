@@ -29,11 +29,11 @@ import useTaskManager from "./useTaskManager";
 import { useConversation } from "./hooks/useConversation";
 import { useExecutionFlow } from "./hooks/useExecutionFlow";
 import TaskDock from "./TaskDock";
+import TaskDetailDrawer from "@/components/task/TaskDetailDrawer";
 import LeftPanel from "./LeftPanel";
 import ChatFlowRenderer from "./ChatFlowRenderer";
 import ChatInputArea from "./ChatInputArea";
 import ConversationHistory from "./ConversationHistory";
-import Nl2uiOverlay from "./Nl2uiOverlay";
 import styles from "@/styles/page.module.css";
 
 export default function HomeChatShell(props: { locale: string }) {
@@ -62,11 +62,11 @@ export default function HomeChatShell(props: { locale: string }) {
     retryCountRef: conv.retryCountRef,
     lastRetryMsgRef: conv.lastRetryMsgRef,
     setToolExecStates: conv.setToolExecStates,
-    setNl2uiLoading: conv.setNl2uiLoading,
     setActiveTask,
     setTaskProgress,
     pollTaskState,
     activeTaskIds: taskQueue.activeTaskIds.length > 0 ? taskQueue.activeTaskIds : taskManagerActiveIds,
+    contextType: "home_chat",
   });
 
   /* ─── SSE ─── */
@@ -107,6 +107,8 @@ export default function HomeChatShell(props: { locale: string }) {
 
   const [cmdOpen, setCmdOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [drawerTaskId, setDrawerTaskId] = useState<string | null>(null);
+  const [drawerRunId, setDrawerRunId] = useState<string | null>(null);
   const hasMessages = hasMounted && conv.flow.length > 0;
 
   const canSend = useMemo(() => Boolean(exec.draft.trim()) || exec.attachments.length > 0, [exec.draft, exec.attachments]);
@@ -126,14 +128,13 @@ export default function HomeChatShell(props: { locale: string }) {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "k") { e.preventDefault(); setCmdOpen((p) => !p); }
       if (e.key === "Escape") {
-        if (conv.maximizedNl2ui) { conv.setMaximizedNl2ui(null); return; }
         if (cmdOpen) setCmdOpen(false);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-bind when cmdOpen or maximized state changes
-  }, [cmdOpen, conv.maximizedNl2ui, conv.setMaximizedNl2ui]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-bind when cmdOpen changes
+  }, [cmdOpen]);
 
   /* ─── Scroll management ─── */
   useEffect(() => {
@@ -244,13 +245,14 @@ export default function HomeChatShell(props: { locale: string }) {
         <div className={`${styles.chatSide} ${rightCollapsed ? styles.chatCollapsed : ""}`}>
           {!rightCollapsed && (<button className={`${styles.collapseBtn} ${styles.collapseBtnRight}`} onClick={toggleRight} title={t(locale, "panel.collapseRight")}><IconChevronRight /></button>)}
           <main className={styles.main}>
-            {!hasMessages && (<div className={styles.hero}><h1 className={styles.greeting}>{t(locale, "home.welcome")}</h1><p className={styles.subtitle}>{t(locale, "home.subtitle")}</p><p className={styles.hint} style={{ marginTop: 8 }}>{t(locale, "nl2ui.description")}</p></div>)}
+            {!hasMessages && (<div className={styles.hero}><h1 className={styles.greeting}>{t(locale, "home.welcome")}</h1><p className={styles.subtitle}>{t(locale, "home.subtitle")}</p></div>)}
 
             {taskQueue.allEntries.length > 0 && (
               <div style={{ padding: "0 16px", marginBottom: 8 }}>
                 <TaskDock locale={locale} entries={taskQueue.allEntries} dependencies={taskQueue.queueState.dependencies}
                   foregroundEntryId={taskQueue.queueState.foregroundEntryId} activeCount={taskQueue.queueState.activeCount}
-                  queuedCount={taskQueue.queueState.queuedCount} actions={taskQueue.actions} operating={taskQueue.operating} />
+                  queuedCount={taskQueue.queueState.queuedCount} actions={taskQueue.actions} operating={taskQueue.operating}
+                  onTaskClick={(taskId, runId) => { setDrawerTaskId(taskId); setDrawerRunId(runId ?? null); }} />
               </div>
             )}
 
@@ -270,10 +272,10 @@ export default function HomeChatShell(props: { locale: string }) {
             )}
 
             {hasMessages && (
-              <ChatFlowRenderer locale={locale} flow={conv.flow} busy={exec.busy} nl2uiLoading={conv.nl2uiLoading}
-                toolExecStates={conv.toolExecStates} directiveNav={directiveNav} savedPages={conv.savedPages} savingPageId={conv.savingPageId}
+              <ChatFlowRenderer locale={locale} flow={conv.flow} busy={exec.busy}
+                toolExecStates={conv.toolExecStates} directiveNav={directiveNav}
                 scrollRef={scrollRef} send={exec.send} executeToolInline={exec.executeToolInline} openDirective={openDirective}
-                openInWorkspace={openInWorkspace} saveAsPage={conv.saveAsPage} setMaximizedNl2ui={conv.setMaximizedNl2ui} onApprovalDecision={onApprovalDecision} />
+                openInWorkspace={openInWorkspace} onApprovalDecision={onApprovalDecision} />
             )}
 
             <ChatInputArea locale={locale} hasMessages={hasMessages} draft={exec.draft} setDraft={exec.setDraft} busy={exec.busy} canSend={canSend}
@@ -285,7 +287,8 @@ export default function HomeChatShell(props: { locale: string }) {
               startVoice={exec.startVoice} toggleConversation={exec.toggleConversation} stopSpeaking={exec.stopSpeaking}
               videoActive={exec.videoActive} videoStream={exec.videoStream} videoSupported={exec.videoSupported}
               startVideo={exec.startVideo} stopVideo={exec.stopVideo} captureFrame={exec.captureFrame}
-              onVideoCaptureFrame={() => {
+              streaming={exec.streaming} startStreaming={exec.startStreaming} stopStreaming={exec.stopStreaming}
+              onVideoCaptureFrame={exec.streaming ? undefined : () => {
                 const dataUrl = exec.captureFrame();
                 if (dataUrl) {
                   const byteStr = atob(dataUrl.split(",")[1]);
@@ -311,12 +314,15 @@ export default function HomeChatShell(props: { locale: string }) {
         </div>
       </div>
 
-      {conv.maximizedNl2ui && (
-        <Nl2uiOverlay locale={locale} maximizedNl2ui={conv.maximizedNl2ui} savedPages={conv.savedPages} savingPageId={conv.savingPageId}
-          saveAsPage={conv.saveAsPage} setMaximizedNl2ui={conv.setMaximizedNl2ui} handleCardClick={handleCardClick} />
-      )}
-
       <CommandPalette locale={locale} open={cmdOpen} onClose={() => setCmdOpen(false)} onSelect={handleCmdSelect} recent={conv.recent} />
+      {drawerTaskId && (
+        <TaskDetailDrawer
+          taskId={drawerTaskId}
+          runId={drawerRunId ?? undefined}
+          locale={locale}
+          onClose={() => { setDrawerTaskId(null); setDrawerRunId(null); }}
+        />
+      )}
       <BottomTray locale={locale} />
     </div>
   );

@@ -226,5 +226,17 @@
   { "envKey": "STRATEGY_RECALL_CONFIDENCE_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.65", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Minimum confidence for unconditional strategy recall (below this, requires minhash similarity match)" },
   { "envKey": "STRATEGY_RECALL_LIMIT", "level": "runtime", "valueType": "number", "defaultValue": "5", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Maximum number of procedural strategies recalled per iteration" },
   { "envKey": "STRATEGY_RECALL_MAX_CHARS", "level": "runtime", "valueType": "number", "defaultValue": "2000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Maximum total characters for recalled strategy text" },
-  { "envKey": "STRATEGY_RECALL_DECAY_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.1", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Minimum decay_score for strategy to be eligible for recall" }
+  { "envKey": "STRATEGY_RECALL_DECAY_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.1", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Minimum decay_score for strategy to be eligible for recall" },
+
+  { "envKey": "DEBATE_CONVERGENCE_THRESHOLD", "level": "runtime", "valueType": "number", "defaultValue": "0.8", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "辩论收敛阈值" },
+  { "envKey": "DEBATE_MIN_CONFIDENCE", "level": "runtime", "valueType": "number", "defaultValue": "0.6", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "辩论最低置信度" },
+  { "envKey": "DEBATE_SCORE_DECAY", "level": "runtime", "valueType": "number", "defaultValue": "0.9", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "辩论评分衰减系数" },
+  { "envKey": "DEBATE_CORRECTION_BONUS", "level": "runtime", "valueType": "number", "defaultValue": "0.05", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "辩论纠错奖励系数" },
+  { "envKey": "DEBATE_CONSENSUS_EVOLUTION_WINDOW", "level": "runtime", "valueType": "number", "defaultValue": "3", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "辩论共识演化窗口" },
+  { "envKey": "DEBATE_MIN_PARTIES", "level": "runtime", "valueType": "number", "defaultValue": "2", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "辩论最少参与方数" },
+  { "envKey": "DEBATE_MAX_PARTIES", "level": "runtime", "valueType": "number", "defaultValue": "10", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "辩论最大参与方数" },
+  { "envKey": "COLLAB_BUS_STREAM_MAXLEN", "level": "runtime", "valueType": "number", "defaultValue": "5000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Redis Stream 最大保留消息数" },
+  { "envKey": "COLLAB_MAX_CORRECTION_ROUNDS", "level": "runtime", "valueType": "number", "defaultValue": "3", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "协作最大纠错轮次" },
+  { "envKey": "COLLAB_MAX_ENVELOPE_SIZE", "level": "runtime", "valueType": "number", "defaultValue": "1048576", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Envelope 最大字节数" },
+  { "envKey": "COLLAB_CROSS_VALIDATION_STRATEGY", "level": "runtime", "valueType": "string", "defaultValue": "adjacent", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "交叉验证策略 (adjacent/round_robin)" }
 ]

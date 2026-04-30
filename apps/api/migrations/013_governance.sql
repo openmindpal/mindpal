@@ -436,7 +436,7 @@ VALUES
   ('tenant_dev', 'knowledge',     'ai',            8, ARRAY['knowledge','rag','search']),
   ('tenant_dev', 'memory',        'ai',            8, ARRAY['memory','context','recall']),
   ('tenant_dev', 'intent',        'ai',            9, ARRAY['intent','analysis','nlp']),
-  ('tenant_dev', 'nl2ui',         'ai',            9, ARRAY['nl2ui','page-generation','frontend']),
+  ('tenant_dev', 'schema-ui',     'ai',            9, ARRAY['schema-ui','page-generation','frontend']),
   ('tenant_dev', 'media',         'ai',            7, ARRAY['media','multimodal','vision']),
   ('tenant_dev', 'schema',        'database',      9, ARRAY['schema','database','ddl']),
   ('tenant_dev', 'entity',        'database',      8, ARRAY['entity','data','crud']),
@@ -478,7 +478,7 @@ VALUES
   ('tenant_dev', 'pinned', 'name', 'knowledge.search', '{"pinnedOrder": 1}'),
   ('tenant_dev', 'pinned', 'name', 'memory.read',      '{"pinnedOrder": 2}'),
   ('tenant_dev', 'pinned', 'name', 'memory.write',     '{"pinnedOrder": 3}'),
-  ('tenant_dev', 'pinned', 'name', 'nl2ui.generate',   '{"pinnedOrder": 4}'),
+  ('tenant_dev', 'pinned', 'name', 'schema-ui.generate',   '{"pinnedOrder": 4}'),
   ('tenant_dev', 'pinned', 'name', 'entity.create',    '{"pinnedOrder": 5}'),
   ('tenant_dev', 'pinned', 'name', 'entity.update',    '{"pinnedOrder": 6}'),
   ('tenant_dev', 'pinned', 'name', 'entity.delete',    '{"pinnedOrder": 7}')
@@ -525,7 +525,7 @@ ON CONFLICT (tenant_id, rule_group) DO NOTHING;
 -- Seed: category_display — from categoryNames (orchestrator.ts L155-171)
 INSERT INTO orchestrator_rule_configs (tenant_id, rule_group, rules)
 VALUES ('tenant_dev', 'category_display', '{
-  "nl2ui":         {"zh": "界面生成",       "en": "UI Generation"},
+  "schema-ui":     {"zh": "界面生成",       "en": "UI Generation"},
   "memory":        {"zh": "记忆管理",       "en": "Memory Management"},
   "knowledge":     {"zh": "知识检索",       "en": "Knowledge Retrieval"},
   "governance":    {"zh": "治理控制",       "en": "Governance Control"},
@@ -600,12 +600,12 @@ ON CONFLICT (tenant_id, rule_group) DO NOTHING;
 
 
 -- ══════════════════════════════════════════════════════════════════════
--- Extra: Tag nl2ui tools with execution:separate-pipeline
+-- Extra: Tag schema-ui tools with execution:separate-pipeline
 -- ══════════════════════════════════════════════════════════════════════
 
 UPDATE tool_definitions
 SET tags = array_append(tags, 'execution:separate-pipeline')
-WHERE resource_type = 'nl2ui'
+WHERE resource_type = 'schema-ui'
   AND NOT ('execution:separate-pipeline' = ANY(tags));
 
 -- ============ merged from 023_approval_rules.sql ============

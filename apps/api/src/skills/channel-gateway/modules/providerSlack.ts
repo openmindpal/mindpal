@@ -2,7 +2,8 @@ import { Errors } from "../../../lib/errors";
 import { pickSecret } from "./channelCommon";
 import { verifySlackSignature, slackSendTextWithRetry } from "./slack";
 import type { ChannelProviderPlugin, IngressContext, ParsedInbound } from "./providerAdapters";
-import { registerChannelProvider } from "./providerAdapters";
+import { registerChannelProvider, inferAttachmentType } from "./providerAdapters";
+import type { UnifiedAttachment } from "@openslin/shared";
 import { SlackSocketClient } from "./slackSocketMode";
 
 const slackPlugin: ChannelProviderPlugin = {
@@ -79,6 +80,22 @@ const slackPlugin: ChannelProviderPlugin = {
     const channelUserId = String(ev?.user ?? "").trim();
     const msgText = typeof ev?.text === "string" ? String(ev.text) : "";
 
+    // ── Slack 附件提取：event.files[] ──
+    const attachments: UnifiedAttachment[] = [];
+    const files = ev?.files;
+    if (Array.isArray(files)) {
+      for (const f of files) {
+        const mimeType = String(f.mimetype ?? f.mime_type ?? "application/octet-stream");
+        attachments.push({
+          type: inferAttachmentType(mimeType),
+          mimeType,
+          name: f.name || f.title,
+          sizeBytes: f.size != null ? Number(f.size) : undefined,
+          dataUrl: String(f.url_private_download ?? f.url_private ?? ""),
+        });
+      }
+    }
+
     return {
       workspaceId: teamId,
       eventId,
@@ -88,6 +105,7 @@ const slackPlugin: ChannelProviderPlugin = {
       channelUserId,
       text: msgText,
       rawBody: body,
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
   },
 
@@ -140,6 +158,22 @@ const slackPlugin: ChannelProviderPlugin = {
         const msgText = typeof ev?.text === "string" ? String(ev.text) : "";
         if (!msgText) return;
 
+        // ── WS 模式 Slack 附件提取 ──
+        const attachments: UnifiedAttachment[] = [];
+        const wsFiles = ev?.files;
+        if (Array.isArray(wsFiles)) {
+          for (const f of wsFiles) {
+            const mimeType = String(f.mimetype ?? f.mime_type ?? "application/octet-stream");
+            attachments.push({
+              type: inferAttachmentType(mimeType),
+              mimeType,
+              name: f.name || f.title,
+              sizeBytes: f.size != null ? Number(f.size) : undefined,
+              dataUrl: String(f.url_private_download ?? f.url_private ?? ""),
+            });
+          }
+        }
+
         const parsed: ParsedInbound = {
           workspaceId: teamId,
           eventId,
@@ -149,6 +183,7 @@ const slackPlugin: ChannelProviderPlugin = {
           channelUserId,
           text: msgText,
           rawBody: payload,
+          ...(attachments.length > 0 ? { attachments } : {}),
         };
         await onEvent(parsed);
       } catch (err: any) {

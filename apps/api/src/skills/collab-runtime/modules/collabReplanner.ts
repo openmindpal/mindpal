@@ -487,6 +487,26 @@ export async function executeReplan(params: {
           metadata: episode as any,
         },
       });
+
+      // P0: 持久化重规划经验片段到 replan_episodes 表，用于后续 few-shot 学习
+      try {
+        await pool.query(
+          `INSERT INTO replan_episodes (tenant_id, trace_id, collab_run_id, diagnosis, strategy, outcome, feasibility_score)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)`,
+          [
+            tenantId,
+            traceId ?? "",
+            context.collabRunId ?? null,
+            JSON.stringify(context.diagnosis),
+            strategy,
+            newPlanSteps.length > 0 ? "success" : "failure",
+            feasibility?.score ?? null,
+          ],
+        );
+      } catch (episodeErr) {
+        // episode 记录失败不影响重规划主流程
+        app.log.warn?.({ err: episodeErr }, "[Replanner] replan episode record failed, non-blocking");
+      }
     }
 
     return {

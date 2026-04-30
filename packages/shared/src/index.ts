@@ -556,6 +556,7 @@ export {
   computeDebateConsensusScore,
   COLLAB_CONFIG_DEFAULTS,
   DEBATE_CONFIG_DEFAULTS,
+  getDebateConfigDefaults,
   collabConfig,
 } from "./collabProtocol";
 export type {
@@ -738,6 +739,9 @@ export type {
   PreflightResult,
 } from "./orchestrationEvents";
 
+// ── Schema-UI 共享类型 ──
+export type { SchemaUiConfig, SchemaUiHints, SchemaUiDataBinding } from "./schemaUiTypes.js";
+
 // ── 统一流式事件类型 ──
 export {
   StreamEventType,
@@ -821,4 +825,25 @@ export type {
   HandshakeSecurityExt, HandshakeAckSecurityExt,
   DeviceSessionState, SecureDeviceMessage,
 } from "./deviceHandshakeSecurity";
+
+// ── 统一附件处理基座（元数据驱动，零硬编码） ──
+export {
+  DEFAULT_MULTIMODAL_CAPABILITIES,
+  validateAttachment, validateAttachmentBatch,
+  toOrchestratorAttachment, toContentParts, extractBase64Payload, normalizeAudioFormat,
+} from "./attachmentProcessor";
+export type {
+  UnifiedAttachment, MultimodalCapabilities,
+} from "./attachmentProcessor";
+
+// ── 统一设备协议（OS级设备抽象 + 视频流WebSocket协议） ──
+export type {
+  SensorCapability,
+  ActuatorCapability,
+  DeviceCapabilityDescriptor,
+  DeviceCommand,
+  DeviceCommandAck,
+  VideoStreamClientMessage,
+  VideoStreamServerMessage,
+} from "./deviceProtocol";
 

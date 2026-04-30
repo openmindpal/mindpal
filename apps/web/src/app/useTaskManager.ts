@@ -15,6 +15,9 @@ const POLL_CONFIG = {
   MAX_INTERVAL_MS: 10000,      // max interval 10s
   MULTIPLIER: 2,               // backoff multiplier
   ERROR_INTERVAL_MS: 4000,     // error retry interval
+  MAX_POLLS: 150,              // max polling iterations before timeout
+  MAX_CONTINUE_RETRIES: 3,     // auto-continue max retry count
+  NO_PROGRESS_WARN_MS: 15000,  // no-progress warning threshold
 } as const;
 
 /** Compute next poll interval based on task phase and consecutive no-change count */
@@ -46,6 +49,10 @@ export interface UseTaskManagerParams {
   locale: string;
   setFlow: React.Dispatch<React.SetStateAction<ChatFlowItem[]>>;
   abortRef: React.MutableRefObject<AbortController | null>;
+  /** 轮询期间无进度超过阈值时触发 */
+  onNoProgress?: (runId: string, elapsedMs: number) => void;
+  /** 轮询达到 MAX_POLLS 上限时触发 */
+  onPollTimeout?: (runId: string) => void;
 }
 
 /**
@@ -56,6 +63,8 @@ export default function useTaskManager({
   locale,
   setFlow,
   abortRef,
+  onNoProgress,
+  onPollTimeout,
 }: UseTaskManagerParams) {
   // P1-13: 单任务兼容状态（HomeChat 未改造前仍使用）
   const [activeTask, setActiveTask] = useState<{ taskId: string; runId: string; taskState: TaskState } | null>(null);
@@ -95,7 +104,6 @@ export default function useTaskManager({
     // 若已有该 runId 的轮询，不重复启动
     if (pollTimersRef.current.has(runId)) return;
 
-    const MAX_POLLS = 150;
     let pollCount = 0;
     let lastPhase = "";
     let lastStepCount = 0;
@@ -103,17 +111,16 @@ export default function useTaskManager({
     let lastStatusChangeAt = Date.now();
     let noProgressWarned = false;
     let continueTries = 0;
-    const MAX_CONTINUE_RETRIES = 3;
-    const NO_PROGRESS_WARN_MS = 15000;
 
     // 指数退避状态
     let consecutiveNoChange = 0;
 
     const scheduleNext = (phase: string, isError = false) => {
       pollCount++;
-      if (pollCount >= MAX_POLLS) {
+      if (pollCount >= POLL_CONFIG.MAX_POLLS) {
         console.log(`[pollTaskState] Polling timed out, stopping runId=${runId}`);
         pollTimersRef.current.delete(runId);
+        onPollTimeout?.(runId);
         return;
       }
       const interval = isError
@@ -185,8 +192,11 @@ export default function useTaskManager({
           consecutiveNoChange++;
         }
 
-        if (!noProgressWarned && Date.now() - lastStatusChangeAt > NO_PROGRESS_WARN_MS && status === "running") {
+        if (!noProgressWarned && Date.now() - lastStatusChangeAt > POLL_CONFIG.NO_PROGRESS_WARN_MS && status === "running") {
+          const elapsed = Date.now() - lastStatusChangeAt;
+          console.warn(`[pollTaskState] No progress for ${elapsed}ms on runId=${runId}`);
           noProgressWarned = true;
+          onNoProgress?.(runId, elapsed);
         }
 
         setActiveTask((prev) => {
@@ -244,7 +254,7 @@ export default function useTaskManager({
         }
 
         const waitingStatuses = ["waiting", "step_done"];
-        if (waitingStatuses.includes(status) && continueTries < MAX_CONTINUE_RETRIES) {
+        if (waitingStatuses.includes(status) && continueTries < POLL_CONFIG.MAX_CONTINUE_RETRIES) {
           console.log(`[pollTaskState] Task ${runId} is waiting (${status}); auto-triggering continue.`);
           continueTries++;
           try {
@@ -275,7 +285,7 @@ export default function useTaskManager({
 
     const timer = setTimeout(poll, POLL_CONFIG.ACTIVE_INTERVAL_MS);
     pollTimersRef.current.set(runId, timer);
-  }, [getTaskControlRequest, locale]);
+  }, [getTaskControlRequest, locale, onNoProgress, onPollTimeout]);
 
   const taskAction = useCallback(async (action: "continue" | "stop" | "retry" | "skip", targetRunId?: string) => {
     const runId = targetRunId ?? activeTask?.runId;
@@ -405,7 +415,9 @@ export default function useTaskManager({
 
   return {
     // 单任务兼容 API
+    /** @deprecated 使用 activeTasksMap 替代。P1-13 多任务迁移。 */
     activeTask, setActiveTask,
+    /** @deprecated 使用 activeTasksMap 替代。P1-13 多任务迁移。 */
     taskProgress, setTaskProgress,
     pollTaskState,
     taskAction,

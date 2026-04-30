@@ -14,13 +14,18 @@ import { runAgentLoop } from "./agentLoop";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import type { AgentState, CollabResult, CollabOrchestratorParams } from "./collabTypes";
 import { writeCollabEnvelope } from "./collabEnvelope";
-import { collabConfig } from "@openslin/shared";
+import { collabConfig, resolveString } from "@openslin/shared";
 
-/** 最大纠错轮次限制，超过后返回当前最佳结果而非继续重试 */
-const MAX_CORRECTION_ROUNDS = 3;
+/** 最大纠错轮次限制，超过后返回当前最佳结果而非继续重试（governance > env > default 三级配置） */
+function getMaxCorrectionRounds(): number {
+  return collabConfig("COLLAB_MAX_CORRECTION_ROUNDS");
+}
 
-/** 交叉验证选择策略：adjacent=相邻互验，round_robin=随机非自身验证 */
-const CROSS_VALIDATION_STRATEGY = (process.env.COLLAB_CROSS_VALIDATION_STRATEGY ?? "adjacent") as "adjacent" | "round_robin";
+/** 交叉验证选择策略：adjacent=相邻互验，round_robin=随机非自身验证（governance > env > default 三级配置） */
+function getCrossValidationStrategy(): "adjacent" | "round_robin" {
+  const val = resolveString("COLLAB_CROSS_VALIDATION_STRATEGY", undefined, undefined, "adjacent").value;
+  return val === "round_robin" ? "round_robin" : "adjacent";
+}
 
 // ── 交叉验证执行阶段 ──────────────────────────────────────────
 
@@ -41,7 +46,7 @@ export async function runCrossValidationPhase(params: {
 
   // 构建交叉验证配对
   const pairs: Array<{ validated: AgentState; validator: AgentState }> = [];
-  if (CROSS_VALIDATION_STRATEGY === "round_robin") {
+  if (getCrossValidationStrategy() === "round_robin") {
     for (const validated of doneStates) {
       const candidates = doneStates.filter(s => s.agentId !== validated.agentId);
       if (candidates.length === 0) continue;
@@ -129,7 +134,7 @@ export async function runDynamicCorrectionPhase(params: {
 }): Promise<NonNullable<CollabResult["corrections"]> & { correctionExhausted?: boolean }> {
   const { agentStates, crossValidationResults, params: orchestratorParams, maxIterationsPerAgent, maxRetries } = params;
   // 实际轮次不能超过 MAX_CORRECTION_ROUNDS 上限
-  const effectiveMaxRetries = Math.min(maxRetries, MAX_CORRECTION_ROUNDS);
+  const effectiveMaxRetries = Math.min(maxRetries, getMaxCorrectionRounds());
   const { app, pool, subject } = orchestratorParams;
 
   const corrections: NonNullable<CollabResult["corrections"]> = [];
@@ -339,7 +344,7 @@ export async function runDynamicCorrectionPhase(params: {
         event: "collab.correction.exhausted",
         agentId: targetState.agentId,
         retriesAttempted,
-        maxCorrectionRounds: MAX_CORRECTION_ROUNDS,
+        maxCorrectionRounds: getMaxCorrectionRounds(),
         finalVerdict: currentVerdict,
       }, "[CollabOrchestrator] 纠错轮次耗尽，返回当前最佳可用结果");
     }

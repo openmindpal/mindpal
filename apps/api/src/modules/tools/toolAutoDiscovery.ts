@@ -12,7 +12,7 @@
  * ═══════════════════════════════════════════════════════════════════
  *
  * 自动发现并注册来自三个来源的工具：
- * 1. 内置 Skill 插件（manifest.tools 声明）— 如 memory.read, nl2ui.generate
+ * 1. 内置 Skill 插件（manifest.tools 声明）— 如 memory.read, entity.create
  * 2. 外部 Skill 包（skills/ 目录 manifest.json）— 如 collab.guard, sleep
  * 3. 内置 Skill 身份（无显式 tools 的插件）— 注册为 builtin_skill
  *
@@ -427,7 +427,7 @@ export async function autoDiscoverAndRegisterTools(pool: Pool): Promise<{ regist
     const seen = new Set<string>();
     const allTools: DiscoveredTool[] = [];
 
-    // Source A: Built-in skill plugin manifest.tools (e.g. entity.create, memory.read, nl2ui.generate)
+    // Source A: Built-in skill plugin manifest.tools (e.g. entity.create, memory.read)
     const builtinTools = collectBuiltinSkillTools(seen, profiles);
     allTools.push(...builtinTools);
 

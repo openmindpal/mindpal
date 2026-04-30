@@ -6,7 +6,7 @@
  * 
  * 支持的意图类型:
  * - chat: 闲聊/问答（无需工具调用）
- * - ui: 界面生成（推荐 nl2ui.generate）
+ * - ui: 界面生成
  * - query: 数据查询（推荐 entity.read 等）
  * - task: 任务执行（推荐 workflow/approval 工具）
  * - collab: 多智能体协作（推荐 collab.* 工具）

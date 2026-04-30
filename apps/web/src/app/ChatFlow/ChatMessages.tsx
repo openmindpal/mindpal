@@ -14,17 +14,12 @@ export interface ChatMessagesProps {
   locale: string;
   flow: any[];
   busy: boolean;
-  nl2uiLoading: boolean;
   toolExecStates: any;
   directiveNav: any;
-  savedPages: any;
-  savingPageId: string | null;
   send: (msg?: string) => Promise<void>;
   executeToolInline: (toolRef: string, params: any) => Promise<any>;
   openDirective: (d: any) => void;
   openInWorkspace: (info: { kind: string; name: string; url: string }) => void;
-  saveAsPage: (id: string) => void;
-  setMaximizedNl2ui: (v: any) => void;
   onApprovalDecision: (approvalId: string, decision: "approve" | "reject") => Promise<void>;
   hasMounted: boolean;
 }
@@ -69,18 +64,13 @@ export default function ChatMessages(props: ChatMessagesProps) {
       locale={locale}
       flow={flow}
       busy={busy}
-      nl2uiLoading={props.nl2uiLoading}
       toolExecStates={props.toolExecStates}
       directiveNav={props.directiveNav}
-      savedPages={props.savedPages}
-      savingPageId={props.savingPageId}
       scrollRef={scrollRef}
       send={props.send}
       executeToolInline={props.executeToolInline}
       openDirective={props.openDirective}
       openInWorkspace={props.openInWorkspace}
-      saveAsPage={props.saveAsPage}
-      setMaximizedNl2ui={props.setMaximizedNl2ui}
       onApprovalDecision={props.onApprovalDecision}
     />
   );

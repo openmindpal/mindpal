@@ -10,4 +10,5 @@ export * from "./JsonFormEditor";
 export * from "./EmptyState";
 export * from "./FormHint";
 export * from "./AlertBanner";
+export * from "./ReferencePicker";
 

@@ -6,7 +6,6 @@ const mockCreateJobRun = vi.fn();
 const mockUpsertTaskState = vi.fn();
 const mockRunPlanningPipeline = vi.fn();
 const mockRunAgentLoop = vi.fn();
-const mockGenerateUiFromNaturalLanguage = vi.fn();
 const mockCreateOrchestratorTurn = vi.fn();
 const mockRequirePermission = vi.fn();
 const mockValidateToolInput = vi.fn();
@@ -56,10 +55,6 @@ vi.mock("../../kernel/agentLoop", () => ({
   runAgentLoop: (...args: any[]) => mockRunAgentLoop(...args),
 }));
 
-vi.mock("../nl2ui-generator/modules/generator", () => ({
-  generateUiFromNaturalLanguage: (...args: any[]) => mockGenerateUiFromNaturalLanguage(...args),
-}));
-
 vi.mock("../task-manager/modules/taskRepo", () => ({
   createTask: (...args: any[]) => mockCreateTask(...args),
 }));
@@ -105,7 +100,6 @@ describe("dispatch.handleExecute", () => {
     mockUpsertTaskState.mockResolvedValue(undefined);
     mockRunPlanningPipeline.mockResolvedValue({ ok: true, planSteps: [] });
     mockRunAgentLoop.mockResolvedValue({ loopId: "loop_1", endReason: "done" });
-    mockGenerateUiFromNaturalLanguage.mockResolvedValue(null);
     mockCreateOrchestratorTurn.mockResolvedValue({ turnId: "turn_1" });
     mockRequirePermission.mockResolvedValue({ decision: "allow", snapshotRef: "snap_1" });
     mockValidateToolInput.mockReturnValue(undefined);

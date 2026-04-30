@@ -39,8 +39,11 @@ export enum StreamEventType {
   SAFETY = "safety",
   DELTA = "delta",
   TOOL_SUGGESTIONS = "toolSuggestions",
-  NL2UI_STATUS = "nl2uiStatus",
-  NL2UI_RESULT = "nl2uiResult",
+
+  // ── Schema-UI ──
+  SCHEMA_UI_STATUS = "schemaUiStatus",
+  SCHEMA_UI_RESULT = "schemaUiResult",
+  SCHEMA_UI_ERROR = "schemaUiError",
 
   // ── 流控制 ──
   STREAM_ERROR = "stream.error",
@@ -103,8 +106,9 @@ export const STREAM_EVENT_SSE_NAME: Record<StreamEventType, string> = {
   [StreamEventType.SAFETY]: "safety",
   [StreamEventType.DELTA]: "delta",
   [StreamEventType.TOOL_SUGGESTIONS]: "toolSuggestions",
-  [StreamEventType.NL2UI_STATUS]: "nl2uiStatus",
-  [StreamEventType.NL2UI_RESULT]: "nl2uiResult",
+  [StreamEventType.SCHEMA_UI_STATUS]: "schemaUiStatus",
+  [StreamEventType.SCHEMA_UI_RESULT]: "schemaUiResult",
+  [StreamEventType.SCHEMA_UI_ERROR]: "schemaUiError",
   [StreamEventType.STREAM_ERROR]: "stream.error",
   [StreamEventType.STREAM_DONE]: "stream.done",
   [StreamEventType.PING]: "ping",

@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import type { UnifiedAttachment } from "@openslin/shared";
 
 // ─── 插件接口类型 ────────────────────────────────────────────────────────────
 
@@ -20,7 +21,20 @@ export type ParsedInbound = {
   channelUserId: string;
   text: string;
   rawBody: any;
+  /** IM 渠道提取的附件（可选，由各 Provider parseInbound 填充） */
+  attachments?: UnifiedAttachment[];
 };
+
+/**
+ * 根据 MIME 类型推断附件模态类型。
+ * 供各 Provider 的 parseInbound 共用。
+ */
+export function inferAttachmentType(mimeType: string): UnifiedAttachment["type"] {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "voice";
+  if (mimeType.startsWith("video/")) return "video";
+  return "document";
+}
 
 /** Provider 元数据（驱动前端 UI 动态渲染） */
 export type ChannelProviderMeta = {

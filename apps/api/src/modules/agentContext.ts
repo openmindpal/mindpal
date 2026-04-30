@@ -10,6 +10,7 @@ import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
 import { searchMemory, listRecentTaskStates, touchMemoryAccess } from "./memory/repo";
 import { computeMinhash, minhashOverlapScore } from "@openslin/shared";
+import type { ToolSemanticMeta } from "@openslin/shared";
 import { getKnowledgeContract } from "./contracts/knowledgeContract";
 import { StructuredLogger } from "@openslin/shared";
 import { invokeModelChat } from "../lib/llm";
@@ -30,6 +31,19 @@ import { insertAuditEvent } from "./audit/auditRepo";
 // ─── 工具类型 ─────────────────────────────────────────────────────
 
 export type EnabledTool = { name: string; toolRef: string; def: ToolDefinition; ver: ToolVersion | null };
+
+/** P4: 从现有工具元数据自动推断语义，显式 semantic_meta 覆盖推断值 */
+export function inferSemanticMeta(def: { scope?: string | null; riskLevel?: string; category?: string; semanticMeta?: ToolSemanticMeta | null }): ToolSemanticMeta {
+  const base: ToolSemanticMeta = {
+    operationType: def.scope === "write" ? "write" : "read",
+    precisionLevel: def.riskLevel === "high" ? "best_effort" : "exact",
+    sideEffects: def.scope === "write" ? [def.category ?? "unknown"] : [],
+    semanticEquivalents: [],
+    notEquivalentTo: [],
+  };
+  if (def.semanticMeta) return { ...base, ...def.semanticMeta };
+  return base;
+}
 
 // ─── 内部辅助 ─────────────────────────────────────────────────────
 

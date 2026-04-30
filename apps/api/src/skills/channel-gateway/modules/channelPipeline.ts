@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { redactString, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget, StructuredLogger } from "@openslin/shared";
+import { redactString, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget, StructuredLogger, validateAttachmentBatch, toOrchestratorAttachment, DEFAULT_MULTIMODAL_CAPABILITIES } from "@openslin/shared";
 import {
   extractTextForPromptInjectionScan,
   getPromptInjectionDenyTargetsFromEnv,
@@ -361,6 +361,12 @@ export async function channelIngressPipeline(
       conversationId,
       authorization: null,
       traceId: req.ctx.traceId,
+      ...(() => {
+        const rawAtts = inbound.attachments ?? [];
+        if (rawAtts.length === 0) return {};
+        const { valid } = validateAttachmentBatch(rawAtts, DEFAULT_MULTIMODAL_CAPABILITIES);
+        return valid.length > 0 ? { attachments: valid.map(toOrchestratorAttachment) } : {};
+      })(),
     });
     const replyText = toReplyText(req.ctx.locale, out);
 
@@ -568,6 +574,12 @@ export async function channelWsIngressPipeline(params: {
       conversationId,
       authorization: null,
       traceId,
+      ...(() => {
+        const rawAtts = parsed.attachments ?? [];
+        if (rawAtts.length === 0) return {};
+        const { valid } = validateAttachmentBatch(rawAtts, DEFAULT_MULTIMODAL_CAPABILITIES);
+        return valid.length > 0 ? { attachments: valid.map(toOrchestratorAttachment) } : {};
+      })(),
     });
     const replyText = toReplyText("zh", out);
 

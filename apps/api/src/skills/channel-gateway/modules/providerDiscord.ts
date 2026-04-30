@@ -3,7 +3,8 @@ import { pickSecret } from "./channelCommon";
 import { verifyDiscordSignature } from "./discord";
 import { DiscordGatewayClient } from "./discordGateway";
 import type { ChannelProviderPlugin, IngressContext, ParsedInbound } from "./providerAdapters";
-import { registerChannelProvider } from "./providerAdapters";
+import { registerChannelProvider, inferAttachmentType } from "./providerAdapters";
+import type { UnifiedAttachment } from "@openslin/shared";
 
 const discordPlugin: ChannelProviderPlugin = {
   provider: "discord",
@@ -73,6 +74,37 @@ const discordPlugin: ChannelProviderPlugin = {
     const argsText = options.map((o: any) => String(o?.value ?? "")).filter(Boolean).join(" ");
     const msgText = cmdName ? `/${cmdName}${argsText ? " " + argsText : ""}` : "interaction";
 
+    // ── Discord 附件提取：interaction 模式下 resolved.attachments 或消息体 attachments ──
+    const attachments: UnifiedAttachment[] = [];
+    // Interaction resolved attachments
+    const resolvedAtts = body?.data?.resolved?.attachments;
+    if (resolvedAtts && typeof resolvedAtts === "object") {
+      for (const a of Object.values(resolvedAtts) as any[]) {
+        const mimeType = String(a.content_type ?? "application/octet-stream");
+        attachments.push({
+          type: inferAttachmentType(mimeType),
+          mimeType,
+          name: a.filename,
+          sizeBytes: a.size != null ? Number(a.size) : undefined,
+          dataUrl: String(a.url ?? ""),
+        });
+      }
+    }
+    // MESSAGE_CREATE 等带 attachments 数组
+    const rawAtts = body?.d?.attachments ?? body?.attachments;
+    if (Array.isArray(rawAtts)) {
+      for (const a of rawAtts) {
+        const mimeType = String(a.content_type ?? "application/octet-stream");
+        attachments.push({
+          type: inferAttachmentType(mimeType),
+          mimeType,
+          name: a.filename,
+          sizeBytes: a.size != null ? Number(a.size) : undefined,
+          dataUrl: String(a.url ?? ""),
+        });
+      }
+    }
+
     return {
       workspaceId: appId,
       eventId,
@@ -82,6 +114,7 @@ const discordPlugin: ChannelProviderPlugin = {
       channelUserId,
       text: msgText,
       rawBody: body,
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
   },
 
@@ -147,6 +180,22 @@ const discordPlugin: ChannelProviderPlugin = {
           text: String(msgData.content ?? ""),
           rawBody: msgData,
         };
+
+        // ── WS 模式 Discord 附件提取 ──
+        const wsAtts: UnifiedAttachment[] = [];
+        if (Array.isArray(msgData.attachments)) {
+          for (const a of msgData.attachments) {
+            const mimeType = String(a.content_type ?? "application/octet-stream");
+            wsAtts.push({
+              type: inferAttachmentType(mimeType),
+              mimeType,
+              name: a.filename,
+              sizeBytes: a.size != null ? Number(a.size) : undefined,
+              dataUrl: String(a.url ?? ""),
+            });
+          }
+        }
+        if (wsAtts.length > 0) parsed.attachments = wsAtts;
         await onEvent(parsed);
       } catch (err: any) {
         console.error("[discord-gateway] event handling error", err?.message ?? err);

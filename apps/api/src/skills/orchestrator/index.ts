@@ -12,7 +12,7 @@ const plugin: BuiltinSkillPlugin = {
     routes: ["/orchestrator"],
     frontend: ["/orchestrator"],
     dependencies: ["schemas", "entities", "tools", "audit", "rbac"],
-    skillDependencies: ["nl2ui.generator", "model.gateway"],
+    skillDependencies: ["model.gateway"],
   },
   routes: orchestratorRoutes,
 };

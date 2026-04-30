@@ -17,8 +17,8 @@ import { performance } from "node:perf_hooks";
 import type { GoalGraph, WorldState, AgentTracingContext, FailureDiagnosis, SemanticAuditEntry } from "@openslin/shared";
 import { ErrorCategory, resolveNumber, startAgentTracing, startIteration, startPhase, endPhase, endAgentTracing } from "@openslin/shared";
 import { startSpan as otelStartSpan } from "../lib/tracing";
-import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, recallProceduralStrategies, type EnabledTool } from "../modules/agentContext";
-import { upsertTaskState } from "../modules/memory/repo";
+import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, recallProceduralStrategies, inferSemanticMeta, type EnabledTool } from "../modules/agentContext";
+import { upsertTaskState, updateMemoryConfidenceFromFacts } from "../modules/memory/repo";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
 import { writeCheckpoint, finalizeCheckpoint, startHeartbeat, registerProcess, updateProcessStatus, AGENT_LOOP_FULL_CHECKPOINT_INTERVAL, type WriteCheckpointParams } from "./loopCheckpoint";
 import { acquireLoopSlot } from "./priorityScheduler";
@@ -645,7 +645,12 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             app, pool, queue, subject: subject as any,
             traceId, runId, jobId: jobId ?? "", loopId, goal, iterations,
             decision, currentSeq, executionConstraints, signal, worldState, goalGraph,
-            toolCatalog: toolDiscovery.tools.map(t => ({ ref: t.toolRef, category: t.def.category, requiredAction: t.def.action ?? undefined })),
+            toolCatalog: toolDiscovery.tools.map(t => ({
+              ref: t.toolRef,
+              category: t.def.category,
+              requiredAction: t.def.action ?? undefined,
+              semanticMeta: inferSemanticMeta(t.def),
+            })),
           });
           if (tcResult.outcome === "boundary_paused") {
             const result = buildResult("ask_user", `检测到意图冲突，已暂停执行: ${tcResult.reason}`);
@@ -686,6 +691,15 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
               degradedCompletion = true;
               app.log.info({ runId, iteration: iterations, reason: fbImpact.reason }, "[AgentLoop] Fallback 导致精度降级，标记 degradedCompletion");
             } else if (fbImpact.impact === "goal_unreachable") {
+              // P4: 先重评估目标条件——fallback 工具可能仍满足部分目标
+              if (goalGraph && worldState) {
+                goalGraph = evaluateGoalConditions(goalGraph, worldState);
+                const affectedGoal = goalGraph.subGoals.find(g => g.goalId === runId);
+                if (affectedGoal?.completionLevel === "full") {
+                  app.log.info({ runId }, "[AgentLoop] Fallback tool still satisfies goal, skipping abort");
+                  continue;
+                }
+              }
               const driftDiagnosis: FailureDiagnosis = {
                 failureType: "tool_semantic_drift",
                 affectedGoalId: runId,
@@ -806,6 +820,21 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         (_loopFinalResult as any).needsHumanConfirmation = true;
         (_loopFinalResult as any).semanticAuditTrail = semanticAuditTrail;
       }
+    }
+
+    // P3: 记忆置信度基于任务事实反馈
+    try {
+      if (worldState?.facts?.length) {
+        const factsForRepo = worldState.facts.map(f => ({ key: f.key, value: f.value, confidence: f.confidence }));
+        const feedbackResult = await updateMemoryConfidenceFromFacts(
+          pool, subject.tenantId, subject.spaceId ?? "", factsForRepo,
+        );
+        if (feedbackResult.corroborated + feedbackResult.contradicted > 0) {
+          app.log.info({ feedbackResult }, "[AgentLoop] 记忆置信度已基于任务事实更新");
+        }
+      }
+    } catch (memFbErr) {
+      app.log.warn({ err: memFbErr }, "[AgentLoop] 记忆置信度反馈失败，不影响主流程");
     }
 
     // 将 degradedCompletion 标记写入最终结果，供上层感知精度降级

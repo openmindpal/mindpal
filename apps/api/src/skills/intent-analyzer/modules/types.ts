@@ -37,7 +37,7 @@ export type IntentAnalyzeRequest = z.infer<typeof intentAnalyzeRequestSchema>;
 // ─── Tool Suggestion Schema ────────────────────────────────────────────
 
 export const toolSuggestionSchema = z.object({
-  toolRef: z.string().describe("工具引用，如 nl2ui.generate@1.0"),
+  toolRef: z.string().describe("工具引用，如 entity.read@1.0"),
   inputDraft: z.record(z.string(), z.any()).describe("工具输入草稿"),
   confidence: z.number().min(0).max(1).describe("该工具推荐的置信度"),
   reasoning: z.string().optional().describe("推荐该工具的推理过程"),

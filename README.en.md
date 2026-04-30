@@ -49,7 +49,7 @@
 | **Skill Runtime** | Multi-language (Node.js/Python), sandbox (forbidden modules/dynamic code locking), least privilege, outbound network policies, dependency scanning, supply chain security gate, Skill RPC protocol |
 | **Governance Control Plane** | Changesets (draft→submit→approve→release→rollback), canary releases, eval gating, dynamic approval rule engine (recursive AND/OR matching), runtime governance checkpoints |
 | **Device / Embodied Intelligence** | Device registration & pairing, remote execution, desktop Agent, browser automation (Playwright), desktop control/GUI automation, visual perception routing, capability probing |
-| **NL2UI** | Natural-language-to-UI generation, dynamic page config, workbench management, visual workflow orchestration (ReactFlow) |
+| **Schema-UI** | JSON Schema-driven + MDX-enhanced lightweight UI generation, supports table/cards/form/chart/markdown/dashboard six layout strategies, infinitely extensible via standard JSON Schema, zero heavy dependencies |
 | **Voice Interaction** | Voice input (WebSpeech API), TTS speech synthesis, voice Skills |
 | **Universal Data Plane** | Schema-driven CRUD, import/export, offline sync, Yjs collaborative editing |
 | **Security Hub** | RBAC + ABAC policy engine, Safety/DLP (audit/deny modes), Prompt injection detection, tamper-proof audit logs, supply chain security (trust/SBOM/scanning), module boundary scanning |
@@ -88,7 +88,7 @@ Modeling      ──  Schema + Metadata + Universal CRUD                       �
 │                   Analytics / AI Event Reasoning /                 │
 │                   Browser Automation / Desktop Automation           │
 ├───────────────────────────────────────────────────────────────────┤
-│  Optional Layer: NL2UI / Workbench / OAuth / SSO(OIDC) / SCIM /  │
+│  Optional Layer: Schema-UI / Workbench / OAuth / SSO(OIDC) / SCIM /  │
 │                  Notification / Device Runtime / Collab Runtime /  │
 │                  Sync / RBAC / Federation Gateway / MFA /          │
 │                  Observability Dashboard                           │
@@ -159,7 +159,7 @@ Modeling      ──  Schema + Metadata + Universal CRUD                       �
 | Runtime | Node.js 20+ |
 | Backend | Fastify 5 + WebSocket |
 | Frontend | Next.js 16 + React 19 |
-| UI Libraries | @xyflow/react (flowchart) + framer-motion + react-markdown |
+| UI Libraries | react-markdown + MDX rendering |
 | Database | PostgreSQL 16 (28 migration files) |
 | Cache / Message | Redis 7 + ioredis |
 | Task Queue | BullMQ 5.58 |

@@ -223,7 +223,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
     let streamSent = false;
 
     try {
-      await redis.xadd(sKey, "MAXLEN", "~", "5000", "*",
+      await redis.xadd(sKey, "MAXLEN", "~", String(collabConfig("COLLAB_BUS_STREAM_MAXLEN")), "*",
         "data", json,
         "priority", String(msg.priority ?? "normal"),
         "kind", msg.messageType,
@@ -234,7 +234,7 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
       // 快速重试一次（50ms 延迟）
       try {
         await new Promise(r => setTimeout(r, 50));
-        await redis.xadd(sKey, "MAXLEN", "~", "5000", "*",
+        await redis.xadd(sKey, "MAXLEN", "~", String(collabConfig("COLLAB_BUS_STREAM_MAXLEN")), "*",
           "data", json,
           "priority", String(msg.priority ?? "normal"),
           "kind", msg.messageType,

@@ -7,7 +7,7 @@
  * - 触发 LLM 意图分类（answer/execute/collab）
  * - 自动创建 Task/Run（execute/collab 模式）
  * - 支持闭环执行、审批流、多智能体协作
- * - 保留流式 UX（delta/toolSuggestions/nl2uiResult/done事件）
+ * - 保留流式 UX（delta/toolSuggestions/done事件）
  */
 import crypto from "node:crypto";
 import { redactValue, resolveToolAlias, isDeviceToolName, resolveNumber, extractTextContent } from "@openslin/shared";
@@ -355,7 +355,7 @@ export function registerStreamRoute(app: any): void {
       }
 
       // ── D1 守卫：规划失败处理 ──
-      // auto 模式下规划失败 → 降级到 answer 模式（answer 模式有完善的 NL2UI / 内联工具 / 对话能力）
+      // auto 模式下规划失败 → 降级到 answer 模式（answer 模式有完善的内联工具 / 对话能力）
       // 用户显式指定 execute 模式 → 保留原有报错行为
       if (!planResult.ok || planResult.planSteps.length === 0) {
         const failCategory = planResult.failureCategory ?? "unknown";
@@ -368,7 +368,7 @@ export function registerStreamRoute(app: any): void {
           willFallbackToAnswer: isAutoMode,
         }, "[dispatch.stream] 规划失败，不进入 workflow 路径");
 
-        // ── 关键修复：auto 模式下降级到 answer，让 NL2UI / 对话能力兜底 ──
+        // ── 关键修复：auto 模式下降级到 answer，让对话能力兗底 ──
         if (isAutoMode) {
           req.ctx.audit!.outputDigest = {
             conversationId,
@@ -380,7 +380,7 @@ export function registerStreamRoute(app: any): void {
           app.log.info({
             traceId: req.ctx.traceId, conversationId, failCategory,
             droppedToolCalls: planResult.droppedToolCalls?.map(d => ({ toolRef: d.toolRef, reason: d.reason })) ?? [],
-          }, "[dispatch.stream] auto 模式规划失败，降级到 answer 模式（NL2UI / 对话兜底）");
+          }, "[dispatch.stream] auto 模式规划失败，降级到 answer 模式（对话兗底）");
           sse.sendEvent("status", { phase: "classified", mode: "answer", fallbackFrom: "execute", reason: failCategory });
           sse.sendEvent("phaseIndicator", { phase: "thinking", runId: null, mode: "answer", fallbackFrom: "execute", reason: failCategory });
           await handleStreamAnswerMode({

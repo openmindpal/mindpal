@@ -3,11 +3,10 @@
  *
  * 从 dispatch.stream.ts 提取的即时动作（immediate_action）执行路径。
  * 当 auto 模式下 planResult 的工具调用属于"可即时执行"类别时，
- * 跳过 workflow 层，直接在本地执行（NL2UI、内联工具）。
+ * 跳过 workflow 层，直接在本地执行内联工具。
  */
 import { sha256Hex } from "../../lib/digest";
 import { createOrchestratorTurn } from "./modules/turnRepo";
-import { generateUiFromNaturalLanguage } from "../nl2ui-generator/modules/generator";
 import { executeInlineTools, formatInlineResultsForLLM } from "./modules/inlineToolExecutor";
 import { persistStreamSessionContext } from "./dispatch.streamSessionPersist";
 import { invokeModelChatUpstreamStream } from "../model-gateway/modules/invokeChatUpstreamStream";
@@ -74,7 +73,6 @@ export async function handleImmediateAction(params: {
   message: string;
   conversationId: string;
   resolution: {
-    separatePipelineTool: { inputDraft: Record<string, unknown> } | null;
     inlineTools: Array<{ toolRef: string; inputDraft: Record<string, unknown> }>;
   };
   toolDiscovery: { tools: any[] };
@@ -98,23 +96,6 @@ export async function handleImmediateAction(params: {
     suggestedToolCount: planStepCount,
   };
   sse.sendEvent("status", { phase: "executing", executionClass: "immediate_action" });
-
-  // 标记 execution:separate-pipeline 的工具有独立执行管线
-  if (resolution.separatePipelineTool) {
-    try {
-      const nlInput = typeof resolution.separatePipelineTool.inputDraft?.userInput === "string"
-        ? resolution.separatePipelineTool.inputDraft.userInput
-        : message;
-      const cfg = await generateUiFromNaturalLanguage(
-        app.db,
-        { userInput: nlInput, context: { userId: subject.subjectId || "anonymous", tenantId: subject.tenantId, spaceId: subject.spaceId || undefined } },
-        { app, authorization: authorization ?? "", traceId: req.ctx.traceId, defaultModelRef },
-      );
-      if (cfg) sse.sendEvent("nl2uiResult", { config: cfg });
-    } catch (nl2uiErr: any) {
-      app.log.error({ traceId: req.ctx.traceId, err: nl2uiErr?.message }, "[dispatch.stream] 即时 NL2UI 执行异常");
-    }
-  }
 
   // 内联工具执行
   const inlineResults = resolution.inlineTools.length > 0
@@ -141,7 +122,7 @@ export async function handleImmediateAction(params: {
       traceId: req.ctx.traceId,
       defaultModelRef,
     });
-  } else if (!resolution.separatePipelineTool) {
+  } else {
     sse.sendEvent("delta", {
       text: locale !== "en-US"
         ? "已完成即时操作。"

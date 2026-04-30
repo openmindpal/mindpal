@@ -50,6 +50,20 @@ function getMasterKey(): string {
   return key;
 }
 
+// ── 辅助函数 ─────────────────────────────────────────────
+
+/**
+ * 从加密 JSON 值中解析 kRef（密钥引用），用于预加载密钥
+ */
+function parseEncryptedKRef(value: unknown): { scopeType: string; scopeId: string; keyVersion: number } | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed?.v === 1 && parsed?.kRef) return parsed.kRef;
+  } catch { /* not encrypted */ }
+  return null;
+}
+
 // ── 密钥解析 ──────────────────────────────────────────────
 
 /**
@@ -94,15 +108,17 @@ export async function getActiveKeyMaterial(params: {
 
 /**
  * 创建密钥解析器（用于解密操作），支持按 kRef 查找任意版本密钥
+ * @param prefilled - 可选的预填充缓存，用于批量解密时避免串行密钥查询
  */
 export function createMemoryKeyResolver(params: {
   pool: Pool;
   tenantId: string;
+  prefilled?: Map<string, Buffer>;
 }): (kRef: ColumnEncryptedV1["kRef"]) => Promise<Buffer> {
   const masterKey = getMasterKey();
 
   // 密钥缓存（按版本）
-  const cache = new Map<string, Buffer>();
+  const cache = params.prefilled ?? new Map<string, Buffer>();
 
   return async (kRef) => {
     const cacheKey = `${kRef.scopeType}:${kRef.scopeId}:${kRef.keyVersion}`;
@@ -188,7 +204,10 @@ export async function decryptMemoryContent(params: {
 }
 
 /**
- * 批量解密 memory content_text 列表（带密钥缓存，减少密钥查询）
+ * 批量解密 memory content_text 列表（带密钥预加载 + 缓存）
+ *
+ * 当多条记录使用不同密钥版本时，预先批量加载所有版本，
+ * 避免 decryptColumns 内部逐条串行查询密钥。
  */
 export async function decryptMemoryContents(params: {
   pool: Pool;
@@ -196,9 +215,55 @@ export async function decryptMemoryContents(params: {
   entries: Array<{ key: string; value: unknown }>;
   options?: ColumnDecryptOptions;
 }): Promise<Map<string, string>> {
+  // ── 密钥预加载 ──────────────────────────────────────────
+  let prefilled: Map<string, Buffer> | undefined;
+  try {
+    // 1. 扫描 entries，提取不同密钥版本集合（去重）
+    const kRefSet = new Map<string, { scopeType: string; scopeId: string; keyVersion: number }>();
+    for (const entry of params.entries) {
+      const kRef = parseEncryptedKRef(entry.value);
+      if (kRef) {
+        const k = `${kRef.scopeType}:${kRef.scopeId}:${kRef.keyVersion}`;
+        if (!kRefSet.has(k)) kRefSet.set(k, kRef);
+      }
+    }
+
+    // 2. 仅当版本数 > 1 时才预加载（单版本场景缓存自然命中，无需额外开销）
+    if (kRefSet.size > 1) {
+      const masterKey = getMasterKey();
+      if (masterKey) {
+        // 批量查询所有需要的密钥版本
+        const versions = Array.from(kRefSet.values());
+        const conditions = versions.map((_, i) => `(scope_type = $${i * 3 + 2} AND scope_id = $${i * 3 + 3} AND key_version = $${i * 3 + 4})`);
+        const sqlParams: Array<string | number> = [params.tenantId];
+        for (const v of versions) {
+          sqlParams.push(v.scopeType, v.scopeId, v.keyVersion);
+        }
+        const sql = `SELECT scope_type, scope_id, key_version, status, encrypted_key FROM partition_keys WHERE tenant_id = $1 AND (${conditions.join(" OR ")})`;
+        const res = await params.pool.query(sql, sqlParams);
+
+        prefilled = new Map<string, Buffer>();
+        for (const row of res.rows as any[]) {
+          if (row.status === "disabled") continue;
+          const cacheKey = `${row.scope_type}:${row.scope_id}:${row.key_version}`;
+          try {
+            const keyBytes = decryptPartitionKeyMaterial({ masterKey, encryptedKey: row.encrypted_key });
+            prefilled.set(cacheKey, keyBytes);
+          } catch { /* skip corrupted key */ }
+        }
+      }
+    }
+  } catch (err) {
+    // 预加载失败 → 降级到逐条查询（现有行为）
+    _logger.warn("preloadKeys failed, falling back to sequential", { err: (err as Error)?.message });
+    prefilled = undefined;
+  }
+
+  // ── 正常解密流程 ────────────────────────────────────────
   const keyResolver = createMemoryKeyResolver({
     pool: params.pool,
     tenantId: params.tenantId,
+    prefilled,
   });
 
   return decryptColumns(

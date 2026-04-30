@@ -13,6 +13,8 @@
  * - Notification: { jsonrpc: "2.0", method, params } (无 id，无需响应)
  */
 
+import type { DeviceCapabilityDescriptor } from "./deviceProtocol";
+
 /* ================================================================== */
 /*  协议版本                                                            */
 /* ================================================================== */
@@ -79,6 +81,12 @@ export interface DeviceMultimodalCapabilities {
       silenceThresholdMs?: number;
       energySmoothingFactor?: number;
       adaptiveThreshold?: boolean;
+      /** 噪声基线校准时长（ms），默认 3000 */
+      noiseCalibrationMs?: number;
+      /** 最小语音段时长（ms），低于此值视为噪声，默认 200 */
+      minSpeechDurationMs?: number;
+      /** 灵敏度档位：quiet/normal/noisy/auto */
+      sensitivityProfile?: "quiet" | "normal" | "noisy" | "auto";
     };
     /** 轻量级视频帧流配置 */
     videoStream?: {
@@ -88,6 +96,8 @@ export interface DeviceMultimodalCapabilities {
       format?: "jpeg" | "png";
     };
   };
+  /** 设备能力描述符（OS级设备抽象，设备连接时上报） */
+  capabilityDescriptor?: DeviceCapabilityDescriptor;
 }
 
 /** 服务端下发的多模态策略 */
@@ -98,7 +108,15 @@ export interface DeviceMultimodalPolicy {
   /** 流式策略下发 */
   streaming?: { supported: boolean; maxConcurrentStreams?: number } | null;
   /** VAD 策略下发 */
-  vad?: { enabled: boolean; silenceThresholdMs?: number; energySmoothingFactor?: number; adaptiveThreshold?: boolean } | null;
+  vad?: {
+    enabled: boolean;
+    silenceThresholdMs?: number;
+    energySmoothingFactor?: number;
+    adaptiveThreshold?: boolean;
+    noiseCalibrationMs?: number;
+    minSpeechDurationMs?: number;
+    sensitivityProfile?: "quiet" | "normal" | "noisy" | "auto";
+  } | null;
   /** 视频帧流策略下发 */
   videoStream?: { supported: boolean; frameIntervalMs?: number; maxFrameWidth?: number; format?: "jpeg" | "png" } | null;
 }

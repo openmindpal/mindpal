@@ -32,6 +32,17 @@ export const COLLAB_CONFIG_DEFAULTS: Record<string, number> = {
   COLLAB_CORRECTION_FEEDBACK_MAX_LEN: 800,   // 纠错建议截断长度
   COLLAB_CORRECTION_PREV_OUTPUT_MAX_LEN: 500, // 上一轮输出截断长度
   COLLAB_ENVELOPE_OBSERVATION_LIMIT: 5, // Envelope 包含的前述结果数
+  DEBATE_MAX_ROUNDS: 5,                  // 辩论最大轮次
+  DEBATE_CONVERGENCE_THRESHOLD: 0.8,     // 收敛阈值
+  DEBATE_MIN_CONFIDENCE: 0.6,            // 最低置信度
+  DEBATE_SCORE_DECAY: 0.9,               // 评分衰减
+  DEBATE_CORRECTION_BONUS: 0.05,         // 纠错奖励
+  DEBATE_CONSENSUS_EVOLUTION_WINDOW: 3,  // 共识演化窗口
+  DEBATE_MIN_PARTIES: 2,                 // 辩论最小参与方
+  DEBATE_MAX_PARTIES: 10,                // 辩论最大参与方
+  COLLAB_BUS_STREAM_MAXLEN: 5000,        // Redis Stream 最大长度
+  COLLAB_MAX_CORRECTION_ROUNDS: 3,       // 纠错最大轮次
+  COLLAB_MAX_ENVELOPE_SIZE: 1048576,     // Envelope 结果最大字节数 (1MB)
 };
 
 /** 获取协作模块配置值，自动走 governance > env > default 三级解析 */
@@ -529,20 +540,25 @@ export interface DebateConfig {
   maxParties: number;
 }
 
-/** 辩论配置默认值（无 DB 规则时兜底） */
-export const DEBATE_CONFIG_DEFAULTS: DebateConfig = {
-  maxRounds: 5,
-  convergenceThreshold: 0.8,
-  minConfidence: 0.6,
-  allowCorrections: true,
-  requireEvidence: true,
-  scoreDecay: 0.9,
-  correctionBonus: 0.05,
-  consensusEvolutionWindow: 3,
-  divergenceConfDiff: 0.15,
-  minParties: 2,
-  maxParties: 10,
-};
+/** 获取辩论配置默认值（运行时读取，支持governance热更新） */
+export function getDebateConfigDefaults(): DebateConfig {
+  return {
+    maxRounds: collabConfig("DEBATE_MAX_ROUNDS"),
+    convergenceThreshold: collabConfig("DEBATE_CONVERGENCE_THRESHOLD"),
+    minConfidence: collabConfig("DEBATE_MIN_CONFIDENCE"),
+    allowCorrections: true,
+    requireEvidence: true,
+    scoreDecay: collabConfig("DEBATE_SCORE_DECAY"),
+    correctionBonus: collabConfig("DEBATE_CORRECTION_BONUS"),
+    consensusEvolutionWindow: collabConfig("DEBATE_CONSENSUS_EVOLUTION_WINDOW"),
+    divergenceConfDiff: collabConfig("COLLAB_DIVERGENCE_CONF_DIFF"),
+    minParties: collabConfig("DEBATE_MIN_PARTIES"),
+    maxParties: collabConfig("DEBATE_MAX_PARTIES"),
+  };
+}
+
+/** @deprecated 使用 getDebateConfigDefaults()，此静态版本不支持 governance 热更新 */
+export const DEBATE_CONFIG_DEFAULTS: DebateConfig = getDebateConfigDefaults();
 
 /** 创建 N 方辩论会话 */
 export function createDebateSession(params: {
@@ -553,7 +569,7 @@ export function createDebateSession(params: {
   arbiter: string;
   maxRounds?: number;
 }): DebateSession {
-  const maxRounds = params.maxRounds ?? Math.max(1, resolveNumber("DEBATE_MAX_ROUNDS").value);
+  const maxRounds = params.maxRounds ?? Math.max(1, collabConfig("DEBATE_MAX_ROUNDS"));
   const parties: DebateParty[] = params.parties.map(p => ({
     partyId: p.partyId,
     role: p.role,

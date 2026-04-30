@@ -325,12 +325,12 @@ describe("Intent Analyzer - LLM Integration", () => {
   });
 
   describe("Tool Suggestion Quality", () => {
-    it("UI 意图应该推荐 nl2ui.generate", async () => {
+    it("UI 意图应该推荐 ui.page.generate", async () => {
       const result = await analyzeIntent(mockPool, {
         message: "生成一个 dashboard",
       });
 
-      expect(result.suggestedTools.some(t => t.toolRef.includes("nl2ui"))).toBe(true);
+      expect(result.suggestedTools.some(t => t.toolRef.includes("ui.page"))).toBe(true);
     });
 
     it("Query 意图应该推荐 entity.read", async () => {

@@ -14,11 +14,9 @@ import {
   prepareToolStep,
   submitStepToExistingRun,
 } from "../../kernel/executionKernel";
-import { runPlanningPipeline } from "../../kernel/planningKernel";
 import { runAgentLoop } from "../../kernel/agentLoop";
-import { generateUiFromNaturalLanguage } from "../nl2ui-generator/modules/generator";
 import { createTask } from "../task-manager/modules/taskRepo";
-import { analyzeUserIntent, separateToolSuggestions } from "./modules/intentIntegration";
+import { analyzeUserIntent } from "./modules/intentIntegration";
 import { parseAndAnchorUserIntentions } from "../../kernel/intentAnchoringService";
 
 export async function handleExecuteMode(ctx: DispatchContext): Promise<DispatchResponse> {
@@ -94,7 +92,6 @@ export async function handleExecuteMode(ctx: DispatchContext): Promise<DispatchR
   }
 
   let phase: string = "executing";
-  let nl2uiConfig: any = null;
 
   // ━━━ 当传入预生成的 toolSuggestions 时，直接创建 steps 执行 ━━━
   const prebuiltSuggestions = Array.isArray(body.toolSuggestions) && body.toolSuggestions.length > 0
@@ -102,52 +99,23 @@ export async function handleExecuteMode(ctx: DispatchContext): Promise<DispatchR
     : null;
 
   if (prebuiltSuggestions) {
-    // 使用意图分析 Skill 替代硬编码的 NL2UI 检测
+    // 使用意图分析 Skill
     let intentResult: Awaited<ReturnType<typeof analyzeUserIntent>> | null = null;
     
-    // 如果没有预生成建议，调用 intent.analyze
     if (!prebuiltSuggestions || prebuiltSuggestions.length === 0) {
       intentResult = await analyzeUserIntent(app.db, message, subject, app);
     }
 
-    // 分离 NL2UI 和 Worker 工具建议
-    const { nl2uiSuggestions, workerSuggestions } = separateToolSuggestions(prebuiltSuggestions);
+    const workerSuggestions = prebuiltSuggestions;
 
     app.log.info({ 
       runId, 
       taskId: task.taskId, 
-      nl2uiCount: nl2uiSuggestions.length, 
       workerCount: workerSuggestions.length,
       detectedIntent: intentResult?.intent 
     }, "[dispatch] 处理工具建议");
 
-    // NL2UI 内联执行
-    if (nl2uiSuggestions.length > 0) {
-      const nlInput = nl2uiSuggestions[0].inputDraft?.userInput;
-      try {
-        nl2uiConfig = await generateUiFromNaturalLanguage(app.db,
-          { userInput: typeof nlInput === "string" ? nlInput : message, context: { userId: subject.subjectId || "anonymous", tenantId: subject.tenantId, spaceId: subject.spaceId || undefined } },
-          { app, authorization: authorization ?? "", traceId });
-      } catch (e: any) {
-        app.log.warn({ error: e?.message }, "[dispatch] NL2UI inline execution failed");
-      }
-      if (nl2uiConfig && workerSuggestions.length === 0) {
-        phase = "succeeded";
-        await upsertTaskState({
-          pool: app.db,
-          tenantId: subject.tenantId,
-          spaceId: subject.spaceId,
-          runId,
-          phase: "succeeded",
-          plan: { taskId: task.taskId, goal: message, mode: "execute", nl2ui: true, agentLoop: false },
-          clearBlockReason: true,
-          clearNextAction: true,
-          clearApprovalStatus: true,
-        });
-      }
-    }
-
-    // 仅为非 NL2UI 工具创建 Worker steps
+    // 为工具创建 Worker steps
     if (workerSuggestions.length > 0) {
       let firstOutcome: "queued" | "needs_approval" = "queued";
       for (let i = 0; i < workerSuggestions.length; i++) {
@@ -227,116 +195,73 @@ export async function handleExecuteMode(ctx: DispatchContext): Promise<DispatchR
       }
     }
   } else {
-    // 无预生成 suggestions → 走原有逻辑
+    // 无预生成 suggestions → 走 Agent Loop
 
-    // 快速规划检测是否有 nl2ui 需求
-    const quickPlan = await runPlanningPipeline({
+    // 启动 Agent Loop（异步执行）
+    const maxIterations = body.constraints?.maxSteps ?? 10;
+    const maxWallTimeMs = body.constraints?.maxWallTimeMs ?? 10 * 60 * 1000;
+
+    const agentLoopPromise = runAgentLoop({
       app,
       pool: app.db,
-      subject,
-      spaceId: subject.spaceId,
+      queue: app.queue as WorkflowQueue,
+      subject: { ...subject, spaceId: subject.spaceId! },
       locale,
       authorization,
       traceId,
-      userMessage: message,
-      maxSteps: 1,
-      purpose: "dispatch.execute.nl2ui_check",
-      plannerRole: "executor",
-      actorRole: "executor",
+      goal: message,
+      runId,
+      jobId,
+      taskId: task.taskId,
+      maxIterations,
+      maxWallTimeMs,
+      executionConstraints: {
+        allowedTools: body.constraints?.allowedTools,
+        allowWrites: body.constraints?.allowWrites,
+      },
+      defaultModelRef: body.defaultModelRef,
     });
 
-    const hasNl2ui = quickPlan.planSteps.some(s => s.toolRef.startsWith("nl2ui.generate"));
-    if (hasNl2ui) {
-      try {
-        nl2uiConfig = await generateUiFromNaturalLanguage(app.db,
-          { userInput: message, context: { userId: subject.subjectId || "anonymous", tenantId: subject.tenantId, spaceId: subject.spaceId || undefined } },
-          { app, authorization: authorization ?? "", traceId });
-      } catch {}
-      if (nl2uiConfig) {
-        phase = "succeeded";
-        await upsertTaskState({
-          pool: app.db,
-          tenantId: subject.tenantId,
-          spaceId: subject.spaceId,
-          runId,
-          phase,
-          clearBlockReason: true,
-          clearNextAction: true,
-          clearApprovalStatus: true,
-        });
-      }
-    }
+    // 早期失败检测：短暂等待 500ms，捕捉同步初始化错误（如 DB 连接失败、参数校验错误等）
+    // 若 500ms 内未报错，则认为 loop 已正常启动，当坞后台运行
+    const EARLY_CHECK_MS = 500;
+    const earlyCheck = new Promise<"started">((resolve) => setTimeout(() => resolve("started"), EARLY_CHECK_MS));
+    const earlyResult = await Promise.race([
+      agentLoopPromise.then((result) => {
+        app.log.info({ runId, loopId: result.loopId, endReason: result.endReason, taskId: task.taskId }, "[dispatch] Agent Loop 完成");
+        return "completed" as const;
+      }),
+      earlyCheck,
+    ]).catch((err: any) => {
+      app.log.error({ err, runId, taskId: task.taskId }, "[dispatch] Agent Loop 早期失败（启动阶段异常）");
+      return "early_error" as const;
+    });
 
-    // 如果不是纯 NL2UI 任务，启动 Agent Loop（异步执行）
-    if (!nl2uiConfig) {
-      const maxIterations = body.constraints?.maxSteps ?? 10;
-      const maxWallTimeMs = body.constraints?.maxWallTimeMs ?? 10 * 60 * 1000;
-
-      const agentLoopPromise = runAgentLoop({
-        app,
+    if (earlyResult === "early_error") {
+      phase = "error";
+      await upsertTaskState({
         pool: app.db,
-        queue: app.queue as WorkflowQueue,
-        subject: { ...subject, spaceId: subject.spaceId! },
-        locale,
-        authorization,
-        traceId,
-        goal: message,
+        tenantId: subject.tenantId,
+        spaceId: subject.spaceId,
         runId,
-        jobId,
-        taskId: task.taskId,
-        maxIterations,
-        maxWallTimeMs,
-        executionConstraints: {
-          allowedTools: body.constraints?.allowedTools,
-          allowWrites: body.constraints?.allowWrites,
-        },
-        defaultModelRef: body.defaultModelRef,
+        phase: "error",
+        clearBlockReason: true,
+        clearNextAction: true,
+        clearApprovalStatus: true,
       });
-
-      // 早期失败检测：短暂等待 500ms，捕捉同步初始化错误（如 DB 连接失败、参数校验错误等）
-      // 若 500ms 内未报错，则认为 loop 已正常启动，当坞后台运行
-      const EARLY_CHECK_MS = 500;
-      const earlyCheck = new Promise<"started">((resolve) => setTimeout(() => resolve("started"), EARLY_CHECK_MS));
-      const earlyResult = await Promise.race([
-        agentLoopPromise.then((result) => {
-          app.log.info({ runId, loopId: result.loopId, endReason: result.endReason, taskId: task.taskId }, "[dispatch] Agent Loop 完成");
-          return "completed" as const;
-        }),
-        earlyCheck,
-      ]).catch((err: any) => {
-        app.log.error({ err, runId, taskId: task.taskId }, "[dispatch] Agent Loop 早期失败（启动阶段异常）");
-        return "early_error" as const;
+    } else if (earlyResult === "started") {
+      // loop 还在后台运行，挂载异常捕获
+      agentLoopPromise.catch((err: any) => {
+        app.log.error({ err, runId, taskId: task.taskId }, "[dispatch] Agent Loop 异常结束");
       });
-
-      if (earlyResult === "early_error") {
-        phase = "error";
-        await upsertTaskState({
-          pool: app.db,
-          tenantId: subject.tenantId,
-          spaceId: subject.spaceId,
-          runId,
-          phase: "error",
-          clearBlockReason: true,
-          clearNextAction: true,
-          clearApprovalStatus: true,
-        });
-      } else if (earlyResult === "started") {
-        // loop 还在后台运行，挂载异常捕获
-        agentLoopPromise.catch((err: any) => {
-          app.log.error({ err, runId, taskId: task.taskId }, "[dispatch] Agent Loop 异常结束");
-        });
-      }
-      // earlyResult === "completed" 表示 loop 已在 500ms 内完成，无需额外处理
     }
+    // earlyResult === "completed" 表示 loop 已在 500ms 内完成，无需额外处理
   }
-
   // 生成回复文本
   const zh = locale.startsWith("zh");
-  const executionReplyText = nl2uiConfig
-    ? (zh ? "页面已生成，请查看。" : "Page generated. Please check the result.")
-    : (zh
-      ? `收到你的请求「${message.slice(0, 80)}」，Agent Loop 已启动，正在智能分析并逐步执行。每一步都会由 AI 分析执行结果后决定下一步操作。`
-      : `Received your request. Agent Loop started — AI will analyze each step's result before deciding the next action.`);
+  const executionReplyText = zh
+    ? `收到你的请求「${message.slice(0, 80)}」，Agent Loop 已启动，正在智能分析并逐步执行。每一步都会由 AI 分析执行结果后决定下一步操作。`
+    : `Received your request. Agent Loop started — AI will analyze each step's result before deciding the next action.`;
 
   const turn = await createOrchestratorTurn({
     pool: app.db,
@@ -369,14 +294,13 @@ export async function handleExecuteMode(ctx: DispatchContext): Promise<DispatchR
     taskId: task.taskId,
     runId,
     jobId,
-    phase: nl2uiConfig ? "succeeded" : phase,
+    phase,
     taskState: {
-      phase: nl2uiConfig ? "succeeded" : phase,
+      phase,
       stepCount: 0,
       currentStep: 0,
       needsApproval: false,
     },
     turnId: turn.turnId,
-    nl2uiResult: nl2uiConfig ?? undefined,
   };
 }

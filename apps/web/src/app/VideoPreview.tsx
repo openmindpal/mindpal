@@ -7,15 +7,16 @@ export interface VideoPreviewProps {
   locale: string;
   videoStream: MediaStream | null;
   videoActive: boolean;
-  onCapture: () => void;
+  onCapture?: () => void;
   onStop: () => void;
+  streaming?: boolean;
 }
 
 /**
  * VideoPreview — corner preview window showing live camera feed.
  * Lightweight inline component, no external dependencies.
  */
-export default function VideoPreview({ locale, videoStream, videoActive, onCapture, onStop }: VideoPreviewProps) {
+export default function VideoPreview({ locale, videoStream, videoActive, onCapture, onStop, streaming }: VideoPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -57,6 +58,10 @@ export default function VideoPreview({ locale, videoStream, videoActive, onCaptu
         }}
       />
       <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+        {streaming && (
+          <span style={{ fontSize: 10, color: "#4ade80", alignSelf: "center" }}>● Streaming</span>
+        )}
+        {!streaming && onCapture && (
         <button
           type="button"
           onClick={onCapture}
@@ -73,6 +78,7 @@ export default function VideoPreview({ locale, videoStream, videoActive, onCaptu
         >
           {t(locale, "chat.video.capture")}
         </button>
+        )}
         <button
           type="button"
           onClick={onStop}

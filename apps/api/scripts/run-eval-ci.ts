@@ -3,7 +3,7 @@
  * P0-3: 离线评测 CI 脚本
  *
  * 功能：
- * 1. 执行 intent / nl2ui / knowledge / decompose 全量评测
+ * 1. 执行 intent / knowledge / decompose 全量评测
  * 2. 生成 JSON 报告 + 文本摘要
  * 3. 支持基线对比（--baseline <path>）输出回归 delta
  * 4. 支持回归门禁（--gate）失败时 exit(1)
@@ -27,7 +27,6 @@ import {
 
 import {
   intentEvalCases,
-  nl2uiEvalCases,
   knowledgeEvalCases,
   decomposeEvalCases,
   allEvalCases,
@@ -151,20 +150,6 @@ function createMockExecutor() {
           latencyMs: Date.now() - start,
         };
       }
-      case "nl2ui":
-        return {
-          output: {
-            layout: (evalCase as any).expected.layout ?? "single-column",
-            panels: ((evalCase as any).expected.containsComponents ?? []).map((c: string) => ({
-              components: [{ componentId: c }],
-            })),
-            dataBindings: ((evalCase as any).expected.dataBindingEntities ?? []).map((e: string) => ({
-              entityName: e,
-            })),
-            metadata: { confidence: ((evalCase as any).expected.minConfidence ?? 0.5) + 0.1 },
-          },
-          latencyMs: Date.now() - start,
-        };
       case "knowledge":
         return {
           output: {
@@ -419,7 +404,6 @@ async function pinEvalSpaceRoutingPurposes(params: {
   const purposes = [
     "intent.analyze",
     "intent.classify",
-    "nl2ui.generate",
     "agent.loop.decompose",
     "agent.loop.decompose.fast",
   ];
@@ -468,28 +452,6 @@ async function injectJson<T>(params: {
   return {
     body: response.json() as T,
     latencyMs: Date.now() - startedAt,
-  };
-}
-
-function normalizeNl2UiOutput(raw: any) {
-  const config = raw?.config;
-  const areas = Array.isArray(config?.ui?.layout?.areas) ? config.ui.layout.areas : [];
-  const dataBindings = Array.isArray(config?.dataBindings) ? config.dataBindings : [];
-  const toEvalComponentId = (componentId: string) => {
-    if (componentId === "EntityList.Table") return "DataGrid";
-    if (componentId === "EntityForm.Single") return "FormPanel";
-    if (componentId.startsWith("Chart.")) return "ChartPanel";
-    return componentId;
-  };
-  return {
-    layout: config?.ui?.layout?.variant ?? null,
-    panels: areas.map((area: any) => ({
-      components: [{ componentId: toEvalComponentId(String(area?.componentId ?? "")) }],
-    })),
-    dataBindings: dataBindings.map((binding: any) => ({
-      entityName: binding?.params?.entityName ?? binding?.entityName ?? "",
-    })),
-    metadata: config?.metadata ?? {},
   };
 }
 
@@ -751,18 +713,6 @@ async function createRealExecutor(): Promise<RealExecutorHandle> {
             defaultModelRef: bootstrapInfo.modelRef,
           });
           return { output, latencyMs: Date.now() - startedAt };
-        }
-        case "nl2ui": {
-          const response = await injectJson<any>({
-            app,
-            method: "POST",
-            url: "/nl2ui/generate",
-            headers,
-            payload: {
-              userInput: evalCase.input,
-            },
-          });
-          return { output: normalizeNl2UiOutput(response.body), latencyMs: response.latencyMs };
         }
         case "knowledge": {
           if (!evalCase.input.trim()) {

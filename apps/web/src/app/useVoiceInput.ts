@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import { t } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
 
@@ -66,7 +66,8 @@ export default function useVoiceInput(opts: {
   const chunksRef = useRef<Blob[]>([]);
   const conversationRef = useRef(false);
   const accumulatedTextRef = useRef("");
-
+  const wsCleanupRef = useRef<(() => void) | null>(null);
+  const wsSTTAvailableRef = useRef<boolean | null>(null);
   const transcribeViaServer = useCallback(async (audioBlob: Blob): Promise<string | null> => {
     const WHISPER_TIMEOUT_MS = parseInt(
       process.env.NEXT_PUBLIC_WHISPER_TIMEOUT_MS ?? "15000",
@@ -109,8 +110,149 @@ export default function useVoiceInput(opts: {
     }
   }, [locale]);
 
+  // ── WebSocket 流式 STT 可用性检测 ─────────────────────
+  useEffect(() => {
+    if (wsSTTAvailableRef.current !== null) return;
+    apiFetch("/audio/capabilities")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        wsSTTAvailableRef.current = Boolean(data?.stt?.streamingReady);
+      })
+      .catch(() => { wsSTTAvailableRef.current = false; });
+  }, []);
+
+  // ── PCM 转换辅助 ───────────────────────────────
+  const float32ToInt16Base64 = useCallback((float32: Float32Array): string => {
+    const int16 = new Int16Array(float32.length);
+    for (let i = 0; i < float32.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    // Convert Int16Array to base64
+    const bytes = new Uint8Array(int16.buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }, []);
+
+  // ── WebSocket 流式 STT 路径 ─────────────────────────
+  const startWebSocketSTT = useCallback((): boolean => {
+    if (!wsSTTAvailableRef.current) return false;
+
+    const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const langParam = locale.startsWith("en") ? "en" : "zh";
+    const wsUrl = `${wsProtocol}//${location.host}/v1/audio/stream-stt?language=${langParam}`;
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch {
+      console.warn("[voice] WebSocket STT connection failed");
+      return false;
+    }
+
+    let audioCtx: AudioContext | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let processor: ScriptProcessorNode | null = null;
+    let stream: MediaStream | null = null;
+    let stopped = false;
+
+    const cleanup = () => {
+      if (stopped) return;
+      stopped = true;
+      try { processor?.disconnect(); } catch { /* ignore */ }
+      try { source?.disconnect(); } catch { /* ignore */ }
+      try { audioCtx?.close(); } catch { /* ignore */ }
+      stream?.getTracks().forEach((t) => t.stop());
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: "finish" })); } catch { /* ignore */ }
+        ws.close();
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      wsCleanupRef.current = null;
+      setVoiceListening(false);
+      setVoiceInterim("");
+      if (conversationRef.current && accumulatedTextRef.current.trim()) {
+        onAutoSend?.(accumulatedTextRef.current.trim());
+        accumulatedTextRef.current = "";
+      }
+    };
+
+    wsCleanupRef.current = cleanup;
+
+    ws.onopen = () => {
+      // 开始采集麦克风音频
+      navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true } })
+        .then((mediaStream) => {
+          if (stopped) { mediaStream.getTracks().forEach((t) => t.stop()); return; }
+          stream = mediaStream;
+          audioCtx = new AudioContext({ sampleRate: 16000 });
+          source = audioCtx.createMediaStreamSource(mediaStream);
+          processor = audioCtx.createScriptProcessor(4096, 1, 1);
+          source.connect(processor);
+          processor.connect(audioCtx.destination);
+
+          processor.onaudioprocess = (e) => {
+            if (stopped || ws.readyState !== WebSocket.OPEN) return;
+            const pcm = e.inputBuffer.getChannelData(0);
+            const base64 = float32ToInt16Base64(pcm);
+            try {
+              ws.send(JSON.stringify({ type: "audio_chunk", data: base64 }));
+            } catch { /* ignore */ }
+          };
+
+          setVoiceListening(true);
+          setVoiceInterim("");
+        })
+        .catch((err) => {
+          console.error("[voice] getUserMedia failed:", err);
+          cleanup();
+        });
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "interim") {
+          setVoiceInterim(msg.text || "");
+          accumulatedTextRef.current = msg.text || "";
+        } else if (msg.type === "final") {
+          const text = msg.text || "";
+          accumulatedTextRef.current = text;
+          setVoiceInterim("");
+          if (conversationRef.current) {
+            setDraft(text);
+          } else {
+            setDraft((prev) => prev + text);
+          }
+        } else if (msg.type === "error") {
+          console.warn("[voice] WS STT error:", msg.error);
+        }
+      } catch { /* ignore parse error */ }
+    };
+
+    ws.onerror = () => {
+      console.warn("[voice] WebSocket STT error, will fallback");
+      cleanup();
+    };
+
+    ws.onclose = () => {
+      if (!stopped) cleanup();
+    };
+
+    return true;
+  }, [locale, setDraft, onAutoSend, float32ToInt16Base64]);
+
   const startVoice = useCallback(() => {
     accumulatedTextRef.current = "";
+
+    // 优先级 1: WebSocket 流式 STT（最优体验）
+    if (startWebSocketSTT()) return;
+
+    // 优先级 2: Web Speech API
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (SR) {
@@ -247,6 +389,11 @@ export default function useVoiceInput(opts: {
   }, [locale, setDraft, onAutoSend, transcribeViaServer]);
 
   const stopVoice = useCallback(() => {
+    // 清理 WebSocket 流式 STT
+    if (wsCleanupRef.current) {
+      wsCleanupRef.current();
+      wsCleanupRef.current = null;
+    }
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
@@ -264,6 +411,7 @@ export default function useVoiceInput(opts: {
       const next = !prev;
       conversationRef.current = next;
       if (!next) {
+        if (wsCleanupRef.current) { wsCleanupRef.current(); wsCleanupRef.current = null; }
         if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null; }
         if (recorderRef.current && recorderRef.current.state !== "inactive") { recorderRef.current.stop(); recorderRef.current = null; }
         setVoiceListening(false);

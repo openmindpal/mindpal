@@ -25,9 +25,8 @@ export function resolveExecutionClassFromSuggestions(params: {
   executionClass: ExecutionClass;
   inlineTools: InlineToolCall[];
   workflowTools: InlineToolCall[];
-  separatePipelineTool: InlineToolCall | null;
 } {
-  const { inlineTools, upgradeTools, separatePipelineTool } = classifyToolCalls(
+  const { inlineTools, upgradeTools } = classifyToolCalls(
     params.toolCalls,
     params.enabledTools,
     params.inlineWritableEntities,
@@ -35,7 +34,7 @@ export function resolveExecutionClassFromSuggestions(params: {
 
   const executionClass: ExecutionClass = upgradeTools.length > 0
     ? "workflow"
-    : (inlineTools.length > 0 || separatePipelineTool)
+    : inlineTools.length > 0
       ? "immediate_action"
       : "conversation";
 
@@ -43,6 +42,5 @@ export function resolveExecutionClassFromSuggestions(params: {
     executionClass,
     inlineTools,
     workflowTools: upgradeTools,
-    separatePipelineTool,
   };
 }

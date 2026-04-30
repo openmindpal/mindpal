@@ -4,7 +4,8 @@ import { timingSafeTokenCompare } from "./channelCommon";
 import { resolveChannelSecretPayload } from "./channelSecret";
 import { feishuSendTextToChatWithRetry, getFeishuTenantAccessToken } from "./feishu";
 import type { ChannelProviderPlugin, IngressContext, ParsedInbound } from "./providerAdapters";
-import { registerChannelProvider } from "./providerAdapters";
+import { registerChannelProvider, inferAttachmentType } from "./providerAdapters";
+import type { UnifiedAttachment } from "@openslin/shared";
 import { FeishuWsClient } from "./feishuLongConnection";
 
 function toTextPayload(raw: unknown) {
@@ -84,6 +85,48 @@ const feishuPlugin: ChannelProviderPlugin = {
     const channelUserId = String(body?.event?.sender?.sender_id?.open_id ?? body?.event?.sender?.sender_id?.user_id ?? "").trim();
     const msgText = toTextPayload(body?.event?.message?.content);
 
+    // ── 提取附件（根据飞书消息类型）──
+    const attachments: UnifiedAttachment[] = [];
+    const msgType = String(body?.event?.message?.message_type ?? "text");
+    const rawContent = body?.event?.message?.content;
+    let parsedContent: any = null;
+    if (typeof rawContent === "string") {
+      try { parsedContent = JSON.parse(rawContent); } catch { /* ignore */ }
+    } else if (rawContent && typeof rawContent === "object") {
+      parsedContent = rawContent;
+    }
+
+    if (parsedContent) {
+      const baseUrl = String(process.env.FEISHU_BASE_URL ?? "https://open.feishu.cn");
+      if (msgType === "image" && parsedContent.image_key) {
+        // 图片消息：存储飞书图片下载 URL 供后续处理
+        attachments.push({
+          type: "image",
+          mimeType: "image/png",
+          name: parsedContent.image_key,
+          dataUrl: `${baseUrl}/open-apis/im/v1/images/${parsedContent.image_key}`,
+        });
+      } else if (msgType === "file" && parsedContent.file_key) {
+        // 文件消息
+        const mimeType = String(parsedContent.mime_type ?? "application/octet-stream");
+        attachments.push({
+          type: inferAttachmentType(mimeType),
+          mimeType,
+          name: parsedContent.file_name || parsedContent.file_key,
+          sizeBytes: parsedContent.file_size != null ? Number(parsedContent.file_size) : undefined,
+          dataUrl: `${baseUrl}/open-apis/im/v1/messages/${body?.event?.message?.message_id}/resources/${parsedContent.file_key}`,
+        });
+      } else if (msgType === "audio" && parsedContent.file_key) {
+        // 音频消息
+        attachments.push({
+          type: "voice",
+          mimeType: "audio/ogg",
+          name: parsedContent.file_key,
+          dataUrl: `${baseUrl}/open-apis/im/v1/messages/${body?.event?.message?.message_id}/resources/${parsedContent.file_key}`,
+        });
+      }
+    }
+
     return {
       workspaceId: String(body?.header?.tenant_key ?? body?.tenant_key ?? "").trim(),
       eventId,
@@ -93,6 +136,7 @@ const feishuPlugin: ChannelProviderPlugin = {
       channelUserId,
       text: msgText,
       rawBody: body,
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
   },
 
@@ -221,6 +265,45 @@ function parseWsEventToInbound(body: any): ParsedInbound {
   ).trim();
   const msgText = toTextPayload(body?.event?.message?.content);
   const timestampSec = Math.floor(Date.now() / 1000);
+
+  // ── WS 模式附件提取（与 parseInbound 逻辑一致）──
+  const attachments: UnifiedAttachment[] = [];
+  const msgType = String(body?.event?.message?.message_type ?? "text");
+  const rawContent = body?.event?.message?.content;
+  let parsedContent: any = null;
+  if (typeof rawContent === "string") {
+    try { parsedContent = JSON.parse(rawContent); } catch { /* ignore */ }
+  } else if (rawContent && typeof rawContent === "object") {
+    parsedContent = rawContent;
+  }
+  if (parsedContent) {
+    const baseUrl = String(process.env.FEISHU_BASE_URL ?? "https://open.feishu.cn");
+    if (msgType === "image" && parsedContent.image_key) {
+      attachments.push({
+        type: "image",
+        mimeType: "image/png",
+        name: parsedContent.image_key,
+        dataUrl: `${baseUrl}/open-apis/im/v1/images/${parsedContent.image_key}`,
+      });
+    } else if (msgType === "file" && parsedContent.file_key) {
+      const mimeType = String(parsedContent.mime_type ?? "application/octet-stream");
+      attachments.push({
+        type: inferAttachmentType(mimeType),
+        mimeType,
+        name: parsedContent.file_name || parsedContent.file_key,
+        sizeBytes: parsedContent.file_size != null ? Number(parsedContent.file_size) : undefined,
+        dataUrl: `${baseUrl}/open-apis/im/v1/messages/${body?.event?.message?.message_id}/resources/${parsedContent.file_key}`,
+      });
+    } else if (msgType === "audio" && parsedContent.file_key) {
+      attachments.push({
+        type: "voice",
+        mimeType: "audio/ogg",
+        name: parsedContent.file_key,
+        dataUrl: `${baseUrl}/open-apis/im/v1/messages/${body?.event?.message?.message_id}/resources/${parsedContent.file_key}`,
+      });
+    }
+  }
+
   return {
     workspaceId: String(body?.header?.tenant_key ?? body?.tenant_key ?? "").trim(),
     eventId,
@@ -230,6 +313,7 @@ function parseWsEventToInbound(body: any): ParsedInbound {
     channelUserId,
     text: msgText,
     rawBody: body,
+    ...(attachments.length > 0 ? { attachments } : {}),
   };
 }
 

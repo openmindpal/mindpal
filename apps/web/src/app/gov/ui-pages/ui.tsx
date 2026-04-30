@@ -14,7 +14,7 @@ type PageVersion = {
   status?: string;
   pageType?: string;
   title?: Record<string, string> | string | null;
-  params?: { entityName?: string; nl2uiConfig?: any } | null;
+  params?: { entityName?: string } | null;
   ui?: { layout?: { variant?: string }; blocks?: any[] } | null;
   createdAt?: string;
   updatedAt?: string;
@@ -44,7 +44,7 @@ function normalizePageVersion(value: unknown): PageVersion | null {
     status: stringField(record, "status"),
     pageType: stringField(record, "pageType"),
     title: normalizeTitle(record.title),
-    params: params ? { entityName: toDisplayText(params.entityName), nl2uiConfig: params.nl2uiConfig } : null,
+    params: params ? { entityName: toDisplayText(params.entityName) } : null,
     ui: { layout: layout ? { variant: toDisplayText(layout.variant) } : undefined, blocks },
     createdAt: toDisplayText(record.createdAt),
     updatedAt: toDisplayText(record.updatedAt),
@@ -78,11 +78,8 @@ function extractTitle(v: PageVersion | null | undefined, locale: string): string
   return "";
 }
 
-function inferSource(item: PageListItem): "nl2ui" | "template" | "manual" {
+function inferSource(item: PageListItem): "template" | "manual" {
   const name = item.name ?? "";
-  if (name.startsWith("nl2ui.")) return "nl2ui";
-  const p = item.draft?.params ?? item.latestReleased?.params;
-  if (p && (p as any).nl2uiConfig) return "nl2ui";
   // entity.list/edit pages with certain patterns from template generation
   if (name.match(/^[a-z_]+\.(list|detail|new|edit)$/)) return "template";
   return "manual";
@@ -135,7 +132,6 @@ export default function GovUiPagesClient(props: { locale: string; initial: any }
   }, [props.locale]);
 
   const sourceStyle = (src: string): React.CSSProperties => {
-    if (src === "nl2ui") return { background: "#ede9fe", color: "#7c3aed", padding: "2px 8px", borderRadius: 4, fontSize: 12 };
     if (src === "template") return { background: "#dcfce7", color: "#16a34a", padding: "2px 8px", borderRadius: 4, fontSize: 12 };
     return { background: "#f1f5f9", color: "#64748b", padding: "2px 8px", borderRadius: 4, fontSize: 12 };
   };

@@ -60,13 +60,3 @@ export async function analyzeUserIntent(
     return null;
   }
 }
-
-/**
- * 从预生成的 toolSuggestions 中分离 NL2UI 和其他工具。
- * 当前被 dispatch.handleExecute 活跃调用，请勿删除。
- */
-export function separateToolSuggestions(prebuiltSuggestions: Array<{ toolRef: string; inputDraft?: any }>) {
-  const nl2uiSuggestions = prebuiltSuggestions.filter(s => s.toolRef.startsWith("nl2ui.generate"));
-  const workerSuggestions = prebuiltSuggestions.filter(s => !s.toolRef.startsWith("nl2ui.generate"));
-  return { nl2uiSuggestions, workerSuggestions };
-}

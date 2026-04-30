@@ -66,12 +66,6 @@
     "description": "Event trigger engine"
   },
   {
-    "key": "nl2ui.generator",
-    "module": "./nl2ui-generator",
-    "tier": "optional",
-    "description": "Natural language to UI generation"
-  },
-  {
     "key": "intent.analyzer",
     "module": "./intent-analyzer",
     "tier": "optional",
@@ -82,6 +76,12 @@
     "module": "./ui-page-config",
     "tier": "optional",
     "description": "UI page configuration management"
+  },
+  {
+    "key": "schema-ui.generate",
+    "module": "./schema-ui-generator",
+    "tier": "optional",
+    "description": "Schema-UI generation from natural language"
   },
   {
     "key": "workbench.manager",

@@ -70,13 +70,6 @@ export default function SettingsClient(props: { locale: string }) {
   const [ssoBusy, setSsoBusy] = useState<string | null>(null); // providerId being initiated
   const [ssoErr, setSsoErr] = useState("");
   const [ssoTenantId, setSsoTenantId] = useState(""); // dynamically fetched from /me API
-  const [nl2uiFontSize, setNl2uiFontSize] = useState<string>("medium");
-  const [nl2uiCardStyle, setNl2uiCardStyle] = useState<string>("modern");
-  const [nl2uiColorTheme, setNl2uiColorTheme] = useState<string>("blue");
-  const [nl2uiDensity, setNl2uiDensity] = useState<string>("comfortable");
-  const [nl2uiDefaultLayout, setNl2uiDefaultLayout] = useState<string>("list");
-  const [nl2uiPrefsStatus, setNl2uiPrefsStatus] = useState<string>("idle");
-  const [nl2uiPrefsErr, setNl2uiPrefsErr] = useState<string>("");
 
   const [consoleErr, setConsoleErr] = useState<string>("");
 
@@ -298,77 +291,6 @@ export default function SettingsClient(props: { locale: string }) {
     setSsoBusy(null);
   }
 
-  /* ─── NL2UI Style Preferences ─── */
-
-  async function loadNl2uiPrefs() {
-    setNl2uiPrefsErr("");
-    setNl2uiPrefsStatus("loading");
-    try {
-      const res = await apiFetch("/nl2ui/style-preferences", { method: "GET", locale: props.locale });
-      if (res.ok) {
-        const data = await res.json() as { preferences: any };
-        if (data.preferences) {
-          setNl2uiFontSize(data.preferences.fontSize || "medium");
-          setNl2uiCardStyle(data.preferences.cardStyle || "modern");
-          setNl2uiColorTheme(data.preferences.colorTheme || "blue");
-          setNl2uiDensity(data.preferences.density || "comfortable");
-          setNl2uiDefaultLayout(data.preferences.defaultLayout || "list");
-        }
-        setNl2uiPrefsStatus("ready");
-      } else {
-        setNl2uiPrefsStatus("idle");
-        setNl2uiPrefsErr(parseErr(await res.json().catch(() => null), props.locale));
-      }
-    } catch (e: unknown) {
-      setNl2uiPrefsStatus("idle");
-      setNl2uiPrefsErr(errMsg(e));
-    }
-  }
-
-  async function saveNl2uiPrefs() {
-    setNl2uiPrefsErr("");
-    setNl2uiPrefsStatus("saving");
-    try {
-      const res = await apiFetch("/nl2ui/style-preferences", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        locale: props.locale,
-        body: JSON.stringify({
-          fontSize: nl2uiFontSize,
-          cardStyle: nl2uiCardStyle,
-          colorTheme: nl2uiColorTheme,
-          density: nl2uiDensity,
-          defaultLayout: nl2uiDefaultLayout,
-        }),
-      });
-      if (res.ok) {
-        setNl2uiPrefsStatus("saved");
-        setTimeout(() => setNl2uiPrefsStatus("ready"), 1500);
-      } else {
-        setNl2uiPrefsStatus("ready");
-        setNl2uiPrefsErr(parseErr(await res.json().catch(() => null), props.locale));
-      }
-    } catch (e: unknown) {
-      setNl2uiPrefsStatus("ready");
-      setNl2uiPrefsErr(errMsg(e));
-    }
-  }
-
-  async function clearNl2uiPrefs() {
-    setNl2uiPrefsErr("");
-    try {
-      await apiFetch("/nl2ui/style-preferences", { method: "DELETE", locale: props.locale });
-      setNl2uiFontSize("medium");
-      setNl2uiCardStyle("modern");
-      setNl2uiColorTheme("blue");
-      setNl2uiDensity("comfortable");
-      setNl2uiDefaultLayout("list");
-      setNl2uiPrefsStatus("idle");
-    } catch (e: unknown) {
-      setNl2uiPrefsErr(errMsg(e));
-    }
-  }
-
   /* SSR hydration: read localStorage after mount */
   useEffect(() => {
     const token = getClientAuthToken();
@@ -378,7 +300,6 @@ export default function SettingsClient(props: { locale: string }) {
     setAuthEditing(!token);
     setHydrated(true);
     if (token) {
-      loadNl2uiPrefs();
       loadPatTokens();
       loadMfaStatus();
       loadSsoProviders();
@@ -700,84 +621,6 @@ export default function SettingsClient(props: { locale: string }) {
               </div>
             </div>
           )}
-        </Card>
-      </div>
-
-      {/* NL2UI style preferences */}
-      <div style={{ marginTop: 16 }} id="nl2ui-prefs">
-        <Card
-          title={t(props.locale, "settings.section.nl2uiPrefs")}
-          footer={
-            <span>
-              <Badge tone={nl2uiPrefsStatus === "saved" ? "success" : nl2uiPrefsStatus === "ready" ? "neutral" : "warning"}>
-                {nl2uiPrefsStatus === "saved" ? t(props.locale, "action.saved") : statusText(nl2uiPrefsStatus)}
-              </Badge>
-            </span>
-          }
-        >
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-            <button onClick={loadNl2uiPrefs} disabled={nl2uiPrefsStatus === "loading"}>
-              {nl2uiPrefsStatus === "loading" ? t(props.locale, "action.loading") : t(props.locale, "action.load")}
-            </button>
-          </div>
-          {nl2uiPrefsErr && <pre style={{ color: "crimson", whiteSpace: "pre-wrap", marginBottom: 12 }}>{nl2uiPrefsErr}</pre>}
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16, marginBottom: 16 }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>{t(props.locale, "nl2ui.prefs.fontSize")}</span>
-              <select value={nl2uiFontSize} onChange={(e) => setNl2uiFontSize(e.target.value)} style={{ padding: "6px 8px", borderRadius: 6 }}>
-                <option value="small">{t(props.locale, "nl2ui.prefs.fontSize.small")}</option>
-                <option value="medium">{t(props.locale, "nl2ui.prefs.fontSize.medium")}</option>
-                <option value="large">{t(props.locale, "nl2ui.prefs.fontSize.large")}</option>
-              </select>
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>{t(props.locale, "nl2ui.prefs.cardStyle")}</span>
-              <select value={nl2uiCardStyle} onChange={(e) => setNl2uiCardStyle(e.target.value)} style={{ padding: "6px 8px", borderRadius: 6 }}>
-                <option value="minimal">{t(props.locale, "nl2ui.prefs.cardStyle.minimal")}</option>
-                <option value="modern">{t(props.locale, "nl2ui.prefs.cardStyle.modern")}</option>
-                <option value="classic">{t(props.locale, "nl2ui.prefs.cardStyle.classic")}</option>
-              </select>
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>{t(props.locale, "nl2ui.prefs.colorTheme")}</span>
-              <select value={nl2uiColorTheme} onChange={(e) => setNl2uiColorTheme(e.target.value)} style={{ padding: "6px 8px", borderRadius: 6 }}>
-                <option value="blue">{t(props.locale, "nl2ui.prefs.colorTheme.blue")}</option>
-                <option value="green">{t(props.locale, "nl2ui.prefs.colorTheme.green")}</option>
-                <option value="warm">{t(props.locale, "nl2ui.prefs.colorTheme.warm")}</option>
-                <option value="dark">{t(props.locale, "nl2ui.prefs.colorTheme.dark")}</option>
-              </select>
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>{t(props.locale, "nl2ui.prefs.density")}</span>
-              <select value={nl2uiDensity} onChange={(e) => setNl2uiDensity(e.target.value)} style={{ padding: "6px 8px", borderRadius: 6 }}>
-                <option value="compact">{t(props.locale, "nl2ui.prefs.density.compact")}</option>
-                <option value="comfortable">{t(props.locale, "nl2ui.prefs.density.comfortable")}</option>
-              </select>
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>{t(props.locale, "nl2ui.prefs.defaultLayout")}</span>
-              <select value={nl2uiDefaultLayout} onChange={(e) => setNl2uiDefaultLayout(e.target.value)} style={{ padding: "6px 8px", borderRadius: 6 }}>
-                <option value="list">{t(props.locale, "nl2ui.prefs.defaultLayout.list")}</option>
-                <option value="cards">{t(props.locale, "nl2ui.prefs.defaultLayout.cards")}</option>
-                <option value="kanban">{t(props.locale, "nl2ui.prefs.defaultLayout.kanban")}</option>
-                <option value="table">{t(props.locale, "nl2ui.prefs.defaultLayout.table")}</option>
-              </select>
-            </label>
-          </div>
-
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={saveNl2uiPrefs} disabled={nl2uiPrefsStatus === "saving"}>
-              {nl2uiPrefsStatus === "saving" ? t(props.locale, "action.saving") : t(props.locale, "action.save")}
-            </button>
-            <button onClick={clearNl2uiPrefs}>
-              {t(props.locale, "action.clear")}
-            </button>
-          </div>
         </Card>
       </div>
     </div>

@@ -4,11 +4,13 @@ import { useCallback, useRef, useState } from "react";
 import { type ChatAttachment } from "./homeHelpers";
 import { nextId } from "@/lib/apiError";
 import { t } from "@/lib/i18n";
+import { DEFAULT_MULTIMODAL_CAPABILITIES } from "@openslin/shared/attachment";
 
-export const IMAGE_ACCEPT = "image/jpeg,image/png,image/gif,image/webp";
+// 从元数据能力配置生成 accept 字符串（单点维护，与 shared 层 DEFAULT_MULTIMODAL_CAPABILITIES 一致）
+export const IMAGE_ACCEPT = (DEFAULT_MULTIMODAL_CAPABILITIES.constraints.image?.supportedMimeTypes ?? []).join(",");
 export const DOC_ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.pptx,.txt,.csv,.md,.json,.xml,.html,.htm,.rtf,.log,.yml,.yaml,.ini,.conf,.toml";
-export const AUDIO_ACCEPT = "audio/wav,audio/mpeg,audio/mp3,audio/ogg,audio/webm,audio/flac,audio/aac,audio/mp4,audio/x-m4a";
-export const VIDEO_ACCEPT = "video/mp4,video/webm,video/ogg,video/quicktime";
+export const AUDIO_ACCEPT = (DEFAULT_MULTIMODAL_CAPABILITIES.constraints.audio?.supportedMimeTypes ?? []).join(",");
+export const VIDEO_ACCEPT = (DEFAULT_MULTIMODAL_CAPABILITIES.constraints.video?.supportedMimeTypes ?? []).join(",");
 // Backend config: MEDIA_MAX_INLINE_BYTES (default 5MB for inline base64)
 // These frontend limits are independent client-side guards
 export const MAX_FILE_MB = 20;

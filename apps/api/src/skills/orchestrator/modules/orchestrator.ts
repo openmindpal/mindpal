@@ -4,6 +4,8 @@ import type { Pool } from "pg";
 import { redactValue, resolveNumber } from "@openslin/shared";
 import { Errors } from "../../../lib/errors";
 import { invokeModelChat, parseToolCallsFromOutput, type LlmSubject } from "../../../lib/llm";
+import { executeInlineTools, formatInlineResultsForLLM, loadInlineWritableEntities } from "./inlineToolExecutor";
+import { resolveExecutionClassFromSuggestions } from "../dispatch.executionPolicy";
 import type { OrchestratorTurnRequest, OrchestratorTurnResponse } from "./model";
 import { getSessionContext, upsertSessionContext, type SessionMessage, type SessionState } from "../../../modules/memory/sessionContextRepo";
 import { getToolVersionByRef, type ToolDefinition } from "../../../modules/tools/toolRepo";
@@ -161,6 +163,18 @@ export function shouldTriggerEventDrivenSummary(
   }
   
   return { should: false };
+}
+
+/** 将 SessionState 槽位动态构建为上下文文本，不硬编码字段列表 */
+export function buildSessionStateContext(state: SessionState | undefined): string | null {
+  if (!state) return null;
+  const parts: string[] = [];
+  for (const [key, val] of Object.entries(state)) {
+    if (key === 'lastUpdatedAt' || val == null || val === '') continue;
+    if (Array.isArray(val) && val.length === 0) continue;
+    parts.push(`${key}: ${Array.isArray(val) ? val.join(', ') : String(val)}`);
+  }
+  return parts.length > 0 ? parts.join('\n') : null;
 }
 
 function conversationWindowSize() {
@@ -371,17 +385,13 @@ export function buildSystemPrompt(
     parts.push(
       "\n## Available Tools (enabled in current workspace)\n" +
       toolCatalog +
-      "\n\n## Built-in Capabilities\n" +
-      "- nl2ui.generate: Use nl2ui.generate when a visual interface would enhance the user experience (data display, workflow visualization, form creation, etc.).\n" +
       "\nTOOL CALL FORMAT: When you decide to use a tool, include a tool_call block in this markdown format at the END of your reply:" +
       '\n```tool_call\n[{"toolRef":"<toolRef>","inputDraft":{<key>:<value>}}]\n```' +
       "\nAlways use this markdown code block format for tool invocations."
     );
   } else {
     parts.push(
-      "\n## Built-in Capabilities\n" +
-      "- nl2ui.generate: Use nl2ui.generate when a visual interface would enhance the user experience (data display, workflow visualization, form creation, etc.).\n" +
-      "\nNo database tools are currently enabled in this workspace. You can still help with information, analysis, and suggestions."
+      "\n\nNo database tools are currently enabled in this workspace. You can still help with information, analysis, and suggestions."
     );
   }
   if (taskContext) {
@@ -671,6 +681,12 @@ export async function orchestrateChatTurn(params: {
       .filter((m: any) => m.content),
   ];
 
+  // SessionState 槽位恢复：将结构化会话状态注入 LLM 上下文
+  const sessionStateCtx = buildSessionStateContext(prev?.context?.sessionState);
+  if (sessionStateCtx) {
+    modelMessages.push({ role: "system", content: `## Session State\n${sessionStateCtx}` });
+  }
+
   // 多模态附件处理：将图片附件融合到 user message 的 content 中（OpenAI Vision 格式）
   const imageAttachments = (params.attachments ?? []).filter(a => a.type === "image" && a.dataUrl);
   const docAttachments = (params.attachments ?? []).filter(a => a.type === "document");
@@ -896,6 +912,59 @@ export async function orchestrateChatTurn(params: {
   }
 
   /* ── 验证 tool_call：仅保留确实已启用的工具 ── */
+  const validatedToolCalls = toolCalls.filter((tc) => enabledToolRefSet.has(tc.toolRef));
+
+  /* ── 内联工具执行：分类 + 执行只读/安全写入工具 ── */
+  const inlineWritableEntities = await loadInlineWritableEntities(params.pool);
+  const resolution = resolveExecutionClassFromSuggestions({
+    toolCalls: validatedToolCalls,
+    enabledTools: toolDiscovery.tools,
+    inlineWritableEntities,
+  });
+
+  if (resolution.inlineTools.length > 0) {
+    params.app.log.info(
+      { traceId: params.traceId, inlineTools: resolution.inlineTools.map(t => t.toolRef) },
+      "[orchestrator] 检测到可内联工具调用，执行内联查询",
+    );
+    const inlineResults = await executeInlineTools(resolution.inlineTools, {
+      pool: params.pool,
+      tenantId: params.subject.tenantId,
+      spaceId: params.subject.spaceId ?? "",
+      subjectId: params.subject.subjectId,
+      enabledTools: toolDiscovery.tools,
+      app: params.app,
+      traceId: params.traceId,
+    });
+    const toolResultText = formatInlineResultsForLLM(inlineResults, locale);
+    savedToolContext = toolResultText;
+
+    // 二次 LLM 回复：基于工具结果生成自然语言
+    const effectiveToolResultText = toolResultText || (locale !== "en-US"
+      ? "## 工具执行结果\n工具已执行但未返回有效数据。\n"
+      : "## Tool Execution Results\nTools executed but returned no valid data.\n");
+    try {
+      const followUpOut = await invokeModelChat({
+        app: params.app,
+        subject: params.subject,
+        locale,
+        authorization: params.authorization,
+        traceId: params.traceId,
+        purpose: "orchestrator.turn.inline_followup",
+        messages: [
+          ...modelMessages,
+          { role: "assistant", content: outputText },
+          { role: "user", content: effectiveToolResultText + (locale !== "en-US"
+            ? "\n\n请基于上面的工具返回数据，直接向用户展示结果。用自然语言组织数据，不要提及工具调用过程。"
+            : "\n\nBased on the tool results above, present the data to the user directly. Organize it in natural language.") },
+        ],
+      });
+      followUpText = typeof followUpOut?.outputText === "string" ? followUpOut.outputText : "";
+    } catch (followUpErr: any) {
+      params.app.log.warn({ err: followUpErr, traceId: params.traceId }, "[orchestrator] 内联工具二次回复失败");
+    }
+  }
+
   const validatedSuggestions: Array<{
     toolRef: string;
     inputDraft: Record<string, unknown>;
@@ -903,8 +972,7 @@ export async function orchestrateChatTurn(params: {
     approvalRequired: boolean;
     idempotencyKey?: string;
   }> = [];
-  for (const tc of toolCalls) {
-    if (!enabledToolRefSet.has(tc.toolRef)) continue;
+  for (const tc of resolution.workflowTools) {
     const tool = enabledToolMap.get(tc.toolRef);
     validatedSuggestions.push({
       toolRef: tc.toolRef,

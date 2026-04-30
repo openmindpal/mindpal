@@ -102,7 +102,6 @@ export default function useWorkspaceTabs(opts: {
       case "knowledgeResult": return <IconKnowledge />;
       case "artifact": return <IconArtifact />;
       case "workbench": return <IconWorkbench />;
-      case "nl2uiPreview": return <IconPanel />;
       case "page":
       default: return <IconPage />;
     }

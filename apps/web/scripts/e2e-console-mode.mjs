@@ -14,8 +14,6 @@ async function readHomeChatModules() {
   const files = [
     "HomeChat.tsx", "useChatSession.ts", "useTaskManager.ts",
     "useToolExecution.ts", "useSendMessage.ts", "useDirectives.ts",
-    "useNl2uiActions.ts", "LeftPanel.tsx", "ChatFlowRenderer.tsx",
-    "ChatInputArea.tsx", "Nl2uiOverlay.tsx",
     "useWorkspaceTabs.tsx", "useSplitLayout.ts",
   ];
   const parts = await Promise.all(files.map((f) => fs.readFile(path.resolve(base, f), "utf8").catch(() => "")));

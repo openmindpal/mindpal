@@ -65,6 +65,10 @@
     "./approvalDecision": {
       "types": "./dist/approvalDecision.d.ts",
       "default": "./dist/approvalDecision.js"
+    },
+    "./attachment": {
+      "types": "./dist/attachmentProcessor.d.ts",
+      "default": "./dist/attachmentProcessor.js"
     }
   },
   "scripts": {
@@ -76,7 +80,8 @@
     "*": {
       "document": ["dist/documentParser.d.ts"],
       "policyExpr": ["dist/policyExpr.d.ts"],
-      "approvalDecision": ["dist/approvalDecision.d.ts"]
+      "approvalDecision": ["dist/approvalDecision.d.ts"],
+      "attachment": ["dist/attachmentProcessor.d.ts"]
     }
   },
   "dependencies": {

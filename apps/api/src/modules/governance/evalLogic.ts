@@ -4,7 +4,7 @@ export type EvalThresholds = {
   sealRequired?: boolean;
   /** 标记为核心回归套件，release 时强制检查 */
   core?: boolean;
-  /** 分类级别阈值：{ "intent": { passRateMin: 0.9 }, "nl2ui": { passRateMin: 0.8 } } */
+  /** 分类级别阈值：{ "intent": { passRateMin: 0.9 } } */
   categoryThresholds?: Record<string, { passRateMin?: number; denyRateMax?: number }>;
   /** 允许的最大过期时间(小时)，超过则视为过期需重新运行 */
   maxStaleHours?: number;

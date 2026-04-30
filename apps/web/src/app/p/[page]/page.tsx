@@ -9,7 +9,6 @@ import EntityEditForm from "./editUi";
 import { ViewPrefsPanel } from "./ViewPrefsPanel";
 import { Card, Table } from "../../../components/ui";
 import { resolveReferenceLabels, type RefLabelMap } from "../../../lib/referenceResolver";
-import Nl2UiPageRenderer from "./Nl2UiPageRenderer";
 
 async function loadPage(locale: string, name: string) {
   const token = (await cookies()).get("openslin_token")?.value ?? "";
@@ -238,22 +237,6 @@ export default async function PageEntry(props: {
   const schemaName = getSchemaNameFromBindings(binds);
   const prefs = await loadViewPrefs(locale, name);
   const mergedUi = mergeUi(getUi(released), prefs, searchParams);
-
-  const nl2uiConfig = (params as any).nl2uiConfig;
-  if (nl2uiConfig && typeof nl2uiConfig === "object" && nl2uiConfig.ui?.layout) {
-    const pageTitle = text(released.title ?? name, locale) || name;
-    const nl2uiBackHref = `/gov/ui-pages/${encodeURIComponent(name)}?lang=${encodeURIComponent(locale)}`;
-    return (
-      <Nl2UiPageRenderer
-        config={nl2uiConfig}
-        locale={locale}
-        pageName={name}
-        title={pageTitle}
-        backHref={nl2uiBackHref}
-        released={released}
-      />
-    );
-  }
 
   if (pageType === "entity.list") {
     const entityName = String(params.entityName ?? "");

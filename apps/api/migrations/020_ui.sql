@@ -1,5 +1,5 @@
 -- migration-aliases: 007_ui_config,018b_nl2ui_generation_cache,046_ui_page_template_ui_json,092_workbench_plugins,106_ui_component_registry_versions
--- Domain: UI — page templates, nl2ui, component registry, workbench plugins
+-- Domain: UI — page templates, schema-ui, component registry, workbench plugins
 
 -- ═══ Page Templates ═══
 
@@ -40,9 +40,9 @@ CREATE INDEX IF NOT EXISTS page_template_versions_latest_released_idx
   ON page_template_versions (tenant_id, scope_type, scope_id, name, version DESC)
   WHERE status = 'released';
 
--- ═══ NL2UI Generation Cache ═══
+-- ═══ Schema-UI Generation Cache ═══
 
-CREATE TABLE IF NOT EXISTS nl2ui_generation_cache (
+CREATE TABLE IF NOT EXISTS schema_ui_generation_cache (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id VARCHAR(255) NOT NULL,
   user_id VARCHAR(255) NOT NULL,
@@ -54,14 +54,14 @@ CREATE TABLE IF NOT EXISTS nl2ui_generation_cache (
   CONSTRAINT unique_tenant_user_input UNIQUE (tenant_id, user_id, user_input_hash)
 );
 
-CREATE INDEX IF NOT EXISTS idx_nl2ui_cache_tenant_user
-  ON nl2ui_generation_cache(tenant_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_schema_ui_cache_tenant_user
+  ON schema_ui_generation_cache(tenant_id, user_id);
 
-CREATE INDEX IF NOT EXISTS idx_nl2ui_cache_expires
-  ON nl2ui_generation_cache(expires_at);
+CREATE INDEX IF NOT EXISTS idx_schema_ui_cache_expires
+  ON schema_ui_generation_cache(expires_at);
 
-COMMENT ON TABLE nl2ui_generation_cache IS 'NL2UI 生成结果缓存表，存储自然语言到 UI 配置的映射，TTL=7 天';
-COMMENT ON COLUMN nl2ui_generation_cache.generated_config IS '完整的 UI 配置 JSON，包含 layout、blocks、dataBindings 等';
+COMMENT ON TABLE schema_ui_generation_cache IS 'Schema-UI 生成结果缓存表，存储自然语言到 UI 配置的映射，TTL=7 天';
+COMMENT ON COLUMN schema_ui_generation_cache.generated_config IS '完整的 UI 配置 JSON，包含 layout、blocks、dataBindings 等';
 
 -- ═══ UI Component Registry Versions ═══
 

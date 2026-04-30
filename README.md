@@ -55,7 +55,7 @@
 | **Skill 运行时** | 多语言支持（Node.js/Python）、隔离沙箱（禁止模块/动态代码锁定）、最小权限、出站网络策略、依赖扫描、供应链安全门禁、Skill RPC 协议 |
 | **治理控制面** | 变更集（draft→submit→approve→release→rollback）、灰度发布、评测准入、动态审批规则引擎（递归 AND/OR 条件匹配）、运行时治理检查点 |
 | **设备/具身智能** | 设备注册配对、远程执行、桌面端 Agent、浏览器自动化（Playwright）、桌面控制/GUI 自动化、视觉感知路由、能力探测 |
-| **NL2UI** | 自然语言生成 UI、动态页面配置、工作台管理、可视化流程编排（ReactFlow） |
+| **Schema-UI** | JSON Schema 驱动 + MDX 增强的轻量界面生成，支持 table/cards/form/chart/markdown/dashboard 六种布局策略，基于标准 JSON Schema 无限扩展，零重型依赖 |
 | **语音交互** | 语音输入（WebSpeech API）、TTS 语音合成、语音 Skill |
 | **通用数据平面** | Schema 驱动 CRUD、导入导出、离线同步、Yjs 协同编辑 |
 | **安全中枢** | RBAC + ABAC 策略引擎、Safety/DLP（审计/拦截双模式）、Prompt 注入检测、审计不可篡改日志、供应链安全（信任/SBOM/依赖扫描）、模块边界扫描 |
@@ -92,7 +92,7 @@
 │  扩展能力层：媒体流水线 / 备份 / 回放 / 产物 / 分析 /       │
 │            AI事件推理 / 浏览器自动化 / 桌面自动化          │
 ├─────────────────────────────────────────────────────────────┤
-│  可选能力层：NL2UI / 工作台 / OAuth / SSO(OIDC) / SCIM /   │
+│  可选能力层：Schema-UI / 工作台 / OAuth / SSO(OIDC) / SCIM /   │
 │            通知 / 设备运行时 / 协作运行时 / 同步引擎 /     │
 │            RBAC / 联邦网关 / MFA / 观测性仪表盘            │
 ├─────────────────────────────────────────────────────────────┤
@@ -156,7 +156,7 @@
 | 运行时 | Node.js 20+ |
 | 后端框架 | Fastify 5 + WebSocket |
 | 前端框架 | Next.js 16 + React 19 |
-| UI 库 | @xyflow/react (流程图) + framer-motion + react-markdown |
+| UI 库 | react-markdown + MDX 渲染 |
 | 数据库 | PostgreSQL 16（24 个迁移文件） |
 | 缓存/消息 | Redis 7 + ioredis |
 | 任务队列 | BullMQ 5.58 |

@@ -27,19 +27,21 @@ export interface UseExecutionFlowParams {
   retryCountRef: React.MutableRefObject<Map<string, number>>;
   lastRetryMsgRef: React.MutableRefObject<string | null>;
   setToolExecStates: React.Dispatch<React.SetStateAction<any>>;
-  setNl2uiLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setActiveTask: (v: any) => void;
   setTaskProgress: (v: any) => void;
   pollTaskState: (taskId: string) => Promise<void>;
   activeTaskIds: string[];
+  /** 场景化上下文类型，用于后端跳过不必要的 Schema-UI 生成 */
+  contextType?: "home_chat" | "workspace" | "workbench";
 }
 
 export function useExecutionFlow(params: UseExecutionFlowParams) {
   const {
     locale, conversationId, setConversationId, flow, setFlow,
     selectedModelRef, abortRef, retryCountRef, lastRetryMsgRef,
-    setToolExecStates, setNl2uiLoading, setActiveTask, setTaskProgress,
+    setToolExecStates, setActiveTask, setTaskProgress,
     pollTaskState, activeTaskIds,
+    contextType,
   } = params;
 
   const [draft, setDraft] = useState("");
@@ -59,8 +61,8 @@ export function useExecutionFlow(params: UseExecutionFlowParams) {
   }, []);
 
   const { voiceListening, voiceInterim, voiceConversation, startVoice, toggleConversation } = useVoiceInput({ locale, setDraft, onAutoSend });
-  const { speaking, speak, stopSpeaking, checkTTSReady } = useVoiceTTS();
-  const { videoActive, videoStream, videoSupported, startVideo, stopVideo, captureFrame } = useVideoCapture();
+  const { speaking, speak, stopSpeaking, checkTTSReady, feedChunk, flushAndFinish, abortStreaming } = useVoiceTTS();
+  const { videoActive, videoStream, videoSupported, streaming, startVideo, stopVideo, captureFrame, startStreaming, stopStreaming } = useVideoCapture();
   const { executeToolInline } = useToolExecution({ locale, setToolExecStates });
 
   // TTS readiness check
@@ -70,28 +72,68 @@ export function useExecutionFlow(params: UseExecutionFlowParams) {
   }, [checkTTSReady]);
 
   // Auto-speak after response in voice conversation mode
+  // (Legacy fallback: if streaming TTS was not active, speak full text after response)
   const prevBusyRef = useRef(false);
   const voiceConvRef = useRef(false);
   useEffect(() => { voiceConvRef.current = voiceConversation; }, [voiceConversation]);
   useEffect(() => {
     if (prevBusyRef.current && !busy && voiceConvRef.current) {
-      const lastAssistant = [...flow].reverse().find(
-        (it): it is { kind: "message" } & FlowMessage => it.kind === "message" && it.role === "assistant" && Boolean((it as FlowMessage).text)
-      );
-      if (lastAssistant?.text) {
-        void speak(lastAssistant.text).then(() => { if (voiceConvRef.current) startVoice(); });
-      } else if (voiceConvRef.current) startVoice();
+      // If streaming TTS is already active (speaking), just restart voice on end.
+      // Otherwise fall back to one-shot speak.
+      if (!speaking) {
+        const lastAssistant = [...flow].reverse().find(
+          (it): it is { kind: "message" } & FlowMessage => it.kind === "message" && it.role === "assistant" && Boolean((it as FlowMessage).text)
+        );
+        if (lastAssistant?.text) {
+          void speak(lastAssistant.text).then(() => { if (voiceConvRef.current) startVoice(); });
+        } else if (voiceConvRef.current) startVoice();
+      } else {
+        // Streaming TTS is playing; when it finishes, speaking will become false
+        // and voiceConversation loop will re-trigger via the next busy cycle.
+      }
     }
     prevBusyRef.current = busy;
-  }, [busy, flow, speak, startVoice]);
+  }, [busy, flow, speak, speaking, startVoice]);
+
+  // Barge-in: abort streaming TTS when user starts new voice input
+  useEffect(() => {
+    if (voiceListening && speaking) {
+      abortStreaming();
+    }
+  }, [voiceListening, speaking, abortStreaming]);
+
+  // Auto video streaming: start when video is active + voice conversation mode
+  useEffect(() => {
+    if (videoActive && voiceConversation && !streaming) {
+      startStreaming({ frameRate: 2, quality: 0.7 });
+    } else if ((!videoActive || !voiceConversation) && streaming) {
+      stopStreaming();
+    }
+  }, [videoActive, voiceConversation, streaming, startStreaming, stopStreaming]);
+
+  // Streaming TTS callbacks for SSE pipeline
+  const onStreamDelta = useCallback((chunk: string) => {
+    if (voiceConvRef.current) {
+      feedChunk(chunk);
+    }
+  }, [feedChunk]);
+
+  const onStreamDone = useCallback(() => {
+    if (voiceConvRef.current) {
+      flushAndFinish();
+    }
+  }, [flushAndFinish]);
 
   const { send } = useSendMessage({
     locale, draft, setDraft, attachments, setAttachments,
     conversationId, setConversationId, execMode, selectedModelRef,
-    setBusy, setFlow, setNl2uiLoading,
+    setBusy, setFlow,
     setActiveTask, setTaskProgress, pollTaskState,
     inputRef, abortRef, retryCountRef, lastRetryMsgRef,
     activeTaskIds,
+    onStreamDelta,
+    onStreamDone,
+    contextType,
   });
 
   useEffect(() => { sendRef.current = (msg: string) => void send(msg); }, [send]);
@@ -105,8 +147,8 @@ export function useExecutionFlow(params: UseExecutionFlowParams) {
     attachments, addAttachment, removeAttachment, imageInputRef, docInputRef, audioInputRef, videoInputRef,
     handleImageSelect, handleDocSelect, handleAudioSelect, handleVideoSelect,
     voiceListening, voiceInterim, voiceConversation, speaking,
-    startVoice, toggleConversation, stopSpeaking,
-    videoActive, videoStream, videoSupported, startVideo, stopVideo, captureFrame,
+    startVoice, toggleConversation, stopSpeaking: abortStreaming,
+    videoActive, videoStream, videoSupported, streaming, startVideo, stopVideo, captureFrame, startStreaming, stopStreaming,
     executeToolInline, send, onKeyDown,
   };
 }

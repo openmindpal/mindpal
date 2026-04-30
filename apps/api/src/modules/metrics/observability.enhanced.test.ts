@@ -24,18 +24,18 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
     
     it("应该记录规则匹配指标", () => {
       metrics.incIntentRuleMatch({
-        ruleId: "nl2ui_display",
+        ruleId: "intent_classify",
         confidence: "high",
       });
 
       metrics.incIntentRuleMatch({
-        ruleId: "nl2ui_display",
+        ruleId: "intent_classify",
         confidence: "medium",
       });
 
       const output = metrics.renderPrometheus();
       expect(output).toContain("openslin_intent_rule_matches_total");
-      expect(output).toContain('rule_id="nl2ui_display"');
+      expect(output).toContain('rule_id="intent_classify"');
       expect(output).toContain('confidence="high"');
       expect(output).toContain('confidence="medium"');
     });

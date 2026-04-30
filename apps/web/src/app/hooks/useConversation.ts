@@ -10,7 +10,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { type RecentEntry, loadRecent, addRecent } from "../homeHelpers";
 import useChatSession from "../useChatSession";
-import useNl2uiActions from "../useNl2uiActions";
 
 export interface UseConversationParams {
   locale: string;
@@ -21,8 +20,6 @@ export function useConversation({ locale }: UseConversationParams) {
   const [recent, setRecent] = useState<RecentEntry[]>([]);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration: read localStorage once on mount
   useEffect(() => { setRecent(loadRecent()); }, []);
-
-  const nl2ui = useNl2uiActions({ locale, setRecent });
 
   const addToRecent = useCallback((entry: { kind: "page" | "workbench"; name: string }) => {
     setRecent(addRecent(entry));
@@ -53,7 +50,5 @@ export function useConversation({ locale }: UseConversationParams) {
     recent,
     setRecent,
     addToRecent,
-    // NL2UI
-    ...nl2ui,
   };
 }

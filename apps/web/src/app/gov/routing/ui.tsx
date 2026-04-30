@@ -9,7 +9,6 @@ const PRESET_PURPOSES = [
   "intent.classify",
   "intent.analyze",
   "orchestrator.turn",
-  "nl2ui.generate",
   "agent.loop.think",
   "agent.loop.think.fast",
   "agent.loop.decompose",
