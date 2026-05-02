@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { getBuiltinSkills, validateSkillDependencies } from "../lib/skillPlugin";
+import { getBuiltinSkills, validateSkillDependencies } from "../../lib/skillPlugin";
 import { getAllBreakerMetrics } from "@mindpal/shared";
 
 export const healthRoutes: FastifyPluginAsync = async (app) => {

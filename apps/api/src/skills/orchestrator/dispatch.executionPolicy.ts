@@ -1,6 +1,7 @@
 import type { IntentClassification } from "./modules/intentClassifier";
 import { classifyToolCalls, type InlineToolCall } from "./modules/inlineToolExecutor";
 import type { EnabledTool } from "../../modules/agentContext";
+import type { Pool } from "pg";
 
 export type ExecutionClass = "conversation" | "immediate_action" | "workflow" | "collab";
 
@@ -17,19 +18,21 @@ export function shouldAutoEnterExecute(classification: IntentClassification): bo
     && classification.confidence >= AUTO_EXECUTION_THRESHOLD;
 }
 
-export function resolveExecutionClassFromSuggestions(params: {
+export async function resolveExecutionClassFromSuggestions(params: {
   toolCalls: InlineToolCall[];
   enabledTools: EnabledTool[];
   inlineWritableEntities: Set<string>;
-}): {
+  dbCtx?: { pool: Pool; tenantId: string };
+}): Promise<{
   executionClass: ExecutionClass;
   inlineTools: InlineToolCall[];
   workflowTools: InlineToolCall[];
-} {
-  const { inlineTools, upgradeTools } = classifyToolCalls(
+}> {
+  const { inlineTools, upgradeTools } = await classifyToolCalls(
     params.toolCalls,
     params.enabledTools,
     params.inlineWritableEntities,
+    params.dbCtx,
   );
 
   const executionClass: ExecutionClass = upgradeTools.length > 0

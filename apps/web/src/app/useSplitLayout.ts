@@ -1,26 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-
-const SPLIT_KEY = "mindpal_split_layout";
-
-function readSavedSplitLayout(): { leftWidth: number; leftCollapsed: boolean; rightCollapsed: boolean } {
-  if (typeof window === "undefined") {
-    return { leftWidth: 50, leftCollapsed: false, rightCollapsed: false };
-  }
-  try {
-    const raw = localStorage.getItem(SPLIT_KEY);
-    if (!raw) return { leftWidth: 50, leftCollapsed: false, rightCollapsed: false };
-    const saved = JSON.parse(raw) as { leftWidth?: number; leftCollapsed?: boolean; rightCollapsed?: boolean };
-    return {
-      leftWidth: typeof saved.leftWidth === "number" ? saved.leftWidth : 50,
-      leftCollapsed: Boolean(saved.leftCollapsed),
-      rightCollapsed: Boolean(saved.rightCollapsed),
-    };
-  } catch {
-    return { leftWidth: 50, leftCollapsed: false, rightCollapsed: false };
-  }
-}
+import { useSplitLayoutStore } from "@/store/layoutStore";
 
 export interface SplitLayoutState {
   layoutRestored: boolean;
@@ -37,32 +18,26 @@ export interface SplitLayoutState {
   toggleRight: () => void;
 }
 
-/** SSR-safe defaults (must match the server render) */
-const SSR_DEFAULTS = { leftWidth: 50, leftCollapsed: false, rightCollapsed: false };
-
 export default function useSplitLayout(): SplitLayoutState {
-  const [layoutRestored, setLayoutRestored] = useState(false);
-  const [leftWidth, setLeftWidth] = useState<number>(SSR_DEFAULTS.leftWidth);
-  const [leftCollapsed, setLeftCollapsed] = useState(SSR_DEFAULTS.leftCollapsed);
-  const [rightCollapsed, setRightCollapsed] = useState(SSR_DEFAULTS.rightCollapsed);
+  /* ── Zustand (persisted) state ── */
+  const leftWidth = useSplitLayoutStore((s) => s.leftWidth);
+  const leftCollapsed = useSplitLayoutStore((s) => s.leftCollapsed);
+  const rightCollapsed = useSplitLayoutStore((s) => s.rightCollapsed);
+  const setLeftWidth = useSplitLayoutStore((s) => s.setLeftWidth);
+  const setLeftCollapsed = useSplitLayoutStore((s) => s.setLeftCollapsed);
+  const setRightCollapsed = useSplitLayoutStore((s) => s.setRightCollapsed);
 
+  /* ── SSR hydration guard ── */
+  const [layoutRestored, setLayoutRestored] = useState(false);
   useEffect(() => {
-    const saved = readSavedSplitLayout();
-    const frameId = window.requestAnimationFrame(() => {
-      setLeftWidth(saved.leftWidth);
-      setLeftCollapsed(saved.leftCollapsed);
-      setRightCollapsed(saved.rightCollapsed);
-      setLayoutRestored(true);
-    });
+    // Zustand persist hydrates asynchronously; mark restored after first frame
+    const frameId = window.requestAnimationFrame(() => setLayoutRestored(true));
     return () => window.cancelAnimationFrame(frameId);
   }, []);
+
+  /* ── Local-only UI state ── */
   const [isDragging, setIsDragging] = useState(false);
   const splitRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!layoutRestored) return;
-    try { localStorage.setItem(SPLIT_KEY, JSON.stringify({ leftWidth, leftCollapsed, rightCollapsed })); } catch { /* ignore */ }
-  }, [leftWidth, leftCollapsed, rightCollapsed, layoutRestored]);
 
   const handleDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -88,21 +63,21 @@ export default function useSplitLayout(): SplitLayoutState {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isDragging]);
+  }, [isDragging, setLeftWidth]);
 
   const toggleLeft = useCallback(() => {
     setLeftCollapsed((p) => {
       if (!p && rightCollapsed) setRightCollapsed(false);
       return !p;
     });
-  }, [rightCollapsed]);
+  }, [rightCollapsed, setLeftCollapsed, setRightCollapsed]);
 
   const toggleRight = useCallback(() => {
     setRightCollapsed((p) => {
       if (!p && leftCollapsed) setLeftCollapsed(false);
       return !p;
     });
-  }, [leftCollapsed]);
+  }, [leftCollapsed, setRightCollapsed, setLeftCollapsed]);
 
   return {
     layoutRestored,

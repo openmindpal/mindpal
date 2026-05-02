@@ -19,6 +19,14 @@ import {
 } from "@mindpal/shared";
 import type { DebateV2PhaseParams } from "./collabTypes";
 import { loadApprovalRules } from "./approvalRuleEngine";
+import { StructuredLogger } from "@mindpal/shared";
+
+const _debateLogger = new StructuredLogger({ module: "collabDebate" });
+
+// ── 辩论最大轮次硬限制（元数据驱动，环境变量 > 默认值） ──────────
+const MAX_DEBATE_ROUNDS = parseInt(process.env.COLLAB_MAX_DEBATE_ROUNDS ?? "5", 10);
+// ── 连续无新观点轮次阈值 ─────────────────────────────────────
+const STALE_ROUNDS_THRESHOLD = parseInt(process.env.COLLAB_DEBATE_STALE_ROUNDS ?? "2", 10);
 
 // ── 辩论配置动态加载 ─────────────────────────────────────────
 
@@ -118,10 +126,16 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
 
   app.log.info({
     debateId, topic, partyCount: parties.length, maxRounds: session.maxRounds,
+    effectiveMaxRounds: Math.min(session.maxRounds, MAX_DEBATE_ROUNDS),
     parties: parties.map(p => p.role),
   }, "[CollabOrchestrator] 开始 N方辩论 (v2)");
 
-  for (let round = 0; round < session.maxRounds; round++) {
+  // 收敛性保证：观点变化率跟踪
+  const seenOpinionHashes = new Set<string>();
+  let staleRoundsCount = 0;
+  const effectiveMaxRounds = Math.min(session.maxRounds, MAX_DEBATE_ROUNDS);
+
+  for (let round = 0; round < effectiveMaxRounds; round++) {
     if (signal?.aborted) { session.status = "aborted"; break; }
 
     const historyContext = buildDebateHistoryContext(session);
@@ -181,13 +195,48 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
     if (!session.consensusEvolution) session.consensusEvolution = [];
     session.consensusEvolution.push(consensusEntry);
 
+    // ── 观点变化率检测：跟踪观点摘要 hash ──
+    const roundHash = roundPositions
+      .map(p => `${p.fromRole}:${p.claim.slice(0, 100).trim().toLowerCase()}`)
+      .sort()
+      .join("|");
+    const opinionHash = simpleHash(roundHash);
+    const prevSize = seenOpinionHashes.size;
+    seenOpinionHashes.add(opinionHash);
+    if (seenOpinionHashes.size === prevSize) {
+      staleRoundsCount++;
+    } else {
+      staleRoundsCount = 0;
+    }
+
+    // ── 提前终止：连续无新观点 ──
+    if (staleRoundsCount >= STALE_ROUNDS_THRESHOLD) {
+      _debateLogger.info("debate early termination: stale opinions", {
+        debateId, round, staleRoundsCount, totalRounds: round + 1,
+        uniqueOpinions: seenOpinionHashes.size,
+      });
+      session.status = "converged";
+      break;
+    }
+
     if (isDebateConverged(session, debateConfig.minConfidence, consensusThreshold)) {
       session.status = "converged";
       break;
     }
   }
 
-  if (session.status === "in_progress") session.status = "max_rounds_reached";
+  // ── 强制终止：达到最大轮次时采用多数意见（投票机制） ──
+  if (session.status === "in_progress") {
+    session.status = "max_rounds_reached";
+    _debateLogger.info("debate forced termination: max rounds", {
+      debateId,
+      roundsCompleted: session.rounds.length,
+      effectiveMaxRounds,
+      uniqueOpinions: seenOpinionHashes.size,
+      finalConsensusScore: computeDebateConsensusScore(session),
+      decisionMethod: "majority_vote",
+    });
+  }
 
   if (session.status !== "aborted") {
     try {
@@ -209,6 +258,17 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
 }
 
 // ── V2 辅助函数 ──────────────────────────────────────────
+
+/** 简单字符串 hash（用于观点变化率检测，非加密用途） */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + ch;
+    hash |= 0; // 32-bit integer
+  }
+  return hash.toString(36);
+}
 
 async function runDebateAgentV2(params: {
   app: FastifyInstance; pool: Pool; queue: WorkflowQueue;

@@ -4,14 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, setLocale } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { nextId } from "@/lib/apiError";
+import { useSessionStore } from "@/store/sessionStore";
 import type { ChatFlowItem, ToolExecState, FrontendTaskQueueEntry, FrontendTaskDependency } from "./homeHelpers";
 
-const SESSION_KEY = "mindpal_chat_session";
 const TASK_QUEUE_KEY = "mindpal_task_queue_state";
-const MODEL_KEY = "mindpal_selected_model";
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const EMPTY_SESSION = { conversationId: "", flow: [] as ChatFlowItem[], toolExecStates: {} as Record<string, ToolExecState> };
 const EMPTY_TASK_QUEUE = { pendingEntries: [] as FrontendTaskQueueEntry[], dependencies: [] as FrontendTaskDependency[] };
 
 /** P3-13: 读取保存的任务队列状态 */
@@ -42,41 +39,24 @@ export interface ModelBinding {
 /**
  * useChatSession — manages conversation ID, flow, session persistence,
  * model bindings, and startNew.
+ *
+ * State is backed by Zustand sessionStore (with persist middleware).
+ * This hook only retains behaviour logic, refs, and derived values.
  */
 export default function useChatSession({ locale }: { locale: string }) {
-  // 同步从 localStorage 恢复会话状态
-  const [conversationId, setConversationId] = useState(() => {
-    try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (raw) { const s = JSON.parse(raw); return s.conversationId ?? ""; }
-    } catch { /* ignore */ }
-    return "";
-  });
-  const [flow, setFlow] = useState<ChatFlowItem[]>(() => {
-    try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (raw) { const s = JSON.parse(raw); return Array.isArray(s.flow) ? s.flow : []; }
-    } catch { /* ignore */ }
-    return [];
-  });
-  const [toolExecStates, setToolExecStates] = useState<Record<string, ToolExecState>>(() => {
-    try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (raw) {
-        const s = JSON.parse(raw);
-        const restored: Record<string, ToolExecState> = {};
-        if (s.toolExecStates && typeof s.toolExecStates === "object") {
-          for (const [k, v] of Object.entries(s.toolExecStates)) {
-            if (v && ((v as ToolExecState).status === "done" || (v as ToolExecState).status === "error")) restored[k] = v as ToolExecState;
-          }
-        }
-        return restored;
-      }
-    } catch { /* ignore */ }
-    return {};
-  });
+  /* ── Zustand store selectors (state + actions) ── */
+  const conversationId = useSessionStore((s) => s.conversationId);
+  const setConversationId = useSessionStore((s) => s.setConversationId);
+  const flow = useSessionStore((s) => s.flow);
+  const setFlow = useSessionStore((s) => s.setFlow);
+  const toolExecStates = useSessionStore((s) => s.toolExecStates);
+  const setToolExecStates = useSessionStore((s) => s.setToolExecStates);
+  const selectedModelRef = useSessionStore((s) => s.selectedModelRef);
+  const setSelectedModelRef = useSessionStore((s) => s.setSelectedModelRef);
+  const clearSession = useSessionStore((s) => s.clearSession);
+
+  /* ── Local-only state (not persisted) ── */
   const [bindings, setBindings] = useState<ModelBinding[]>([]);
-  const [selectedModelRef, setSelectedModelRef] = useState<string>("");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -110,21 +90,6 @@ export default function useChatSession({ locale }: { locale: string }) {
     return () => { cancelled = true; };
   }, [conversationId, locale]);
 
-  /* ─── 持久化会话状态 ─── */
-  useEffect(() => {
-    try {
-      if (flow.length || conversationId) {
-        const persistable: Record<string, ToolExecState> = {};
-        for (const [k, v] of Object.entries(toolExecStates)) {
-          if (v.status === "done" || v.status === "error") persistable[k] = v;
-        }
-        localStorage.setItem(SESSION_KEY, JSON.stringify({ conversationId, flow, toolExecStates: persistable }));
-      } else {
-        localStorage.removeItem(SESSION_KEY);
-      }
-    } catch { /* expected: storage may fail silently */ }
-  }, [flow, conversationId, toolExecStates]);
-
   /* ─── Sync html lang attribute on mount ─── */
   useEffect(() => { setLocale(locale); }, [locale]);
 
@@ -137,11 +102,12 @@ export default function useChatSession({ locale }: { locale: string }) {
           const data = await res.json();
           const list = Array.isArray(data.bindings) ? data.bindings : [];
           setBindings(list);
-          const savedModelRef = localStorage.getItem(MODEL_KEY);
-          if (savedModelRef && list.some((b: any) => b.modelRef === savedModelRef)) {
-            setSelectedModelRef(savedModelRef);
+          // Restore persisted model selection or fall back to first binding
+          const currentRef = useSessionStore.getState().selectedModelRef;
+          if (currentRef && list.some((b: ModelBinding) => b.modelRef === currentRef)) {
+            // Already set in store via persist — nothing to do
           } else if (list.length > 0) {
-            setSelectedModelRef(prev => prev || list[0].modelRef);
+            setSelectedModelRef(list[0].modelRef);
           }
         }
       } catch (err) {
@@ -149,14 +115,7 @@ export default function useChatSession({ locale }: { locale: string }) {
       }
     };
     fetchBindings();
-  }, [locale]);
-
-  /* ─── Persist selected model ─── */
-  useEffect(() => {
-    if (selectedModelRef) {
-      try { localStorage.setItem(MODEL_KEY, selectedModelRef); } catch { /* ignore */ }
-    }
-  }, [selectedModelRef]);
+  }, [locale, setSelectedModelRef]);
 
   /* ─── Online restore hint ─── */
   useEffect(() => {
@@ -173,18 +132,15 @@ export default function useChatSession({ locale }: { locale: string }) {
     }
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
-  }, [locale]);
+  }, [locale, setFlow]);
 
   /* ─── Start new conversation ─── */
   const startNew = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
-    setConversationId("");
-    setFlow([]);
-    setToolExecStates({});
-    try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+    clearSession();
     try { localStorage.removeItem(TASK_QUEUE_KEY); } catch { /* ignore */ }
-  }, []);
+  }, [clearSession]);
 
   /** P3-13: 从后端拉取任务队列状态并保存 */
   const restoreTaskQueueState = useCallback(async (sessionId: string) => {
@@ -238,7 +194,7 @@ export default function useChatSession({ locale }: { locale: string }) {
       console.error("[loadConversation] Load error:", err);
       return false;
     }
-  }, [locale, restoreTaskQueueState]);
+  }, [locale, restoreTaskQueueState, setConversationId, setFlow, setToolExecStates]);
 
   /* ─── Delete a conversation from backend ─── */
   const deleteConversation = useCallback(async (sessionId: string) => {
@@ -249,7 +205,7 @@ export default function useChatSession({ locale }: { locale: string }) {
         return false;
       }
       // If deleting the currently loaded conversation, clear it
-      if (sessionId === conversationId) {
+      if (sessionId === useSessionStore.getState().conversationId) {
         startNew();
       }
       return true;
@@ -257,7 +213,7 @@ export default function useChatSession({ locale }: { locale: string }) {
       console.error("[deleteConversation] Delete error:", err);
       return false;
     }
-  }, [locale, conversationId, startNew]);
+  }, [locale, startNew]);
 
   return {
     conversationId, setConversationId,

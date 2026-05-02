@@ -1,10 +1,10 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { setAuditContext } from "../modules/audit/context";
-import { requirePermission } from "../modules/auth/guard";
+import { setAuditContext } from "../../modules/audit/context";
+import { requirePermission } from "../../modules/auth/guard";
 import { PERM } from "@mindpal/shared";
-import { getGlobalLoopConcurrency } from "../kernel/priorityScheduler";
-import { getNotifOnlineCount, getNotifOnlineSubjectCount, getNotifNodeId } from "../plugins/realtimeNotification";
+import { getGlobalLoopConcurrency } from "../../kernel/priorityScheduler";
+import { getNotifOnlineCount, getNotifOnlineSubjectCount, getNotifNodeId } from "../../plugins/realtimeNotification";
 import { getAllBreakerMetrics } from "@mindpal/shared";
 
 async function countKeysByPattern(params: { redis: any; pattern: string; maxScans: number }) {

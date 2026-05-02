@@ -5,7 +5,7 @@ import type { Pool } from "pg";
 import { sha256Hex, stableStringify } from "../../lib/digest";
 import { isSupportedModelProvider } from "../../lib/modelProviderContract";
 import { getToolDefinition, getToolVersionByRef } from "../tools/toolRepo";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+import { assessToolExecutionRisk } from "../../kernel/approvalRuleEngine";
 import { getEvalSuite, getLatestEvalRunForChangeSet, listChangeSetEvalBindings } from "./evalRepo";
 import { evalPassed } from "./evalLogic";
 import { computeSchemaCompatReportV1 } from "../metadata/compat";
@@ -334,7 +334,14 @@ export async function preflightChangeSet(params: { pool: Pool; tenantId: string;
               break;
             }
             const idempotencyRequired = Boolean(def.idempotencyRequired);
-            const approvalRequired = shouldRequireApproval(def);
+            const approvalAssessment = await assessToolExecutionRisk({
+              pool: params.pool as any,
+              tenantId: params.tenantId,
+              toolRef: rawToolRef,
+              inputDraft: {},
+              toolDefinition: { riskLevel: def.riskLevel as any, approvalRequired: def.approvalRequired, scope: def.scope ?? undefined },
+            });
+            const approvalRequired = approvalAssessment.approvalRequired;
             if (idempotencyRequired && String((a as any)?.idempotencyKeyStrategy ?? "") !== "required") {
               status = "fail"; errorCode = "CONTRACT_NOT_COMPATIBLE";
               messageI18n = { "zh-CN": "UI 页面 ActionBinding 缺少幂等键策略", "en-US": "UI page ActionBinding missing idempotency key strategy" };

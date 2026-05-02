@@ -5,31 +5,31 @@
  * 提升可读性和可维护性，不改变任何路由的功能行为。
  */
 import type { FastifyInstance } from "fastify";
-import { entityRoutes } from "./entities";
-import { effectiveSchemaRoutes } from "./effectiveSchema";
-import { schemaRoutes } from "./schemas";
-import { toolRoutes } from "./tools";
-import { toolCategoryRoutes } from "./toolCategory";
-import { secretRoutes } from "./secrets";
-import { keyringRoutes } from "./keyring";
-import { jobRoutes } from "./jobs";
+import { entityRoutes } from "./data/entities";
+import { effectiveSchemaRoutes } from "./data/effectiveSchema";
+import { schemaRoutes } from "./data/schemas";
+import { toolRoutes } from "./tools/tools";
+import { toolCategoryRoutes } from "./tools/toolCategory";
+import { secretRoutes } from "./tools/secrets";
+import { keyringRoutes } from "./tools/keyring";
+import { jobRoutes } from "./runs/jobs";
 import { runRoutes } from "./runs";
 import { governanceRoutes } from "./governance";
-import { rbacRoutes } from "./rbac";
-import { approvalRoutes } from "./approvals";
-import { policySnapshotRoutes } from "./policySnapshots";
-import { auditRoutes } from "./audit";
-import { settingsRoutes } from "./settings";
-import { healthRoutes } from "./health";
-import { diagnosticsRoutes } from "./diagnostics";
-import { metricsRoutes } from "./metrics";
+import { rbacRoutes } from "./auth/rbac";
+import { approvalRoutes } from "./audit/approvals";
+import { policySnapshotRoutes } from "./audit/policySnapshots";
+import { auditRoutes } from "./audit/audit";
+import { settingsRoutes } from "./system/settings";
+import { healthRoutes } from "./system/health";
+import { diagnosticsRoutes } from "./system/diagnostics";
+import { metricsRoutes } from "./system/metrics";
 import { meRoutes } from "./me";
-import { authTokenRoutes } from "./authTokens";
+import { authTokenRoutes } from "./auth/authTokens";
 import { scimRoutes } from "./scimRoutes";
 import { notificationPreferenceRoutes } from "./notificationPreferences";
-import { spacesRoutes } from "./spaces";
+import { spacesRoutes } from "./data/spaces";
 import { skillLifecycleRoutes } from "./extended";
-import { audioRoutes } from "./audio";
+import { audioRoutes } from "./media/audio";
 import { memoryRoutes } from "./memory";
 
 // ── 核心数据路由 ──

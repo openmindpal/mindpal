@@ -33,6 +33,10 @@ import type {
   AgentLoopParams, ExecutionConstraints, AgentLoopResult,
   LoopBudget,
 } from "./loopTypes";
+
+/* ── Checkpoint 可配置常量 ── */
+const CHECKPOINT_INTERVAL = parseInt(process.env.AGENT_LOOP_CHECKPOINT_INTERVAL ?? "2", 10) || 2;
+const MAX_CHECKPOINT_FAILURES = parseInt(process.env.AGENT_LOOP_MAX_CHECKPOINT_FAILURES ?? "3", 10) || 3;
 import { isBudgetExhausted, recordTokenUsage, recordCostUsage, createDefaultBudget } from "./loopTypes";
 import { prepareRunForExecution, safeTransitionRun } from "./loopStateHelpers";
 import { parseAgentDecision, normalizeExecutionConstraints, filterToolDiscoveryByConstraints, extractConfidenceFromOutput, evaluateDecisionQuality, getDecisionQualityConfig } from "./loopThinkDecide";
@@ -44,7 +48,7 @@ import { handleDoneAction, handleToolCallAction } from "./loopActHandlers";
 import { getCacheConfig, cacheGet, cacheSet, prepareCacheKey, getLightIterationConfig, isLightIteration } from "./loopCacheConfig";
 import { getMaxStepSeq, upsertGoalGraph, deletePendingSteps } from "./agentLoopRepo";
 import { initializeLoopState, finalizeLoopProcess, type LoopState } from "./loopLifecycle";
-import { turboSkipFastCheckpoint, turboSkipDecisionRetry } from "./loopTurboMode";
+import { getTurboPolicy } from "./loopTurboMode";
 
 /* ── re-export（外部文件 import from "./agentLoop"） ── */
 export type { AgentDecisionAction, AgentDecision, StepObservation, AgentLoopParams, ExecutionConstraints, AgentLoopResult } from "./loopTypes";
@@ -180,6 +184,10 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
   const failureDiagnoses: FailureDiagnosis[] = [];
   const semanticAuditTrail: SemanticAuditEntry[] = [];
   let degradedCompletion = false;
+  let checkpointConsecutiveFailures = 0;
+
+  /* ── Turbo 策略：循环初始化时获取一次，避免每次迭代重复读取 ── */
+  const turbo = getTurboPolicy();
 
   /* ── Agent Tracing 初始化（静默失败，不影响主流程） ── */
   let tracingCtx: AgentTracingContext | null = null;
@@ -258,7 +266,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       // 检查中断信号
       if (checkInterrupt(signal)) {
         await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
-          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted) failed");
+          const err = e instanceof Error ? e : new Error(String(e));
+          app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted) failed");
         });
         const result = buildResult("interrupted", "用户中断了任务执行");
         onLoopEnd?.(result);
@@ -268,7 +277,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       // 检查超时
       if (Date.now() - loopStartedAt > maxWallTimeMs) {
         await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
-          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/timeout) failed");
+          const err = e instanceof Error ? e : new Error(String(e));
+          app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/timeout) failed");
         });
         const result = gracefulDegradation("max_wall_time", `执行超时 (>${maxWallTimeMs}ms)`);
         onLoopEnd?.(result);
@@ -300,7 +310,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         app.log.warn({ runId, iteration: iterations, reason: budgetCheck.reason }, "[AgentLoop] 预算耗尽");
         await safeTransitionRun(pool, runId, "stopped", { log: app.log });
         await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
-          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(budget) failed");
+          const err = e instanceof Error ? e : new Error(String(e));
+          app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(budget) failed");
         });
         const result = gracefulDegradation("budget_exhausted", `预算耗尽: ${budgetCheck.reason}`);
         onLoopEnd?.(result);
@@ -320,7 +331,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       // ── 信号检查：Observe 完成后 ──
       if (checkInterrupt(signal)) {
         await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
-          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/observe) failed");
+          const err = e instanceof Error ? e : new Error(String(e));
+          app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/observe) failed");
         });
         const result = buildResult("interrupted", "用户中断了任务执行");
         onLoopEnd?.(result);
@@ -348,7 +360,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       // ── 信号检查：Think/LLM 调用前 ──
       if (checkInterrupt(signal)) {
         await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
-          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/think) failed");
+          const err = e instanceof Error ? e : new Error(String(e));
+          app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/think) failed");
         });
         const result = buildResult("interrupted", "用户中断了任务执行");
         onLoopEnd?.(result);
@@ -410,7 +423,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       try {
         // 快速模型不触发决策质量重试（降低延迟）
         const isFastTier = currentModelUsed.includes("fast");
-        if (isFastTier || turboSkipDecisionRetry()) {
+        if (isFastTier || turbo.skipDecisionRetry) {
           // 附加基础质量评分但跳过重试
           decision.qualityScore = { confidence: -1, retryCount: 0, modelUsed: currentModelUsed, skippedReason: "fast_tier" } as any;
         } else {
@@ -489,7 +502,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       // ── 信号检查：Decide 解析完成后，Act 执行前 ──
       if (checkInterrupt(signal)) {
         await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
-          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/decide) failed");
+          const err = e instanceof Error ? e : new Error(String(e));
+          app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/decide) failed");
         });
         const result = buildResult("interrupted", "用户中断了任务执行");
         onLoopEnd?.(result);
@@ -521,6 +535,11 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       safeStartPhase(tracingCtx, "act", iterations);
       switch (decision.action) {
         case "done": {
+          if (checkInterrupt(signal)) {
+            const result = buildResult("interrupted", "用户中断了任务执行");
+            onLoopEnd?.(result);
+            return result;
+          }
           const doneResult = await handleDoneAction({
             app, pool, subject: subject as any, locale, authorization, traceId,
             runId, loopId, goal, iterations, maxIterations, defaultModelRef,
@@ -545,7 +564,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             clearApprovalStatus: true,
           });
           await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
-            app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/abort) failed");
+            const err = e instanceof Error ? e : new Error(String(e));
+            app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/abort) failed");
           });
           const result = buildResult("aborted", decision.abortReason ?? "任务无法完成");
           onLoopEnd?.(result);
@@ -578,7 +598,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             knowledgeContext: knowledgeContext ?? null,
             status: "paused",
           }).catch((e: unknown) => {
-            app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] writeCheckpoint(paused) failed");
+            const err = e instanceof Error ? e : new Error(String(e));
+            app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] writeCheckpoint(paused) failed");
           });
           const result = buildResult("ask_user", decision.question ?? "需要更多信息");
           onLoopEnd?.(result);
@@ -586,6 +607,11 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         }
 
         case "replan": {
+          if (checkInterrupt(signal)) {
+            const result = buildResult("interrupted", "用户中断了任务执行");
+            onLoopEnd?.(result);
+            return result;
+          }
           // 重新规划：清除 pending 步骤，重新进入下一轮循环让 LLM 产出新的 tool_call
           app.log.info({ runId, iteration: iterations, reasoning: decision.reasoning }, "[AgentLoop] 重新规划");
           // steps 表主链路按 run_id 归属，pending 清理这里沿用同样口径
@@ -594,6 +620,11 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         }
 
         case "parallel_tool_calls": {
+          if (checkInterrupt(signal)) {
+            const result = buildResult("interrupted", "用户中断了任务执行");
+            onLoopEnd?.(result);
+            return result;
+          }
           // 并行执行多个独立工具调用
           const calls = decision.parallelCalls ?? [];
           if (calls.length === 0) {
@@ -682,7 +713,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           // ── 信号检查：并行工具执行全部返回后 ──
           if (checkInterrupt(signal)) {
             await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
-              app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/parallel) failed");
+              const err = e instanceof Error ? e : new Error(String(e));
+              app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/parallel) failed");
             });
             const result = buildResult("interrupted", "用户中断了任务执行");
             onLoopEnd?.(result);
@@ -714,6 +746,11 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         }
 
         case "tool_call": {
+          if (checkInterrupt(signal)) {
+            const result = buildResult("interrupted", "用户中断了任务执行");
+            onLoopEnd?.(result);
+            return result;
+          }
           const originalToolRef = decision.toolRef ?? "";
           const tcResult = await handleToolCallAction({
             app, pool, queue, subject: subject as any,
@@ -794,7 +831,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         default: {
           // 未知决策，安全终止
           await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
-            app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/unknown) failed");
+            const err = e instanceof Error ? e : new Error(String(e));
+            app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/unknown) failed");
           });
           const result = buildResult("error", `Unknown decision action: ${(decision as unknown as Record<string, unknown>).action}`);
           onLoopEnd?.(result);
@@ -812,10 +850,19 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       }
 
       // P0-1: 每次迭代结束后写 checkpoint（分层：fast 轻量 / full 完整）
+      // 熔断检查：连续 checkpoint 失败超过阈值时中止循环
+      if (checkpointConsecutiveFailures >= MAX_CHECKPOINT_FAILURES) {
+        app.log.error({ runId, loopId, consecutiveFailures: checkpointConsecutiveFailures }, "[AgentLoop] Checkpoint 连续失败超过阈值，中止循环");
+        await safeTransitionRun(pool, runId, "failed", { finishedAt: true, log: app.log }).catch(() => {});
+        const result = gracefulDegradation("error", `Checkpoint 连续失败 ${checkpointConsecutiveFailures} 次，循环中止`);
+        onLoopEnd?.(result);
+        return result;
+      }
+
       const decisionAction: string = decision.action;
       const isPhaseTransition = decisionAction === "replan" || decisionAction === "done" || decisionAction === "abort";
       const checkpointTier: "fast" | "full" = (isPhaseTransition || iterations % AGENT_LOOP_FULL_CHECKPOINT_INTERVAL === 0 || iterations === 1)
-        ? "full" : "fast";
+        ? "full" : (iterations % CHECKPOINT_INTERVAL === 0) ? "fast" : "fast";
 
       const checkpointParams: WriteCheckpointParams = {
         pool, loopId,
@@ -835,18 +882,27 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       };
 
       const ckptStart = performance.now();
-      if (checkpointTier === "fast" && turboSkipFastCheckpoint()) {
+      if (checkpointTier === "fast" && turbo.skipFastCheckpoint) {
         // turbo mode: 完全跳过 fast tier 检查点写入
       } else if (checkpointTier === "fast") {
         // fast tier 异步写入，不阻塞主循环
-        writeCheckpoint(checkpointParams, "fast").catch((e: unknown) => {
-          app.log.warn({ err: (e as Error)?.message, runId, loopId, iteration: iterations }, "[AgentLoop] fast checkpoint 写入失败（不阻塞主循环）");
+        writeCheckpoint(checkpointParams, "fast").then(() => {
+          checkpointConsecutiveFailures = 0;
+        }).catch((e: unknown) => {
+          checkpointConsecutiveFailures++;
+          const err = e instanceof Error ? e : new Error(String(e));
+          app.log.error({ err: err.message, stack: err.stack, runId, loopId, iteration: iterations, consecutiveFailures: checkpointConsecutiveFailures }, "[AgentLoop] fast checkpoint 写入失败");
         });
       } else {
         // full tier 仍然 await（保证恢复一致性）
-        await writeCheckpoint(checkpointParams, "full").catch((e: unknown) => {
-          app.log.warn({ err: (e as Error)?.message, runId, loopId, iteration: iterations }, "[AgentLoop] full checkpoint 写入失败（不阻塞主循环）");
-        });
+        try {
+          await writeCheckpoint(checkpointParams, "full");
+          checkpointConsecutiveFailures = 0;
+        } catch (e: unknown) {
+          checkpointConsecutiveFailures++;
+          const err = e instanceof Error ? e : new Error(String(e));
+          app.log.error({ err: err.message, stack: err.stack, runId, loopId, iteration: iterations, consecutiveFailures: checkpointConsecutiveFailures }, "[AgentLoop] full checkpoint 写入失败");
+        }
       }
       const ckptDur = Math.round(performance.now() - ckptStart);
       const totalDur = Math.round(performance.now() - iterStart);
@@ -856,7 +912,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     // 达到最大迭代次数
     await safeTransitionRun(pool, runId, "stopped", { log: app.log });
     await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
-      app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/maxIter) failed");
+      const err = e instanceof Error ? e : new Error(String(e));
+      app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/maxIter) failed");
     });
     const result = gracefulDegradation("max_iterations", `达到最大迭代次数 (${maxIterations})`);
     onLoopEnd?.(result);
@@ -864,10 +921,12 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
   } catch (err: any) {
     app.log.error({ err, runId, iteration: iterations }, "[AgentLoop] 循环异常");
     await safeTransitionRun(pool, runId, "failed", { finishedAt: true, log: app.log }).catch((e: unknown) => {
-      app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] safeTransitionRun(failed) failed");
+      const err = e instanceof Error ? e : new Error(String(e));
+      app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] safeTransitionRun(failed) failed");
     });
     await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
-      app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/error) failed");
+      const err = e instanceof Error ? e : new Error(String(e));
+      app.log.error({ err: err.message, stack: err.stack, runId, loopId }, "[AgentLoop] finalizeCheckpoint(failed/error) failed");
     });
     const result = buildResult("error", `Agent Loop 异常: ${err?.message ?? "unknown"}`);
     onLoopEnd?.(result);

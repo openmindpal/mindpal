@@ -386,11 +386,14 @@ export class TaskQueueManager {
     // 注意：executor 内部通过 callbacks.onFailed 统一处理失败，
     // 此处不再重复调用 markFailed，避免双重事件/双重重试。
     if (this.executor) {
-      this.executor.execute(updated).catch((err) => {
-        log("error", `Task execution error (handled by executor)`, {
-          entryId: entry.entryId, error: String(err),
+      try {
+        await this.executor.execute(updated);
+      } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err));
+        log("error", `Task execution error`, {
+          entryId: entry.entryId, err: e.message, stack: e.stack,
         });
-      });
+      }
     }
   }
 
@@ -485,9 +488,14 @@ export class TaskQueueManager {
 
     // 通知执行器暂停
     if (this.executor) {
-      await this.executor.pause(updated).catch((err) => {
-        log("error", `Failed to pause task execution`, { entryId, error: String(err) });
-      });
+      try {
+        await this.executor.pause(updated);
+      } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err));
+        log("error", `Failed to pause task execution`, { entryId, err: e.message, stack: e.stack });
+        // 暂停失败：将任务标记为 error 状态，避免状态不一致
+        await repo.updateEntryStatus(this.pool, { entryId, status: "failed", lastError: `pause_failed: ${e.message}` }).catch(() => {});
+      }
     }
 
     this.emitEvent({

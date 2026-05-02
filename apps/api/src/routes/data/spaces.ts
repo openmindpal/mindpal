@@ -18,9 +18,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { Errors } from "../lib/errors";
-import { setAuditContext } from "../modules/audit/context";
-import { requirePermission } from "../modules/auth/guard";
+import { Errors } from "../../lib/errors";
+import { setAuditContext } from "../../modules/audit/context";
+import { requirePermission } from "../../modules/auth/guard";
 import {
   addSpaceMember,
   removeSpaceMember,
@@ -30,7 +30,7 @@ import {
   listOrgUnits,
   updateOrgUnit,
   deleteOrgUnit,
-} from "../modules/auth/orgIsolationRuntime";
+} from "../../modules/auth/orgIsolationRuntime";
 
 /* ─── 内部辅助 ─── */
 

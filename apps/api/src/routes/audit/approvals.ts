@@ -2,15 +2,15 @@ import type { FastifyPluginAsync } from "fastify";
 import type { Pool } from "pg";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { Errors } from "../lib/errors";
-import { setAuditContext } from "../modules/audit/context";
-import { insertAuditEvent } from "../modules/audit/auditRepo";
-import { enqueueAuditOutboxForRequest } from "../modules/audit/requestOutbox";
-import { requirePermission } from "../modules/auth/guard";
-import { upsertTaskState } from "../modules/memory/repo";
-import { getRunForSpace, listSteps } from "../modules/workflow/jobRepo";
-import { addDecision, getApproval, listApprovals, getApprovalSigningKey, computeInputSignature } from "../modules/workflow/approvalRepo";
-import { enqueueWorkflowStep } from "../modules/workflow/queue";
+import { Errors } from "../../lib/errors";
+import { setAuditContext } from "../../modules/audit/context";
+import { insertAuditEvent } from "../../modules/audit/auditRepo";
+import { enqueueAuditOutboxForRequest } from "../../modules/audit/requestOutbox";
+import { requirePermission } from "../../modules/auth/guard";
+import { upsertTaskState } from "../../modules/memory/repo";
+import { getRunForSpace, listSteps } from "../../modules/workflow/jobRepo";
+import { addDecision, getApproval, listApprovals, getApprovalSigningKey, computeInputSignature } from "../../modules/workflow/approvalRepo";
+import { enqueueWorkflowStep } from "../../modules/workflow/queue";
 
 
 function verifyInputSignature(inputDigest: unknown, signature: string, secretKey: string): boolean {

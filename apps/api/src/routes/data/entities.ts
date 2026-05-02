@@ -1,19 +1,19 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { Errors } from "../lib/errors";
+import { Errors } from "../../lib/errors";
 import { PERM } from "@mindpal/shared";
-import { guarded } from "../middleware/routeGuard";
-import { applyReadFieldRules, applyWriteFieldRules } from "../modules/data/fieldRules";
-import { getIdempotencyRecord, insertIdempotencyRecord } from "../modules/data/idempotencyRepo";
-import { deleteRecord, getRecord, insertRecord, listRecords, queryRecords, updateRecord } from "../modules/data/dataRepo";
-import { entityQueryRequestSchema } from "../modules/data/queryModel";
-import { validateEntityQuery } from "../modules/data/queryValidate";
-import { validateEntityPayload, validateReferenceFields } from "../modules/data/validate";
-import { getEffectiveSchema, resolveSchemaNameForEntity } from "../modules/metadata/schemaRepo";
+import { guarded } from "../../middleware/routeGuard";
+import { applyReadFieldRules, applyWriteFieldRules } from "../../modules/data/fieldRules";
+import { getIdempotencyRecord, insertIdempotencyRecord } from "../../modules/data/idempotencyRepo";
+import { deleteRecord, getRecord, insertRecord, listRecords, queryRecords, updateRecord } from "../../modules/data/dataRepo";
+import { entityQueryRequestSchema } from "../../modules/data/queryModel";
+import { validateEntityQuery } from "../../modules/data/queryValidate";
+import { validateEntityPayload, validateReferenceFields } from "../../modules/data/validate";
+import { getEffectiveSchema, resolveSchemaNameForEntity } from "../../modules/metadata/schemaRepo";
 import crypto from "node:crypto";
-import { createJobRunStepWithoutToolRef } from "../modules/workflow/jobRepo";
-import { enqueueAuditOutboxForRequest } from "../modules/audit/requestOutbox";
-import type { AuditEventInput } from "../modules/audit/auditRepo";
+import { createJobRunStepWithoutToolRef } from "../../modules/workflow/jobRepo";
+import { enqueueAuditOutboxForRequest } from "../../modules/audit/requestOutbox";
+import type { AuditEventInput } from "../../modules/audit/auditRepo";
 
 export const entityRoutes: FastifyPluginAsync = async (app) => {
   async function resolveSchemaNameOrThrow(params: {

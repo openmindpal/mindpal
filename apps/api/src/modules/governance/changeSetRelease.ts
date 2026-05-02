@@ -8,7 +8,7 @@ import { ensureSchemaI18nFallback } from "../metadata/i18n";
 import { getActiveSchemaOverride, getByNameVersion, getEffectiveSchema, publishNewReleased, setActiveSchemaOverride, setActiveSchemaVersion } from "../metadata/schemaRepo";
 import { getPageConfigContract } from "../contracts/pageConfigContract";
 import { getToolDefinition, getToolVersionByRef } from "../tools/toolRepo";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+import { assessToolExecutionRisk } from "../../kernel/approvalRuleEngine";
 import { getWorkbenchContract } from "../contracts/workbenchContract";
 import { bumpPolicyCacheEpoch } from "../auth/policyCacheEpochRepo";
 import { getEvalSuite, getLatestEvalRunForChangeSet, listChangeSetEvalBindings, listCoreEvalSuites, getLatestSucceededEvalRunGlobal } from "./evalRepo";
@@ -246,7 +246,14 @@ export async function releaseChangeSet(params: { pool: Pool; tenantId: string; i
           const def = await getToolDefinition(tx as any, params.tenantId, toolName);
           if (!def) throw new Error("contract_not_compatible");
           const idempotencyRequired = Boolean(def.idempotencyRequired);
-          const approvalRequired = shouldRequireApproval(def);
+          const approvalAssessment = await assessToolExecutionRisk({
+            pool: tx as any,
+            tenantId: params.tenantId,
+            toolRef: rawToolRef,
+            inputDraft: {},
+            toolDefinition: { riskLevel: def.riskLevel as any, approvalRequired: def.approvalRequired, scope: def.scope ?? undefined },
+          });
+          const approvalRequired = approvalAssessment.approvalRequired;
           if (idempotencyRequired && String((a as any).idempotencyKeyStrategy ?? "") !== "required") throw new Error("contract_not_compatible");
           if (approvalRequired && String((a as any).approval ?? "") !== "required") throw new Error("contract_not_compatible");
           if (approvalRequired) {

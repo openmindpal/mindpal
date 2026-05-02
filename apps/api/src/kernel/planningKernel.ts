@@ -19,7 +19,7 @@ import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { isToolAllowedForPolicy } from "@mindpal/shared";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+import { assessToolExecutionRisk } from "./approvalRuleEngine";
 import { invokeModelChat, parseToolCallsFromOutput, type LlmSubject } from "../lib/llm";
 import { discoverEnabledTools, type EnabledTool } from "../modules/agentContext";
 import { getToolDefinition, getToolVersionByRef, type ToolDefinition } from "../modules/tools/toolRepo";
@@ -258,7 +258,11 @@ export async function parsePlanSuggestions(params: ParseSuggestionsParams): Prom
     }
 
     const def = await getToolDefinition(pool, tenantId, toolName);
-    const approvalRequired = shouldRequireApproval(def ?? {});
+    const approvalRequired = (await assessToolExecutionRisk({
+      pool, tenantId, toolRef: effToolRef,
+      inputDraft: s?.inputDraft && typeof s.inputDraft === "object" && !Array.isArray(s.inputDraft) ? (s.inputDraft as Record<string, unknown>) : {},
+      toolDefinition: def ? { riskLevel: def.riskLevel as any, approvalRequired: def.approvalRequired, scope: def.scope ?? undefined } : undefined,
+    })).approvalRequired;
     const inputDraft =
       s?.inputDraft && typeof s.inputDraft === "object" && !Array.isArray(s.inputDraft)
         ? (s.inputDraft as Record<string, unknown>)

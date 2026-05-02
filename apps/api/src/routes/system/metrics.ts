@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
-import { requirePermission } from "../modules/auth/guard";
-import { setAuditContext } from "../modules/audit/context";
+import { requirePermission } from "../../modules/auth/guard";
+import { setAuditContext } from "../../modules/audit/context";
 
 export const metricsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/metrics", async (req, reply) => {

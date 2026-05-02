@@ -1,13 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { Errors } from "../lib/errors";
-import { requirePermission } from "../modules/auth/guard";
-import { setAuditContext } from "../modules/audit/context";
-import { enqueueAuditOutboxForRequest } from "../modules/audit/requestOutbox";
-import { getConnectorInstance } from "../lib/connectorContract";
-import { encryptSecretEnvelope } from "../modules/secrets/envelope";
-import { createSecretRecord, getSecretRecord, listSecretRecords, retireSecretRecord, revokeSecretRecord } from "../modules/secrets/secretRepo";
-import { listSecretUsageEvents } from "../modules/secrets/usageRepo";
+import { Errors } from "../../lib/errors";
+import { requirePermission } from "../../modules/auth/guard";
+import { setAuditContext } from "../../modules/audit/context";
+import { enqueueAuditOutboxForRequest } from "../../modules/audit/requestOutbox";
+import { getConnectorInstance } from "../../lib/connectorContract";
+import { encryptSecretEnvelope } from "../../modules/secrets/envelope";
+import { createSecretRecord, getSecretRecord, listSecretRecords, retireSecretRecord, revokeSecretRecord } from "../../modules/secrets/secretRepo";
+import { listSecretUsageEvents } from "../../modules/secrets/usageRepo";
 
 function resolveScope(subject: { tenantId: string; spaceId?: string | null }) {
   if (subject.spaceId) return { scopeType: "space" as const, scopeId: subject.spaceId };

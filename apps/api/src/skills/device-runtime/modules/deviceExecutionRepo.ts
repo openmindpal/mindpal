@@ -1,5 +1,11 @@
 import type { Pool } from "pg";
 
+/** device_executions 显式字段列表（与 toRow 映射对齐） */
+const DEVICE_EXEC_COLS = `device_execution_id, tenant_id, space_id, created_by_subject_id,
+  device_id, tool_ref, policy_snapshot_ref, idempotency_key, require_user_presence,
+  input_json, input_digest, status, output_digest, evidence_refs, error_category,
+  run_id, step_id, claimed_at, completed_at, canceled_at, created_at, updated_at`;
+
 export type DeviceExecutionRow = {
   deviceExecutionId: string;
   tenantId: string;
@@ -80,7 +86,7 @@ export async function createDeviceExecution(params: {
         input_json, input_digest, status, run_id, step_id
       )
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,'pending',$11,$12)
-      RETURNING *
+      RETURNING ${DEVICE_EXEC_COLS}
     `,
     [
       params.tenantId,
@@ -101,7 +107,7 @@ export async function createDeviceExecution(params: {
 }
 
 export async function getDeviceExecution(params: { pool: Pool; tenantId: string; deviceExecutionId: string }) {
-  const res = await params.pool.query("SELECT * FROM device_executions WHERE tenant_id = $1 AND device_execution_id = $2 LIMIT 1", [params.tenantId, params.deviceExecutionId]);
+  const res = await params.pool.query(`SELECT ${DEVICE_EXEC_COLS} FROM device_executions WHERE tenant_id = $1 AND device_execution_id = $2 LIMIT 1`, [params.tenantId, params.deviceExecutionId]);
   if (!res.rowCount) return null;
   return toRow(res.rows[0]);
 }
@@ -129,7 +135,7 @@ export async function listDeviceExecutions(params: { pool: Pool; tenantId: strin
   args.push(params.limit, params.offset);
   const res = await params.pool.query(
     `
-      SELECT de.*, d.device_type, d.os AS device_os
+      SELECT ${DEVICE_EXEC_COLS.replace(/(\w+)/g, "de.$1")}, d.device_type, d.os AS device_os
       FROM device_executions de
       LEFT JOIN device_records d ON d.device_id = de.device_id AND d.tenant_id = de.tenant_id
       WHERE ${where.join(" AND ")}
@@ -144,7 +150,7 @@ export async function listDeviceExecutions(params: { pool: Pool; tenantId: strin
 export async function listPendingByDevice(params: { pool: Pool; tenantId: string; deviceId: string; limit: number }) {
   const res = await params.pool.query(
     `
-      SELECT *
+      SELECT ${DEVICE_EXEC_COLS}
       FROM device_executions
       WHERE tenant_id = $1 AND device_id = $2 AND status = 'pending'
       ORDER BY created_at ASC
@@ -161,7 +167,7 @@ export async function cancelDeviceExecution(params: { pool: Pool; tenantId: stri
       UPDATE device_executions
       SET status = 'canceled', canceled_at = now(), updated_at = now()
       WHERE tenant_id = $1 AND device_execution_id = $2 AND status IN ('pending','claimed')
-      RETURNING *
+      RETURNING ${DEVICE_EXEC_COLS}
     `,
     [params.tenantId, params.deviceExecutionId],
   );
@@ -175,7 +181,7 @@ export async function claimDeviceExecution(params: { pool: Pool; tenantId: strin
       UPDATE device_executions
       SET status = 'claimed', claimed_at = now(), updated_at = now()
       WHERE tenant_id = $1 AND device_execution_id = $2 AND device_id = $3 AND status = 'pending'
-      RETURNING *
+      RETURNING ${DEVICE_EXEC_COLS}
     `,
     [params.tenantId, params.deviceExecutionId, params.deviceId],
   );
@@ -185,7 +191,7 @@ export async function claimDeviceExecution(params: { pool: Pool; tenantId: strin
 
 export async function getDeviceExecutionByRunStep(params: { pool: Pool; tenantId: string; runId: string; stepId: string }) {
   const res = await params.pool.query(
-    "SELECT * FROM device_executions WHERE tenant_id = $1 AND run_id = $2 AND step_id = $3 ORDER BY created_at DESC LIMIT 1",
+    `SELECT ${DEVICE_EXEC_COLS} FROM device_executions WHERE tenant_id = $1 AND run_id = $2 AND step_id = $3 ORDER BY created_at DESC LIMIT 1`,
     [params.tenantId, params.runId, params.stepId],
   );
   if (!res.rowCount) return null;
@@ -215,7 +221,7 @@ export async function findActiveDeviceForTool(params: { pool: Pool; tenantId: st
 export async function listCompletedDeviceExecutionsForResume(params: { pool: Pool; limit: number }) {
   const res = await params.pool.query(
     `
-      SELECT *
+      SELECT ${DEVICE_EXEC_COLS}
       FROM device_executions
       WHERE run_id IS NOT NULL
         AND step_id IS NOT NULL
@@ -250,7 +256,7 @@ export async function completeDeviceExecution(params: {
           completed_at = now(),
           updated_at = now()
       WHERE tenant_id = $1 AND device_execution_id = $2 AND device_id = $3 AND status = 'claimed'
-      RETURNING *
+      RETURNING ${DEVICE_EXEC_COLS}
     `,
     [
       params.tenantId,

@@ -1,16 +1,16 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { Errors } from "../lib/errors";
-import { setAuditContext } from "../modules/audit/context";
-import { requirePermission } from "../modules/auth/guard";
+import { Errors } from "../../lib/errors";
+import { setAuditContext } from "../../modules/audit/context";
+import { requirePermission } from "../../modules/auth/guard";
 import { PERM } from "@mindpal/shared";
-import { getArtifactContent } from "../modules/artifacts/artifactRepo";
-import { createBackup, getBackup, listBackups } from "../modules/backups/backupRepo";
-import { getEffectiveSchema, resolveSchemaNameForEntities } from "../modules/metadata/schemaRepo";
-import { applyWriteFieldRules } from "../modules/data/fieldRules";
-import { validateEntityPayload } from "../modules/data/validate";
-import { createJobRunStepWithoutToolRef } from "../modules/workflow/jobRepo";
+import { getArtifactContent } from "../../modules/artifacts/artifactRepo";
+import { createBackup, getBackup, listBackups } from "../../modules/backups/backupRepo";
+import { getEffectiveSchema, resolveSchemaNameForEntities } from "../../modules/metadata/schemaRepo";
+import { applyWriteFieldRules } from "../../modules/data/fieldRules";
+import { validateEntityPayload } from "../../modules/data/validate";
+import { createJobRunStepWithoutToolRef } from "../../modules/workflow/jobRepo";
 
 export const backupRoutes: FastifyPluginAsync = async (app) => {
   async function resolveSchemaNameOrThrow(params: {

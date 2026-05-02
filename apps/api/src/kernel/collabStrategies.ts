@@ -11,6 +11,9 @@ import { StructuredLogger, collabConfig } from "@mindpal/shared";
 
 const logger = new StructuredLogger({ module: "collabStrategies" });
 
+// ── 死锁恢复超时（元数据驱动，环境变量 > 默认值） ────────────────
+const DEADLOCK_RECOVERY_TIMEOUT_MS = parseInt(process.env.COLLAB_DEADLOCK_RECOVERY_TIMEOUT_MS ?? "30000", 10);
+
 // ── 结果注入校验 ────────────────────────────────────────────────
 
 /** Envelope 结果最大字节数（governance > env > default 三级配置） */
@@ -274,15 +277,17 @@ export async function executePipeline(
     if (ready.length === 0) {
       // 死锁检测：有剩余 Agent 但没有可执行的
       const remainingIds = Array.from(remaining);
+      const recoveryStart = Date.now();
+      let recovered = false;
 
-      // 死锁恢复：检查未满足的依赖是否为 optional
+      // ── 恢复策略 1: skip_optional_dependency — 跳过可选依赖 ──
       const optionalRecoverable: string[] = [];
+      const skippedOptionalDeps: string[] = [];
       for (const id of remainingIds) {
         const agent = agents.find(a => a.agentId === id);
         const optDeps = new Set(agent?.optionalDependencies ?? []);
         const unresolved = (agent?.dependencies ?? []).filter(d => !completed.has(d));
         if (unresolved.every(d => optDeps.has(d))) {
-          // 所有未满足依赖均为 optional，可跳过继续执行
           for (const d of unresolved) {
             const dState = states.find(x => x.agentId === d);
             if (dState && dState.status === "pending") {
@@ -300,21 +305,113 @@ export async function executePipeline(
             }
             completed.add(d);
             remaining.delete(d);
+            skippedOptionalDeps.push(d);
           }
           optionalRecoverable.push(id);
         }
       }
 
       if (optionalRecoverable.length > 0) {
+        logger.info("deadlock recovery: skip_optional_dependency", {
+          strategy: "skip_optional_dependency",
+          recovered: optionalRecoverable,
+          skippedDeps: skippedOptionalDeps,
+          durationMs: Date.now() - recoveryStart,
+        });
         params.app.log.info(
-          { recovered: optionalRecoverable },
+          { recovered: optionalRecoverable, skippedDeps: skippedOptionalDeps },
           "[CollabOrchestrator] 死锁恢复：跳过 optional 依赖后继续",
         );
-        // 恢复成功，继续循环
         continue;
       }
 
-      // 真正的死锁：不可恢复
+      // ── 恢复策略 2: retry_with_fallback — 对已失败的依赖 Agent 使用 fallback 结果 ──
+      if (Date.now() - recoveryStart < DEADLOCK_RECOVERY_TIMEOUT_MS) {
+        const fallbackRecoverable: string[] = [];
+        const fallbackApplied: Array<{ agentId: string; dep: string }> = [];
+        for (const id of Array.from(remaining)) {
+          const agent = agents.find(a => a.agentId === id);
+          const unresolved = (agent?.dependencies ?? []).filter(d => !completed.has(d));
+          // 如果所有未解决依赖都是已失败（有 result）但还在 remaining 的 agent，可用其 fallback 结果
+          const allFailedWithResult = unresolved.every(d => {
+            const ds = states.find(x => x.agentId === d);
+            return ds && ds.status === "failed" && ds.result;
+          });
+          if (allFailedWithResult && unresolved.length > 0) {
+            for (const d of unresolved) {
+              completed.add(d);
+              remaining.delete(d);
+              fallbackApplied.push({ agentId: id, dep: d });
+            }
+            fallbackRecoverable.push(id);
+          }
+        }
+        if (fallbackRecoverable.length > 0) {
+          logger.info("deadlock recovery: retry_with_fallback", {
+            strategy: "retry_with_fallback",
+            recovered: fallbackRecoverable,
+            fallbackApplied,
+            durationMs: Date.now() - recoveryStart,
+          });
+          params.app.log.info(
+            { recovered: fallbackRecoverable, fallbackApplied },
+            "[CollabOrchestrator] 死锁恢复：使用已失败依赖的 fallback 结果继续",
+          );
+          recovered = true;
+        }
+      }
+
+      if (recovered) continue;
+
+      // ── 恢复策略 3: abort_lowest_priority — 中止优先级最低的阻塞 Agent ──
+      if (Date.now() - recoveryStart < DEADLOCK_RECOVERY_TIMEOUT_MS) {
+        // 在剩余的 agent 中找到被等待最多且自身也在等待的（构成死锁环的节点），
+        // 选优先级最低（index 最大）的一个强制标记为失败以打破环路
+        const remainingArr = Array.from(remaining);
+        // 按原始 agent 列表中的顺序作为优先级（靠前=优先级高）
+        const agentPriority = new Map(agents.map((a, i) => [a.agentId, i]));
+        let lowestId: string | null = null;
+        let lowestPriority = -1;
+        for (const id of remainingArr) {
+          const pri = agentPriority.get(id) ?? 999;
+          if (pri > lowestPriority) {
+            lowestPriority = pri;
+            lowestId = id;
+          }
+        }
+        if (lowestId) {
+          const abortedState = states.find(x => x.agentId === lowestId);
+          if (abortedState) {
+            abortedState.status = "failed";
+            abortedState.result = {
+              ok: false,
+              endReason: "error",
+              message: `Agent aborted by deadlock recovery (lowest priority)`,
+              iterations: 0,
+              succeededSteps: 0,
+              failedSteps: 0,
+              observations: [],
+              lastDecision: null,
+            };
+            completed.add(lowestId);
+            remaining.delete(lowestId);
+            logger.info("deadlock recovery: abort_lowest_priority", {
+              strategy: "abort_lowest_priority",
+              abortedAgent: lowestId,
+              priority: lowestPriority,
+              remainingAfter: Array.from(remaining),
+              durationMs: Date.now() - recoveryStart,
+            });
+            params.app.log.warn(
+              { abortedAgent: lowestId, priority: lowestPriority },
+              "[CollabOrchestrator] 死锁恢复：中止优先级最低的 Agent 以解除阻塞",
+            );
+            continue;
+          }
+        }
+      }
+
+      // ── 所有恢复策略均失败，真正的死锁：不可恢复 ──
       const deadlockInfo = {
         remainingAgents: remainingIds,
         unresolvedDeps: remainingIds.map((id) => {
@@ -324,10 +421,11 @@ export async function executePipeline(
             waitingFor: (agent?.dependencies ?? []).filter((d) => !completed.has(d)),
           };
         }),
+        recoveryAttempted: true,
+        recoveryDurationMs: Date.now() - recoveryStart,
       };
-      params.app.log.error(deadlockInfo, "[CollabOrchestrator] 流水线死锁：有剩余 Agent 但无可执行者");
+      params.app.log.error(deadlockInfo, "[CollabOrchestrator] 流水线死锁：所有恢复策略均失败");
 
-      // 标记所有剩余 Agent 为失败，附带死锁原因
       for (const id of remaining) {
         const s = states.find((x) => x.agentId === id);
         if (s) {

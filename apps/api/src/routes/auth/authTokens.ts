@@ -1,11 +1,11 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { Errors } from "../lib/errors";
-import { setAuditContext } from "../modules/audit/context";
-import { requirePermission, requireSubject } from "../modules/auth/guard";
-import { createAuthToken, getAuthTokenById, listAuthTokens, revokeAuthToken, issueSessionTokenPair, rotateRefreshToken, enforceSessionLimit } from "../modules/auth/tokenRepo";
-import { generateTotpSecret, buildTotpUri, verifyTotp, generateRecoveryCodes, getMfaEnrollment, upsertMfaEnrollment, confirmMfaEnrollment, deleteMfaEnrollment, consumeRecoveryCode } from "../modules/auth/mfaRuntime";
-import { getSsoProvider, listSsoProviders } from "../modules/auth/ssoScimRepo";
+import { Errors } from "../../lib/errors";
+import { setAuditContext } from "../../modules/audit/context";
+import { requirePermission, requireSubject } from "../../modules/auth/guard";
+import { createAuthToken, getAuthTokenById, listAuthTokens, revokeAuthToken, issueSessionTokenPair, rotateRefreshToken, enforceSessionLimit } from "../../modules/auth/tokenRepo";
+import { generateTotpSecret, buildTotpUri, verifyTotp, generateRecoveryCodes, getMfaEnrollment, upsertMfaEnrollment, confirmMfaEnrollment, deleteMfaEnrollment, consumeRecoveryCode } from "../../modules/auth/mfaRuntime";
+import { getSsoProvider, listSsoProviders } from "../../modules/auth/ssoScimRepo";
 import {
   buildSsoAuthorizeUrl,
   consumeSsoLoginState,
@@ -19,8 +19,8 @@ import {
   generateSsoState,
   mapClaims,
   validateIdTokenClaims,
-} from "../modules/auth/ssoOidcRuntime";
-import { ensureSubject } from "../modules/auth/subjectRepo";
+} from "../../modules/auth/ssoOidcRuntime";
+import { ensureSubject } from "../../modules/auth/subjectRepo";
 
 export const authTokenRoutes: FastifyPluginAsync = async (app) => {
   app.post("/auth/tokens", async (req) => {

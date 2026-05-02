@@ -213,16 +213,12 @@ function main() {
     console.log("\n❌ Architecture boundary violations found! CI will fail.\n");
     console.log("To fix: Review the import statements listed above and ensure they");
     console.log("comply with the boundary rules defined in moduleBoundary.ts.\n");
-    process.exit(1);
-  }
-
-  if (warnings.length > 0) {
+    process.exitCode = 1;
+  } else if (warnings.length > 0) {
     console.log("\n⚠️  Warnings found. Consider reviewing cross-skill imports.\n");
   } else {
     console.log("\n✅ No boundary violations found.\n");
   }
-
-  process.exit(0);
 }
 
 main();

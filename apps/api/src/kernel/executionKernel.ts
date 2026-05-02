@@ -229,7 +229,10 @@ export async function admitAndBuildStepEnvelope(params: AdmitToolParams): Promis
         outputDigest: { degraded: true },
         result: "error",
         traceId: "",
-      }).catch(() => { /* 审计写入失败不影响主流程 */ });
+      }).catch((err: unknown) => {
+        const e = err instanceof Error ? err : new Error(String(err));
+        _kernelLogger.error("audit event write failed (governance pre-check degraded)", { err: e.message, stack: e.stack, tenantId, spaceId, subjectId, toolRef: resolved.toolRef });
+      });
       throw Errors.badRequest("治理检查不可用，已拒绝执行");
     }
   }
@@ -447,6 +450,86 @@ export async function submitStepToExistingRun(params: SubmitStepToRunParams): Pr
   });
 }
 
+/* ================================================================== */
+/*  Combined: evaluateToolExecution                                     */
+/* ================================================================== */
+
+export interface ToolEvaluationResult {
+  /** 预检结果（null 表示预检降级/跳过） */
+  preflightResult: import("@mindpal/shared").PreflightResult | null;
+  /** 规则引擎风险评估结果 */
+  assessment: import("./approvalRuleEngine").ToolExecutionAssessment;
+  /** 是否需要审批 */
+  approvalRequired: boolean;
+  /** 预检是否通过（false 表示需要终止） */
+  preflightPassed: boolean;
+}
+
+/**
+ * 统一工具执行评估 — 合并预检和规则引擎评估为单次调用。
+ *
+ * 替代 _handleApprovalOrEnqueue 中原先的两阶段顺序调用：
+ *   1. preflightCheck（预算 / 角色工具策略）
+ *   2. assessToolExecutionRisk（规则引擎风险评估）
+ *
+ * 两者共享上下文但结果独立，合并减少模板代码和错误处理冗余。
+ */
+export async function evaluateToolExecution(params: {
+  pool: Pool;
+  tenantId: string;
+  resolved: ResolvedTool;
+  stepId: string;
+  runId: string;
+  subjectId: string | null;
+  inputDraft: Record<string, unknown>;
+}): Promise<ToolEvaluationResult> {
+  const { pool, tenantId, resolved, stepId, runId, subjectId, inputDraft } = params;
+
+  // ── 并行执行预检和规则引擎评估（两者无数据依赖） ──
+  const [preflightSettled, assessmentResult] = await Promise.allSettled([
+    preflightCheck({
+      pool, runId, stepId, tenantId,
+      toolRef: resolved.toolRef,
+      subject: subjectId ? { subjectId } : undefined,
+    }),
+    assessToolExecutionRisk({
+      pool,
+      tenantId,
+      toolRef: resolved.toolRef,
+      inputDraft,
+      toolDefinition: resolved.definition ? {
+        riskLevel: resolved.definition.riskLevel,
+        approvalRequired: resolved.definition.approvalRequired,
+        scope: resolved.definition.scope ?? undefined,
+      } : undefined,
+    }),
+  ]);
+
+  // 解析预检结果（降级容错）
+  let preflightResult: import("@mindpal/shared").PreflightResult | null = null;
+  let preflightPassed = true;
+  if (preflightSettled.status === "fulfilled") {
+    preflightResult = preflightSettled.value;
+    preflightPassed = preflightResult.ok;
+  } else {
+    _kernelLogger.warn("preflightCheck failed (degraded, continuing)", {
+      runId, stepId, error: preflightSettled.reason?.message ?? String(preflightSettled.reason),
+    });
+  }
+
+  // 规则引擎评估必须成功（向上抛异常）
+  if (assessmentResult.status === "rejected") {
+    throw assessmentResult.reason;
+  }
+  const assessment = assessmentResult.value;
+
+  // 合并审批判定：预检要求审批 OR 规则引擎要求审批
+  const approvalRequired = assessment.approvalRequired
+    || (preflightResult?.requiredApprovals?.length ?? 0) > 0;
+
+  return { preflightResult, assessment, approvalRequired, preflightPassed };
+}
+
 /* ------------------------------------------------------------------ */
 /*  Internal: approval-or-enqueue                                      */
 /* ------------------------------------------------------------------ */
@@ -471,16 +554,14 @@ async function _handleApprovalOrEnqueue(params: {
   const jobId = job.jobId ?? job.job_id;
   const stepId = step.stepId ?? step.step_id;
 
-  // ── 编排预检：预算 / 角色工具策略 / 审批需求评估 ──
-  let preflightResult: import("@mindpal/shared").PreflightResult | null = null;
-  try {
-    preflightResult = await preflightCheck({
-      pool, runId, stepId, tenantId,
-      toolRef: resolved.toolRef,
-      subject: subjectId ? { subjectId } : undefined,
-    });
+  // ── 统一评估：预检 + 规则引擎（并行执行） ──
+  const evaluation = await evaluateToolExecution({
+    pool, tenantId, resolved, stepId, runId, subjectId,
+    inputDraft: (typeof step.inputDigest === "object" && step.inputDigest) ? step.inputDigest : {},
+  });
 
-    // 将预检结果写入 step metadata，供 Worker 侧读取
+  // 将预检结果写入 step metadata，供 Worker 侧读取
+  if (evaluation.preflightResult) {
     await pool.query(
       `UPDATE steps SET input_digest = jsonb_set(
          COALESCE(input_digest, '{}'::jsonb),
@@ -488,47 +569,30 @@ async function _handleApprovalOrEnqueue(params: {
          $1::jsonb,
          true
        ) WHERE step_id = $2`,
-      [JSON.stringify(preflightResult), stepId],
+      [JSON.stringify(evaluation.preflightResult), stepId],
     );
-
-    // 预检不通过：停止 run 并标记 step 失败
-    if (!preflightResult.ok) {
-      _kernelLogger.warn("preflight rejected", { runId, stepId, reason: preflightResult.issues[0]?.message ?? "preflight_denied" });
-      await pool.query(
-        "UPDATE steps SET status = 'failed', updated_at = now(), finished_at = now() WHERE step_id = $1",
-        [stepId],
-      );
-      await setRunAndJobStatus({ pool, tenantId, runId, jobId, runStatus: "stopped", jobStatus: "stopped" });
-      return { outcome: "queued", jobId, runId, stepId, idempotencyKey } as SubmitResult;
-    }
-  } catch (preflightErr: any) {
-    // 预检失败不阻断主流程，记录日志后继续
-    _kernelLogger.warn("preflightCheck failed (degraded, continuing)", {
-      runId, stepId, error: preflightErr?.message ?? String(preflightErr),
-    });
   }
 
-  // ── 规则引擎为单一真相源：一次调用同时产出决策和上下文 ──
-  const assessment = await assessToolExecutionRisk({
-    pool,
-    tenantId,
-    toolRef: resolved.toolRef,
-    inputDraft: (typeof step.inputDigest === "object" && step.inputDigest) ? step.inputDigest : {},
-    toolDefinition: resolved.definition ? {
-      riskLevel: resolved.definition.riskLevel,
-      approvalRequired: resolved.definition.approvalRequired,
-      scope: resolved.definition.scope ?? undefined,
-    } : undefined,
-  });
-  const approvalRequired = assessment.approvalRequired;
+  // 预检不通过：停止 run 并标记 step 失败
+  if (!evaluation.preflightPassed && evaluation.preflightResult) {
+    _kernelLogger.warn("preflight rejected", { runId, stepId, reason: evaluation.preflightResult.issues[0]?.message ?? "preflight_denied" });
+    await pool.query(
+      "UPDATE steps SET status = 'failed', updated_at = now(), finished_at = now() WHERE step_id = $1",
+      [stepId],
+    );
+    await setRunAndJobStatus({ pool, tenantId, runId, jobId, runStatus: "stopped", jobStatus: "stopped" });
+    return { outcome: "queued", jobId, runId, stepId, idempotencyKey } as SubmitResult;
+  }
+
+  const { assessment, approvalRequired } = evaluation;
   const approvalInputDigest = buildApprovalInputDigest({
     inputDigest: step.inputDigest,
     resolved,
     requiredApprovals: assessment.requiredApprovals,
   });
 
-  // 预检要求审批时，强制进入审批流程
-  if ((preflightResult?.requiredApprovals?.length ?? 0) > 0 || approvalRequired) {
+  // 需要审批时，进入审批流程
+  if (approvalRequired) {
     await markStepNeedsApproval(pool, stepId);
     if (JSON.stringify(step.inputDigest ?? null) !== JSON.stringify(approvalInputDigest ?? null)) {
       await updateInputDigest(pool, { stepId, runId, inputDigest: approvalInputDigest });

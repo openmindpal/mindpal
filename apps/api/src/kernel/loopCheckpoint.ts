@@ -103,6 +103,24 @@ export interface ProcessRow {
 }
 
 /* ================================================================== */
+/*  Column Constants                                                    */
+/* ================================================================== */
+
+/** agent_loop_checkpoints 显式字段列表 */
+const CHECKPOINT_COLS = `loop_id, tenant_id, space_id, run_id, job_id, task_id,
+  iteration, current_seq, succeeded_steps, failed_steps,
+  observations_digest, last_decision, decision_context,
+  goal, max_iterations, max_wall_time_ms,
+  subject_payload, locale, "authorization", trace_id, default_model_ref,
+  tool_discovery_cache, memory_context, task_history, knowledge_context,
+  node_id, status, heartbeat_at, started_at, finished_at, resumed_from, resume_count`;
+
+/** agent_processes 显式字段列表 */
+const PROCESS_COLS = `process_id, tenant_id, space_id, run_id, loop_id, priority,
+  resource_quota, parent_process_id, node_id, status, heartbeat_at,
+  started_at, finished_at, metadata, created_at, updated_at`;
+
+/* ================================================================== */
 /*  Config — 动态可配，零硬编码                                          */
 /* ================================================================== */
 
@@ -323,7 +341,7 @@ export async function loadCheckpoint(pool: Pool, loopId: string): Promise<Checkp
     resumed_from: string | null;
     resume_count: number;
   }>(
-    "SELECT * FROM agent_loop_checkpoints WHERE loop_id = $1",
+    `SELECT ${CHECKPOINT_COLS} FROM agent_loop_checkpoints WHERE loop_id = $1`,
     [loopId],
   );
 
@@ -515,7 +533,7 @@ export async function findActiveProcess(pool: Pool, runId: string): Promise<Proc
     node_id: string | null; status: string; heartbeat_at: string;
     started_at: string | null; finished_at: string | null; metadata: any;
   }>(
-    `SELECT * FROM agent_processes
+    `SELECT ${PROCESS_COLS} FROM agent_processes
      WHERE run_id = $1 AND status IN ('pending','running','paused')
      ORDER BY created_at DESC LIMIT 1`,
     [runId],

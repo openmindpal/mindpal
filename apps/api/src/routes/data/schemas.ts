@@ -1,13 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { Errors } from "../lib/errors";
-import { guarded } from "../middleware/routeGuard";
+import { Errors } from "../../lib/errors";
+import { guarded } from "../../middleware/routeGuard";
 import {
   getByNameVersion,
   getEffectiveSchema,
   listLatestReleased,
   listVersionsByName,
-} from "../modules/metadata/schemaRepo";
+} from "../../modules/metadata/schemaRepo";
 
 export const schemaRoutes: FastifyPluginAsync = async (app) => {
   app.get("/schemas", async (req) => {

@@ -1,15 +1,15 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { Errors } from "../lib/errors";
-import { normalizeAuditErrorCategory } from "../modules/audit/auditRepo";
+import { Errors } from "../../lib/errors";
+import { normalizeAuditErrorCategory } from "../../modules/audit/auditRepo";
 import { canonicalize, sha256Hex, computeEventHash } from "@mindpal/shared";
-import { dispatchAuditOutboxBatch } from "../modules/audit/outboxRepo";
-import { requirePermission } from "../modules/auth/guard";
+import { dispatchAuditOutboxBatch } from "../../modules/audit/outboxRepo";
+import { requirePermission } from "../../modules/auth/guard";
 import { PERM } from "@mindpal/shared";
-import { setAuditContext } from "../modules/audit/context";
-import { createAuditExport, getAuditExport, listAuditExports } from "../modules/audit/exportRepo";
-import { createAuditLegalHold, getAuditLegalHold, listAuditLegalHolds, releaseAuditLegalHold } from "../modules/audit/legalHoldRepo";
+import { setAuditContext } from "../../modules/audit/context";
+import { createAuditExport, getAuditExport, listAuditExports } from "../../modules/audit/exportRepo";
+import { createAuditLegalHold, getAuditLegalHold, listAuditLegalHolds, releaseAuditLegalHold } from "../../modules/audit/legalHoldRepo";
 import {
   clearAuditSiemDlq,
   clearAuditSiemOutbox,
@@ -20,10 +20,10 @@ import {
   requeueAuditSiemDlq,
   updateAuditSiemDestination,
   upsertAuditSiemCursor,
-} from "../modules/audit/siemRepo";
-import { getConnectorInstance, getConnectorType } from "../lib/connectorContract";
-import { decryptSecretPayload } from "../modules/secrets/envelope";
-import { getSecretRecord, getSecretRecordEncryptedPayload } from "../modules/secrets/secretRepo";
+} from "../../modules/audit/siemRepo";
+import { getConnectorInstance, getConnectorType } from "../../lib/connectorContract";
+import { decryptSecretPayload } from "../../modules/secrets/envelope";
+import { getSecretRecord, getSecretRecordEncryptedPayload } from "../../modules/secrets/secretRepo";
 
 function masterKey() {
   return process.env.API_MASTER_KEY ?? "dev-master-key-change-me";

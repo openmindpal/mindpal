@@ -25,6 +25,16 @@ function computeInstructionDigest(instruction: string): string {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Column Constants                                                    */
+/* ------------------------------------------------------------------ */
+
+/** intent_anchors 显式字段列表 */
+const INTENT_ANCHOR_COLS = `anchor_id, tenant_id, space_id, subject_id,
+  original_instruction, instruction_digest, instruction_type,
+  run_id, task_id, conversation_id,
+  priority, is_active, expires_at, created_by, created_at, updated_at`;
+
+/* ------------------------------------------------------------------ */
 /*  Anchor CRUD                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -40,7 +50,7 @@ export async function createIntentAnchor(
 
   // 检查是否已存在（幂等）
   const existing = await pool.query<IntentAnchor>(
-    `SELECT * FROM intent_anchors WHERE tenant_id = $1 AND instruction_digest = $2 LIMIT 1`,
+    `SELECT ${INTENT_ANCHOR_COLS} FROM intent_anchors WHERE tenant_id = $1 AND instruction_digest = $2 LIMIT 1`,
     [input.tenantId, digest],
   );
 
@@ -55,7 +65,7 @@ export async function createIntentAnchor(
       run_id, task_id, conversation_id,
       priority, is_active, expires_at, created_by
     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,$11,$12)
-    RETURNING *`,
+    RETURNING ${INTENT_ANCHOR_COLS}`,
     [
       input.tenantId,
       input.spaceId ?? null,
@@ -140,7 +150,7 @@ export async function listActiveIntentAnchors(params: {
   conditions.push("(expires_at IS NULL OR expires_at > now())");
 
   const sql = `
-    SELECT * FROM intent_anchors
+    SELECT ${INTENT_ANCHOR_COLS} FROM intent_anchors
     WHERE ${conditions.join(" AND ")}
     ORDER BY priority ASC, created_at DESC
     LIMIT $${paramIndex}
@@ -181,7 +191,9 @@ export async function recordBoundaryViolation(
       run_id, step_id, agent_action, user_intent,
       action_taken, remediation_details, resolved_by
     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-    RETURNING *`,
+    RETURNING violation_id, tenant_id, space_id, violation_type, severity, anchor_id,
+      run_id, step_id, agent_action, user_intent, action_taken,
+      remediation_details, resolved_by, created_at`,
     [
       input.tenantId,
       input.spaceId ?? null,

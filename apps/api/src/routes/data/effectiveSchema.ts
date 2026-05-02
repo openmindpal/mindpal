@@ -1,11 +1,11 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { Errors } from "../lib/errors";
-import { requirePermission } from "../modules/auth/guard";
+import { Errors } from "../../lib/errors";
+import { requirePermission } from "../../modules/auth/guard";
 import { PERM } from "@mindpal/shared";
-import { setAuditContext } from "../modules/audit/context";
-import { buildEffectiveEntitySchema } from "../modules/metadata/effectiveSchema";
-import { getEffectiveSchema, getSchemaEffectiveCacheVersion, resolveSchemaNameForEntity } from "../modules/metadata/schemaRepo";
+import { setAuditContext } from "../../modules/audit/context";
+import { buildEffectiveEntitySchema } from "../../modules/metadata/effectiveSchema";
+import { getEffectiveSchema, getSchemaEffectiveCacheVersion, resolveSchemaNameForEntity } from "../../modules/metadata/schemaRepo";
 
 type CacheKey = string;
 const effectiveCache = new Map<CacheKey, unknown>();

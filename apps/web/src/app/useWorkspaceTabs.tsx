@@ -1,18 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { type WorkspaceTab } from "./homeHelpers";
 import { IconRun, IconApproval, IconKnowledge, IconArtifact, IconWorkbench, IconPanel, IconPage } from "./HomeIcons";
-
-const WORKSPACE_KEY = "mindpal_workspace_tabs";
+import { useWorkspaceTabsStore } from "@/store/layoutStore";
 
 export interface WorkspaceTabsState {
   pinnedTabs: WorkspaceTab[];
-  setPinnedTabs: React.Dispatch<React.SetStateAction<WorkspaceTab[]>>;
+  setPinnedTabs: (v: WorkspaceTab[] | ((p: WorkspaceTab[]) => WorkspaceTab[])) => void;
   previewTab: WorkspaceTab | null;
   setPreviewTab: React.Dispatch<React.SetStateAction<WorkspaceTab | null>>;
   activeTabId: string | null;
-  setActiveTabId: React.Dispatch<React.SetStateAction<string | null>>;
+  setActiveTabId: (v: string | null | ((p: string | null) => string | null)) => void;
   visibleTab: WorkspaceTab | null;
   draggedTabId: string | null;
   dragOverTabId: string | null;
@@ -31,44 +30,20 @@ export interface WorkspaceTabsState {
 
 export default function useWorkspaceTabs(opts: {
   leftCollapsed: boolean;
-  setLeftCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  setLeftCollapsed: (v: boolean | ((p: boolean) => boolean)) => void;
 }): WorkspaceTabsState {
   const { leftCollapsed, setLeftCollapsed } = opts;
-  const [savedWorkspace] = useState(() => {
-    let pinned: WorkspaceTab[] = [];
-    let activeTabId: string | null = null;
-    if (typeof window === "undefined") {
-      return { pinnedTabs: pinned, activeTabId };
-    }
-    try {
-      const raw = localStorage.getItem(WORKSPACE_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as { pinned?: WorkspaceTab[]; activeTabId?: string | null };
-        pinned = Array.isArray(saved.pinned) ? saved.pinned : [];
-        activeTabId = saved.activeTabId ?? pinned[0]?.id ?? null;
-      }
-    } catch {
-      activeTabId = pinned[0]?.id ?? null;
-    }
-    return { pinnedTabs: pinned, activeTabId };
-  });
 
-  const [pinnedTabs, setPinnedTabs] = useState<WorkspaceTab[]>(savedWorkspace.pinnedTabs);
+  /* ── Zustand (persisted) state ── */
+  const pinnedTabs = useWorkspaceTabsStore((s) => s.pinnedTabs);
+  const setPinnedTabs = useWorkspaceTabsStore((s) => s.setPinnedTabs);
+  const activeTabId = useWorkspaceTabsStore((s) => s.activeTabId);
+  const setActiveTabId = useWorkspaceTabsStore((s) => s.setActiveTabId);
+
+  /* ── Local-only (not persisted) state ── */
   const [previewTab, setPreviewTab] = useState<WorkspaceTab | null>(null);
-  const [activeTabId, setActiveTabId] = useState<string | null>(savedWorkspace.activeTabId);
-
-  /* ─── Tab drag state ─── */
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
-
-  const [layoutRestored] = useState(true);
-
-  useEffect(() => {
-    if (!layoutRestored) return;
-    try {
-      localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ pinned: pinnedTabs, activeTabId }));
-    } catch { /* ignore */ }
-  }, [pinnedTabs, activeTabId, layoutRestored]);
 
   // Derived: the currently visible tab (active pinned tab, or preview)
   const visibleTab: WorkspaceTab | null = useMemo(() => {
@@ -81,20 +56,17 @@ export default function useWorkspaceTabs(opts: {
 
   // Workspace actions
   const openInWorkspace = useCallback((entry: { kind: WorkspaceTab["kind"]; name: string; url: string; meta?: WorkspaceTab["meta"] }) => {
-    // Check if already pinned — if so, just switch to it
     const existing = pinnedTabs.find((t) => t.kind === entry.kind && t.name === entry.name);
     if (existing) {
       setActiveTabId(existing.id);
     } else {
-      // Open as preview (temporary)
       const tab: WorkspaceTab = { id: "__preview__", kind: entry.kind, name: entry.name, url: entry.url, meta: entry.meta };
       setPreviewTab(tab);
       setActiveTabId("__preview__");
     }
     if (leftCollapsed) setLeftCollapsed(false);
-  }, [pinnedTabs, leftCollapsed, setLeftCollapsed]);
+  }, [pinnedTabs, leftCollapsed, setLeftCollapsed, setActiveTabId]);
 
-  // Helper: get icon for tab kind
   const getTabIcon = (kind: WorkspaceTab["kind"]) => {
     switch (kind) {
       case "runDetail": return <IconRun />;
@@ -111,18 +83,16 @@ export default function useWorkspaceTabs(opts: {
     if (!previewTab) return;
     const newTab: WorkspaceTab = { ...previewTab, id: `ws_${Date.now()}` };
     setPinnedTabs((prev) => {
-      // Avoid duplicates
       if (prev.some((t) => t.kind === newTab.kind && t.name === newTab.name)) return prev;
       return [...prev, newTab];
     });
     setActiveTabId(newTab.id);
     setPreviewTab(null);
-  }, [previewTab]);
+  }, [previewTab, setPinnedTabs, setActiveTabId]);
 
   const unpinTab = useCallback((tabId: string) => {
     setPinnedTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
-      // If active tab was removed, switch to another
       if (activeTabId === tabId) {
         const idx = prev.findIndex((t) => t.id === tabId);
         const fallback = next[Math.min(idx, next.length - 1)];
@@ -130,14 +100,14 @@ export default function useWorkspaceTabs(opts: {
       }
       return next;
     });
-  }, [activeTabId, previewTab]);
+  }, [activeTabId, previewTab, setPinnedTabs, setActiveTabId]);
 
   const closePreview = useCallback(() => {
     setPreviewTab(null);
     if (activeTabId === "__preview__") {
       setActiveTabId(pinnedTabs[pinnedTabs.length - 1]?.id ?? null);
     }
-  }, [activeTabId, pinnedTabs]);
+  }, [activeTabId, pinnedTabs, setActiveTabId]);
 
   /* ─── Tab drag handlers ─── */
   const handleTabDragStart = useCallback((e: React.DragEvent, tabId: string) => {
@@ -179,14 +149,13 @@ export default function useWorkspaceTabs(opts: {
 
     setDraggedTabId(null);
     setDragOverTabId(null);
-  }, [draggedTabId]);
+  }, [draggedTabId, setPinnedTabs]);
 
   const handleTabDragEnd = useCallback(() => {
     setDraggedTabId(null);
     setDragOverTabId(null);
   }, []);
 
-  /* ─── Double-click to pin preview ─── */
   const handlePreviewDoubleClick = useCallback(() => {
     pinCurrentPreview();
   }, [pinCurrentPreview]);

@@ -29,6 +29,14 @@ export interface DagValidationResult {
   danglingRefs?: Array<{ nodeId: string; missingDep: string }>;
 }
 
+/** DAG 修复操作记录（用于审计） */
+export interface DagRepairAction {
+  type: "remove_edge" | "attach_isolated";
+  from: string;
+  to: string;
+  reason: string;
+}
+
 /* ================================================================== */
 /*  核心算法                                                            */
 /* ================================================================== */
@@ -282,4 +290,124 @@ export function getDescendants(nodes: DagNode[], targetId: string): Set<string> 
   }
 
   return descendants;
+}
+
+/* ================================================================== */
+/*  DAG 自动修复                                                        */
+/* ================================================================== */
+
+/**
+ * 验证 DAG 并自动修复检测到的问题：
+ * 1. 环路检测 → 移除构成环路的边中优先级最低的那条边
+ * 2. 孤立节点 → 关联到拓扑排序中最近的前驱节点
+ *
+ * @param nodes 原始 DAG 节点列表
+ * @param priorityFn 可选的优先级函数（数值越小优先级越高）
+ * @returns 修复后的 DAG 节点列表 + 修复操作列表
+ */
+export function autoRepairDAG(
+  nodes: DagNode[],
+  priorityFn?: (id: string) => number,
+): { repairedNodes: DagNode[]; repairs: DagRepairAction[]; validation: DagValidationResult } {
+  const repairs: DagRepairAction[] = [];
+  // 深拷贝节点以避免修改原始数据
+  let workingNodes: DagNode[] = nodes.map(n => ({ id: n.id, dependsOn: [...n.dependsOn] }));
+  const idSet = new Set(workingNodes.map(n => n.id));
+
+  // ── 阶段 1: 环路检测与修复 ──
+  // 反复检测环路并移除最低优先级边，直到无环
+  let maxRepairIterations = workingNodes.length; // 防止无限循环
+  while (maxRepairIterations-- > 0) {
+    const result = validateDAG(workingNodes);
+    if (!result.cycles || result.cycles.length === 0) break;
+
+    // 找出环上的所有边，选择优先级最低的边移除
+    const cycleNodeIds = new Set(result.cycles[0]!);
+    let worstEdge: { from: string; to: string; score: number } | null = null;
+
+    for (const node of workingNodes) {
+      if (!cycleNodeIds.has(node.id)) continue;
+      for (const dep of node.dependsOn) {
+        if (!cycleNodeIds.has(dep)) continue;
+        // 边 node.id -> dep (node.id 依赖 dep)
+        // 优先级：取两端节点优先级的最大值（越大越低优先级）
+        const edgeScore = priorityFn
+          ? Math.max(priorityFn(node.id), priorityFn(dep))
+          : 0;
+        // 无优先级时，选依赖列表中最后出现的边（启发式：后添加的边更可能是错误）
+        const effectiveScore = priorityFn ? edgeScore : (worstEdge ? 1 : 0);
+        if (!worstEdge || effectiveScore >= worstEdge.score) {
+          worstEdge = { from: node.id, to: dep, score: effectiveScore };
+        }
+      }
+    }
+
+    if (!worstEdge) break; // 安全退出
+
+    // 移除该边
+    const targetNode = workingNodes.find(n => n.id === worstEdge!.from);
+    if (targetNode) {
+      targetNode.dependsOn = targetNode.dependsOn.filter(d => d !== worstEdge!.to);
+      repairs.push({
+        type: "remove_edge",
+        from: worstEdge.from,
+        to: worstEdge.to,
+        reason: `PlanDAG cycle detected and auto-repaired: removed edge ${worstEdge.from} -> ${worstEdge.to}`,
+      });
+    }
+  }
+
+  // ── 阶段 2: 孤立节点修复 ──
+  if (workingNodes.length > 1) {
+    // 先做一次拓扑排序获取有效序列
+    const sorted = topologicalSortGeneric(workingNodes, priorityFn);
+    const sortedIndex = new Map(sorted.map((id, i) => [id, i]));
+
+    const hasIncoming = new Set<string>();
+    const hasOutgoing = new Set<string>();
+    for (const node of workingNodes) {
+      for (const dep of node.dependsOn) {
+        if (idSet.has(dep)) {
+          hasIncoming.add(node.id);
+          hasOutgoing.add(dep);
+        }
+      }
+    }
+
+    // 根节点 = 拓扑序中排在第一位的节点（无入边）
+    const rootCandidates = workingNodes.filter(n => n.dependsOn.filter(d => idSet.has(d)).length === 0);
+    const rootIds = new Set(rootCandidates.map(n => n.id));
+
+    for (const node of workingNodes) {
+      if (hasIncoming.has(node.id) || hasOutgoing.has(node.id)) continue;
+      if (rootIds.has(node.id) && rootCandidates.length <= 1) continue; // 唯一根节点不处理
+
+      // 找拓扑排序中位于该节点之前的最近节点作为前驱
+      const myIdx = sortedIndex.get(node.id) ?? sorted.length;
+      let bestPredecessor: string | null = null;
+      let bestDist = Infinity;
+      for (let i = myIdx - 1; i >= 0; i--) {
+        const dist = myIdx - i;
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestPredecessor = sorted[i]!;
+          break;
+        }
+      }
+
+      if (bestPredecessor) {
+        node.dependsOn.push(bestPredecessor);
+        repairs.push({
+          type: "attach_isolated",
+          from: node.id,
+          to: bestPredecessor,
+          reason: `Isolated node "${node.id}" auto-attached to nearest predecessor "${bestPredecessor}"`,
+        });
+      }
+    }
+  }
+
+  // 最终验证
+  const finalValidation = validateDAG(workingNodes);
+  return { repairedNodes: workingNodes, repairs, validation: finalValidation };
 }

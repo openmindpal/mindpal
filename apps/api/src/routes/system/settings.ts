@@ -1,10 +1,10 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { Errors } from "../lib/errors";
-import { setAuditContext } from "../modules/audit/context";
-import { requirePermission, requireSubject } from "../modules/auth/guard";
-import { getSpaceDefaultLocale, getTenantDefaultLocale, setSpaceDefaultLocale, setTenantDefaultLocale } from "../modules/settings/localeDefaultsRepo";
-import { getTenantStepPayloadRetentionDays, setTenantStepPayloadRetentionDays } from "../modules/settings/stepPayloadRetentionRepo";
+import { Errors } from "../../lib/errors";
+import { setAuditContext } from "../../modules/audit/context";
+import { requirePermission, requireSubject } from "../../modules/auth/guard";
+import { getSpaceDefaultLocale, getTenantDefaultLocale, setSpaceDefaultLocale, setTenantDefaultLocale } from "../../modules/settings/localeDefaultsRepo";
+import { getTenantStepPayloadRetentionDays, setTenantStepPayloadRetentionDays } from "../../modules/settings/stepPayloadRetentionRepo";
 
 export const settingsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/settings/locale-defaults", async (req) => {

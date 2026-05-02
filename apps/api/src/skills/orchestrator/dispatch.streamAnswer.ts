@@ -6,7 +6,7 @@
  */
 import crypto from "node:crypto";
 import { redactValue, parseDocument, dataUrlToBuffer, StructuredLogger, resolveNumber, toContentParts, type UnifiedAttachment } from "@mindpal/shared";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+import { assessToolExecutionRisk } from "../../kernel/approvalRuleEngine";
 
 const _logger = new StructuredLogger({ module: "api:dispatch.streamAnswer" });
 import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRecentTasks, type ContextMeta, shouldTriggerEventDrivenSummary, buildSessionStateContext } from "./modules/orchestrator";
@@ -575,27 +575,33 @@ export async function handleStreamAnswerMode(params: {
   }
 
   const inlineWritableEntities = await loadInlineWritableEntities(app.db);
-  const resolution = resolveExecutionClassFromSuggestions({
+  const resolution = await resolveExecutionClassFromSuggestions({
     toolCalls: validatedToolCalls,
     enabledTools,
     inlineWritableEntities,
+    dbCtx: { pool: app.db, tenantId: subject.tenantId },
   });
-  const workflowSuggestions = resolution.workflowTools.map((suggestion) => {
+  const workflowSuggestions = await Promise.all(resolution.workflowTools.map(async (suggestion) => {
     const tool = enabledToolMap.get(suggestion.toolRef);
     const toolDef = tool?.def;
+    const riskAssessment = await assessToolExecutionRisk({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      toolRef: suggestion.toolRef,
+      inputDraft: suggestion.inputDraft,
+      toolDefinition: toolDef ? { riskLevel: toolDef.riskLevel as any, approvalRequired: toolDef.approvalRequired, scope: toolDef.scope ?? undefined } : undefined,
+    });
     return {
       toolRef: suggestion.toolRef,
       inputDraft: suggestion.inputDraft,
-      riskLevel: toolDef?.riskLevel ?? "low",
-      approvalRequired: toolDef ? shouldRequireApproval(toolDef) : false,
-      approvalReason: toolDef?.riskLevel === "high"
-        ? `工具 ${suggestion.toolRef} 风险等级为 high，需要审批`
-        : (toolDef?.approvalRequired ? `工具 ${suggestion.toolRef} 已配置强制审批` : ""),
+      riskLevel: riskAssessment.riskLevel,
+      approvalRequired: riskAssessment.approvalRequired,
+      approvalReason: riskAssessment.approvalRequired ? riskAssessment.humanSummary : "",
       suggestionId: crypto.randomUUID(),
       // scope=write 的工具需要 idempotencyKey，供前端手动执行时使用
       idempotencyKey: toolDef?.scope === "write" ? crypto.randomUUID() : undefined,
     };
-  });
+  }));
 
   // ━━━ 内联执行只读/安全写入工具并流式回复 ━━━
   if (resolution.inlineTools.length > 0) {

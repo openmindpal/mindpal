@@ -1,23 +1,23 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { resolvePromptInjectionPolicy, resolveSupplyChainPolicy, supplyChainGate as runSupplyChainGate } from "@mindpal/shared";
-import { Errors } from "../lib/errors";
-import { requirePermission } from "../modules/auth/guard";
+import { Errors } from "../../lib/errors";
+import { requirePermission } from "../../modules/auth/guard";
 import { PERM } from "@mindpal/shared";
-import { setAuditContext } from "../modules/audit/context";
-import { enqueueAuditOutboxForRequest } from "../modules/audit/requestOutbox";
-import { toolPublishSchema } from "../modules/tools/toolModel";
-import { getToolDefinition, getToolVersionByRef, listToolDefinitions, listToolVersions, publishToolVersion } from "../modules/tools/toolRepo";
-import { assertManifestConsistent, computeDepsDigest, loadSkillManifest, parseTrustedSkillPublicKeys, resolveArtifactDir, verifySkillManifestTrustWithKeys } from "../modules/tools/skillPackage";
-import { computeSkillSbomV1, resolveSkillArtifactDir, scanSkillDependencies } from "../modules/tools/skillArtifactRegistry";
-import { validateToolInput } from "../modules/tools/validate";
-import { getRunForSpace, listSteps } from "../modules/workflow/jobRepo";
-import { getActiveToolOverride, getActiveToolRef, listActiveToolOverrides, listActiveToolRefs } from "../modules/governance/toolGovernanceRepo";
-import { getEnabledSkillRuntimeRunner, listActiveSkillTrustedKeys } from "../modules/governance/skillRuntimeRepo";
-import { extractTextForPromptInjectionScan, getPromptInjectionPolicyFromEnv, scanPromptInjection, shouldDenyPromptInjectionForTarget, summarizePromptInjection } from "../lib/promptInjection";
-import { getEffectiveSafetyPolicyVersion } from "../lib/safetyContract";
-import { resolveAndValidateTool, admitAndBuildStepEnvelope, buildStepInputPayload, submitNewToolRun } from "../kernel/executionKernel";
-import { authorizeToolExecution } from "../kernel/loopPermissionUnified";
+import { setAuditContext } from "../../modules/audit/context";
+import { enqueueAuditOutboxForRequest } from "../../modules/audit/requestOutbox";
+import { toolPublishSchema } from "../../modules/tools/toolModel";
+import { getToolDefinition, getToolVersionByRef, listToolDefinitions, listToolVersions, publishToolVersion } from "../../modules/tools/toolRepo";
+import { assertManifestConsistent, computeDepsDigest, loadSkillManifest, parseTrustedSkillPublicKeys, resolveArtifactDir, verifySkillManifestTrustWithKeys } from "../../modules/tools/skillPackage";
+import { computeSkillSbomV1, resolveSkillArtifactDir, scanSkillDependencies } from "../../modules/tools/skillArtifactRegistry";
+import { validateToolInput } from "../../modules/tools/validate";
+import { getRunForSpace, listSteps } from "../../modules/workflow/jobRepo";
+import { getActiveToolOverride, getActiveToolRef, listActiveToolOverrides, listActiveToolRefs } from "../../modules/governance/toolGovernanceRepo";
+import { getEnabledSkillRuntimeRunner, listActiveSkillTrustedKeys } from "../../modules/governance/skillRuntimeRepo";
+import { extractTextForPromptInjectionScan, getPromptInjectionPolicyFromEnv, scanPromptInjection, shouldDenyPromptInjectionForTarget, summarizePromptInjection } from "../../lib/promptInjection";
+import { getEffectiveSafetyPolicyVersion } from "../../lib/safetyContract";
+import { resolveAndValidateTool, admitAndBuildStepEnvelope, buildStepInputPayload, submitNewToolRun } from "../../kernel/executionKernel";
+import { authorizeToolExecution } from "../../kernel/loopPermissionUnified";
 
 export const toolRoutes: FastifyPluginAsync = async (app) => {
   function isValidUrl(u: string) {

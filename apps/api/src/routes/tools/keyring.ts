@@ -1,9 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { Errors } from "../lib/errors";
-import { requirePermission } from "../modules/auth/guard";
-import { setAuditContext } from "../modules/audit/context";
-import { disablePartitionKey, initPartitionKey, rotatePartitionKey } from "../modules/keyring/keyringRepo";
+import { Errors } from "../../lib/errors";
+import { requirePermission } from "../../modules/auth/guard";
+import { setAuditContext } from "../../modules/audit/context";
+import { disablePartitionKey, initPartitionKey, rotatePartitionKey } from "../../modules/keyring/keyringRepo";
 
 export const keyringRoutes: FastifyPluginAsync = async (app) => {
   app.post("/keyring/keys/init", async (req) => {

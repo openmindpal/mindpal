@@ -17,7 +17,8 @@ import type { FastifyInstance } from "fastify";
 import { searchMemory, listMemoryEntries, createMemoryEntry, updateMemoryEntry, getMemoryEntry } from "../../../modules/memory/repo";
 import { searchChunksHybrid } from "../../knowledge-rag/modules/repo";
 import type { EnabledTool } from "../../../modules/agentContext";
-import { evaluateMemoryRisk, resolveNumber, shouldRequireApproval } from "@mindpal/shared";
+import { evaluateMemoryRisk, resolveNumber } from "@mindpal/shared";
+import { assessToolExecutionRisk } from "../../../kernel/approvalRuleEngine";
 import { admitInlineExecution } from "../../../kernel/executionKernel";
 import { insertAuditEvent } from "../../../modules/audit/auditRepo";
 
@@ -165,15 +166,16 @@ export function isInlineWriteEligible(
  * - upgradeTools: 需要升级到 execute 模式的工具（write/高风险等）
  * - separatePipelineTool: 标记 execution:separate-pipeline 的工具有独立执行管线
  */
-export function classifyToolCalls(
+export async function classifyToolCalls(
   toolCalls: InlineToolCall[],
   enabledTools: EnabledTool[],
   inlineWritableEntities?: Set<string>,
-): {
+  dbCtx?: { pool: Pool; tenantId: string },
+): Promise<{
   inlineTools: InlineToolCall[];
   upgradeTools: InlineToolCall[];
   separatePipelineTool: InlineToolCall | null;
-} {
+}> {
   const inlineTools: InlineToolCall[] = [];
   const upgradeTools: InlineToolCall[] = [];
   let separatePipelineTool: InlineToolCall | null = null;
@@ -181,13 +183,24 @@ export function classifyToolCalls(
   const enabledToolRefSet = new Set(enabledTools.map(t => t.toolRef));
   const enabledToolMap = new Map(enabledTools.map(t => [t.toolRef, t]));
 
-  function needsApproval(meta: typeof enabledTools[number] | undefined): boolean {
-    return !!meta && shouldRequireApproval({
-      approvalRequired: meta.def.approvalRequired,
-      riskLevel: meta.def.riskLevel,
-      sourceLayer: meta.def.sourceLayer,
-      scope: meta.def.scope,
+  async function needsApproval(meta: typeof enabledTools[number] | undefined, tc: InlineToolCall): Promise<boolean> {
+    if (!meta) return false;
+    if (!dbCtx) {
+      // 降级：无DB上下文时使用工具静态声明
+      return Boolean(meta.def.approvalRequired) || meta.def.riskLevel === "high";
+    }
+    const assessment = await assessToolExecutionRisk({
+      pool: dbCtx.pool,
+      tenantId: dbCtx.tenantId,
+      toolRef: tc.toolRef,
+      inputDraft: tc.inputDraft,
+      toolDefinition: {
+        riskLevel: meta.def.riskLevel as any,
+        approvalRequired: meta.def.approvalRequired,
+        scope: meta.def.scope ?? undefined,
+      },
     });
+    return assessment.approvalRequired;
   }
 
   for (const tc of toolCalls) {
@@ -201,7 +214,7 @@ export function classifyToolCalls(
     if (isInlineEligible(tc.toolRef, enabledTools)) {
       // 即使 read+low，也检查工具定义是否显式要求审批
       const toolMeta = enabledToolMap.get(tc.toolRef);
-      if (needsApproval(toolMeta)) {
+      if (await needsApproval(toolMeta, tc)) {
         upgradeTools.push(tc);  // 显式要求审批的工具不走内联，升级到 workflow 路径
       } else {
         inlineTools.push(tc);
@@ -209,7 +222,7 @@ export function classifyToolCalls(
     } else if (inlineWritableEntities && isInlineWriteEligible(tc.toolRef, tc.inputDraft, inlineWritableEntities, enabledTools)) {
       // 安全写入白名单实体 → 仍需检查审批策略
       const toolMeta = enabledToolMap.get(tc.toolRef);
-      if (needsApproval(toolMeta)) {
+      if (await needsApproval(toolMeta, tc)) {
         upgradeTools.push(tc);  // 显式要求审批的工具不走内联，升级到 workflow 路径
       } else {
         inlineTools.push(tc);

@@ -6,7 +6,7 @@ import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import type { CapabilityEnvelopeV1 } from "@mindpal/shared";
 import { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicy, normalizeLimits, validateCapabilityEnvelopeV1 } from "@mindpal/shared";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { insertAuditEvent } from "../../modules/audit/auditRepo";
@@ -161,12 +161,18 @@ export const runsExecutionRoutes: FastifyPluginAsync = async (app) => {
       run.runId,
     ]);
 
-    const approvalRequired = shouldRequireApproval({
-      approvalRequired: stepInput?.toolContract?.approvalRequired ?? def?.approvalRequired,
-      riskLevel: stepInput?.toolContract?.riskLevel ?? def?.riskLevel,
-      sourceLayer: stepInput?.toolContract?.sourceLayer ?? def?.sourceLayer,
-      scope: stepInput?.toolContract?.scope ?? def?.scope,
+    const riskAssessment = await assessToolExecutionRisk({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      toolRef,
+      inputDraft: (typeof stepInput === "object" && stepInput) ? (stepInput as Record<string, unknown>) : {},
+      toolDefinition: {
+        riskLevel: ((stepInput?.toolContract?.riskLevel ?? def?.riskLevel) ?? undefined) as any,
+        approvalRequired: (stepInput?.toolContract?.approvalRequired ?? def?.approvalRequired) ?? undefined,
+        scope: (stepInput?.toolContract?.scope ?? def?.scope) ?? undefined,
+      },
     });
+    const approvalRequired = riskAssessment.approvalRequired;
     const receipt = { correlation: { requestId: req.ctx.requestId, traceId: req.ctx.traceId, runId: run.runId, stepId: step.stepId }, status: "queued" as const };
 
     if (approvalRequired) {
@@ -182,17 +188,7 @@ export const runsExecutionRoutes: FastifyPluginAsync = async (app) => {
         toolRef,
         policySnapshotRef: decision.snapshotRef ?? null,
         inputDigest: step.inputDigest ?? null,
-        assessmentContext: await assessToolExecutionRisk({
-          pool: app.db,
-          tenantId: subject.tenantId,
-          toolRef,
-          inputDraft: (typeof step.inputDigest === "object" && step.inputDigest) ? step.inputDigest : {},
-          toolDefinition: def ? {
-            riskLevel: (def.riskLevel ?? undefined) as any,
-            approvalRequired: def.approvalRequired ?? undefined,
-            scope: def.scope ?? undefined,
-          } : undefined,
-        }),
+        assessmentContext: riskAssessment,
       });
       await insertAuditEvent(app.db, {
         subjectId: subject.subjectId,

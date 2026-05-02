@@ -1,16 +1,11 @@
 /**
- * Device Agent WebSocket 客户端
+ * Device Agent WebSocket 客户端 — 核心骨架
  *
  * [SDK迁移] 从 apps/device-agent/src/websocketClient.ts 迁入
  *
- * 应用层依赖解耦：
- * - ./deviceAgentEnv (resolveDeviceAgentEnv) → agentVersion 通过 config 传入
- * - ./wsStreamingHandlers → StreamingHandlers 注入接口 (setStreamingHandlers)
- *
- * SDK 内部导入调整：
- * - ./config → ../config
- * - ./log → ../kernel/log
- * - @mindpal/device-agent-sdk (listPlugins) → ../kernel/capabilityRegistry
+ * 职责：连接管理、心跳、消息收发路由
+ * 安全会话 → ./deviceSessionSecurity
+ * 流式消息 → ./streamingMessageRouter
  */
 
 import { WebSocket } from 'ws';
@@ -30,47 +25,24 @@ import {
   type DeviceCapabilityDescriptor,
   type SensorCapability,
   type ActuatorCapability,
-  // V2 安全握手
-  type DeviceSecurityPolicy,
-  type HandshakeSecurityExt,
   type HandshakeAckSecurityExt,
-  type DeviceSessionState,
   type SecureDeviceMessage,
-  DEFAULT_SECURITY_POLICY,
-  generateNonce,
-  generateECDHKeyPair,
-  deriveSessionKeys,
-  signHandshake,
-  verifyHandshake,
-  createSecureMessage,
-  decryptSecureMessage,
-  isSessionExpired,
-  shouldRotateKey,
 } from '@mindpal/shared';
 
-// ── 流式处理器注入接口（解耦 wsStreamingHandlers）────────────────
+import { DeviceSecuritySession } from './deviceSessionSecurity';
+import {
+  type StreamingSessionState,
+  type StreamingSendContext,
+  type StreamingHandlers,
+  setStreamingHandlers as _setStreamingHandlers,
+  routeStreamingMessage,
+} from './streamingMessageRouter';
 
-/** 流式执行器状态（由宿主注入的 streaming handlers 维护） */
-export interface StreamingSessionState {
-  executor: { stop: () => void; getSummary: () => any } | null;
-  sessionId: string | null;
-}
+// ── 类型/函数重导出（保持外部 API 不变） ─────────────────────
 
-/** 流式发送上下文 */
-export interface StreamingSendContext {
-  ws: { readyState: number; send: (data: string) => void } | null;
-}
+export type { StreamingSessionState, StreamingSendContext, StreamingHandlers };
+export { setStreamingHandlers } from './streamingMessageRouter';
 
-/** 流式消息处理器接口 — 应用层需注入 */
-export interface StreamingHandlers {
-  handleStreamingStart(state: StreamingSessionState, ctx: StreamingSendContext, payload?: Record<string, unknown>): void;
-  handleStreamingStep(state: StreamingSessionState, payload?: Record<string, unknown>): void;
-  handleStreamingStop(state: StreamingSessionState): void;
-  handleStreamingPause(state: StreamingSessionState): void;
-  handleStreamingResume(state: StreamingSessionState): void;
-}
-
-let _streamingHandlers: StreamingHandlers | null = null;
 let _activeInstance: WebSocketDeviceAgent | null = null;
 
 /**
@@ -78,13 +50,6 @@ let _activeInstance: WebSocketDeviceAgent | null = null;
  */
 export function getActiveWebSocketAgent(): WebSocketDeviceAgent | null {
   return _activeInstance;
-}
-
-/**
- * 注入流式消息处理器（应用层在使用 streaming 消息前调用）
- */
-export function setStreamingHandlers(handlers: StreamingHandlers): void {
-  _streamingHandlers = handlers;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -155,11 +120,8 @@ export class WebSocketDeviceAgent {
   private reportConsecutiveFailures = 0;
   private reportFrequencyDivisor = 1;
 
-  /** V2 安全握手 */
-  private _ephemeralPrivateKey: string | null = null;
-  private _deviceSession: DeviceSessionState | null = null;
-  private _securityPolicy: DeviceSecurityPolicy | null = null;
-  private _tokenRefreshTimer: NodeJS.Timeout | null = null;
+  /** V2 安全会话（委托给 DeviceSecuritySession） */
+  private _security = new DeviceSecuritySession();
 
   constructor(config: DeviceAgentConfig, confirmFn?: (q: string) => Promise<boolean>) {
     this.config = config;
@@ -303,11 +265,8 @@ export class WebSocketDeviceAgent {
     if (this.heartbeatTimer) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
     if (this.statusReportTimer) { clearInterval(this.statusReportTimer); this.statusReportTimer = null; }
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-    if (this._tokenRefreshTimer) { clearTimeout(this._tokenRefreshTimer); this._tokenRefreshTimer = null; }
 
-    this._deviceSession = null;
-    this._securityPolicy = null;
-    this._ephemeralPrivateKey = null;
+    this._security.reset();
 
     if (this.ws) { this.ws.close(); this.ws = null; }
     safeLog('[WebSocketDeviceAgent] 已停止');
@@ -415,13 +374,18 @@ export class WebSocketDeviceAgent {
     return result;
   }
 
-  // ── 私有方法 ──
+  // ── 消息路由 ──
 
   private handleMessage(data: Buffer): void {
     try {
       const message: WebSocketMessage = JSON.parse(data.toString('utf8'));
       const taskCtx = this.buildTaskContext();
       const sendCtx: StreamingSendContext = { ws: this.ws };
+
+      // 流式消息委托给 streamingMessageRouter
+      if (routeStreamingMessage(message.type, this.streamingState, sendCtx, message.payload)) {
+        return;
+      }
 
       switch (message.type) {
         case 'task_pending':
@@ -430,33 +394,6 @@ export class WebSocketDeviceAgent {
         case 'device_message':
           handleDeviceMessage(message.payload);
           break;
-        case 'streaming_start':
-          if (_streamingHandlers) {
-            _streamingHandlers.handleStreamingStart(this.streamingState, sendCtx, message.payload);
-          } else {
-            safeLog('[WebSocketDeviceAgent] streaming_start: StreamingHandlers 未注入，忽略');
-          }
-          break;
-        case 'streaming_step':
-          if (_streamingHandlers) {
-            _streamingHandlers.handleStreamingStep(this.streamingState, message.payload);
-          }
-          break;
-        case 'streaming_stop':
-          if (_streamingHandlers) {
-            _streamingHandlers.handleStreamingStop(this.streamingState);
-          }
-          break;
-        case 'streaming_pause':
-          if (_streamingHandlers) {
-            _streamingHandlers.handleStreamingPause(this.streamingState);
-          }
-          break;
-        case 'streaming_resume':
-          if (_streamingHandlers) {
-            _streamingHandlers.handleStreamingResume(this.streamingState);
-          }
-          break;
         case 'device_response':
           this.handleDeviceResponse(message as any);
           break;
@@ -464,7 +401,7 @@ export class WebSocketDeviceAgent {
           break;
         case 'secure.message' as any: {
           const secMsg = message as unknown as SecureDeviceMessage;
-          const decrypted = this.handleSecureMessage(secMsg);
+          const decrypted = this._security.decryptMessage(secMsg);
           if (decrypted) {
             this.handleMessage(Buffer.from(JSON.stringify(decrypted), 'utf8'));
           }
@@ -507,7 +444,7 @@ export class WebSocketDeviceAgent {
       : ["desktop.control", "browser.automation", "file.ops"];
     const handshake: ProtocolHandshake & {
       multimodalCapabilities?: DeviceMultimodalCapabilities;
-      securityExt?: HandshakeSecurityExt;
+      securityExt?: import('./deviceSessionSecurity').HandshakeSecurityExt;
       capabilityDescriptor?: DeviceCapabilityDescriptor;
     } = {
       type: "protocol.handshake",
@@ -522,32 +459,14 @@ export class WebSocketDeviceAgent {
     if (this._capabilityDescriptor) {
       handshake.capabilityDescriptor = this._capabilityDescriptor;
     }
-    try {
-      const keyPair = generateECDHKeyPair();
-      this._ephemeralPrivateKey = keyPair.privateKey;
-
-      const nonce = generateNonce();
-      const timestamp = Date.now();
-
-      const secExtData: Record<string, unknown> = {
-        nonce,
-        timestamp,
-        ephemeralPubKey: keyPair.publicKey,
-      };
-      const hmac = signHandshake(
-        { ...secExtData, type: handshake.type, protocolVersion: handshake.protocolVersion },
-        this.config.deviceToken,
-      );
-
-      handshake.securityExt = {
-        nonce,
-        timestamp,
-        ephemeralPubKey: keyPair.publicKey,
-        hmac,
-      };
-    } catch (err: any) {
-      safeLog(`[WebSocketDeviceAgent] V2 安全扩展生成失败，降级 V1: ${err?.message}`);
-      this._ephemeralPrivateKey = null;
+    // V2 安全扩展
+    const secExt = this._security.buildSecurityExt(
+      handshake.type,
+      handshake.protocolVersion,
+      this.config.deviceToken,
+    );
+    if (secExt) {
+      handshake.securityExt = secExt;
     }
     try {
       this.ws.send(JSON.stringify(handshake));
@@ -557,7 +476,7 @@ export class WebSocketDeviceAgent {
     }
   }
 
-  private handleHandshakeAck(ack: ProtocolHandshakeAck & { securityExt?: HandshakeAckSecurityExt }): void {
+  private handleHandshakeAck(ack: ProtocolHandshakeAck & { securityExt?: import('./deviceSessionSecurity').HandshakeAckSecurityExt }): void {
     if (ack.compatible) {
       safeLog(`[WebSocketDeviceAgent] 协议握手成功: negotiated=${ack.negotiatedVersion} server=${ack.serverVersion}`);
       if (ack.deprecationWarning) {
@@ -567,74 +486,19 @@ export class WebSocketDeviceAgent {
         this._multimodalPolicy = ack.multimodalPolicy;
         safeLog(`[WebSocketDeviceAgent] 多模态策略已接收: modalities=${ack.multimodalPolicy.allowedModalities.join(',')}`);
       }
-      if (ack.securityExt && this._ephemeralPrivateKey) {
-        this.handleSecurityAck(ack.securityExt);
+      if (ack.securityExt && this._security.ephemeralPrivateKey) {
+        this._security.handleSecurityAck(
+          ack.securityExt,
+          this.config.deviceToken,
+          this.config.deviceId,
+          () => this.sendProtocolHandshake(),
+        );
       } else {
         safeLog('[WebSocketDeviceAgent] V1 兼容模式（无安全扩展）');
       }
     } else {
       safeError(`[WebSocketDeviceAgent] 协议不兼容: server=${ack.serverVersion} negotiated=${ack.negotiatedVersion}，请升级 Device Agent`);
       this.stop();
-    }
-  }
-
-  private handleSecurityAck(secExt: HandshakeAckSecurityExt): void {
-    try {
-      const { hmac, ...dataWithoutHmac } = secExt;
-      const hmacValid = verifyHandshake(
-        dataWithoutHmac as unknown as Record<string, unknown>,
-        hmac,
-        this.config.deviceToken,
-      );
-      if (!hmacValid) {
-        safeError('[WebSocketDeviceAgent] V2 服务端 HMAC 校验失败，降级 V1');
-        this._ephemeralPrivateKey = null;
-        return;
-      }
-
-      if (secExt.serverEphemeralPubKey && this._ephemeralPrivateKey) {
-        const salt = `${secExt.sessionId}:${secExt.serverNonce}`;
-        const { sessionKey, hmacKey } = deriveSessionKeys(
-          this._ephemeralPrivateKey,
-          secExt.serverEphemeralPubKey,
-          salt,
-        );
-
-        const policy = secExt.securityPolicy ?? DEFAULT_SECURITY_POLICY;
-        this._securityPolicy = policy;
-
-        this._deviceSession = {
-          sessionId: secExt.sessionId,
-          deviceId: this.config.deviceId,
-          tenantId: '',
-          authLevel: policy.authLevel,
-          sessionKey,
-          hmacKey,
-          messageCounter: 0,
-          replayWindow: new Set(),
-          createdAt: Date.now(),
-          expiresAt: Date.now() + policy.sessionTtlMs,
-        };
-
-        safeLog(`[WebSocketDeviceAgent] V2 安全会话已建立: session=${secExt.sessionId} auth=${policy.authLevel}`);
-
-        if (secExt.tokenRefreshAt) {
-          const delay = secExt.tokenRefreshAt - Date.now();
-          if (delay > 0) {
-            if (this._tokenRefreshTimer) clearTimeout(this._tokenRefreshTimer);
-            this._tokenRefreshTimer = setTimeout(() => {
-              safeLog('[WebSocketDeviceAgent] Token 轮换时间到达，触发重新握手');
-              this.sendProtocolHandshake();
-            }, delay);
-          }
-        }
-      } else {
-        safeLog('[WebSocketDeviceAgent] V2 ACK 缺少 serverEphemeralPubKey，降级 V1');
-      }
-    } catch (err: any) {
-      safeError(`[WebSocketDeviceAgent] V2 安全ACK处理失败: ${err?.message}`);
-    } finally {
-      this._ephemeralPrivateKey = null;
     }
   }
 
@@ -684,42 +548,25 @@ export class WebSocketDeviceAgent {
     }, delayMs);
   }
 
-  // ── V2: 安全消息收发 ──
+  // ── V2: 安全消息收发（委托给 DeviceSecuritySession） ──
 
   sendSecureMessage(payload: Record<string, unknown>): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    if (this._deviceSession && !isSessionExpired(this._deviceSession)) {
-      if (this._securityPolicy && shouldRotateKey(this._deviceSession, this._securityPolicy)) {
-        safeLog('[WebSocketDeviceAgent] 会话密钥需要轮换，触发重新握手');
-        this.sendProtocolHandshake();
-      }
-      const msg = createSecureMessage(payload, this._deviceSession);
-      this.ws.send(JSON.stringify(msg));
-    } else {
-      this.ws.send(JSON.stringify(payload));
+    if (this._security.needsKeyRotation()) {
+      safeLog('[WebSocketDeviceAgent] 会话密钥需要轮换，触发重新握手');
+      this.sendProtocolHandshake();
     }
+    const wrapped = this._security.wrapSecurePayload(payload);
+    this.ws.send(JSON.stringify(wrapped));
   }
 
   handleSecureMessage(msg: SecureDeviceMessage): Record<string, unknown> | null {
-    if (!this._deviceSession) {
-      safeError('[WebSocketDeviceAgent] 收到安全消息但无活跃会话');
-      return null;
-    }
-    if (isSessionExpired(this._deviceSession)) {
-      safeError('[WebSocketDeviceAgent] 会话已过期，丢弃安全消息');
-      this._deviceSession = null;
-      return null;
-    }
-    const result = decryptSecureMessage(msg, this._deviceSession);
-    if (!result) {
-      safeError(`[WebSocketDeviceAgent] 安全消息解密/验证失败: seq=${msg.seq}`);
-    }
-    return result;
+    return this._security.decryptMessage(msg);
   }
 
-  get deviceSession(): DeviceSessionState | null { return this._deviceSession; }
-  get securityPolicy(): DeviceSecurityPolicy | null { return this._securityPolicy; }
+  get deviceSession(): import('./deviceSessionSecurity').DeviceSessionState | null { return this._security.deviceSession; }
+  get securityPolicy(): import('./deviceSessionSecurity').DeviceSecurityPolicy | null { return this._security.securityPolicy; }
 
   private encodeSensorData(report: DeviceStatusReport): Buffer {
     const header = Buffer.alloc(16);

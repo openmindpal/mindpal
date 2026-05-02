@@ -13,39 +13,43 @@
  */
 import { resolveBoolean } from "@mindpal/shared";
 
-let _turboMode: boolean | null = null;
+/* ================================================================== */
+/*  TurboPolicy — 统一配置对象                                          */
+/* ================================================================== */
 
-/** 是否启用加速模式 */
-export function isTurboMode(): boolean {
-  if (_turboMode === null) {
-    _turboMode = resolveBoolean("AGENT_LOOP_TURBO_MODE", undefined, undefined, false).value;
+export interface TurboPolicy {
+  /** 是否跳过 fast tier 检查点写入 */
+  skipFastCheckpoint: boolean;
+  /** 是否跳过治理中的 policy/safety 检查 */
+  skipPolicySafety: boolean;
+  /** 是否跳过意图漂移检测（需结合 iteration 判断） */
+  skipIntentDrift: boolean;
+  /** 是否跳过决策质量重试 */
+  skipDecisionRetry: boolean;
+  /** 是否跳过动态策略检索（需结合 iteration 判断） */
+  skipStrategyRecall: boolean;
+}
+
+let _cachedPolicy: TurboPolicy | null = null;
+
+/** 获取 Turbo 策略配置（单例缓存，避免重复读取环境变量） */
+export function getTurboPolicy(): TurboPolicy {
+  if (!_cachedPolicy) {
+    const turboEnabled = resolveBoolean("AGENT_LOOP_TURBO_MODE", undefined, undefined, false).value;
+    _cachedPolicy = {
+      skipFastCheckpoint: turboEnabled,
+      skipPolicySafety: turboEnabled,
+      skipIntentDrift: turboEnabled,
+      skipDecisionRetry: turboEnabled,
+      skipStrategyRecall: turboEnabled,
+    };
   }
-  return _turboMode;
+  return _cachedPolicy;
 }
 
-/** 加速模式下是否应跳过 fast tier 检查点写入 */
-export function turboSkipFastCheckpoint(): boolean {
-  return isTurboMode();
-}
-
-/** 加速模式下是否应跳过治理中的 policy/safety 检查 */
-export function turboSkipPolicySafety(): boolean {
-  return isTurboMode();
-}
-
-/** 加速模式下是否应跳过当前迭代的意图漂移检测 */
-export function turboSkipIntentDrift(iteration: number): boolean {
-  return isTurboMode() && iteration % 2 === 0; // 仅奇数迭代执行
-}
-
-/** 加速模式下是否应跳过决策质量重试 */
-export function turboSkipDecisionRetry(): boolean {
-  return isTurboMode();
-}
-
-/** 加速模式下是否应跳过当前迭代的动态策略检索 */
-export function turboSkipStrategyRecall(iteration: number): boolean {
-  return isTurboMode() && iteration > 1; // 仅第 1 次迭代执行
+/** 重置缓存（用于测试或配置热更新） */
+export function invalidateTurboCache(): void {
+  _cachedPolicy = null;
 }
 
 // 允许 turbo 模式的租户白名单（仅开发/沙盒租户）
@@ -58,10 +62,5 @@ const TURBO_ALLOWED_TENANTS = new Set(
  * 即使全局 AGENT_LOOP_TURBO_MODE=true，也只有白名单内的租户才能启用
  */
 export function isTurboAllowedForTenant(tenantId: string): boolean {
-  return isTurboMode() && TURBO_ALLOWED_TENANTS.has(tenantId);
-}
-
-/** 重置缓存（用于测试或配置热更新） */
-export function resetTurboModeCache(): void {
-  _turboMode = null;
+  return getTurboPolicy().skipFastCheckpoint && TURBO_ALLOWED_TENANTS.has(tenantId);
 }

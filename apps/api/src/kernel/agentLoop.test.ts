@@ -175,8 +175,13 @@ vi.mock("./loopCacheConfig", () => ({
 }));
 
 vi.mock("./loopTurboMode", () => ({
-  turboSkipFastCheckpoint: vi.fn(() => false),
-  turboSkipDecisionRetry: vi.fn(() => false),
+  getTurboPolicy: vi.fn(() => ({
+    skipFastCheckpoint: false,
+    skipPolicySafety: false,
+    skipIntentDrift: false,
+    skipDecisionRetry: false,
+    skipStrategyRecall: false,
+  })),
 }));
 
 vi.mock("./loopObservation", () => ({

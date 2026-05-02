@@ -3,11 +3,11 @@ import { z } from "zod";
 import crypto from "node:crypto";
 import { POLICY_EXPR_JSON_SCHEMA_V1, validatePolicyExpr, validateAbacPolicyRule, evaluateAbacPolicySet } from "@mindpal/shared";
 import type { AbacEvaluationRequest, AbacPolicyRule, AbacPolicySet } from "@mindpal/shared";
-import { Errors } from "../lib/errors";
-import { guarded } from "../middleware/routeGuard";
+import { Errors } from "../../lib/errors";
+import { guarded } from "../../middleware/routeGuard";
 import { PERM } from "@mindpal/shared";
-import { authorize, invalidateRbacCache } from "../modules/auth/authz";
-import { bumpPolicyCacheEpoch } from "../modules/auth/policyCacheEpochRepo";
+import { authorize, invalidateRbacCache } from "../../modules/auth/authz";
+import { bumpPolicyCacheEpoch } from "../../modules/auth/policyCacheEpochRepo";
 
 function isSafeFieldName(name: string) {
   if (!name) return false;

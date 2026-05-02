@@ -11,10 +11,10 @@
  *   POST /internal/alertmanager-webhook     — Alertmanager 告警接收
  */
 import type { FastifyPluginAsync } from "fastify";
-import { runAgentLoop, type AgentLoopParams } from "../kernel/agentLoop";
-import type { WorkflowQueue } from "../modules/workflow/queue";
-import { rescanAndRegisterTools } from "../modules/tools/toolAutoDiscovery";
-import { invalidateToolCatalogQueryCache } from "../modules/agentContext";
+import { runAgentLoop, type AgentLoopParams } from "../../kernel/agentLoop";
+import type { WorkflowQueue } from "../../modules/workflow/queue";
+import { rescanAndRegisterTools } from "../../modules/tools/toolAutoDiscovery";
+import { invalidateToolCatalogQueryCache } from "../../modules/agentContext";
 
 /* ================================================================== */
 /*  Configuration                                                       */

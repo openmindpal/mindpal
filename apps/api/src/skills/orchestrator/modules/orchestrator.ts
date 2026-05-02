@@ -916,10 +916,11 @@ export async function orchestrateChatTurn(params: {
 
   /* ── 内联工具执行：分类 + 执行只读/安全写入工具 ── */
   const inlineWritableEntities = await loadInlineWritableEntities(params.pool);
-  const resolution = resolveExecutionClassFromSuggestions({
+  const resolution = await resolveExecutionClassFromSuggestions({
     toolCalls: validatedToolCalls,
     enabledTools: toolDiscovery.tools,
     inlineWritableEntities,
+    dbCtx: { pool: params.pool, tenantId: params.subject.tenantId },
   });
 
   if (resolution.inlineTools.length > 0) {

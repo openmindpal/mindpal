@@ -24,6 +24,44 @@ import { authorizeToolExecution, findFallbackTool, AGENT_LOOP_PERMISSION_FALLBAC
 const _logger = new StructuredLogger({ module: "loopToolExecutor" });
 
 /* ================================================================== */
+/*  Schema 兼容性检查                                                    */
+/* ================================================================== */
+
+/**
+ * 检查 fallback 工具是否与原始工具的 inputSchema 核心字段兼容。
+ * 策略：宽松检查 — fallback 工具的 inputSchema 必须能接受原始输入的 required 字段。
+ * 不会过于严格（允许 fallback 接受更多字段或更少 optional 字段）。
+ */
+function checkSchemaCompatibility(
+  originalSchema: Record<string, unknown> | undefined,
+  fallbackSchema: Record<string, unknown> | undefined,
+): { compatible: boolean; reason?: string } {
+  // 无 schema 信息时默认兼容（宽松策略）
+  if (!originalSchema || !fallbackSchema) return { compatible: true };
+
+  const origProps = (originalSchema.properties ?? {}) as Record<string, unknown>;
+  const fbProps = (fallbackSchema.properties ?? {}) as Record<string, unknown>;
+  const origRequired = Array.isArray(originalSchema.required) ? originalSchema.required as string[] : [];
+
+  // 核心检查：原始 schema 的 required 字段在 fallback 中必须存在
+  const missingRequired: string[] = [];
+  for (const field of origRequired) {
+    if (!(field in fbProps)) {
+      missingRequired.push(field);
+    }
+  }
+
+  if (missingRequired.length > 0) {
+    return {
+      compatible: false,
+      reason: `Fallback tool missing required input fields: ${missingRequired.join(", ")}`,
+    };
+  }
+
+  return { compatible: true };
+}
+
+/* ================================================================== */
 /*  Fallback 影响评估                                                    */
 /* ================================================================== */
 
@@ -143,8 +181,19 @@ export async function executeToolCall(params: {
           originalCatalogEntry?.semanticMeta,
         );
         if (fallbackRef) {
-          _logger.info("permission-fallback", { toolRef: resolved.toolRef, fallbackRef, runId });
+          // ── Schema 兼容性检查：确保 fallback 工具能接受原始输入的核心字段 ──
           const fallbackResolved = await resolveAndValidateTool({ tenantId, pool, spaceId, rawToolRef: fallbackRef });
+          const schemaCheck = checkSchemaCompatibility(
+            resolved.version.inputSchema as Record<string, unknown> | undefined,
+            fallbackResolved.version.inputSchema as Record<string, unknown> | undefined,
+          );
+          if (!schemaCheck.compatible) {
+            _logger.warn("fallback-schema-incompatible", {
+              toolRef: resolved.toolRef, fallbackRef, reason: schemaCheck.reason, runId,
+            });
+            // Schema 不兼容，不使用此 fallback，继续尝试原始权限拒绝路径
+          } else {
+          _logger.info("permission-fallback", { toolRef: resolved.toolRef, fallbackRef, runId });
           const fallbackAuth = await authorizeToolExecution({
             pool, subjectId, tenantId, spaceId, traceId, runId, jobId,
             resourceType: fallbackResolved.resourceType,
@@ -175,10 +224,39 @@ export async function executeToolCall(params: {
             // 将 fallbackImpact 暂存，在返回时一并传递
             (params as any)._fallbackImpact = fbImpact;
           }
+          }
         }
       }
       if (!authResult.authorized) {
-        return { stepId: "", ok: false, error: authResult.errorMessage ?? "权限检查未通过" };
+        // ── 返回结构化降级结果，而非直接抛出错误 ──
+        const attemptedFallbacks: string[] = [];
+        if (AGENT_LOOP_PERMISSION_FALLBACK && toolCatalog?.length) {
+          const originalCat = toolCatalog.find(t => t.ref === resolved.toolRef);
+          if (originalCat?.category) {
+            toolCatalog
+              .filter(t => t.ref !== resolved.toolRef && t.category === originalCat.category)
+              .forEach(t => attemptedFallbacks.push(t.ref));
+          }
+        }
+        _logger.warn("no-compatible-fallback", {
+          toolRef: resolved.toolRef,
+          status: "degraded",
+          reason: "no_compatible_fallback",
+          attemptedFallbacks,
+          runId,
+        });
+        return {
+          stepId: "",
+          ok: false,
+          error: JSON.stringify({
+            status: "degraded",
+            reason: "no_compatible_fallback",
+            originalTool: resolved.toolRef,
+            attemptedFallbacks,
+            partialResult: null,
+            authError: authResult.errorMessage ?? "权限检查未通过",
+          }),
+        };
       }
     }
     const permDur = Math.round(performance.now() - permStart);

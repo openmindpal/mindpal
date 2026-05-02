@@ -19,7 +19,7 @@ import type { StepObservation, ExecutionConstraints } from "./loopTypes";
 import { buildThinkPrompt } from "./loopThinkDecide";
 import { selectPurposeTier, tryDynamicModelRoute } from "./loopModelRouter";
 import { detectIntentBoundary, type IntentDriftResult } from "./intentAnchoringService";
-import { turboSkipIntentDrift, turboSkipStrategyRecall } from "./loopTurboMode";
+import { getTurboPolicy } from "./loopTurboMode";
 
 /* ================================================================== */
 /*  迭代上下文构建 — 辅助函数                                              */
@@ -77,7 +77,7 @@ async function fetchDynamicStrategy(params: {
   runId: string;
 }): Promise<string | undefined> {
   const { pool, subject, goal, iterations, observations, strategyContext, auditCtx, log, runId } = params;
-  if (!(iterations > 1 && iterations % 3 === 0) || turboSkipStrategyRecall(iterations)) return strategyContext;
+  if (!(iterations > 1 && iterations % 3 === 0) || (getTurboPolicy().skipStrategyRecall && iterations > 1)) return strategyContext;
   try {
     const recentObsSummary = observations.slice(-3).map(o => `- ${o.toolRef}`).join('\n');
     const freshStrategyRecall = await recallProceduralStrategies({
@@ -107,7 +107,7 @@ async function fetchIntentDrift(params: {
   log: FastifyInstance["log"];
 }): Promise<IntentDriftResult | null> {
   const { pool, subject, runId, goal, iterations, observations, log } = params;
-  if (iterations <= 1 || turboSkipIntentDrift(iterations)) return null;
+  if (iterations <= 1 || (getTurboPolicy().skipIntentDrift && iterations % 2 === 0)) return null;
   try {
     const lastObs = observations[observations.length - 1];
     const currentSignal = lastObs

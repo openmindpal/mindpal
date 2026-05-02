@@ -20,7 +20,7 @@ import crypto from "node:crypto";
 import { isToolEnabled } from "../modules/governance/toolGovernanceRepo";
 import { getToolVersionByRef, getToolDefinition } from "../modules/tools/toolRepo";
 import { resolveEffectiveToolRef } from "../modules/tools/resolve";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+import { assessToolExecutionRisk } from "./approvalRuleEngine";
 
 /* ================================================================== */
 /*  Types                                                               */
@@ -222,7 +222,11 @@ export async function insertStep(params: InsertStepParams): Promise<InsertStepRe
   
   // 5. 获取工具定义以确定 approvalRequired
   const def = await getToolDefinition(pool, tenantId, toolName);
-  const approvalRequired = step.approvalRequired || shouldRequireApproval(def ?? {});
+  const approvalRequired = step.approvalRequired || (await assessToolExecutionRisk({
+    pool, tenantId, toolRef: effToolRef ?? step.toolRef,
+    inputDraft: step.inputDraft,
+    toolDefinition: def ? { riskLevel: def.riskLevel as any, approvalRequired: def.approvalRequired, scope: def.scope ?? undefined } : undefined,
+  })).approvalRequired;
   
   // 6. 生成步骤 ID 并插入
   const stepId = crypto.randomUUID();
@@ -374,7 +378,11 @@ export async function replanFromCurrent(ctx: ReplanContext): Promise<ReplanResul
       : await resolveEffectiveToolRef({ pool, tenantId, spaceId, name: toolName });
     
     const def = await getToolDefinition(pool, tenantId, toolName);
-    const approvalRequired = step.approvalRequired || shouldRequireApproval(def ?? {});
+    const approvalRequired = step.approvalRequired || (await assessToolExecutionRisk({
+      pool, tenantId, toolRef: effToolRef ?? step.toolRef,
+      inputDraft: step.inputDraft,
+      toolDefinition: def ? { riskLevel: def.riskLevel as any, approvalRequired: def.approvalRequired, scope: def.scope ?? undefined } : undefined,
+    })).approvalRequired;
     
     await pool.query(
       `INSERT INTO steps (

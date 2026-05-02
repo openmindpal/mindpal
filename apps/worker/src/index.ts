@@ -2,7 +2,7 @@ import { Worker } from "bullmq";
 import "./otel";
 import { SpanStatusCode, context, trace } from "@opentelemetry/api";
 import { loadConfig } from "./config";
-import { validateEnvironment, formatValidationResult, StructuredLogger, classifyError } from "@mindpal/shared";
+import { validateEnvironment, formatValidationResult, StructuredLogger, classifyError, ServiceError, ServiceErrorCategory as ErrorCategory } from "@mindpal/shared";
 import { extractTraceContext, injectTraceHeaders } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:main" });
@@ -42,13 +42,15 @@ interface WorkflowJobData {
 
 /** 运行时检查 job.data 必要字段，避免 `as any` 隐藏结构缺陷 */
 function validateJobData(raw: unknown): WorkflowJobData {
-  if (raw == null || typeof raw !== "object") throw new Error("invalid job data: not an object");
+  if (raw == null || typeof raw !== "object") {
+    throw new ServiceError({ category: ErrorCategory.INVALID_REQUEST, code: "JOB_DATA_INVALID", httpStatus: 400, message: "invalid job data: not an object" });
+  }
   const d = raw as Record<string, unknown>;
   const jobId = d.jobId != null ? String(d.jobId) : "";
   const runId = d.runId != null ? String(d.runId) : "";
   const stepId = d.stepId != null ? String(d.stepId) : "";
   if (!jobId || !runId || !stepId) {
-    throw new Error(`invalid job data: missing required fields (jobId=${jobId}, runId=${runId}, stepId=${stepId})`);
+    throw new ServiceError({ category: ErrorCategory.INVALID_REQUEST, code: "JOB_DATA_INVALID", httpStatus: 400, message: `invalid job data: missing required fields (jobId=${jobId}, runId=${runId}, stepId=${stepId})` });
   }
   return { ...d, jobId, runId, stepId, kind: d.kind != null ? String(d.kind) : undefined };
 }
@@ -119,7 +121,7 @@ async function main() {
     if (timeoutMs <= 0) return promise;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error(`job_timeout: job ${jobId} exceeded ${timeoutMs}ms limit`));
+        reject(new ServiceError({ category: ErrorCategory.TIMEOUT, code: "JOB_TIMEOUT", httpStatus: 504, message: `job ${jobId} exceeded ${timeoutMs}ms limit` }));
       }, timeoutMs);
       timer.unref();
       promise.then(
@@ -166,18 +168,22 @@ async function main() {
           } finally {
             span.end();
           }
-          redis.incr("worker:workflow:step:success").catch((e: any) => {
-            _logger.warn("redis incr step:success failed", { error: String(e?.message ?? e) });
+          redis.incr("worker:workflow:step:success").catch((e: unknown) => {
+            const err = e instanceof Error ? e : new Error(String(e));
+            _logger.error("redis metrics incr failed", { err: err.message, stack: err.stack, key: "step:success" });
           });
-          redis.incr("worker:tool_execute:success").catch((e: any) => {
-            _logger.warn("redis incr tool_execute:success failed", { error: String(e?.message ?? e) });
+          redis.incr("worker:tool_execute:success").catch((e: unknown) => {
+            const err = e instanceof Error ? e : new Error(String(e));
+            _logger.error("redis metrics incr failed", { err: err.message, stack: err.stack, key: "tool_execute:success" });
           });
         } catch (e) {
-          redis.incr("worker:workflow:step:error").catch((e2: any) => {
-            _logger.warn("redis incr step:error failed", { error: String(e2?.message ?? e2) });
+          redis.incr("worker:workflow:step:error").catch((e2: unknown) => {
+            const err = e2 instanceof Error ? e2 : new Error(String(e2));
+            _logger.error("redis metrics incr failed", { err: err.message, stack: err.stack, key: "step:error" });
           });
-          redis.incr("worker:tool_execute:error").catch((e2: any) => {
-            _logger.warn("redis incr tool_execute:error failed", { error: String(e2?.message ?? e2) });
+          redis.incr("worker:tool_execute:error").catch((e2: unknown) => {
+            const err = e2 instanceof Error ? e2 : new Error(String(e2));
+            _logger.error("redis metrics incr failed", { err: err.message, stack: err.stack, key: "tool_execute:error" });
           });
           throw e;
         }
@@ -238,7 +244,7 @@ async function main() {
       if (attemptsMade < maxAttempts) return;
       await markWorkflowStepDeadletter({ pool, jobId, runId, stepId, queueJobId: String(job.id), err });
     } catch (e) {
-      _logger.error("deadletter mark failed", { err: (e as Error)?.message });
+      _logger.error("deadletter mark failed", { err: (e as Error)?.message, stack: (e as Error)?.stack });
     }
   });
 
@@ -269,8 +275,9 @@ async function main() {
       _logger.info("Graceful shutdown complete");
       clearTimeout(forceTimer);
       process.exit(0);
-    } catch (e: any) {
-      _logger.error("Graceful shutdown error", { err: e?.message });
+    } catch (e: unknown) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      _logger.error("Graceful shutdown error", { err: err.message, stack: err.stack });
       clearTimeout(forceTimer);
       process.exit(1);
     }

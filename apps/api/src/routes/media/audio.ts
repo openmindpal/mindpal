@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { guarded } from "../middleware/routeGuard";
-import { transcribeAudio, synthesizeSpeech, getAudioCapabilities, createStreamingSTTSession } from "../modules/audioService";
+import { guarded } from "../../middleware/routeGuard";
+import { transcribeAudio, synthesizeSpeech, getAudioCapabilities, createStreamingSTTSession } from "../../modules/audioService";
 import type { VideoStreamClientMessage, VideoStreamServerMessage } from "@mindpal/shared";
 
 export const audioRoutes: FastifyPluginAsync = async (app) => {

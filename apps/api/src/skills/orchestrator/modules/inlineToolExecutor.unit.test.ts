@@ -1,5 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+vi.mock("../../../kernel/approvalRuleEngine", () => ({
+  assessToolExecutionRisk: vi.fn().mockResolvedValue({
+    riskLevel: "low",
+    approvalRequired: false,
+    riskFactors: [],
+    matchedRules: [],
+    humanSummary: "该操作无需审批",
+    requiredApprovals: 1,
+    approverRoles: [],
+    expiresInMinutes: null,
+  }),
+}));
+
 // ── mock 准入检查 & 审计模块 ──
 vi.mock("../../../kernel/executionKernel", () => ({
   admitInlineExecution: vi.fn().mockResolvedValue({ admitted: true }),
@@ -25,7 +38,6 @@ vi.mock("../../knowledge-rag/modules/repo", () => ({
 vi.mock("@mindpal/shared", () => ({
   evaluateMemoryRisk: vi.fn(() => ({ level: "low", reasons: [] })),
   resolveNumber: vi.fn(() => ({ value: 0.6 })),
-  shouldRequireApproval: vi.fn(() => false),
   ServiceError: class ServiceError extends Error {
     category; code; httpStatus; details;
     constructor(p: any) { super(p.message); this.category = p.category; this.code = p.code; this.httpStatus = p.httpStatus; this.details = p.details; }

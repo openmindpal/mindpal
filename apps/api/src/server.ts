@@ -17,7 +17,7 @@ import { apiVersionPlugin } from "./plugins/apiVersioning";
 import { realtimeNotificationPlugin } from "./plugins/realtimeNotification";
 import { autoDiscoverAndRegisterTools } from "./modules/tools/toolAutoDiscovery";
 import { runBoundaryScan, formatBoundaryScanReport } from "./lib/startupBoundaryScan";
-import { internalRoutes } from "./routes/internal";
+import { internalRoutes } from "./routes/system/internal";
 import { createDbAuthProvider } from "./modules/auth/dbAuthProvider";
 
 // ── Middleware (3 阶段) ──
@@ -55,9 +55,13 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
   app.decorate("cfg", cfg);
   app.decorate("metrics", createMetricsRegistry());
   app.decorate("authProvider", createDbAuthProvider(deps.db));
-  app.redis.on("error", () => undefined);
+  app.redis.on("error", (err) => {
+    app.log.error({ err: err.message, stack: err.stack }, "redis connection error");
+  });
   // 启动 RBAC 缓存 Pub/Sub 订阅（跨实例缓存失效）
-  initRbacCacheSubscriber(app.redis).catch(() => {});
+  initRbacCacheSubscriber(app.redis).catch((err: unknown) => {
+    app.log.error({ err: (err as Error).message }, "RBAC cache subscriber init failed, operating in degraded mode");
+  });
   app.register(websocket);
   app.addContentTypeParser("application/scim+json", { parseAs: "string" }, (_req, body, done) => {
     try {

@@ -37,6 +37,12 @@ const BACKPRESSURE_HIGH_WATER_MARK = Math.max(
   1,
   Number(process.env.SSE_BACKPRESSURE_HIGH_WATER) || 64,
 );
+const SSE_SUMMARY_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.SSE_SUMMARY_TIMEOUT_MS) || 30_000,
+);
+/** 僵尸连接判定阈值：心跳间隔的 3 倍无活动则标记为 stale */
+const STALE_CONNECTION_THRESHOLD_MS = HEARTBEAT_INTERVAL_MS * 3;
 
 /* ================================================================== */
 /*  类型定义                                                            */
@@ -97,6 +103,7 @@ interface ConnectionEntry {
   sessionId?: string;
   taskIds: Set<string>;
   createdAt: number;
+  lastActivityAt: number;
   eventCount: number;
   bytesSent: number;
   droppedEvents: number;
@@ -132,8 +139,21 @@ function ensureHeartbeat(): void {
         registry.delete(id);
         continue;
       }
+      // 僵尸连接清理：超过阈值无活动的连接标记为 stale 并关闭
+      if (now - entry.lastActivityAt > STALE_CONNECTION_THRESHOLD_MS) {
+        try {
+          entry.conn.sendEvent("error", { errorCode: "STALE_CONNECTION", message: "Connection timed out due to inactivity" });
+        } catch { /* ignore */ }
+        try {
+          entry.conn.abortController.abort();
+          entry.conn.close();
+        } catch { /* ignore */ }
+        registry.delete(id);
+        continue;
+      }
       try {
         entry.conn.sendEvent("ping", { ts: now });
+        entry.lastActivityAt = now;
       } catch {
         // 发送失败，连接可能已断开，由 close 事件清理
       }
@@ -231,6 +251,7 @@ export function openManagedSse(params: OpenManagedSseParams): ManagedSseConnecti
     sessionId,
     taskIds: new Set(),
     createdAt: Date.now(),
+    lastActivityAt: Date.now(),
     eventCount: 0,
     bytesSent: 0,
     droppedEvents: 0,
@@ -270,6 +291,7 @@ export function openManagedSse(params: OpenManagedSseParams): ManagedSseConnecti
 
         entry.eventCount++;
         entry.bytesSent += bytes;
+        entry.lastActivityAt = Date.now();
         totalEventsSent++;
         totalBytesSent += bytes;
 
@@ -320,10 +342,12 @@ export function openManagedSse(params: OpenManagedSseParams): ManagedSseConnecti
   entry.conn = connection;
   registry.set(connectionId, entry);
 
-  // ── 自动清理：客户端断开时从注册中心移除 ──
+  // ── 自动清理：客户端断开时从注册中心移除 + 取消挂起异步操作 ──
   const autoCleanup = () => {
     rawStream.off("drain", onDrain);
     registry.delete(connectionId);
+    // 取消所有挂起的异步操作（如摘要回写等）
+    try { sse.abortController.abort(); } catch { /* ignore */ }
     maybeStopHeartbeat();
   };
   req.raw.on("close", autoCleanup);
@@ -493,6 +517,26 @@ export function getConnectionMetrics(connectionId: string): {
 /* ================================================================== */
 /*  优雅关闭                                                            */
 /* ================================================================== */
+
+/**
+ * 带超时的摘要回写辅助函数。
+ * 用 AbortSignal.timeout 包裹异步操作，防止摘要回写无限挂起导致资源泄漏。
+ */
+export async function withSummaryTimeout<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number = SSE_SUMMARY_TIMEOUT_MS,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fn(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** 导出摘要超时配置供外部模块使用 */
+export { SSE_SUMMARY_TIMEOUT_MS };
 
 /**
  * 关闭所有活跃 SSE 连接（用于优雅关闭流程）。

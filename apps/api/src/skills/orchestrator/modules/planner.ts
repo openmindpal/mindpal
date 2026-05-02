@@ -6,7 +6,7 @@ import { authorize } from "../../../modules/auth/authz";
 import { isToolEnabled } from "../../../modules/governance/toolGovernanceRepo";
 import { resolveEffectiveToolRef } from "../../../modules/tools/resolve";
 import { getToolDefinition, getToolVersionByRef, type ToolDefinition } from "../../../modules/tools/toolRepo";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+import { assessToolExecutionRisk } from "../../../kernel/approvalRuleEngine";
 import type { FailureDiagnosis } from "@mindpal/shared";
 
 /* ================================================================== */
@@ -281,7 +281,13 @@ export async function buildHeuristicPlan(params: {
 
   const planSteps: any[] = [];
   for (const c of candidates.slice(0, params.maxSteps)) {
-    const approvalRequired = shouldRequireApproval(c.def ?? {});
+    const approvalRequired = (await assessToolExecutionRisk({
+      pool: params.pool,
+      tenantId: params.tenantId,
+      toolRef: c.toolRef,
+      inputDraft: c.inputDraft,
+      toolDefinition: c.def ? { riskLevel: c.def.riskLevel as any, approvalRequired: c.def.approvalRequired, scope: c.def.scope ?? undefined } : undefined,
+    })).approvalRequired;
     planSteps.push({
       stepId: crypto.randomUUID(),
       actorRole: "executor",

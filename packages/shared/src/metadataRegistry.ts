@@ -52,6 +52,11 @@ export interface MetadataRegistryDeps {
   pool: { query(text: string, values?: unknown[]): Promise<{ rows: unknown[] }> };
 }
 
+/** metadata_registry 显式字段列表（与 toEntry 映射对齐） */
+const METADATA_REGISTRY_COLS = `kind, name, version, tenant_id, scope_type, scope_id,
+  schema_json, capabilities, enabled, rollout_mode, grace_deadline,
+  metadata_json, updated_at`;
+
 /* ------------------------------------------------------------------ */
 /*  Internal helpers                                                    */
 /* ------------------------------------------------------------------ */
@@ -107,7 +112,7 @@ export async function registerMetadata(
        grace_deadline = EXCLUDED.grace_deadline,
        metadata_json  = EXCLUDED.metadata_json,
        updated_at     = now()
-     RETURNING *`,
+     RETURNING ${METADATA_REGISTRY_COLS}`,
     [
       entry.kind,
       entry.name,
@@ -144,7 +149,7 @@ export async function resolveMetadata(
 ): Promise<MetadataEntry | null> {
   // 1. 查询 space 级
   const spaceRes = await deps.pool.query(
-    `SELECT * FROM metadata_registry
+    `SELECT ${METADATA_REGISTRY_COLS} FROM metadata_registry
      WHERE kind = $1 AND name = $2 AND tenant_id = $3
        AND scope_type = 'space' AND scope_id = $4
      LIMIT 1`,
@@ -154,7 +159,7 @@ export async function resolveMetadata(
 
   // 2. fallback 到 tenant 级
   const tenantRes = await deps.pool.query(
-    `SELECT * FROM metadata_registry
+    `SELECT ${METADATA_REGISTRY_COLS} FROM metadata_registry
      WHERE kind = $1 AND name = $2 AND tenant_id = $3
        AND scope_type = 'tenant' AND scope_id = $3
      LIMIT 1`,
@@ -202,7 +207,7 @@ export async function listMetadata(
   }
 
   const res = await deps.pool.query(
-    `SELECT * FROM metadata_registry
+    `SELECT ${METADATA_REGISTRY_COLS} FROM metadata_registry
      WHERE ${where.join(" AND ")}
      ORDER BY updated_at DESC
      LIMIT 500`,

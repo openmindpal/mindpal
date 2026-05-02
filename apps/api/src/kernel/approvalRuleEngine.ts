@@ -36,6 +36,11 @@ function safeRegex(pattern: string, flags?: string): RegExp | null {
 /* ================================================================== */
 
 const RULE_CACHE_TTL_MS = 60_000; // 60s, metadata-driven fallback
+
+/** approval_rules 显式字段列表（与 toRule 映射对齐） */
+const APPROVAL_RULE_COLS = `rule_id, tenant_id, rule_type, name, description, priority, enabled,
+  match_condition, effect, scope_type, scope_id, metadata, created_at, updated_at`;
+
 const ruleCache = new Map<string, { rules: ApprovalRule[]; ts: number }>();
 
 export function invalidateRuleCache(tenantId?: string, ruleType?: string): void {
@@ -154,7 +159,7 @@ export async function loadApprovalRules(params: {
   if (cached && Date.now() - cached.ts < RULE_CACHE_TTL_MS) return cached.rules;
 
   const res = await pool.query(
-    `SELECT * FROM approval_rules
+    `SELECT ${APPROVAL_RULE_COLS} FROM approval_rules
      WHERE rule_type = $1 AND enabled = true
        AND (tenant_id = $2 OR tenant_id = '__default__')
      ORDER BY
@@ -602,7 +607,7 @@ export async function createApprovalRule(params: {
   const res = await pool.query(
     `INSERT INTO approval_rules (tenant_id, rule_type, name, description, priority, match_condition, effect)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING *`,
+     RETURNING ${APPROVAL_RULE_COLS}`,
     [tenantId, ruleType, name, description ?? "", priority ?? 100, JSON.stringify(matchCondition), JSON.stringify(effect)],
   );
   const rule = toRule(res.rows[0]);
@@ -621,7 +626,7 @@ export async function updateApprovalRule(params: {
 }): Promise<ApprovalRule | null> {
   const { pool, ruleId, tenantId, updates, changedBy } = params;
   // snapshot before
-  const prev = await pool.query(`SELECT * FROM approval_rules WHERE rule_id = $1 AND tenant_id = $2`, [ruleId, tenantId]);
+  const prev = await pool.query(`SELECT ${APPROVAL_RULE_COLS} FROM approval_rules WHERE rule_id = $1 AND tenant_id = $2`, [ruleId, tenantId]);
   if (prev.rows.length === 0) return null;
   const prevRow = prev.rows[0];
 
@@ -639,7 +644,7 @@ export async function updateApprovalRule(params: {
   sets.push(`updated_at = now()`);
   vals.push(ruleId, tenantId);
   const res = await pool.query(
-    `UPDATE approval_rules SET ${sets.join(", ")} WHERE rule_id = $${idx++} AND tenant_id = $${idx++} RETURNING *`,
+    `UPDATE approval_rules SET ${sets.join(", ")} WHERE rule_id = $${idx++} AND tenant_id = $${idx++} RETURNING ${APPROVAL_RULE_COLS}`,
     vals,
   );
   if (res.rows.length === 0) return null;
@@ -656,7 +661,7 @@ export async function deleteApprovalRule(params: {
   changedBy?: string;
 }): Promise<boolean> {
   const { pool, ruleId, tenantId, changedBy } = params;
-  const prev = await pool.query(`SELECT * FROM approval_rules WHERE rule_id = $1 AND tenant_id = $2`, [ruleId, tenantId]);
+  const prev = await pool.query(`SELECT ${APPROVAL_RULE_COLS} FROM approval_rules WHERE rule_id = $1 AND tenant_id = $2`, [ruleId, tenantId]);
   if (prev.rows.length === 0) return false;
   await pool.query(`DELETE FROM approval_rules WHERE rule_id = $1 AND tenant_id = $2`, [ruleId, tenantId]);
   await insertAudit(pool, ruleId, tenantId, "delete", prev.rows[0], null, changedBy ?? "system");

@@ -30,7 +30,7 @@
 import type { CapabilityDescriptor } from "@mindpal/device-agent-sdk";
 import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@mindpal/device-agent-sdk";
 import { apiPostJson } from "@mindpal/device-agent-sdk";
-import { type PlanStep, type TargetSpec, isTargetCoord, isTargetPercent, isTargetText } from "./guiTypes";
+import { type PlanStep, type TargetSpec, isTargetText } from "./guiTypes";
 import {
   captureScreen,
   cleanupCapture,
@@ -40,9 +40,17 @@ import {
   type ScreenCapture,
 } from "./localVision";
 import { executeNativeGuiAction, SCREEN_CHANGING_ACTIONS } from "@mindpal/device-agent-sdk";
+import {
+  resolveTarget,
+  resolveTargetWithCache,
+  hasError,
+  hasErrorV2,
+  batchPreResolveTargets,
+  type OcrCacheState,
+} from "./guiTargetResolver";
+import { captureAndUploadEvidence, screenshotAndUpload } from "./guiEvidenceCollector";
 
 // ── 类型重导出（从 guiTypes.ts 统一导入） ─────────────────────────────
-
 export type { PlanStep, TargetSpec } from "./guiTypes";
 
 /** 执行计划时每步的结果 */
@@ -54,46 +62,6 @@ type StepResult = {
   durationMs: number;
 };
 
-// ── 辅助函数（从 guiTypes.ts 导入） ──────────────────────────────────
-
-/**
- * 解析目标为绝对屏幕坐标。
- * - 绝对坐标 → 直接返回
- * - 百分比坐标 → 按屏幕尺寸换算
- * - 文字 → 本地 OCR 截图后定位（核心闭环）
- */
-async function resolveTarget(
-  target: TargetSpec,
-  ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null },
-): Promise<{ x: number; y: number } | { error: string }> {
-  if (isTargetCoord(target)) return { x: target.x, y: target.y };
-
-  // 需要截图 + OCR
-  if (!ocrCache.capture) {
-    ocrCache.capture = await captureScreen();
-    ocrCache.results = await ocrScreen(ocrCache.capture);
-  }
-
-  if (isTargetPercent(target)) {
-    return {
-      x: Math.round((target.xPercent / 100) * ocrCache.capture.width),
-      y: Math.round((target.yPercent / 100) * ocrCache.capture.height),
-    };
-  }
-
-  if (isTargetText(target)) {
-    const match = findTextInOcrResults(ocrCache.results!, target.text, { fuzzy: target.fuzzy });
-    if (!match) return { error: `未找到文字: "${target.text}"` };
-    return { x: match.x, y: match.y };
-  }
-
-  return { error: "无效的目标定位方式" };
-}
-
-function hasError(r: { x: number; y: number } | { error: string }): r is { error: string } {
-  return "error" in r;
-}
-
 import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 import { getOcrCacheService, type OcrCacheService } from "@mindpal/device-agent-sdk";
 
@@ -102,63 +70,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // ── GUI 步骤间延迟（毫秒），给 UI 渲染留出时间 ───────────────────
 const INTER_STEP_DELAY_MS = resolveDeviceAgentEnv().guiStepDelayMs;
 
-// OCR 坐标缓存已统一到内核 ocrCacheService
-// SCREEN_CHANGING_ACTIONS 已统一到 guiActionKernel
-
-/**
- * 增强的目标解析（缓存优先）
- * 解析顺序：绝对坐标 → 坐标缓存 → 截图+OCR
- */
-async function resolveTargetWithCache(
-  target: TargetSpec,
-  ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null },
-  coordCache: OcrCacheService,
-): Promise<{ x: number; y: number; fromCache: boolean; source?: string } | { error: string }> {
-  if (isTargetCoord(target)) return { x: target.x, y: target.y, fromCache: false, source: "coord" };
-
-  if (isTargetText(target)) {
-    // 1. 坐标缓存
-    const cached = coordCache.get(target.text);
-    if (cached) return { x: cached.x, y: cached.y, fromCache: true, source: "coord_cache" };
-  }
-
-  if (!ocrCache.capture) {
-    ocrCache.capture = await captureScreen();
-    ocrCache.results = await ocrScreen(ocrCache.capture);
-  }
-
-  if (isTargetPercent(target)) {
-    return {
-      x: Math.round((target.xPercent / 100) * ocrCache.capture.width),
-      y: Math.round((target.yPercent / 100) * ocrCache.capture.height),
-      fromCache: false,
-      source: "percent",
-    };
-  }
-
-  if (isTargetText(target)) {
-    // 2. OCR 定位
-    if (!ocrCache.results) {
-      ocrCache.results = await ocrScreen(ocrCache.capture);
-    }
-    const match = findTextInOcrResults(ocrCache.results!, target.text, { fuzzy: target.fuzzy });
-    if (!match) return { error: `未找到文字: "${target.text}"` };
-    coordCache.set(target.text, { x: match.x, y: match.y }, match.confidence);
-    return { x: match.x, y: match.y, fromCache: false, source: "ocr" };
-  }
-
-  return { error: "无效的目标定位方式" };
-}
-
-function hasErrorV2(r: { x: number; y: number; fromCache: boolean; source?: string } | { error: string }): r is { error: string } {
-  return "error" in r;
-}
-
 // ── 核心：本地视觉闭环执行引擎 ──────────────────────────────────
 
 async function executeStep(
   step: PlanStep,
-  ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null },
+  ocrCache: OcrCacheState,
 ): Promise<{ status: "ok" | "failed"; detail?: any }> {
   switch (step.action) {
     case "click":
@@ -169,7 +85,6 @@ async function executeStep(
       await executeNativeGuiAction(step.action, { x: pos.x, y: pos.y }, {
         button: step.action === "click" ? (step.button ?? "left") : undefined,
       });
-      // 屏幕变化操作后清除 OCR 缓存
       if (step.action !== "moveTo" && ocrCache.capture) {
         await cleanupCapture(ocrCache.capture); ocrCache.capture = null; ocrCache.results = null;
       }
@@ -250,35 +165,24 @@ async function executeStep(
 
 // ── 工具处理函数 ─────────────────────────────────────────────────
 
-/**
- * device.gui.runPlan — 批量执行 GUI 动作计划（核心工具）
- *
- * 云端一次性下发完整计划，本地闭环执行，大幅降低延迟。
- * input.plan: PlanStep[]
- * input.stopOnError: boolean（默认 true）
- * input.screenshotOnError: boolean（默认 true，失败时截图上传作为证据）
- */
 async function execRunPlan(ctx: ToolExecutionContext): Promise<ToolExecutionResult> {
   const plan: PlanStep[] = Array.isArray(ctx.input.plan) ? ctx.input.plan : [];
   if (!plan.length) return { status: "failed", errorCategory: "input_invalid", outputDigest: { reason: "空的动作计划" } };
 
   const stopOnError = ctx.input.stopOnError !== false;
   const screenshotOnError = ctx.input.screenshotOnError !== false;
-  /** 启用坐标缓存快速通道（默认开启） */
   const enableCoordCache = ctx.input.enableCoordCache !== false;
-  /** 启用批量 OCR 优化（默认开启） */
   const enableBatchOcr = ctx.input.enableBatchOcr !== false;
-  const maxSteps = Math.min(plan.length, 100); // 安全上限
+  const maxSteps = Math.min(plan.length, 100);
 
   const stepResults: StepResult[] = [];
-  const ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null } = { capture: null, results: null };
+  const ocrCache: OcrCacheState = { capture: null, results: null };
   const coordCache = getOcrCacheService();
 
   let allOk = true;
   let cacheHits = 0;
   let cacheMisses = 0;
 
-  // 批量 OCR 预解析—连续文字目标步骤一次性 OCR
   if (enableBatchOcr) {
     await batchPreResolveTargets(plan, maxSteps, ocrCache, coordCache);
   }
@@ -288,13 +192,11 @@ async function execRunPlan(ctx: ToolExecutionContext): Promise<ToolExecutionResu
       const t0 = Date.now();
       const currentStep = plan[i];
 
-      // 使用缓存解析引擎
       const result = enableCoordCache
         ? await executeStepWithCache(currentStep, ocrCache, coordCache)
         : await executeStep(currentStep, ocrCache);
       const durationMs = Date.now() - t0;
 
-      // 跟踪缓存命中率
       if (result.detail?.fromCache) cacheHits++;
       else if ("target" in currentStep && isTargetText((currentStep as any).target)) cacheMisses++;
 
@@ -309,37 +211,20 @@ async function execRunPlan(ctx: ToolExecutionContext): Promise<ToolExecutionResu
       if (result.status === "failed") {
         allOk = false;
         if (stopOnError) {
-          // 失败时截图上传证据
           if (screenshotOnError) {
-            try {
-              const errCapture = await captureScreen();
-              const buf = await import("node:fs/promises").then((f) => f.readFile(errCapture.filePath));
-              const base64 = buf.toString("base64");
-              await apiPostJson({
-                apiBase: ctx.cfg.apiBase,
-                path: "/device-agent/evidence/upload",
-                token: ctx.cfg.deviceToken,
-                body: {
-                  deviceExecutionId: ctx.execution.deviceExecutionId,
-                  contentBase64: base64,
-                  contentType: "image/png",
-                  format: "png",
-                  label: `gui_error_step_${i}`,
-                },
-              });
-              await cleanupCapture(errCapture);
-            } catch { /* 证据上传失败不影响主流程 */ }
+            await captureAndUploadEvidence(
+              { apiBase: ctx.cfg.apiBase, deviceToken: ctx.cfg.deviceToken, deviceExecutionId: ctx.execution.deviceExecutionId },
+              `gui_error_step_${i}`,
+            );
           }
           break;
         }
       }
 
-      // 屏幕变化操作后失效缓存
       if (enableCoordCache && SCREEN_CHANGING_ACTIONS.has(currentStep.action)) {
         coordCache.invalidateAll();
       }
 
-      // 步骤间延迟，给 UI 渲染留出时间
       if (i < maxSteps - 1 && currentStep.action !== "wait") {
         await sleep(INTER_STEP_DELAY_MS);
       }
@@ -361,7 +246,6 @@ async function execRunPlan(ctx: ToolExecutionContext): Promise<ToolExecutionResu
       failedSteps,
       totalDurationMs,
       steps: stepResults,
-      // 缓存效率统计
       fastPath: {
         cacheHits,
         cacheMisses,
@@ -374,11 +258,10 @@ async function execRunPlan(ctx: ToolExecutionContext): Promise<ToolExecutionResu
 
 /**
  * 带缓存的步骤执行引擎
- * 对文字目标优先查缓存，命中时跳过截图+OCR
  */
 async function executeStepWithCache(
   step: PlanStep,
-  ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null },
+  ocrCache: OcrCacheState,
   coordCache: OcrCacheService,
 ): Promise<{ status: "ok" | "failed"; detail?: any }> {
   switch (step.action) {
@@ -410,53 +293,10 @@ async function executeStepWithCache(
       return { status: "ok", detail: { textLen: step.text.length } };
     }
     default:
-      // 非目标类动作回退到原始引擎
       return executeStep(step, ocrCache);
   }
 }
 
-/**
- * 批量预解析—扫描连续的文字目标步骤，一次 OCR 解析所有目标
- * 场景：列表逐行点击、表单多字段填写等
- */
-async function batchPreResolveTargets(
-  plan: PlanStep[],
-  maxSteps: number,
-  ocrCache: { capture: ScreenCapture | null; results: OcrMatch[] | null },
-  coordCache: OcrCacheService,
-): Promise<void> {
-  // 收集前 N 步中的文字目标（仅在第一个屏幕变化动作之前）
-  const textTargets: string[] = [];
-  for (let i = 0; i < maxSteps; i++) {
-    const step = plan[i];
-    // 屏幕变化动作之后的目标无法预解析
-    if (SCREEN_CHANGING_ACTIONS.has(step.action) && textTargets.length > 0) break;
-    if ("target" in step && step.target && isTargetText(step.target as TargetSpec)) {
-      textTargets.push((step.target as { text: string }).text);
-    }
-  }
-
-  if (textTargets.length < 2) return; // 少于 2 个目标时不值得批量
-
-  // 一次 OCR
-  if (!ocrCache.capture) {
-    ocrCache.capture = await captureScreen();
-    ocrCache.results = await ocrScreen(ocrCache.capture);
-  }
-
-  // 批量解析并写入缓存
-  for (const text of textTargets) {
-    const match = findTextInOcrResults(ocrCache.results!, text, { fuzzy: true });
-    if (match) {
-      coordCache.set(text, { x: match.x, y: match.y }, match.confidence);
-    }
-  }
-}
-
-/**
- * device.gui.findAndClick — 截图 + 本地 OCR 找到文字 + 点击
- * 单步快捷操作，等价于 runPlan([{ action: "click", target: { text } }])
- */
 async function execFindAndClick(ctx: ToolExecutionContext): Promise<ToolExecutionResult> {
   const text = String(ctx.input.text ?? "");
   if (!text) return { status: "failed", errorCategory: "input_invalid", outputDigest: { reason: "缺少 text 参数" } };
@@ -473,9 +313,6 @@ async function execFindAndClick(ctx: ToolExecutionContext): Promise<ToolExecutio
   }
 }
 
-/**
- * device.gui.findAndType — 找到目标元素 + 点击 + 输入文字
- */
 async function execFindAndType(ctx: ToolExecutionContext): Promise<ToolExecutionResult> {
   const target = String(ctx.input.target ?? "");
   const text = String(ctx.input.text ?? "");
@@ -497,15 +334,10 @@ async function execFindAndType(ctx: ToolExecutionContext): Promise<ToolExecution
   }
 }
 
-/**
- * device.gui.readScreen — 截图 + 本地 OCR 返回屏幕所有文字
- * 用于云端大模型"看一眼"当前屏幕内容，但 OCR 在本地完成、只回传文字摘要
- */
 async function execReadScreen(ctx: ToolExecutionContext): Promise<ToolExecutionResult> {
   const capture = await captureScreen();
   try {
     const results = await ocrScreen(capture);
-    // 只返回文字和位置，不传图片，带宽极低
     const texts = results.map((r) => ({
       text: r.text,
       x: r.bbox.x,
@@ -519,7 +351,7 @@ async function execReadScreen(ctx: ToolExecutionContext): Promise<ToolExecutionR
         screenWidth: capture.width,
         screenHeight: capture.height,
         ocrItemCount: texts.length,
-        items: texts.slice(0, 500), // 最多 500 个元素
+        items: texts.slice(0, 500),
       },
     };
   } finally {
@@ -527,25 +359,14 @@ async function execReadScreen(ctx: ToolExecutionContext): Promise<ToolExecutionR
   }
 }
 
-/**
- * device.gui.screenshot — 截图并上传（保留，用于云端需要看原图的场景）
- */
 async function execScreenshot(ctx: ToolExecutionContext): Promise<ToolExecutionResult> {
-  const capture = await captureScreen();
-  try {
-    const buf = await import("node:fs/promises").then((f) => f.readFile(capture.filePath));
-    const base64 = buf.toString("base64");
-    const up = await apiPostJson<{ artifactId: string; evidenceRef: string }>({
-      apiBase: ctx.cfg.apiBase,
-      path: "/device-agent/evidence/upload",
-      token: ctx.cfg.deviceToken,
-      body: { deviceExecutionId: ctx.execution.deviceExecutionId, contentBase64: base64, contentType: "image/png", format: "png" },
-    });
-    if (up.status !== 200) return { status: "failed", errorCategory: "upstream_error", outputDigest: { status: up.status } };
-    return { status: "succeeded", outputDigest: { ok: true, artifactId: up.json?.artifactId ?? null }, evidenceRefs: up.json?.evidenceRef ? [up.json.evidenceRef] : [] };
-  } finally {
-    await cleanupCapture(capture);
-  }
+  const result = await screenshotAndUpload({
+    apiBase: ctx.cfg.apiBase,
+    deviceToken: ctx.cfg.deviceToken,
+    deviceExecutionId: ctx.execution.deviceExecutionId,
+  });
+  if (result.status !== 200) return { status: "failed", errorCategory: "upstream_error", outputDigest: { status: result.status } };
+  return { status: "succeeded", outputDigest: { ok: true, artifactId: result.artifactId ?? null }, evidenceRefs: result.evidenceRef ? [result.evidenceRef] : [] };
 }
 
 // ── 工具路由表 ───────────────────────────────────────────────────

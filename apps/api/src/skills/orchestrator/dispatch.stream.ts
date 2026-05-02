@@ -333,10 +333,11 @@ export function registerStreamRoute(app: any): void {
           loadInlineWritableEntities(app.db),
         ]);
 
-        const resolution = resolveExecutionClassFromSuggestions({
+        const resolution = await resolveExecutionClassFromSuggestions({
           toolCalls: planResult.planSteps.map((s) => ({ toolRef: s.toolRef, inputDraft: s.inputDraft ?? {} })),
           enabledTools: toolDiscovery.tools,
           inlineWritableEntities,
+          dbCtx: { pool: app.db, tenantId: subject.tenantId },
         });
 
         if (resolution.executionClass === "immediate_action") {

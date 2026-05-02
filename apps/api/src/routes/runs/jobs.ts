@@ -1,12 +1,12 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { Errors } from "../lib/errors";
-import { requirePermission } from "../modules/auth/guard";
+import { Errors } from "../../lib/errors";
+import { requirePermission } from "../../modules/auth/guard";
 import { PERM } from "@mindpal/shared";
-import { setAuditContext } from "../modules/audit/context";
-import { resolveSchemaNameForEntity } from "../modules/metadata/schemaRepo";
-import { resolveEffectiveToolRef } from "../modules/tools/resolve";
-import { createJobRunStep, getJob, getRunForSpace, listSteps } from "../modules/workflow/jobRepo";
+import { setAuditContext } from "../../modules/audit/context";
+import { resolveSchemaNameForEntity } from "../../modules/metadata/schemaRepo";
+import { resolveEffectiveToolRef } from "../../modules/tools/resolve";
+import { createJobRunStep, getJob, getRunForSpace, listSteps } from "../../modules/workflow/jobRepo";
 
 export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.post("/jobs/entities/:entity/create", async (req) => {

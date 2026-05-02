@@ -35,10 +35,11 @@ export async function handleAnswerMode(ctx: DispatchContext): Promise<DispatchRe
   // 基于工具元数据动态分类（替代硬编码 PASSIVE_PREFIXES）
   const { tools: enabledTools } = await discoverEnabledTools({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, locale });
   const inlineWritableEntities = await loadInlineWritableEntities(app.db);
-  const resolution = resolveExecutionClassFromSuggestions({
+  const resolution = await resolveExecutionClassFromSuggestions({
     toolCalls: toolSuggestions.map((s: any) => ({ toolRef: s.toolRef, inputDraft: s.inputDraft ?? {} })),
     enabledTools,
     inlineWritableEntities,
+    dbCtx: { pool: app.db, tenantId: subject.tenantId },
   });
   const workerSuggestionKeys = new Set(
     resolution.workflowTools.map((s) => `${s.toolRef}::${JSON.stringify(digestParams(s.inputDraft ?? {}))}`)

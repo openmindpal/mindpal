@@ -11,6 +11,21 @@ import {
 } from "./taskQueue.types";
 
 type DbConn = Pool | PoolClient;
+
+/** session_task_queue 显式字段列表（与 rowToQueueEntry 映射对齐） */
+const QUEUE_ENTRY_COLS = `entry_id, tenant_id, space_id, session_id, task_id, run_id, job_id,
+  goal, mode, priority, position, status, foreground,
+  enqueued_at, ready_at, started_at, completed_at, estimated_duration_ms,
+  retry_count, last_error, checkpoint_ref,
+  created_by_subject_id, metadata, created_at, updated_at`;
+
+/** 带 q. 前缀的字段列表（用于 JOIN 查询） */
+const QUEUE_ENTRY_COLS_Q = QUEUE_ENTRY_COLS.replace(/(\w+)/g, "q.$1");
+
+/** task_dependencies 显式字段列表（与 rowToDependency 映射对齐） */
+const DEP_COLS = `dep_id, tenant_id, session_id, from_entry_id, to_entry_id,
+  dep_type, status, output_mapping, source, resolved_at, created_at, updated_at`;
+
 export type QueueEntryScope = {
   tenantId: string;
   spaceId?: string | null;
@@ -72,7 +87,7 @@ export async function insertQueueEntry(db: DbConn, params: {
        COALESCE((SELECT MAX(position) + 1 FROM session_task_queue
                  WHERE tenant_id = $1 AND session_id = $3
                    AND status NOT IN ('completed','failed','cancelled')), 0))
-     RETURNING *`,
+     RETURNING ${QUEUE_ENTRY_COLS}`,
     [tenantId, spaceId || null, sessionId, goal, mode, priority, foreground,
      createdBySubjectId, taskId || null, runId || null, jobId || null,
      estimatedDurationMs || null, metadata ? JSON.stringify(metadata) : null],
@@ -119,7 +134,7 @@ export async function updateEntryStatus(db: DbConn, params: {
      SET status = $2
          ${extras}
      WHERE ${whereClauses.join(" AND ")}
-     RETURNING *`,
+     RETURNING ${QUEUE_ENTRY_COLS}`,
     queryParams,
   );
   return res.rowCount ? rowToQueueEntry(res.rows[0]) : null;
@@ -136,7 +151,7 @@ export async function incrementRetry(db: DbConn, entryId: string, lastError: str
     `UPDATE session_task_queue
      SET retry_count = retry_count + 1, last_error = $2, status = 'queued'
      WHERE entry_id = $1 AND tenant_id = $3
-     RETURNING *`,
+     RETURNING ${QUEUE_ENTRY_COLS}`,
     [entryId, lastError, tenantId],
   );
   return res.rowCount ? rowToQueueEntry(res.rows[0]) : null;
@@ -148,7 +163,7 @@ export async function updateForeground(db: DbConn, entryId: string, foreground: 
   const whereClauses = ["entry_id = $1"];
   appendQueueEntryScope(whereClauses, queryParams, scope);
   const res = await db.query(
-    `UPDATE session_task_queue SET foreground = $2 WHERE ${whereClauses.join(" AND ")} RETURNING *`,
+    `UPDATE session_task_queue SET foreground = $2 WHERE ${whereClauses.join(" AND ")} RETURNING ${QUEUE_ENTRY_COLS}`,
     queryParams,
   );
   return res.rowCount ? rowToQueueEntry(res.rows[0]) : null;
@@ -160,7 +175,7 @@ export async function updatePriority(db: DbConn, entryId: string, priority: numb
   const whereClauses = ["entry_id = $2"];
   appendQueueEntryScope(whereClauses, queryParams, scope);
   const res = await db.query(
-    `UPDATE session_task_queue SET priority = $1 WHERE ${whereClauses.join(" AND ")} RETURNING *`,
+    `UPDATE session_task_queue SET priority = $1 WHERE ${whereClauses.join(" AND ")} RETURNING ${QUEUE_ENTRY_COLS}`,
     queryParams,
   );
   return res.rowCount ? rowToQueueEntry(res.rows[0]) : null;
@@ -176,7 +191,7 @@ export async function getEntry(db: DbConn, entryId: string, scope?: QueueEntrySc
   const whereClauses = ["entry_id = $1"];
   appendQueueEntryScope(whereClauses, queryParams, scope);
   const res = await db.query(
-    `SELECT * FROM session_task_queue WHERE ${whereClauses.join(" AND ")}`,
+    `SELECT ${QUEUE_ENTRY_COLS} FROM session_task_queue WHERE ${whereClauses.join(" AND ")}`,
     queryParams,
   );
   return res.rowCount ? rowToQueueEntry(res.rows[0]) : null;
@@ -186,7 +201,7 @@ export async function getEntry(db: DbConn, entryId: string, scope?: QueueEntrySc
 /** 获取会话的全部非终态队列条目（按 position 排序） */
 export async function listActiveEntries(db: DbConn, tenantId: string, sessionId: string): Promise<TaskQueueEntry[]> {
   const res = await db.query(
-    `SELECT * FROM session_task_queue
+    `SELECT ${QUEUE_ENTRY_COLS} FROM session_task_queue
      WHERE tenant_id = $1 AND session_id = $2
        AND status NOT IN ('completed', 'failed', 'cancelled')
      ORDER BY position ASC`,
@@ -210,7 +225,7 @@ export async function countExecuting(db: DbConn, tenantId: string, sessionId: st
 /** 获取会话中所有可调度的条目 */
 export async function listSchedulable(db: DbConn, tenantId: string, sessionId: string): Promise<TaskQueueEntry[]> {
   const res = await db.query(
-    `SELECT * FROM session_task_queue
+    `SELECT ${QUEUE_ENTRY_COLS} FROM session_task_queue
      WHERE tenant_id = $1 AND session_id = $2
        AND status IN ('queued', 'ready')
      ORDER BY priority ASC, enqueued_at ASC`,
@@ -287,7 +302,7 @@ export async function cancelAllActive(db: DbConn, tenantId: string, sessionId: s
  */
 export async function listGlobalActiveEntries(db: DbConn): Promise<TaskQueueEntry[]> {
   const res = await db.query(
-    `SELECT * FROM session_task_queue
+    `SELECT ${QUEUE_ENTRY_COLS} FROM session_task_queue
      WHERE status IN ('executing', 'ready', 'queued')
      ORDER BY tenant_id, session_id, position`,
   );
@@ -333,7 +348,7 @@ export async function insertDependency(db: DbConn, params: {
      ON CONFLICT (from_entry_id, to_entry_id) DO UPDATE
        SET dep_type = EXCLUDED.dep_type, source = EXCLUDED.source,
            output_mapping = EXCLUDED.output_mapping, updated_at = now()
-     RETURNING *`,
+     RETURNING ${DEP_COLS}`,
     [tenantId, sessionId, fromEntryId, toEntryId, depType, source,
      outputMapping ? JSON.stringify(outputMapping) : null],
   );
@@ -343,7 +358,7 @@ export async function insertDependency(db: DbConn, params: {
 /** 获取条目的所有前置依赖（"我依赖谁"） */
 export async function getDependenciesOf(db: DbConn, entryId: string): Promise<TaskDependency[]> {
   const res = await db.query(
-    `SELECT * FROM task_dependencies WHERE from_entry_id = $1 ORDER BY created_at`,
+    `SELECT ${DEP_COLS} FROM task_dependencies WHERE from_entry_id = $1 ORDER BY created_at`,
     [entryId],
   );
   return res.rows.map(rowToDependency);
@@ -352,7 +367,7 @@ export async function getDependenciesOf(db: DbConn, entryId: string): Promise<Ta
 /** 获取条目的所有后继依赖（"谁依赖我"） */
 export async function getDependentsOf(db: DbConn, entryId: string): Promise<TaskDependency[]> {
   const res = await db.query(
-    `SELECT * FROM task_dependencies WHERE to_entry_id = $1 ORDER BY created_at`,
+    `SELECT ${DEP_COLS} FROM task_dependencies WHERE to_entry_id = $1 ORDER BY created_at`,
     [entryId],
   );
   return res.rows.map(rowToDependency);
@@ -361,7 +376,7 @@ export async function getDependentsOf(db: DbConn, entryId: string): Promise<Task
 /** 获取会话的所有依赖关系（DAG 可视化） */
 export async function listSessionDependencies(db: DbConn, tenantId: string, sessionId: string): Promise<TaskDependency[]> {
   const res = await db.query(
-    `SELECT * FROM task_dependencies WHERE tenant_id = $1 AND session_id = $2 ORDER BY created_at`,
+    `SELECT ${DEP_COLS} FROM task_dependencies WHERE tenant_id = $1 AND session_id = $2 ORDER BY created_at`,
     [tenantId, sessionId],
   );
   return res.rows.map(rowToDependency);
@@ -373,7 +388,7 @@ export async function updateDependencyStatus(db: DbConn, depId: string, status: 
     `UPDATE task_dependencies
      SET status = $2 ${status === "resolved" ? ", resolved_at = now()" : ""}
      WHERE dep_id = $1
-     RETURNING *`,
+     RETURNING ${DEP_COLS}`,
     [depId, status],
   );
   return res.rowCount ? rowToDependency(res.rows[0]) : null;
@@ -404,7 +419,7 @@ export async function resolveUpstreamDeps(db: DbConn, completedEntryId: string):
      SET status = 'resolved', resolved_at = now()
      WHERE to_entry_id = $1 AND status = 'pending'
        AND dep_type IN ('finish_to_start', 'output_to_input')
-     RETURNING *`,
+     RETURNING ${DEP_COLS}`,
     [completedEntryId],
   );
   return res.rows.map(rowToDependency);
@@ -416,7 +431,7 @@ export async function blockUpstreamDeps(db: DbConn, failedEntryId: string): Prom
     `UPDATE task_dependencies
      SET status = 'blocked'
      WHERE to_entry_id = $1 AND status = 'pending'
-     RETURNING *`,
+     RETURNING ${DEP_COLS}`,
     [failedEntryId],
   );
   return res.rows.map(rowToDependency);
@@ -446,7 +461,7 @@ export async function repairBlockedDeps(
     `UPDATE task_dependencies
      SET status = 'overridden', updated_at = now()
      WHERE to_entry_id = $1 AND status = 'blocked'
-     RETURNING *`,
+     RETURNING ${DEP_COLS}`,
     [failedEntryId],
   );
   return res.rows.map(rowToDependency);
@@ -498,7 +513,7 @@ export async function listHistoryEntries(db: DbConn, params: {
   const total = Number(countRes.rows[0].cnt);
 
   const dataRes = await db.query(
-    `SELECT * FROM session_task_queue
+    `SELECT ${QUEUE_ENTRY_COLS} FROM session_task_queue
      WHERE ${whereClause}
      ORDER BY enqueued_at DESC
      LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`,
@@ -511,7 +526,7 @@ export async function listHistoryEntries(db: DbConn, params: {
 /** 获取会话中可恢复的任务（未完成 + 非终态） */
 export async function listResumableEntries(db: DbConn, tenantId: string, sessionId: string): Promise<TaskQueueEntry[]> {
   const res = await db.query(
-    `SELECT * FROM session_task_queue
+    `SELECT ${QUEUE_ENTRY_COLS} FROM session_task_queue
      WHERE tenant_id = $1 AND session_id = $2
        AND status NOT IN ('completed', 'failed', 'cancelled')
      ORDER BY position ASC`,
@@ -587,7 +602,7 @@ export async function updateEntryMetadata(
     `UPDATE session_task_queue
      SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
      WHERE entry_id = $1 AND tenant_id = $3
-     RETURNING *`,
+     RETURNING ${QUEUE_ENTRY_COLS}`,
     [entryId, JSON.stringify(patch), tenantId],
   );
   return res.rowCount ? rowToQueueEntry(res.rows[0]) : null;
@@ -599,7 +614,7 @@ export async function updateEntryMetadata(
  */
 export async function listShutdownPausedEntries(db: DbConn): Promise<TaskQueueEntry[]> {
   const res = await db.query(
-    `SELECT * FROM session_task_queue
+    `SELECT ${QUEUE_ENTRY_COLS} FROM session_task_queue
      WHERE status = 'paused'
        AND checkpoint_ref LIKE 'shutdown:%'
      ORDER BY tenant_id, session_id, position`,
@@ -617,7 +632,7 @@ export async function listZombieExecutingEntries(
   staleThresholdMs: number,
 ): Promise<TaskQueueEntry[]> {
   const res = await db.query(
-    `SELECT q.*
+    `SELECT ${QUEUE_ENTRY_COLS_Q}
      FROM session_task_queue q
      WHERE q.status = 'executing'
        AND q.started_at < now() - ($1 || ' milliseconds')::interval
@@ -719,7 +734,7 @@ export async function listStaleExecutingEntries(
   staleThresholdMs: number,
 ): Promise<TaskQueueEntry[]> {
   const res = await db.query(
-    `SELECT *
+    `SELECT ${QUEUE_ENTRY_COLS}
      FROM session_task_queue
      WHERE status = 'executing'
        AND updated_at < now() - ($1 || ' milliseconds')::interval

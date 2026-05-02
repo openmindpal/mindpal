@@ -470,9 +470,9 @@ export type {
 // ─── P2-4: 统一协作协议 + P2-03: 通用 DAG 工具函数 ──────────────────────
 export {
   validateDAG, detectCycleNodes, topologicalSortGeneric,
-  wouldCreateCycle, getAncestors, getDescendants,
+  wouldCreateCycle, getAncestors, getDescendants, autoRepairDAG,
 } from "./dagUtils";
-export type { DagNode, DagValidationResult } from "./dagUtils";
+export type { DagNode, DagValidationResult, DagRepairAction } from "./dagUtils";
 
 // ─── P0-2: GoalGraph + WorldState (结构化目标图 + 世界状态) ──────────────────
 export {
@@ -795,9 +795,6 @@ export type {
   RolloutMode,
 } from "./metadataRegistry";
 
-// ── 统一审批判定（API / Worker 共用 Single Source of Truth） ──
-/** @deprecated 使用 API 侧 approvalRuleEngine.assessToolExecutionRisk() 代替 */
-export { shouldRequireApproval } from "./approvalDecision.js";
 
 // ── cache manager ─────────────────────────────────────────────
 export {

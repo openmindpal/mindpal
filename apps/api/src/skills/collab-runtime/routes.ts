@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { collabStreamRedisChannel, createCollabStreamSignal, isToolAllowedForPolicy, redactValue } from "@mindpal/shared";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+
 import { Errors, isAppError } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
@@ -1117,12 +1117,18 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
 
       if (!queueJobId) {
         const nextRole = stepInput?.actorRole ? String(stepInput.actorRole) : "executor";
-        const approvalRequired = shouldRequireApproval({
-          approvalRequired: stepInput?.toolContract?.approvalRequired,
-          riskLevel: stepInput?.toolContract?.riskLevel,
-          sourceLayer: stepInput?.toolContract?.sourceLayer,
-          scope: stepInput?.toolContract?.scope,
+        const riskAssessment = await assessToolExecutionRisk({
+          pool: app.db,
+          tenantId: subject.tenantId,
+          toolRef: stepToolRef ?? "",
+          inputDraft: (typeof stepInput === "object" && stepInput) ? stepInput as Record<string, unknown> : {},
+          toolDefinition: stepInput?.toolContract ? {
+            riskLevel: stepInput.toolContract.riskLevel as any,
+            approvalRequired: stepInput.toolContract.approvalRequired,
+            scope: stepInput.toolContract.scope ?? undefined,
+          } : undefined,
         });
+        const approvalRequired = riskAssessment.approvalRequired;
         if (approvalRequired) {
           await setRunAndJobStatus({ pool: app.db, tenantId: subject.tenantId, runId: updated.primaryRunId, jobId, runStatus: "needs_approval", jobStatus: "needs_approval" });
           const approval = await createApproval({
@@ -1135,12 +1141,7 @@ export const collabRuntimeRoutes: FastifyPluginAsync = async (app) => {
             toolRef: stepToolRef,
             policySnapshotRef: stepPolicySnapshotRef ?? null,
             inputDigest: stepInputDigest ?? null,
-            assessmentContext: await assessToolExecutionRisk({
-              pool: app.db,
-              tenantId: subject.tenantId,
-              toolRef: stepToolRef ?? "",
-              inputDraft: (typeof stepInput === "object" && stepInput) ? stepInput as Record<string, unknown> : {},
-            }),
+            assessmentContext: riskAssessment,
           });
           await updateCollabRunStatus({ pool: app.db, tenantId: subject.tenantId, collabRunId: collab.collabRunId, status: "needs_approval" });
           await syncCollabPhase({
