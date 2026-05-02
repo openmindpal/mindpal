@@ -1,4 +1,4 @@
-import type { PolicyDecision } from "@openslin/shared";
+import type { PolicyDecision } from "@mindpal/shared";
 
 function allowAll(allow: string[] | undefined) {
   return Boolean(allow?.includes("*"));

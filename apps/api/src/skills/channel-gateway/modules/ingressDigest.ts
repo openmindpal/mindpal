@@ -1,2 +1,2 @@
-export { sha256Hex, stableStringify } from "@openslin/shared";
+export { sha256Hex, stableStringify } from "@mindpal/shared";
 

@@ -4,9 +4,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
-import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicy, normalizeLimits, validateCapabilityEnvelopeV1 } from "@openslin/shared";
-import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import type { CapabilityEnvelopeV1 } from "@mindpal/shared";
+import { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicy, normalizeLimits, validateCapabilityEnvelopeV1 } from "@mindpal/shared";
+import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { insertAuditEvent } from "../../modules/audit/auditRepo";

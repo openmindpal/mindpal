@@ -92,7 +92,7 @@ describe.sequential("e2e:audit", { timeout: 60_000 }, () => {
       headers: { authorization: "Bearer admin", "x-tenant-id": "tenant_dev", "x-space-id": "space_dev", "x-trace-id": `t-metrics-${crypto.randomUUID()}` },
     });
     expect(metrics.statusCode).toBe(200);
-    expect(String(metrics.body)).toContain("openslin_audit_outbox_enqueue_total");
+    expect(String(metrics.body)).toContain("mindpal_audit_outbox_enqueue_total");
   });
 
   it("audit（read denied）：审计写入失败进入 outbox，结果为 denied", async () => {

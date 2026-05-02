@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { redactString, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget, StructuredLogger, validateAttachmentBatch, toOrchestratorAttachment, DEFAULT_MULTIMODAL_CAPABILITIES } from "@openslin/shared";
+import { redactString, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget, StructuredLogger, validateAttachmentBatch, toOrchestratorAttachment, DEFAULT_MULTIMODAL_CAPABILITIES } from "@mindpal/shared";
 import {
   extractTextForPromptInjectionScan,
   getPromptInjectionDenyTargetsFromEnv,

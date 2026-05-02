@@ -1,4 +1,4 @@
-import { loadDbConfig, loadRedisConfig, loadMasterKey, type DbConfig, type RedisConfig } from "@openslin/shared";
+import { loadDbConfig, loadRedisConfig, loadMasterKey, type DbConfig, type RedisConfig } from "@mindpal/shared";
 
 export type ApiConfig = {
   port: number;

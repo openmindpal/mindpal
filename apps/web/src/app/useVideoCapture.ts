@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { VideoStreamServerMessage } from "@openslin/shared";
+import type { VideoStreamServerMessage } from "@mindpal/shared";
 
 export interface StreamingOptions {
   frameRate?: number;

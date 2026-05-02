@@ -36,9 +36,9 @@ const checks = [
   ["stepOutput", "step_output"],
   ["openInWorkspace", "open_ws"],
   ['kind: "artifact"', "artifact_ws_kind"],
-  ["openslin_chat_session", "session_key"],
-  ["openslin_workspace_tabs", "ws_key"],
-  ["openslin_split_layout", "split_key"],
+  ["mindpal_chat_session", "session_key"],
+  ["mindpal_workspace_tabs", "ws_key"],
+  ["mindpal_split_layout", "split_key"],
 ];
 
 let ok = 0;

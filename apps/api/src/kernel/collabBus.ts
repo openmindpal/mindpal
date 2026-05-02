@@ -16,8 +16,8 @@
  */
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { StructuredLogger, collabConfig, resolveString, resolveNumber } from "@openslin/shared";
-import type { CollabMessageEnvelope, MessagePriority } from "@openslin/shared";
+import { StructuredLogger, collabConfig, resolveString, resolveNumber } from "@mindpal/shared";
+import type { CollabMessageEnvelope, MessagePriority } from "@mindpal/shared";
 
 const logger = new StructuredLogger({ module: "collabBus" });
 

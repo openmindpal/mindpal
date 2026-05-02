@@ -7,7 +7,7 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type Redis from "ioredis";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:tickerRegistry" });
 import type { WorkerConfig } from "./config";

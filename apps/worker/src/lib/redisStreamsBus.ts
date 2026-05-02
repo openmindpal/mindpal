@@ -5,8 +5,8 @@
  * 消费者掉线后重启可通过 `resumeFromLastAck` 从断点续消费。
  */
 import type Redis from "ioredis";
-import type { StreamsBackend } from "@openslin/shared";
-import { StructuredLogger } from "@openslin/shared";
+import type { StreamsBackend } from "@mindpal/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 type StreamReadResult = [string, [string, string[]][]][] | null;
 
@@ -14,7 +14,7 @@ const _logger = new StructuredLogger({ module: "worker:redisStreamsBus" });
 
 export interface RedisStreamsBusOptions {
   redis: Redis;
-  /** Consumer Group 名称，如 'openslin-worker-group' */
+  /** Consumer Group 名称，如 'mindpal-worker-group' */
   consumerGroup: string;
   /** Consumer ID，如 'worker-<hostname>-<pid>' */
   consumerId: string;

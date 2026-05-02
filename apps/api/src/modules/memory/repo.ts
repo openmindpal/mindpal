@@ -15,12 +15,12 @@ import {
   type MemoryRerankInput,
   type MemoryScope,
   DEFAULT_SOURCE_TRUST_MAP,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import { encryptMemoryContent, decryptMemoryContent, decryptMemoryContents } from "./memoryEncryption";
 import { cacheGet, cacheSet } from "../../kernel/loopCacheConfig.js";
 
-export type { WriteProof, WriteIntent, MemoryRiskEvaluation, MemoryScope } from "@openslin/shared";
-export { evaluateMemoryRisk, MEMORY_TYPE_RISK_LEVELS } from "@openslin/shared";
+export type { WriteProof, WriteIntent, MemoryRiskEvaluation, MemoryScope } from "@mindpal/shared";
+export { evaluateMemoryRisk, MEMORY_TYPE_RISK_LEVELS } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "memory:repo" });
 
@@ -1357,7 +1357,7 @@ export async function searchMemory(params: {
     }
   }
 
-  // ── Rerank：使用 @openslin/shared 统一 12 因子公式 ──
+  // ── Rerank：使用 @mindpal/shared 统一 12 因子公式 ──
   const candidates = Array.from(seen.values());
   const nowMs = Date.now();
 

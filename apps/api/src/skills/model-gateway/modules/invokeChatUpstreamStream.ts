@@ -1,5 +1,5 @@
 import { AppError, Errors } from "../../../lib/errors";
-import { redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, resolvePromptInjectionPolicy, shouldDenyDlpForTarget, resolveBoolean } from "@openslin/shared";
+import { redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, resolvePromptInjectionPolicy, shouldDenyDlpForTarget, resolveBoolean } from "@mindpal/shared";
 import { decryptSecretPayload } from "../../../modules/secrets/envelope";
 import { getSecretRecordEncryptedPayload } from "../../../modules/secrets/secretRepo";
 import { writeSecretUsageEvent } from "../../../modules/secrets/usageRepo";

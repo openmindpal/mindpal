@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { sha256Hex, stableStringify } from "../../lib/digest";
 import { computeEvalSummary } from "../../modules/governance/evalLogic";
 import { addChangeSetItem, approveChangeSet, createChangeSet, getChangeSet, listChangeSetItems, listChangeSets, preflightChangeSet, promoteChangeSet, releaseChangeSet, rollbackChangeSet, submitChangeSet } from "../../modules/governance/changeSetRepo";

@@ -2,7 +2,7 @@
  * 插件共享工具函数 — 从 desktopPlugin.ts 提取的纯工具代码。
  * 不依赖外部运行时状态，仅依赖 Node.js 内置模块。
  */
-import { sha256_8 } from "@openslin/shared";
+import { sha256_8 } from "@mindpal/shared";
 import childProcess from "node:child_process";
 import path from "node:path";
 

@@ -173,7 +173,7 @@ describe.sequential("runner service e2e", () => {
     const body = res.json() as any;
     expect(body.runnerSignature?.alg).toBe("ed25519");
     expect(body.runnerSignature?.keyId).toBe("runner_k1");
-    const msg = `openslin:runner:result:${body.runnerSignature.signedDigest}`;
+    const msg = `mindpal:runner:result:${body.runnerSignature.signedDigest}`;
     const ok = crypto.verify(null, Buffer.from(msg, "utf8"), publicKey, Buffer.from(body.runnerSignature.sigBase64, "base64"));
     expect(ok).toBe(true);
     await app.close();

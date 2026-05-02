@@ -4,7 +4,7 @@
  * 从 dispatch.stream.ts 提取。原文件中 3 处几乎相同的会话上下文持久化逻辑
  * （即时动作、规划失败、执行完成）统一为本函数。
  */
-import { redactValue, resolveNumber } from "@openslin/shared";
+import { redactValue, resolveNumber } from "@mindpal/shared";
 import { upsertSessionContext, type SessionMessage, type SessionContext, type SessionState } from "../../modules/memory/sessionContextRepo";
 import type { Pool } from "pg";
 

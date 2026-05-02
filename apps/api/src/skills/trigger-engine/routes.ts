@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { normalizeNetworkPolicy, normalizeLimits } from "@openslin/shared";
+import type { CapabilityEnvelopeV1 } from "@mindpal/shared";
+import { normalizeNetworkPolicy, normalizeLimits } from "@mindpal/shared";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";

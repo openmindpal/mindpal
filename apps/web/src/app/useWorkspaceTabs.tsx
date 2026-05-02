@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { type WorkspaceTab } from "./homeHelpers";
 import { IconRun, IconApproval, IconKnowledge, IconArtifact, IconWorkbench, IconPanel, IconPage } from "./HomeIcons";
 
-const WORKSPACE_KEY = "openslin_workspace_tabs";
+const WORKSPACE_KEY = "mindpal_workspace_tabs";
 
 export interface WorkspaceTabsState {
   pinnedTabs: WorkspaceTab[];

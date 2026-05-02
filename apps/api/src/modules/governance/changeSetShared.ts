@@ -5,7 +5,7 @@
  * External code should import from `./changeSetRepo` (barrel).
  */
 import type { Pool, PoolClient } from "pg";
-import { resolveSupplyChainPolicy, supplyChainGate as runSupplyChainGate } from "@openslin/shared";
+import { resolveSupplyChainPolicy, supplyChainGate as runSupplyChainGate } from "@mindpal/shared";
 
 // ---- Exported Types ----
 

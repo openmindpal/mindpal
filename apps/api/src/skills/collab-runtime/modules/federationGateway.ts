@@ -13,7 +13,7 @@ import { getSecretRecordEncryptedPayload } from "../../../modules/secrets/secret
 import { getCollabRun } from "./collabRepo";
 import { appendCollabEnvelope } from "./collabEnvelopeRepo";
 import { appendCollabRunEvent } from "./collabEventRepo";
-import { getOrCreateBreaker, StructuredLogger, canonicalize, canonicalStringify } from "@openslin/shared";
+import { getOrCreateBreaker, StructuredLogger, canonicalize, canonicalStringify } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:federationGateway" });
 import { safeCompare, verifyWebhookSignature } from "../../../lib/webhookVerification";

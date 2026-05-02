@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { UnifiedAttachment } from "@openslin/shared";
+import type { UnifiedAttachment } from "@mindpal/shared";
 
 // ─── 插件接口类型 ────────────────────────────────────────────────────────────
 

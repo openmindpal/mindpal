@@ -1,12 +1,12 @@
 {
-  "name": "@openslin/admin-cli",
+  "name": "@mindpal/admin-cli",
   "version": "0.0.0",
   "private": true,
   "license": "Apache-2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "openslin-admin": "dist/index.js"
+    "mindpal-admin": "dist/index.js"
   },
   "scripts": {
     "dev": "tsx src/index.ts",
@@ -16,7 +16,7 @@
     "lint": "node -e \"process.exit(0)\""
   },
   "dependencies": {
-    "@openslin/shared": "workspace:*",
+    "@mindpal/shared": "workspace:*",
     "commander": "^14.0.3"
   },
   "devDependencies": {

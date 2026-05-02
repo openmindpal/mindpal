@@ -1,4 +1,4 @@
-import type { PolicyDecision, ConditionalFieldRule } from "@openslin/shared";
+import type { PolicyDecision, ConditionalFieldRule } from "@mindpal/shared";
 import type { SchemaDef } from "./schemaModel";
 
 function allowAll(allow: string[] | undefined) {
@@ -56,7 +56,7 @@ export function buildEffectiveEntitySchema(params: {
       ...def,
       extensions: {
         ...def.extensions,
-        "io.openslin.access": {
+        "io.mindpal.access": {
           writable,
           ...(conditionalAnnotations.length > 0 ? { conditionalAccess: conditionalAnnotations } : {}),
         },

@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { type ChatAttachment } from "./homeHelpers";
 import { nextId } from "@/lib/apiError";
 import { t } from "@/lib/i18n";
-import { DEFAULT_MULTIMODAL_CAPABILITIES } from "@openslin/shared/attachment";
+import { DEFAULT_MULTIMODAL_CAPABILITIES } from "@mindpal/shared/attachment";
 
 // 从元数据能力配置生成 accept 字符串（单点维护，与 shared 层 DEFAULT_MULTIMODAL_CAPABILITIES 一致）
 export const IMAGE_ACCEPT = (DEFAULT_MULTIMODAL_CAPABILITIES.constraints.image?.supportedMimeTypes ?? []).join(",");

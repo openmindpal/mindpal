@@ -179,8 +179,8 @@
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/your-org/openslin.git
-cd openslin
+git clone https://github.com/openmindpal/mindpal.git
+cd mindpal
 ```
 
 ### 2. 启动基础设施
@@ -204,7 +204,7 @@ cp .env.example .env    # 按需修改
 
 ```bash
 pnpm install
-pnpm --filter @openslin/api run db:seed    # 迁移 + 种子数据 + core schema
+pnpm --filter @mindpal/api run db:seed    # 迁移 + 种子数据 + core schema
 ```
 
 ### 5. 启动服务
@@ -245,18 +245,18 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 提供只读/幂等运维 CLI，适合排障与运营查询：
 
 ```bash
-pnpm run dev -w @openslin/admin-cli
+pnpm run dev -w @mindpal/admin-cli
 
 # 示例
-openslin-admin audit verify --apiBase http://localhost:3001/v1 --token <token> --tenantId tenant_dev
-openslin-admin models usage --apiBase http://localhost:3001/v1 --token <token> --range 24h
-openslin-admin queue status --apiBase http://localhost:3001/v1 --token <token>
+mindpal-admin audit verify --apiBase http://localhost:3001/v1 --token <token> --tenantId tenant_dev
+mindpal-admin models usage --apiBase http://localhost:3001/v1 --token <token> --range 24h
+mindpal-admin queue status --apiBase http://localhost:3001/v1 --token <token>
 ```
 
 ## 📁 项目结构
 
 ```
-openslin/
+mindpal/
 ├── apps/
 │   ├── api/            # Fastify API 服务（Agent OS 大脑）
 │   │   ├── kernel/     # 内核：Agent Loop/目标分解/规划/执行/调度/协作
@@ -410,7 +410,7 @@ skills/<skill-name>/
 - `POST /devices` — 设备注册
 - `POST /devices/:deviceId/pairing` — 设备配对
 - `POST /device-executions` — 创建设备执行
-- 设备代理：`npm run dev -w @openslin/device-agent -- pair|run`
+- 设备代理：`npm run dev -w @mindpal/device-agent -- pair|run`
 
 </details>
 
@@ -564,12 +564,12 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 
 | 指标 | 说明 |
 |------|------|
-| `openslin_governance_pipeline_actions_total` | 治理流水线操作计数 |
-| `openslin_governance_gate_failed_total` | 治理门禁失败计数 |
-| `openslin_knowledge_search_total` / `_duration_ms` | 知识检索计数与耗时 |
-| `openslin_knowledge_evidence_resolve_total` / `_duration_ms` | 证据链解析计数与耗时 |
-| `openslin_sync_push_total` / `_duration_ms` / `_conflicts_total` | 离线同步推送统计 |
-| `openslin_sync_pull_total` / `_duration_ms` / `_ops_returned` | 离线同步拉取统计 |
+| `mindpal_governance_pipeline_actions_total` | 治理流水线操作计数 |
+| `mindpal_governance_gate_failed_total` | 治理门禁失败计数 |
+| `mindpal_knowledge_search_total` / `_duration_ms` | 知识检索计数与耗时 |
+| `mindpal_knowledge_evidence_resolve_total` / `_duration_ms` | 证据链解析计数与耗时 |
+| `mindpal_sync_push_total` / `_duration_ms` / `_conflicts_total` | 离线同步推送统计 |
+| `mindpal_sync_pull_total` / `_duration_ms` / `_ops_returned` | 离线同步拉取统计 |
 | `worker:workflow:step:success` / `:error` | Worker 工作流步骤成功/失败 |
 | `worker:tool_execute:success` / `:error` | 工具执行成功/失败 |
 

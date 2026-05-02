@@ -18,7 +18,7 @@ import {
   type DebateSession,
   type DebatePosition,
   type DebateRound,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 describe("validateCollabMessage", () => {
   it("合法消息通过验证", () => {

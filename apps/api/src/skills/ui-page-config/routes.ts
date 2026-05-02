@@ -5,7 +5,7 @@ import { Errors } from "../../lib/errors";
 import { requirePermission } from "../../modules/auth/guard";
 import { setAuditContext } from "../../modules/audit/context";
 import { getLatestReleasedToolVersion, getToolDefinition, getToolVersionByRef } from "../../modules/tools/toolRepo";
-import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
 import { buildEffectiveEntitySchema } from "../../modules/metadata/effectiveSchema";
 import { getEffectiveSchema, resolveSchemaNameForEntity } from "../../modules/metadata/schemaRepo";
 import { pageDraftSchema, pageViewPrefsSchema } from "./modules/pageModel";
@@ -163,7 +163,7 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
     const preferred = ["title", "name", "status", "createdAt", "updatedAt"];
     const defaultSelect = Array.from(new Set([...preferred.filter((k) => fieldKeys.includes(k)), ...fieldKeys])).slice(0, 20);
     const writableFields = fieldKeys.filter((k) => {
-      const access = (effective.fields as any)?.[k]?.extensions?.["io.openslin.access"];
+      const access = (effective.fields as any)?.[k]?.extensions?.["io.mindpal.access"];
       return access?.writable !== false;
     });
 

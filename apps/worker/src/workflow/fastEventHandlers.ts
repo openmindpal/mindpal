@@ -7,7 +7,7 @@
 import type { Pool } from 'pg';
 import type { ResumeEvent, ResumeResult } from './eventDrivenResume';
 import { writeAudit } from './processor/audit';
-import { StructuredLogger } from '@openslin/shared';
+import { StructuredLogger } from '@mindpal/shared';
 
 const _logger = new StructuredLogger({ module: 'worker:fastEventHandlers' });
 

@@ -20,7 +20,7 @@
  */
 import type { Pool } from "pg";
 import type Redis from "ioredis";
-import { safeTransitionRun, type RunStatus, StructuredLogger } from "@openslin/shared";
+import { safeTransitionRun, type RunStatus, StructuredLogger } from "@mindpal/shared";
 import { acquireLock } from "../lib/distributedLock";
 
 const _logger = new StructuredLogger({ module: 'worker:eventDrivenResume' });

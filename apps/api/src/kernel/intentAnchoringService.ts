@@ -12,7 +12,7 @@
  * @module intentAnchoringService
  */
 import type { Pool } from "pg";
-import { resolveNumber } from "@openslin/shared";
+import { resolveNumber } from "@mindpal/shared";
 
 /* ── Re-export 子模块，保持外部引用兼容 ── */
 export { getAnchorRules, loadAnchorRules } from "./intentAnchorRules";

@@ -11,7 +11,7 @@ import { Card, Table } from "../../../components/ui";
 import { resolveReferenceLabels, type RefLabelMap } from "../../../lib/referenceResolver";
 
 async function loadPage(locale: string, name: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/ui/pages/${encodeURIComponent(name)}`, {
     token,
     locale,
@@ -22,7 +22,7 @@ async function loadPage(locale: string, name: string) {
 }
 
 async function loadViewPrefs(locale: string, name: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/ui/pages/${encodeURIComponent(name)}/view-prefs`, {
     token,
     locale,
@@ -34,7 +34,7 @@ async function loadViewPrefs(locale: string, name: string) {
 }
 
 async function loadEffectiveSchemaBy(locale: string, entity: string, schemaName?: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const query = schemaName ? `?schemaName=${encodeURIComponent(schemaName)}` : "";
   const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective${query}`, {
     token,
@@ -46,7 +46,7 @@ async function loadEffectiveSchemaBy(locale: string, entity: string, schemaName?
 }
 
 async function loadEntity(locale: string, entity: string, id: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, {
     token,
     locale,
@@ -57,7 +57,7 @@ async function loadEntity(locale: string, entity: string, id: string) {
 }
 
 async function loadEntityQuery(locale: string, entity: string, body: unknown) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/entities/${encodeURIComponent(entity)}/query`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -284,7 +284,7 @@ export default async function PageEntry(props: {
     const data = await loadEntityQuery(locale, entityName, queryBody);
 
     // Resolve reference field display labels
-    const token = (await cookies()).get("openslin_token")?.value ?? "";
+    const token = (await cookies()).get("mindpal_token")?.value ?? "";
     const refLabels: RefLabelMap = await resolveReferenceLabels({
       fields,
       items: Array.isArray((data as any)?.items) ? (data as any).items : [],
@@ -528,7 +528,7 @@ export default async function PageEntry(props: {
     const fields = (schema?.fields ?? {}) as Record<string, FieldDef>;
 
     // Resolve reference field display labels for detail view
-    const detailToken = (await cookies()).get("openslin_token")?.value ?? "";
+    const detailToken = (await cookies()).get("mindpal_token")?.value ?? "";
     const detailRefLabels: RefLabelMap = await resolveReferenceLabels({
       fields,
       items: entity ? [{ payload: entity.payload ?? {} } as Record<string, unknown>] : [],

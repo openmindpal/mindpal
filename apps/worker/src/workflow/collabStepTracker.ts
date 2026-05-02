@@ -6,7 +6,7 @@
  * 属于 cross-cutting concern，非 collab run 时自动跳过。
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:collabStepTracker" });
 import { appendCollabEventOnce } from "../lib/collabEvents";

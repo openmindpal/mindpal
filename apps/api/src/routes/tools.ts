@@ -1,9 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { resolvePromptInjectionPolicy, resolveSupplyChainPolicy, supplyChainGate as runSupplyChainGate } from "@openslin/shared";
+import { resolvePromptInjectionPolicy, resolveSupplyChainPolicy, supplyChainGate as runSupplyChainGate } from "@mindpal/shared";
 import { Errors } from "../lib/errors";
 import { requirePermission } from "../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { setAuditContext } from "../modules/audit/context";
 import { enqueueAuditOutboxForRequest } from "../modules/audit/requestOutbox";
 import { toolPublishSchema } from "../modules/tools/toolModel";

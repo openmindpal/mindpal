@@ -9,7 +9,7 @@ import {
   computeDebateConsensusScore,
   type DebateSession, type DebatePosition, type DebateRound,
   type DebateVerdict, type DebateCorrection, type ConsensusEvolutionEntry,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 // ── 持久化：辩论会话 ──────────────────────────────────────
 

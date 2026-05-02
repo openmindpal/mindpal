@@ -19,10 +19,10 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult,
   DeviceMessageContext,
-} from "@openslin/device-agent-sdk";
-import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
-import { findPluginForTool, getMultimodalCapabilities, getActiveWebSocketAgent } from "@openslin/device-agent-sdk";
-import type { DeviceAttachment } from "@openslin/shared";
+} from "@mindpal/device-agent-sdk";
+import type { CapabilityDescriptor } from "@mindpal/device-agent-sdk";
+import { findPluginForTool, getMultimodalCapabilities, getActiveWebSocketAgent } from "@mindpal/device-agent-sdk";
+import type { DeviceAttachment } from "@mindpal/shared";
 
 // ── 类型定义 ──────────────────────────────────────────────────────
 

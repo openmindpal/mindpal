@@ -1,7 +1,7 @@
 import type { WorkerSkillContribution } from "../../lib/workerSkillContract";
 import { tickWebhookDeliveries } from "../../channels/webhookDelivery";
 import { tickChannelOutboxDeliveries } from "../../channels/outboxDelivery";
-import { resolveString } from "@openslin/shared";
+import { resolveString } from "@mindpal/shared";
 
 function resolveMasterKey() {
   const v = resolveString("API_MASTER_KEY").value;

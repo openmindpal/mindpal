@@ -85,14 +85,14 @@ describe("schema extension namespace gate", () => {
             title: {
               type: "string",
               extensions: {
-                "io.openslin.editor": { widget: "text" },
+                "io.mindpal.editor": { widget: "text" },
               },
             },
           },
         },
       },
       extensions: {
-        "org.openslin.schema": { tier: "stable" },
+        "org.mindpal.schema": { tier: "stable" },
       },
     });
     expect(out).toEqual({ ok: true });

@@ -1,5 +1,5 @@
-import type { CollabPhase, StepStatus } from "@openslin/shared";
-import { normalizeStepStatus, normalizeCollabPhase, checkStateInvariant } from "@openslin/shared";
+import type { CollabPhase, StepStatus } from "@mindpal/shared";
+import { normalizeStepStatus, normalizeCollabPhase, checkStateInvariant } from "@mindpal/shared";
 
 export type CollabInvariant = { code: string; severity: "error" | "warn"; message: string; details?: any };
 

@@ -34,7 +34,7 @@ import {
   type HandshakeAckSecurityExt,
   type DeviceSessionState,
   type SecureDeviceMessage,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import * as crypto from "node:crypto";
 
 const _logger = new StructuredLogger({ module: "api:deviceWs" });
@@ -63,7 +63,7 @@ import {
 } from "./modules/crossDeviceBus";
 import { processDeviceQuery } from "./deviceMultimodalHandler";
 import { deviceCapabilityRegistry } from "./deviceCapabilityRegistry";
-import type { DeviceCapabilityDescriptor, DeviceCommand, DeviceCommandAck } from "@openslin/shared";
+import type { DeviceCapabilityDescriptor, DeviceCommand, DeviceCommandAck } from "@mindpal/shared";
 
 function requireDeviceFromReq(req: any) {
   const device = req.ctx?.device;

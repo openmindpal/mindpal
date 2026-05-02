@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { canonicalize, stableStringify, sha256Hex, computeEventHash } from "@openslin/shared";
+import { canonicalize, stableStringify, sha256Hex, computeEventHash } from "@mindpal/shared";
 
 // ─── Tests ───────────────────────────────────────────────────────────────
 

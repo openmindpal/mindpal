@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { computeMinhash, minhashOverlapScore, StructuredLogger } from "@openslin/shared";
+import { computeMinhash, minhashOverlapScore, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:knowledgeRepo" });
 import { createVectorStore, resolveVectorStoreConfigFromEnv } from "./vectorStore";

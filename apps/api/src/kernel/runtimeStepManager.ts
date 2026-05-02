@@ -20,7 +20,7 @@ import crypto from "node:crypto";
 import { isToolEnabled } from "../modules/governance/toolGovernanceRepo";
 import { getToolVersionByRef, getToolDefinition } from "../modules/tools/toolRepo";
 import { resolveEffectiveToolRef } from "../modules/tools/resolve";
-import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
 
 /* ================================================================== */
 /*  Types                                                               */

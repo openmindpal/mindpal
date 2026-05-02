@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import GovDevicesClient from "./ui";
 
 async function loadDevices(locale: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const q = new URLSearchParams();
   q.set("limit", "50");
   q.set("offset", "0");

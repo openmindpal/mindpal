@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { Errors } from "../lib/errors";
 import { setAuditContext } from "../modules/audit/context";
 import { requirePermission } from "../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { getArtifactContent } from "../modules/artifacts/artifactRepo";
 import { createBackup, getBackup, listBackups } from "../modules/backups/backupRepo";
 import { getEffectiveSchema, resolveSchemaNameForEntities } from "../modules/metadata/schemaRepo";

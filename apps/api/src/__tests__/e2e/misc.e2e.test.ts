@@ -140,7 +140,7 @@ describe.sequential("e2e:misc", { timeout: 60_000 }, () => {
       headers: { authorization: "Bearer admin", "x-tenant-id": "tenant_dev", "x-space-id": "space_dev" },
     });
     expect(r.statusCode).toBe(200);
-    expect(String(r.body)).toContain("openslin_");
+    expect(String(r.body)).toContain("mindpal_");
   });
 
   it("PAT：创建→使用→撤销", async () => {

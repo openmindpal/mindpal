@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory, sha256_8 } from "@openslin/shared";
+import { normalizeAuditErrorCategory, sha256_8 } from "@mindpal/shared";
 
 async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();

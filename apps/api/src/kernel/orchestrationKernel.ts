@@ -28,9 +28,9 @@ import type {
   StepExecutionResult,
   OrchestrationEvent,
   OrchestrationEventType,
-} from "@openslin/shared";
-import { StructuredLogger, tryTransitionAgent, mapOrchestrationToAgent } from "@openslin/shared";
-import type { AgentPhase, PreflightResult } from "@openslin/shared";
+} from "@mindpal/shared";
+import { StructuredLogger, tryTransitionAgent, mapOrchestrationToAgent } from "@mindpal/shared";
+import type { AgentPhase, PreflightResult } from "@mindpal/shared";
 
 import { runAgentLoop, type AgentLoopParams, type AgentLoopResult } from "./agentLoop";
 import type { LoopState } from "./loopLifecycle";

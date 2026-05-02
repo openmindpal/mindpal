@@ -4,7 +4,7 @@ import GovModelsClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadInitial(locale: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const [bindingsRes, catalogRes] = await Promise.all([
     apiFetch(`/models/bindings`, { token, locale, cache: "no-store" }),
     apiFetch(`/models/catalog`, { token, locale, cache: "no-store" }),

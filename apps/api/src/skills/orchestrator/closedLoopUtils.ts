@@ -3,7 +3,7 @@
  * Extracted from routes.closedLoop.ts to reduce file size and enable reuse.
  */
 import { sha256Hex } from "../../lib/digest";
-import { sha256_8 } from "@openslin/shared";
+import { sha256_8 } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  Types                                                               */

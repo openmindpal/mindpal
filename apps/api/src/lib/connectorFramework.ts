@@ -13,7 +13,7 @@
  *   - bidirectional: 双向持久连接（WebSocket/长轮询）
  */
 import type { Pool } from "pg";
-import { getOrCreateBreaker, CircuitOpenError, StructuredLogger } from "@openslin/shared";
+import { getOrCreateBreaker, CircuitOpenError, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "connectorFramework" });
 

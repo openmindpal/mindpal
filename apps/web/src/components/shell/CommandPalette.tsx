@@ -13,7 +13,7 @@ export type CommandItem = {
   keywords?: string[];
 };
 
-const STORAGE_KEY = "openslin_nav_visits";
+const STORAGE_KEY = "mindpal_nav_visits";
 const MAX_RECENT = 8;
 
 function readVisits(): Record<string, number> {

@@ -1,4 +1,4 @@
-import { attachDlpSummary, redactValue, shouldDenyDlpForTarget } from "@openslin/shared";
+import { attachDlpSummary, redactValue, shouldDenyDlpForTarget } from "@mindpal/shared";
 
 import { Errors } from "./errors";
 import type { RequestDlpPolicyContext } from "./dlpPolicy";

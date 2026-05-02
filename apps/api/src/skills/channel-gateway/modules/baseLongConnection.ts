@@ -10,7 +10,7 @@
  * 子类只需实现协议差异部分（握手、心跳、消息解析）。
  */
 import { EventEmitter } from "events";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 // ─── WebSocket 运行时适配 ───────────────────────────────────────────────────
 let _WsImpl: any;

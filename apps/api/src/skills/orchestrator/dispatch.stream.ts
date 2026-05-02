@@ -10,10 +10,10 @@
  * - 保留流式 UX（delta/toolSuggestions/done事件）
  */
 import crypto from "node:crypto";
-import { redactValue, resolveToolAlias, isDeviceToolName, resolveNumber, extractTextContent } from "@openslin/shared";
+import { redactValue, resolveToolAlias, isDeviceToolName, resolveNumber, extractTextContent } from "@mindpal/shared";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { sha256Hex } from "../../lib/digest";
 import { classifyIntentFast, classifyIntentTwoLevel, reviewIntentDecision, intentDecisionToClassification, type IntentMode, type IntentClassification, GRAY_ZONE } from "./modules/intentClassifier";
 import { createOrchestratorTurn } from "./modules/turnRepo";
@@ -530,7 +530,7 @@ export function registerStreamRoute(app: any): void {
       };
 
       // 5.3.1 推送 planStep 结构化卡片到聊天流（含设备可用性预检）
-      // 工具别名解析使用 @openslin/shared 共享解析器，不再内联硬编码
+      // 工具别名解析使用 @mindpal/shared 共享解析器，不再内联硬编码
       const totalPlanSteps = planResult.planSteps.length;
       const deviceToolSteps: Array<{ idx: number; toolName: string }> = [];
       for (let i = 0; i < totalPlanSteps; i++) {

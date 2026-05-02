@@ -8,7 +8,7 @@
  * 无需改动 jobDispatcher.ts 分发逻辑。
  */
 import { registerJobHandler, type JobDeps } from "./jobDispatcher";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:builtinJobHandlers" });
 import { processGovernanceEvalRun } from "../governance/evalExecutor";

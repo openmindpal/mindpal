@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isToolAllowedForPolicy } from "@openslin/shared";
+import { isToolAllowedForPolicy } from "@mindpal/shared";
 
 describe("tool policy matching", () => {
   it("accepts exact versioned tool refs", () => {

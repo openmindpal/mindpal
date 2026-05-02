@@ -11,7 +11,7 @@
  * - 决策质量重试：禁用（直接接受首次决策）
  * - 动态策略检索：仅第 1 次迭代执行
  */
-import { resolveBoolean } from "@openslin/shared";
+import { resolveBoolean } from "@mindpal/shared";
 
 let _turboMode: boolean | null = null;
 

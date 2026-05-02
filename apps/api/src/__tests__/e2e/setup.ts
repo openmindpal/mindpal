@@ -13,7 +13,7 @@ import { loadConfig } from "../../config";
 import { migrate } from "../../db/migrate";
 import { createPool } from "../../db/pool";
 import { buildServer } from "../../server";
-import { redactString } from "@openslin/shared";
+import { redactString } from "@mindpal/shared";
 import { processAuditExport } from "../../../../worker/src/audit/exportProcessor";
 import { processKnowledgeEmbeddingJob } from "../../../../worker/src/knowledge/embedding";
 import { processKnowledgeIngestJob } from "../../../../worker/src/knowledge/ingest";

@@ -1,5 +1,5 @@
 import type { FastifyRequest } from "fastify";
-import type { AbacEvaluationRequest } from "@openslin/shared";
+import type { AbacEvaluationRequest } from "@mindpal/shared";
 import { Errors } from "../../lib/errors";
 import { authorize } from "./authz";
 

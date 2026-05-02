@@ -209,7 +209,7 @@ export const NAV_ITEMS = [
 /* ─── Recent pages (localStorage) ────────────────────────────────────── */
 
 export type RecentEntry = { kind: "page" | "workbench"; name: string; ts: number; url?: string };
-const RECENT_KEY = "openslin_recent_pages";
+const RECENT_KEY = "mindpal_recent_pages";
 const MAX_RECENT = 12;
 
 export function loadRecent(): RecentEntry[] {
@@ -233,7 +233,7 @@ export function clearRecent() {
 /* ─── Favorites (localStorage) ───────────────────────────────────────── */
 
 export type FavoriteEntry = { kind: "page" | "workbench" | "run" | "agent"; name: string; url: string; addedAt: number };
-const FAVORITES_KEY = "openslin_favorites";
+const FAVORITES_KEY = "mindpal_favorites";
 const MAX_FAVORITES = 20;
 
 export function loadFavorites(): FavoriteEntry[] {

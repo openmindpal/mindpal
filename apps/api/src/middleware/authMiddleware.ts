@@ -56,7 +56,7 @@ export function authMiddleware(app: FastifyInstance): void {
 
     // ── 2. Bearer / Cookie Authentication ──
     const headerAuth = req.headers.authorization;
-    const cookieToken = readCookieValue(req.headers.cookie, "openslin_token").trim();
+    const cookieToken = readCookieValue(req.headers.cookie, "mindpal_token").trim();
     const cookieAuth =
       cookieToken && !headerAuth
         ? cookieToken.toLowerCase().startsWith("bearer ") || cookieToken.toLowerCase().startsWith("device ")

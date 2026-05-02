@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { sha256Hex, stableStringify } from "@openslin/shared";
+import { sha256Hex, stableStringify } from "@mindpal/shared";
 
 export type SafetyPolicyType = "content" | "injection" | "risk";
 export type SafetyPolicyVersionStatus = "draft" | "submitted" | "approved" | "released";

@@ -1,4 +1,4 @@
-import { sha256Hex, stableStringify } from "@openslin/shared";
+import { sha256Hex, stableStringify } from "@mindpal/shared";
 
 function evalReportDigest8FromCases(casesJson: any[]) {
   const cases = Array.isArray(casesJson) ? casesJson : [];

@@ -13,7 +13,7 @@
  * 不变式检查不阻塞执行（warn-only），但为旁路检测提供依据。
  */
 
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "invariants" });
 

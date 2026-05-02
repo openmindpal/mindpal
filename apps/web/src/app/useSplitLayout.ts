@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const SPLIT_KEY = "openslin_split_layout";
+const SPLIT_KEY = "mindpal_split_layout";
 
 function readSavedSplitLayout(): { leftWidth: number; leftCollapsed: boolean; rightCollapsed: boolean } {
   if (typeof window === "undefined") {

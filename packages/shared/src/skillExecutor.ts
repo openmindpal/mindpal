@@ -4,7 +4,7 @@
  * 将 Runner 的进程池管理 + IPC 协议 + 超时/心跳 + 错误分类逻辑提取为共享库，
  * 消除 Runner 与 Worker 的双重沙箱实现。
  *
- * @module @openslin/shared/skillExecutor
+ * @module @mindpal/shared/skillExecutor
  */
 import child_process, { type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";

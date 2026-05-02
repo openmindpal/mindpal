@@ -40,7 +40,7 @@ import {
   type SkillLogNotification,
   type SkillRpcResponse,
   resolveString,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import type { RuntimeLimits, NetworkPolicy } from "./runtime";
 import type { DynamicSkillExecResult } from "./dynamicSkillTypes";
 

@@ -8,7 +8,7 @@ import type { FieldDef, EffectiveSchema, UiFormUi } from "../../../../lib/types"
 import { ReferencePicker } from "../../../../components/ui/ReferencePicker";
 
 const isFieldWritable = (def: FieldDef | undefined) =>
-  (def?.extensions?.["io.openslin.access"] as any)?.writable !== false;
+  (def?.extensions?.["io.mindpal.access"] as any)?.writable !== false;
 
 type Props = {
   locale: string;
@@ -255,7 +255,7 @@ export function EntityForm(props: Props) {
 
               if (type === "reference") {
                 // Build cascadeFilter from extensions
-                const uiExt = (def.extensions?.["io.openslin.ui"] as any) ?? undefined;
+                const uiExt = (def.extensions?.["io.mindpal.ui"] as any) ?? undefined;
                 const dep = uiExt?.reference?.dependsOn;
                 const cascadeFilter = dep && values[dep.field]
                   ? { field: dep.filterField, value: String(values[dep.field]) }

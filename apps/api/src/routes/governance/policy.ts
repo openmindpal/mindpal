@@ -7,7 +7,7 @@ import { authorize } from "../../modules/auth/authz";
 import { getPolicySnapshot, listPolicySnapshots } from "../../modules/auth/policySnapshotRepo";
 import { bumpPolicyCacheEpoch, getPolicyCacheEpoch } from "../../modules/auth/policyCacheEpochRepo";
 import { createDraftPolicyVersion, getPolicyVersion, listPolicyVersions, setPolicyVersionStatus } from "../../modules/auth/policyVersionRepo";
-import { validatePolicyExpr } from "@openslin/shared";
+import { validatePolicyExpr } from "@mindpal/shared";
 
 export const governancePolicyRoutes: FastifyPluginAsync = async (app) => {
   app.get("/governance/policy/snapshots", async (req) => {

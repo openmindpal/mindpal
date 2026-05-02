@@ -14,7 +14,7 @@ import { runAgentLoop } from "./agentLoop";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import type { AgentState, CollabResult, CollabOrchestratorParams } from "./collabTypes";
 import { writeCollabEnvelope } from "./collabEnvelope";
-import { collabConfig, resolveString } from "@openslin/shared";
+import { collabConfig, resolveString } from "@mindpal/shared";
 
 /** 最大纠错轮次限制，超过后返回当前最佳结果而非继续重试（governance > env > default 三级配置） */
 function getMaxCorrectionRounds(): number {

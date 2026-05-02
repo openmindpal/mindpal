@@ -5,7 +5,7 @@
  * 避免各路由文件中散落的字符串字面量。
  *
  * 使用方式:
- *   import { PERM } from "@openslin/shared";
+ *   import { PERM } from "@mindpal/shared";
  *   await requirePermission({ req, ...PERM.GOVERNANCE_TOOL_ENABLE });
  */
 
@@ -151,7 +151,7 @@ const MEMORY_TASK_STATE: PermissionAction = { resourceType: "memory", action: "t
  * All permission action constants, grouped by module.
  *
  * Usage:
- *   import { PERM } from "@openslin/shared";
+ *   import { PERM } from "@mindpal/shared";
  *   requirePermission({ req, ...PERM.GOVERNANCE_TOOL_ENABLE });
  */
 export const PERM = {

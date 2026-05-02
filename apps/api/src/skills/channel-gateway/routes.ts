@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:channelGateway" });
 import { Errors } from "../../lib/errors";

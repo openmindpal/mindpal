@@ -3,7 +3,7 @@
     "id": null,
     "uid": "agent-loop-overview",
     "title": "Agent Loop Overview",
-    "tags": ["agent", "openslin", "observability"],
+    "tags": ["agent", "mindpal", "observability"],
     "timezone": "browser",
     "refresh": "30s",
     "schemaVersion": 39,

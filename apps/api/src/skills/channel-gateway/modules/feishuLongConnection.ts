@@ -3,7 +3,7 @@
  *
  * 通过 WebSocket 订阅飞书事件推送，无需公网 URL。
  */
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 import { BaseLongConnectionClient } from "./baseLongConnection";
 
 const _logger = new StructuredLogger({ module: "api:feishuWsClient" });

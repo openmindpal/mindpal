@@ -189,7 +189,7 @@ let memoryPolicyCache: PolicyCacheEntry | null = null;
 const DEFAULT_POLICY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function getPolicyCacheDir(): string {
-  return policyCacheConfig?.cacheDir ?? path.join(os.homedir(), ".openslin", "cache");
+  return policyCacheConfig?.cacheDir ?? path.join(os.homedir(), ".mindpal", "cache");
 }
 
 function getPolicyCacheFilePath(): string {

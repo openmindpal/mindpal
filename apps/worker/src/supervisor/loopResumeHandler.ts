@@ -12,7 +12,7 @@
  *   任意 API 节点接收到请求后调用 runAgentLoop(resumeLoopId, resumeState)
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:loopResume" });
 

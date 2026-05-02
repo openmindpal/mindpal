@@ -8,8 +8,8 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import { StructuredLogger, resolveBoolean, resolveNumber } from "@openslin/shared";
-import type { SimilarityStrategy } from "@openslin/shared";
+import { StructuredLogger, resolveBoolean, resolveNumber } from "@mindpal/shared";
+import type { SimilarityStrategy } from "@mindpal/shared";
 import type {
   IntentAnchor,
   BoundaryViolation as BoundaryViolationType,

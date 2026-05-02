@@ -29,7 +29,7 @@ import {
   isRpcNotification,
   isRpcResponse,
   normalizeLimits,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 describe.sequential("e2e:skillSandbox", { timeout: 60_000 }, () => {
 

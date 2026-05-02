@@ -1,6 +1,6 @@
 import type { SchemaDef } from "../metadata/schemaModel";
 import type { Pool, PoolClient } from "pg";
-import { isPlainObject, checkType } from "@openslin/shared";
+import { isPlainObject, checkType } from "@mindpal/shared";
 
 type ValidationError = { ok: false; reason: string };
 type ValidationOk = { ok: true };

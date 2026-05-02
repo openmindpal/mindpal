@@ -1,5 +1,5 @@
-import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicy, normalizeLimits, validateCapabilityEnvelopeV1 } from "@openslin/shared";
+import type { CapabilityEnvelopeV1 } from "@mindpal/shared";
+import { checkCapabilityEnvelopeNotExceedV1, normalizeNetworkPolicy, normalizeLimits, validateCapabilityEnvelopeV1 } from "@mindpal/shared";
 import type { Pool } from "pg";
 import { getEffectiveToolNetworkPolicy } from "../governance/toolNetworkPolicyRepo";
 import { sha256Hex } from "../../lib/digest";

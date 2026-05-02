@@ -22,7 +22,7 @@ import crypto from "node:crypto";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
-import { PERM, resolveNumber } from "@openslin/shared";
+import { PERM, resolveNumber } from "@mindpal/shared";
 import { sha256Hex } from "../../lib/digest";
 import {
   classifyIntentFast,

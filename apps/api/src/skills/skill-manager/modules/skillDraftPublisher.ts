@@ -62,7 +62,7 @@ function generatePackageJson(skillName: string, manifest: any): string {
   const safeName = skillName.replace(/\./g, "-").toLowerCase();
   return JSON.stringify(
     {
-      name: `@openslin-skill/${safeName}`,
+      name: `@mindpal-skill/${safeName}`,
       version: manifest?.identity?.version ?? "1.0.0",
       type: "module",
       main: "dist/index.js",

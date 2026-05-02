@@ -6,8 +6,8 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import type { GoalGraph, WorldState, FailureDiagnosis, FallbackImpact, ReplanAction } from "@openslin/shared";
-import { ErrorCategory } from "@openslin/shared";
+import type { GoalGraph, WorldState, FailureDiagnosis, FallbackImpact, ReplanAction } from "@mindpal/shared";
+import { ErrorCategory } from "@mindpal/shared";
 import type { AgentDecision, StepObservation, ExecutionConstraints } from "./loopTypes";
 import type { VerificationResult } from "./verifierAgent";
 import { verifyGoalCompletion, verifySimple, verifyStepResult, applyStepVerification } from "./verifierAgent";

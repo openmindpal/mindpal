@@ -10,7 +10,7 @@
  * 自包含 DB 查询逻辑，不依赖 API 层 import。
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:loopSupervisor" });
 

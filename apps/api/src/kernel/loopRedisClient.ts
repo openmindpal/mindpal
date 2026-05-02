@@ -4,7 +4,7 @@
  * 用于 step 完成事件驱动通知，避免每次 waitForStepCompletion 创建新连接。
  */
 
-import { resolveString, resolveNumber } from "@openslin/shared";
+import { resolveString, resolveNumber } from "@mindpal/shared";
 
 /* ─── 2.1 FIX: 模块级共享 Redis Pub/Sub 连接（懒单例） ─── */
 let _sharedSubClient: import("ioredis").default | null = null;

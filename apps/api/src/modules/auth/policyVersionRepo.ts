@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { canonicalize, stableStringify, sha256Hex } from "@openslin/shared";
+import { canonicalize, stableStringify, sha256Hex } from "@mindpal/shared";
 
 export type PolicyVersionState = "draft" | "released" | "deprecated";
 

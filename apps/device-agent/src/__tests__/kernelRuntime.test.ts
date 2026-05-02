@@ -1,9 +1,9 @@
 import path from "node:path";
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { clearAll, getCapability } from "@openslin/device-agent-sdk";
-import { initPlugin, getPluginState, disposeAllPlugins } from "@openslin/device-agent-sdk";
-import { assertKernelManifest, validatePluginBoundary } from "@openslin/device-agent-sdk";
-import { getHeartbeatStatus, initSessionManager, sendHeartbeat, shutdownSessionManager } from "@openslin/device-agent-sdk";
+import { clearAll, getCapability } from "@mindpal/device-agent-sdk";
+import { initPlugin, getPluginState, disposeAllPlugins } from "@mindpal/device-agent-sdk";
+import { assertKernelManifest, validatePluginBoundary } from "@mindpal/device-agent-sdk";
+import { getHeartbeatStatus, initSessionManager, sendHeartbeat, shutdownSessionManager } from "@mindpal/device-agent-sdk";
 import desktopPlugin from "../plugins/desktopPlugin";
 import guiAutomationPlugin from "../plugins/guiAutomationPlugin";
 

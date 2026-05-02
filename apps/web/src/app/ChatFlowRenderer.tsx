@@ -382,7 +382,7 @@ const MemoizedFlowBubble = memo(function FlowBubble({
       {/* ── Schema-UI Result (JSON Schema驱动的结构化UI) ── */}
       {it.kind === "schemaUiResult" && (
         <Suspense fallback={<span style={{ opacity: 0.5, fontSize: "0.875rem" }}>Loading…</span>}>
-          <LazyFlowSchemaUiResult config={(it as FlowSchemaUiResult).config as import("@openslin/shared").SchemaUiConfig} />
+          <LazyFlowSchemaUiResult config={(it as FlowSchemaUiResult).config as import("@mindpal/shared").SchemaUiConfig} />
         </Suspense>
       )}
     </div>

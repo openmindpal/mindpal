@@ -7,7 +7,7 @@
  * - 集成到 Fastify 插件系统
  */
 import type { FastifyPluginAsync } from "fastify";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:tenantQuota" });
 

@@ -4,7 +4,7 @@ import ChangeSetDetailClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadChangeSet(locale: string, id: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/governance/changesets/${encodeURIComponent(id)}`, { token, locale, cache: "no-store" });
   const json: unknown = await res.json().catch(() => null);
   return { status: res.status, json };

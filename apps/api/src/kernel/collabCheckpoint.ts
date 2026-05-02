@@ -13,7 +13,7 @@
  * - 心跳间隔复用 COLLAB_CONFIG_DEFAULTS.heartbeatIntervalMs 语义
  */
 import type { Pool } from "pg";
-import { resolveNumber } from "@openslin/shared";
+import { resolveNumber } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  Types                                                               */

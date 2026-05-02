@@ -25,8 +25,8 @@ import {
   syncPolicyToCache,
   buildOfflineClaim,
   getPolicyCacheStatus,
-} from "@openslin/device-agent-sdk";
-import type { CachedPolicy, PolicyCacheEntry } from "@openslin/device-agent-sdk";
+} from "@mindpal/device-agent-sdk";
+import type { CachedPolicy, PolicyCacheEntry } from "@mindpal/device-agent-sdk";
 
 // Mock fs 模块，避免真实磁盘操作
 vi.mock("node:fs/promises", () => ({

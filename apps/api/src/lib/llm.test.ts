@@ -18,7 +18,7 @@ const {
   };
 });
 
-vi.mock("@openslin/shared", () => ({
+vi.mock("@mindpal/shared", () => ({
   getOrCreateBreaker: mockGetOrCreateBreaker,
   StructuredLogger: vi.fn().mockImplementation(() => ({
     debug: vi.fn(),

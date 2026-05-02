@@ -36,36 +36,36 @@ export type PolicyExpr =
   | { op: "attr_match"; attributes: Array<{ key: string; operand: PolicyOperand; value: PolicyLiteral }> };
 
 export const POLICY_EXPR_JSON_SCHEMA_V1 = {
-  $id: "openslin:policy-expr:v1",
+  $id: "mindpal:policy-expr:v1",
   type: "object",
   oneOf: [
-    { properties: { op: { const: "and" }, args: { type: "array", minItems: 1, items: { $ref: "openslin:policy-expr:v1" } } }, required: ["op", "args"] },
-    { properties: { op: { const: "or" }, args: { type: "array", minItems: 1, items: { $ref: "openslin:policy-expr:v1" } } }, required: ["op", "args"] },
-    { properties: { op: { const: "not" }, arg: { $ref: "openslin:policy-expr:v1" } }, required: ["op", "arg"] },
+    { properties: { op: { const: "and" }, args: { type: "array", minItems: 1, items: { $ref: "mindpal:policy-expr:v1" } } }, required: ["op", "args"] },
+    { properties: { op: { const: "or" }, args: { type: "array", minItems: 1, items: { $ref: "mindpal:policy-expr:v1" } } }, required: ["op", "args"] },
+    { properties: { op: { const: "not" }, arg: { $ref: "mindpal:policy-expr:v1" } }, required: ["op", "arg"] },
     {
       properties: {
         op: { const: "eq" },
-        left: { $ref: "openslin:policy-operand:v1" },
-        right: { oneOf: [{ $ref: "openslin:policy-operand:v1" }, { $ref: "openslin:policy-literal:v1" }] },
+        left: { $ref: "mindpal:policy-operand:v1" },
+        right: { oneOf: [{ $ref: "mindpal:policy-operand:v1" }, { $ref: "mindpal:policy-literal:v1" }] },
       },
       required: ["op", "left", "right"],
     },
     {
       properties: {
         op: { const: "in" },
-        left: { $ref: "openslin:policy-operand:v1" },
-        right: { type: "object", properties: { kind: { const: "list" }, values: { type: "array", minItems: 1, items: { $ref: "openslin:policy-literal:v1" } } }, required: ["kind", "values"] },
+        left: { $ref: "mindpal:policy-operand:v1" },
+        right: { type: "object", properties: { kind: { const: "list" }, values: { type: "array", minItems: 1, items: { $ref: "mindpal:policy-literal:v1" } } }, required: ["kind", "values"] },
       },
       required: ["op", "left", "right"],
     },
     {
-      properties: { op: { const: "exists" }, operand: { $ref: "openslin:policy-operand:v1" } },
+      properties: { op: { const: "exists" }, operand: { $ref: "mindpal:policy-operand:v1" } },
       required: ["op", "operand"],
     },
   ],
   $defs: {
-    "openslin:policy-literal:v1": { oneOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }, { type: "null" }] },
-    "openslin:policy-operand:v1": {
+    "mindpal:policy-literal:v1": { oneOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }, { type: "null" }] },
+    "mindpal:policy-operand:v1": {
       type: "object",
       oneOf: [
         { properties: { kind: { const: "subject" }, key: { enum: ["subjectId", "tenantId", "spaceId"] } }, required: ["kind", "key"] },

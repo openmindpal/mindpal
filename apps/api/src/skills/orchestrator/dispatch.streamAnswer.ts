@@ -5,8 +5,8 @@
  * 仅处理对话与即时动作，不在前端/answer 层自动升级为 workflow
  */
 import crypto from "node:crypto";
-import { redactValue, parseDocument, dataUrlToBuffer, StructuredLogger, resolveNumber, toContentParts, type UnifiedAttachment } from "@openslin/shared";
-import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import { redactValue, parseDocument, dataUrlToBuffer, StructuredLogger, resolveNumber, toContentParts, type UnifiedAttachment } from "@mindpal/shared";
+import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
 
 const _logger = new StructuredLogger({ module: "api:dispatch.streamAnswer" });
 import { orchestrateChatTurn, discoverEnabledTools, buildSystemPrompt, summarizeDroppedMessages, fallbackTruncateSummary, recallRecentTasks, type ContextMeta, shouldTriggerEventDrivenSummary, buildSessionStateContext } from "./modules/orchestrator";
@@ -720,7 +720,7 @@ export async function handleStreamAnswerMode(params: {
   sse.sendEvent("done", { turnId: turn.turnId, conversationId, executionClass: resolution.executionClass, ...(actualModelRef ? { actualModelRef } : {}) });
 }
 
-// extractBase64Payload 和 normalizeAudioAttachmentFormat 已迁移至 @openslin/shared（attachmentProcessor）
+// extractBase64Payload 和 normalizeAudioAttachmentFormat 已迁移至 @mindpal/shared（attachmentProcessor）
 
 /**
  * P1-3: 从用户消息中提取多维度查询片段，用于激活 additionalQueries 并行记忆检索。

@@ -3,7 +3,7 @@ import { pickSecret } from "./channelCommon";
 import { verifySlackSignature, slackSendTextWithRetry } from "./slack";
 import type { ChannelProviderPlugin, IngressContext, ParsedInbound } from "./providerAdapters";
 import { registerChannelProvider, inferAttachmentType } from "./providerAdapters";
-import type { UnifiedAttachment } from "@openslin/shared";
+import type { UnifiedAttachment } from "@mindpal/shared";
 import { SlackSocketClient } from "./slackSocketMode";
 
 const slackPlugin: ChannelProviderPlugin = {

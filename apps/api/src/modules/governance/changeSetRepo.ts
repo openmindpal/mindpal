@@ -30,7 +30,7 @@ export {
 } from "./changeSetCrud";
 
 // ── Validation ─────────────────────────────────────────────
-export { isPlainObject } from "@openslin/shared";
+export { isPlainObject } from "@mindpal/shared";
 export {
   validateItem,
   assertMigrationGate,

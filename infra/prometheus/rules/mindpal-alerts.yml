@@ -1,20 +1,20 @@
-# P3-16: OpenSlin 关键业务告警规则
-# 部署路径: /etc/prometheus/rules/openslin-alerts.yml
+# P3-16: MindPal 关键业务告警规则
+# 部署路径: /etc/prometheus/rules/mindpal-alerts.yml
 
 groups:
   # ═══════════════════════════════════════════════════════════
   # 审计系统告警
   # ═══════════════════════════════════════════════════════════
-  - name: openslin.audit
+  - name: mindpal.audit
     interval: 30s
     rules:
       # 审计写入失败率 > 1%
       - alert: AuditWriteFailureRateHigh
         expr: |
           (
-            sum(rate(openslin_audit_write_failed_total[5m]))
+            sum(rate(mindpal_audit_write_failed_total[5m]))
             /
-            clamp_min(sum(rate(openslin_http_requests_total[5m])), 0.001)
+            clamp_min(sum(rate(mindpal_http_requests_total[5m])), 0.001)
           ) * 100 > 1
         for: 3m
         labels:
@@ -29,7 +29,7 @@ groups:
       # 审计 Outbox 积压超过 1000
       - alert: AuditOutboxBacklogHigh
         expr: |
-          sum(openslin_audit_outbox_backlog{status="pending"}) > 1000
+          sum(mindpal_audit_outbox_backlog{status="pending"}) > 1000
         for: 5m
         labels:
           severity: warning
@@ -42,13 +42,13 @@ groups:
   # ═══════════════════════════════════════════════════════════
   # 队列系统告警
   # ═══════════════════════════════════════════════════════════
-  - name: openslin.queue
+  - name: mindpal.queue
     interval: 30s
     rules:
       # Workflow 队列积压超过 1000
       - alert: WorkflowQueueBacklogHigh
         expr: |
-          sum(openslin_workflow_queue_backlog{status="waiting"}) > 1000
+          sum(mindpal_workflow_queue_backlog{status="waiting"}) > 1000
         for: 5m
         labels:
           severity: critical
@@ -61,7 +61,7 @@ groups:
       # 协同运行积压超过 500
       - alert: CollabRunBacklogHigh
         expr: |
-          sum(openslin_collab_runs_backlog{status="pending"}) > 500
+          sum(mindpal_collab_runs_backlog{status="pending"}) > 500
         for: 5m
         labels:
           severity: warning
@@ -74,16 +74,16 @@ groups:
   # ═══════════════════════════════════════════════════════════
   # 授权/安全告警
   # ═══════════════════════════════════════════════════════════
-  - name: openslin.authz
+  - name: mindpal.authz
     interval: 30s
     rules:
       # 授权拒绝率异常突增（5分钟内拒绝率 > 10%）
       - alert: AuthzDenialRateAbnormal
         expr: |
           (
-            sum(rate(openslin_authz_denied_total[5m]))
+            sum(rate(mindpal_authz_denied_total[5m]))
             /
-            clamp_min(sum(rate(openslin_http_requests_total[5m])), 0.001)
+            clamp_min(sum(rate(mindpal_http_requests_total[5m])), 0.001)
           ) * 100 > 10
         for: 3m
         labels:
@@ -97,7 +97,7 @@ groups:
       # 数据隔离违规
       - alert: DataIsolationViolation
         expr: |
-          sum(rate(openslin_data_isolation_violation_total[5m])) > 0
+          sum(rate(mindpal_data_isolation_violation_total[5m])) > 0
         for: 1m
         labels:
           severity: critical
@@ -110,14 +110,14 @@ groups:
   # ═══════════════════════════════════════════════════════════
   # API 性能告警
   # ═══════════════════════════════════════════════════════════
-  - name: openslin.api
+  - name: mindpal.api
     interval: 30s
     rules:
       # API P95 延迟超过 2 秒
       - alert: ApiLatencyP95High
         expr: |
           histogram_quantile(0.95,
-            sum(rate(openslin_http_request_duration_ms_bucket[5m])) by (le)
+            sum(rate(mindpal_http_request_duration_ms_bucket[5m])) by (le)
           ) > 2000
         for: 5m
         labels:
@@ -132,9 +132,9 @@ groups:
       - alert: ApiServerErrorRateHigh
         expr: |
           (
-            sum(rate(openslin_http_requests_total{status_class="5xx"}[5m]))
+            sum(rate(mindpal_http_requests_total{status_class="5xx"}[5m]))
             /
-            clamp_min(sum(rate(openslin_http_requests_total[5m])), 0.001)
+            clamp_min(sum(rate(mindpal_http_requests_total[5m])), 0.001)
           ) * 100 > 5
         for: 3m
         labels:
@@ -148,7 +148,7 @@ groups:
       # Worker 心跳超时（>120s 未更新）
       - alert: WorkerHeartbeatStale
         expr: |
-          openslin_worker_heartbeat_age_seconds > 120
+          mindpal_worker_heartbeat_age_seconds > 120
         for: 2m
         labels:
           severity: critical
@@ -161,13 +161,13 @@ groups:
   # ═══════════════════════════════════════════════════════════
   # 评测/治理告警
   # ═══════════════════════════════════════════════════════════
-  - name: openslin.eval
+  - name: mindpal.eval
     interval: 60s
     rules:
       # Eval Gate 连续阻断超过 10 次
       - alert: EvalGateBlockFrequent
         expr: |
-          sum(increase(openslin_eval_gate_blocked_total[30m])) > 10
+          sum(increase(mindpal_eval_gate_blocked_total[30m])) > 10
         for: 5m
         labels:
           severity: warning
@@ -180,7 +180,7 @@ groups:
       # 治理门禁失败率突增
       - alert: GovernanceGateFailureHigh
         expr: |
-          sum(rate(openslin_governance_gate_failed_total[5m])) > 1
+          sum(rate(mindpal_governance_gate_failed_total[5m])) > 1
         for: 5m
         labels:
           severity: warning
@@ -193,13 +193,13 @@ groups:
   # ═══════════════════════════════════════════════════════════
   # 基础设施告警
   # ═══════════════════════════════════════════════════════════
-  - name: openslin.infra
+  - name: mindpal.infra
     interval: 30s
     rules:
       # DB 连接池等待队列过长
       - alert: DbPoolWaitingHigh
         expr: |
-          openslin_db_pool_waiting > 10
+          mindpal_db_pool_waiting > 10
         for: 3m
         labels:
           severity: warning
@@ -212,7 +212,7 @@ groups:
       # DB 连接池空闲连接为 0
       - alert: DbPoolExhausted
         expr: |
-          openslin_db_pool_idle == 0 and openslin_db_pool_waiting > 0
+          mindpal_db_pool_idle == 0 and mindpal_db_pool_waiting > 0
         for: 2m
         labels:
           severity: critical
@@ -225,7 +225,7 @@ groups:
       # 健康检查失败
       - alert: ComponentUnhealthy
         expr: |
-          openslin_health_status == 0
+          mindpal_health_status == 0
         for: 2m
         labels:
           severity: critical
@@ -238,9 +238,9 @@ groups:
       # 进程重启检测（uptime 骤降）
       - alert: ProcessRestarted
         expr: |
-          openslin_process_uptime_seconds < 60
+          mindpal_process_uptime_seconds < 60
           and
-          openslin_process_uptime_seconds offset 5m > 300
+          mindpal_process_uptime_seconds offset 5m > 300
         for: 0m
         labels:
           severity: warning
@@ -253,13 +253,13 @@ groups:
   # ═══════════════════════════════════════════════════════════
   # 冲突解决 / 同步告警
   # ═══════════════════════════════════════════════════════════
-  - name: openslin.sync
+  - name: mindpal.sync
     interval: 60s
     rules:
       # 手动冲突解决积压
       - alert: ConflictManualRequiredHigh
         expr: |
-          sum(increase(openslin_conflict_manual_required_total[1h])) > 50
+          sum(increase(mindpal_conflict_manual_required_total[1h])) > 50
         for: 5m
         labels:
           severity: warning
@@ -273,9 +273,9 @@ groups:
       - alert: SyncPushErrorRateHigh
         expr: |
           (
-            sum(rate(openslin_sync_push_total{result="error"}[5m]))
+            sum(rate(mindpal_sync_push_total{result="error"}[5m]))
             /
-            clamp_min(sum(rate(openslin_sync_push_total[5m])), 0.001)
+            clamp_min(sum(rate(mindpal_sync_push_total[5m])), 0.001)
           ) * 100 > 5
         for: 5m
         labels:

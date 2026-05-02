@@ -1,18 +1,18 @@
 /**
  * toolGovernanceRepo — 工具治理层
  *
- * 统一元数据注册层（MetadataRegistry）已在 @openslin/shared/metadataRegistry 中可用，
+ * 统一元数据注册层（MetadataRegistry）已在 @mindpal/shared/metadataRegistry 中可用，
  * 提供跨 kind（tool/workflow/permission/connector）的统一元数据 CRUD 与分层解析。
  * 本模块保留原有 tool_rollouts 表的操作作为工具治理的主路径，
  * isToolEnabled 内部增加了对 metadata_registry 的可选查询作为补充解析路径。
  */
 import type { Pool } from "pg";
 import { getToolVersionByRef } from "../tools/toolRepo";
-import { resolveSupplyChainPolicy, checkTrust, checkDependencyScan } from "@openslin/shared";
+import { resolveSupplyChainPolicy, checkTrust, checkDependencyScan } from "@mindpal/shared";
 import { insertAuditEvent } from "../audit/auditRepo";
 import { Errors } from "../../lib/errors";
-import { StructuredLogger } from "@openslin/shared";
-import { resolveMetadata, type MetadataRegistryDeps } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
+import { resolveMetadata, type MetadataRegistryDeps } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "toolGovernance" });
 

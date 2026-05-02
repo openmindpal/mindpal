@@ -1,7 +1,7 @@
 /**
  * executeSkill.ts — Runner 侧 Skill 沙箱执行（薄包装）
  *
- * 核心进程池 + IPC 协议已迁移至 @openslin/shared/skillExecutor，
+ * 核心进程池 + IPC 协议已迁移至 @mindpal/shared/skillExecutor，
  * 本文件保留 Runner 专属的：
  * - artifact 路径解析（含环境变量、协议前缀、路径越界防护）
  * - manifest 加载 + deps digest 计算
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import type { EgressEvent, NetworkPolicy } from "./runtime";
 import { stableStringify } from "./common";
 import { getProcessPool } from "./skillProcessPool";
-import type { SkillExecuteResponse } from "@openslin/shared";
+import type { SkillExecuteResponse } from "@mindpal/shared";
 
 /**
  * 文件路径越界防护：校验请求路径是否在沙箱根目录内。

@@ -8,7 +8,7 @@
  *
  * @layer plugin
  */
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult, CapabilityDescriptor } from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult, CapabilityDescriptor } from "@mindpal/device-agent-sdk";
 
 const BUILTIN_CAPABILITIES: CapabilityDescriptor[] = [
   {

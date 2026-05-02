@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import KnowledgeEngineClient from "./ui"; // knowledge engine
 
 async function loadApi(locale: string, path: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   try {
     const res = await apiFetch(path, { token, locale, cache: "no-store" });
     const json: unknown = await res.json().catch(() => null);

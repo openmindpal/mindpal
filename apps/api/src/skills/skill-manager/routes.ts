@@ -14,7 +14,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { getBuiltinSkills, type BuiltinSkillPlugin } from "../../lib/skillPlugin";
 import { Errors } from "../../lib/errors";
 import { invalidateToolDiscoveryCache } from "../../modules/tools/toolAutoDiscovery";

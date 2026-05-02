@@ -10,10 +10,10 @@
 import type { Pool } from "pg";
 import type { LlmSubject } from "../lib/llm";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
-import type { ConsensusProposal, ConsensusVote, ConsensusQuorumType } from "@openslin/shared";
-import { isConsensusReached } from "@openslin/shared";
+import type { ConsensusProposal, ConsensusVote, ConsensusQuorumType } from "@mindpal/shared";
+import { isConsensusReached } from "@mindpal/shared";
 import crypto from "node:crypto";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "collabPermissions" });
 import type { CollabAgentRole, PermissionDelegation, CollabArbitrationStrategy } from "./collabTypes";

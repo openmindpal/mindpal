@@ -4,7 +4,7 @@
  * 合并自 Worker 与 Runner 的重复实现，作为 Skill 执行的共享基线。
  * 包含：类型定义、网络策略、出站检查、资源限制、并发/超时控制。
  *
- * @module @openslin/shared/runtime
+ * @module @mindpal/shared/runtime
  */
 
 import { resolveNumber } from "./runtimeConfig";

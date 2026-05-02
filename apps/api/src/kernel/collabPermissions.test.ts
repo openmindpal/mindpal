@@ -24,8 +24,8 @@ vi.mock("./collabValidation", () => ({
   queryRolePerformanceHistory,
 }));
 
-vi.mock("@openslin/shared", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@openslin/shared")>();
+vi.mock("@mindpal/shared", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@mindpal/shared")>();
   return {
     ...original,
     isConsensusReached: isConsensusReachedMock,

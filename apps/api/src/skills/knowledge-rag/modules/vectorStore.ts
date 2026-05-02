@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { sha256Hex, stableStringify } from "@openslin/shared";
+import { sha256Hex, stableStringify } from "@mindpal/shared";
 
 // ── 本地 VectorStore 类型定义（轻量级 legacy 接口） ──
 

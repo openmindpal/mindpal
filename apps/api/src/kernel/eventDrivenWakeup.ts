@@ -13,7 +13,7 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import type { EventEnvelope, EventBusSubscription } from "@openslin/shared";
+import type { EventEnvelope, EventBusSubscription } from "@mindpal/shared";
 import { channelMatchesPattern, type ExtendedEventBus } from "../lib/eventBus";
 import { runAgentLoop, type AgentLoopParams } from "./agentLoop";
 import type { WorkflowQueue } from "../modules/workflow/queue";

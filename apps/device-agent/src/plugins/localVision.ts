@@ -430,7 +430,7 @@ export async function scroll(direction: "up" | "down", clicks: number = 3): Prom
 
 // ── 自动注入 GUI 实现到 SDK 内核 ────────────────────────────────
 
-import { setNativeGuiProvider } from "@openslin/device-agent-sdk";
+import { setNativeGuiProvider } from "@mindpal/device-agent-sdk";
 
 setNativeGuiProvider({
   clickMouse,

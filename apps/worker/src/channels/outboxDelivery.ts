@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory, sha256Hex } from "@openslin/shared";
+import { normalizeAuditErrorCategory, sha256Hex } from "@mindpal/shared";
 import { decryptSecretPayload } from "../secrets/envelope";
 import { invokeFirstPartySkill } from "../lib/skillInvoke";
 

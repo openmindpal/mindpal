@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { computeMinhash, minhashOverlapScore, MINHASH_K, StructuredLogger } from "@openslin/shared";
+import { computeMinhash, minhashOverlapScore, MINHASH_K, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:memoryLifecycle" });
 

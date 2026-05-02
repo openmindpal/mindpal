@@ -21,7 +21,7 @@ export default function AdminWorkbenchesClient(props: { locale: string; initial:
   const [manifestText, setManifestText] = useState<string>(
     JSON.stringify(
       {
-        apiVersion: "workbench.openslin/v1",
+        apiVersion: "workbench.mindpal/v1",
         workbenchKey: "ops.dashboard",
         entrypoint: { type: "iframe", assetPath: "index.html" },
         capabilities: { dataBindings: [{ kind: "entities.query" }, { kind: "schema.effective" }], actionBindings: [] },

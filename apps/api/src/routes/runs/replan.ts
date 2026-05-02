@@ -7,7 +7,7 @@ import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { insertAuditEvent } from "../../modules/audit/auditRepo";
 import { requirePermission } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { getRunForSpace } from "../../modules/workflow/jobRepo";
 import { insertStep, appendStep, removeStep, replanFromCurrent, getEditableSteps, type RuntimeStep } from "../../kernel/runtimeStepManager";
 

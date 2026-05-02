@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { sha256Hex, stableStringify } from "@openslin/shared";
+import { sha256Hex, stableStringify } from "@mindpal/shared";
 import { Errors } from "../../../lib/errors";
 
 function isSafeDomainPattern(s: string) {
@@ -15,7 +15,7 @@ const DATA_BINDING_KIND = z.enum(["entities.query", "entities.get", "schema.effe
 const ACTION_BINDING_KIND = z.enum(["tools.invoke", "workflows.invoke"]);
 
 const WorkbenchManifestSchemaV1 = z.object({
-  apiVersion: z.literal("workbench.openslin/v1"),
+  apiVersion: z.literal("workbench.mindpal/v1"),
   workbenchKey: z.string().min(1).max(200),
   entrypoint: z.object({
     type: z.literal("iframe"),

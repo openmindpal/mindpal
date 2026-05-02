@@ -3,13 +3,13 @@
  */
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { normalizeNetworkPolicy, normalizeLimits } from "@openslin/shared";
+import type { CapabilityEnvelopeV1 } from "@mindpal/shared";
+import { normalizeNetworkPolicy, normalizeLimits } from "@mindpal/shared";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { insertAuditEvent } from "../../modules/audit/auditRepo";
 import { requirePermission } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { getToolDefinition, getToolVersionByRef } from "../../modules/tools/toolRepo";
 import { isToolEnabled } from "../../modules/governance/toolGovernanceRepo";
 import { getEffectiveToolNetworkPolicy } from "../../modules/governance/toolNetworkPolicyRepo";

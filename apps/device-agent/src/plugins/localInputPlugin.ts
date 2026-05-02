@@ -20,7 +20,7 @@ import type {
   ToolExecutionResult,
   CapabilityDescriptor,
   DeviceMessageContext,
-} from "@openslin/device-agent-sdk";
+} from "@mindpal/device-agent-sdk";
 
 // ── 类型 ──────────────────────────────────────────────────────
 

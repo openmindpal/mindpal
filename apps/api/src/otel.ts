@@ -4,9 +4,9 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { Resource } from "@opentelemetry/resources";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { SEMRESATTRS_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
-import { bootstrapOtel } from "@openslin/shared";
+import { bootstrapOtel } from "@mindpal/shared";
 
 bootstrapOtel({
-  serviceName: "openslin-api",
+  serviceName: "mindpal-api",
   deps: { diag, DiagConsoleLogger, DiagLogLevel, OTLPTraceExporter, Resource, NodeSDK, SEMRESATTRS_SERVICE_NAME, getNodeAutoInstrumentations },
 });

@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import type { WorkerConfig } from "../config";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:dbPool" });
 

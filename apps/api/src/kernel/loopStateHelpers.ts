@@ -2,7 +2,7 @@
  * Agent Loop — 状态转换辅助函数
  */
 import type { Pool } from "pg";
-import { safeTransitionRun, type RunStatus } from "@openslin/shared";
+import { safeTransitionRun, type RunStatus } from "@mindpal/shared";
 
 export { safeTransitionRun };
 

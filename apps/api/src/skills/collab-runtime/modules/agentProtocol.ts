@@ -11,7 +11,7 @@
 import type { Pool } from "pg";
 import type { RoleName } from "./dynamicCoordinator";
 import { getCollabBus } from "../../../kernel/collabBus";
-import type { CollabMessageEnvelope, CollabMessageType, MessagePriority, MessageStatus } from "@openslin/shared";
+import type { CollabMessageEnvelope, CollabMessageType, MessagePriority, MessageStatus } from "@mindpal/shared";
 import crypto from "node:crypto";
 
 /* ================================================================== */
@@ -21,7 +21,7 @@ import crypto from "node:crypto";
 /** @deprecated 使用 CollabMessageType */
 export type MessageType = CollabMessageType;
 
-export type { MessagePriority, MessageStatus } from "@openslin/shared";
+export type { MessagePriority, MessageStatus } from "@mindpal/shared";
 
 export interface AgentMessage {
   messageId: string;

@@ -5,7 +5,7 @@ import DeadlettersClient from "./ui.tsx";
 
 async function loadDeadletters(locale: string) {
   try {
-    const token = (await cookies()).get("openslin_token")?.value ?? "";
+    const token = (await cookies()).get("mindpal_token")?.value ?? "";
     const res = await apiFetch(`/governance/workflow/deadletters?limit=50`, {
       token,
       locale,

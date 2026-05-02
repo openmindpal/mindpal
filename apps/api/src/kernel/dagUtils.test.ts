@@ -11,7 +11,7 @@ import {
   getAncestors,
   getDescendants,
   type DagNode,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 /* ================================================================== */
 /*  dagUtils                                                           */

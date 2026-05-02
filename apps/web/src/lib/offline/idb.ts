@@ -5,7 +5,7 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 export function openOfflineDb() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open("openslin_offline_v1", 1);
+    const req = indexedDB.open("mindpal_offline_v1", 1);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains("keys")) db.createObjectStore("keys", { keyPath: "keyId" });

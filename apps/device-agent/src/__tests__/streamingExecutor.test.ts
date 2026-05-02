@@ -75,7 +75,7 @@ vi.mock("../../../../packages/device-agent-sdk/src/kernel/ocrCacheService", () =
   resetOcrCacheService: vi.fn(),
 }));
 
-import { createStreamingExecutor, setVisionProvider, type StreamingEvent } from "@openslin/device-agent-sdk";
+import { createStreamingExecutor, setVisionProvider, type StreamingEvent } from "@mindpal/device-agent-sdk";
 
 // 提供测试用 VisionProvider
 const mockVisionProvider = {

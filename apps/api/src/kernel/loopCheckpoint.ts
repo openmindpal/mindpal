@@ -14,7 +14,7 @@
  */
 import type { Pool } from "pg";
 import type { StepObservation, AgentDecision, AgentLoopParams } from "./agentLoop";
-import { resolveNumber } from "@openslin/shared";
+import { resolveNumber } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  通用检查点接口                                                       */

@@ -13,7 +13,7 @@
  * - 节点心跳过期自动清理
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:loopScheduler" });
 import type { Redis } from "ioredis";

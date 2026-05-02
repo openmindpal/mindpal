@@ -7,7 +7,7 @@
 import { runAgentLoop } from "./agentLoop";
 import type { CollabAgentRole, AgentState, CollabOrchestratorParams } from "./collabTypes";
 import { readCollabEnvelopes, buildEnvelopeContext, writeCollabEnvelope } from "./collabEnvelope";
-import { StructuredLogger, collabConfig } from "@openslin/shared";
+import { StructuredLogger, collabConfig } from "@mindpal/shared";
 
 const logger = new StructuredLogger({ module: "collabStrategies" });
 

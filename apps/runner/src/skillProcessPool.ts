@@ -1,14 +1,14 @@
 /**
  * skillProcessPool.ts — Runner 侧进程池（薄包装）
  *
- * 核心实现已迁移至 @openslin/shared/skillExecutor，
+ * 核心实现已迁移至 @mindpal/shared/skillExecutor，
  * 本文件保留 Runner 专属的单例管理 + childScript 路径解析。
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { SkillProcessPool } from "@openslin/shared";
+import { SkillProcessPool } from "@mindpal/shared";
 
-export { SkillProcessPool } from "@openslin/shared";
+export { SkillProcessPool } from "@mindpal/shared";
 
 /* ── 解析沙箱子进程入口（Runner 侧 skillSandboxChild） ───── */
 let _childEntryCache: { entry: string; execArgv: string[] } | null = null;

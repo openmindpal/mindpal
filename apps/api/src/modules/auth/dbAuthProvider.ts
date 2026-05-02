@@ -6,7 +6,7 @@
  * authorize():    委托 authz.ts 的 authorize() 执行 RBAC + ABAC 决策
  */
 import type { Pool } from "pg";
-import type { AuthContext, AuthProvider } from "@openslin/shared";
+import type { AuthContext, AuthProvider } from "@mindpal/shared";
 import { authenticate as authnAuthenticate } from "./authn";
 import { authorize as rbacAuthorize } from "./authz";
 

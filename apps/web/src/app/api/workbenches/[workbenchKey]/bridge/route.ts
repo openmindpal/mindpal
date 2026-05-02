@@ -36,7 +36,7 @@ function allowToolRef(allow: any, toolRef: string) {
 
 export async function POST(req: Request, ctx: { params: Promise<{ workbenchKey: string }> }) {
   const { workbenchKey } = await ctx.params;
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const locale = String(req.headers.get("x-user-locale") ?? "zh-CN");
   const body: any = await req.json().catch(() => null);
   const id = String(body?.id ?? "");

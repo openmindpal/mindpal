@@ -1,5 +1,5 @@
-import type { I18nText } from "@openslin/shared";
-import { ServiceError, ServiceErrorCategory, classifyError as sharedClassifyError, toHttpResponse } from "@openslin/shared";
+import type { I18nText } from "@mindpal/shared";
+import { ServiceError, ServiceErrorCategory, classifyError as sharedClassifyError, toHttpResponse } from "@mindpal/shared";
 export { ServiceError, ServiceErrorCategory as ErrorCategory, toHttpResponse };
 export { sharedClassifyError as classifyError };
 

@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { sha256Hex, digestObject } from "@openslin/shared";
+import { sha256Hex, digestObject } from "@mindpal/shared";
 import { chunkText as knowledgeChunkText, resolveChunkConfigFromEnv, defaultChunkConfig } from "./chunkStrategy";
 import type { ChunkResult, ChunkStrategyConfig, ChunkStrategyName } from "./chunkStrategy";
 import { writeKnowledgeAudit as writeAudit } from "./auditWriter";

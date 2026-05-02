@@ -17,7 +17,7 @@ async function mkSkillDir(params: { root: string; entryJs: string }) {
 
 describe("executeSkillInSandbox cpuTimeLimitMs", () => {
   it("terminates CPU-bound skill and returns resource_exhausted", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openslin_runner_test_"));
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "mindpal_runner_test_"));
     const skillRoot = path.join(tmp, "skills");
     await fs.mkdir(skillRoot, { recursive: true });
     const artifactDir = await mkSkillDir({

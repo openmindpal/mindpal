@@ -30,7 +30,7 @@ import path from "node:path";
 import type { Pool } from "pg";
 import { getBuiltinSkills, isBuiltinSkillRegistrySealed, resolveSkillLayer } from "../../lib/skillPlugin";
 import type { SkillLayer } from "../../lib/skillPlugin";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "toolAutoDiscovery" });
 

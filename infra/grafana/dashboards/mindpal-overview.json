@@ -1,6 +1,6 @@
 {
   "annotations": { "list": [] },
-  "description": "OpenSlin 系统全局可观测性 Dashboard — API 延迟 / 队列积压 / 错误率 / 评测 / 辩论",
+  "description": "MindPal 系统全局可观测性 Dashboard — API 延迟 / 队列积压 / 错误率 / 评测 / 辩论",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -14,7 +14,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(openslin_http_requests_total[5m])) by (status_class)",
+          "expr": "sum(rate(mindpal_http_requests_total[5m])) by (status_class)",
           "legendFormat": "{{status_class}}"
         }
       ],
@@ -32,15 +32,15 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(openslin_http_request_duration_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(mindpal_http_request_duration_ms_bucket[5m])) by (le))",
           "legendFormat": "P50"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(openslin_http_request_duration_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(mindpal_http_request_duration_ms_bucket[5m])) by (le))",
           "legendFormat": "P95"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(openslin_http_request_duration_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(mindpal_http_request_duration_ms_bucket[5m])) by (le))",
           "legendFormat": "P99"
         }
       ],
@@ -58,7 +58,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(openslin_http_requests_total{status_class=\"5xx\"}[5m])) / sum(rate(openslin_http_requests_total[5m])) * 100",
+          "expr": "sum(rate(mindpal_http_requests_total{status_class=\"5xx\"}[5m])) / sum(rate(mindpal_http_requests_total[5m])) * 100",
           "legendFormat": "5xx %"
         }
       ],
@@ -82,7 +82,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(openslin_authz_denied_total[5m]))",
+          "expr": "sum(rate(mindpal_authz_denied_total[5m]))",
           "legendFormat": "denied/s"
         }
       ],
@@ -106,7 +106,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(openslin_audit_write_failed_total[5m]))",
+          "expr": "sum(rate(mindpal_audit_write_failed_total[5m]))",
           "legendFormat": "failed/s"
         }
       ],
@@ -130,7 +130,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "openslin_process_uptime_seconds",
+          "expr": "mindpal_process_uptime_seconds",
           "legendFormat": "uptime"
         }
       ],
@@ -143,11 +143,11 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "openslin_workflow_queue_backlog",
+          "expr": "mindpal_workflow_queue_backlog",
           "legendFormat": "workflow {{status}}"
         },
         {
-          "expr": "openslin_audit_outbox_backlog",
+          "expr": "mindpal_audit_outbox_backlog",
           "legendFormat": "audit_outbox {{status}}"
         }
       ],
@@ -164,9 +164,9 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "openslin_db_pool_total", "legendFormat": "total" },
-        { "expr": "openslin_db_pool_idle", "legendFormat": "idle" },
-        { "expr": "openslin_db_pool_waiting", "legendFormat": "waiting" }
+        { "expr": "mindpal_db_pool_total", "legendFormat": "total" },
+        { "expr": "mindpal_db_pool_idle", "legendFormat": "idle" },
+        { "expr": "mindpal_db_pool_waiting", "legendFormat": "waiting" }
       ],
       "fieldConfig": {
         "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 20 } }
@@ -178,9 +178,9 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "sum(rate(openslin_eval_run_total{action=\"passed\"}[5m]))", "legendFormat": "passed" },
-        { "expr": "sum(rate(openslin_eval_run_total{action=\"not_passed\"}[5m]))", "legendFormat": "not_passed" },
-        { "expr": "sum(rate(openslin_eval_run_total{action=\"failed\"}[5m]))", "legendFormat": "failed" }
+        { "expr": "sum(rate(mindpal_eval_run_total{action=\"passed\"}[5m]))", "legendFormat": "passed" },
+        { "expr": "sum(rate(mindpal_eval_run_total{action=\"not_passed\"}[5m]))", "legendFormat": "not_passed" },
+        { "expr": "sum(rate(mindpal_eval_run_total{action=\"failed\"}[5m]))", "legendFormat": "failed" }
       ],
       "fieldConfig": {
         "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 20 } }
@@ -192,7 +192,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "sum(rate(openslin_eval_gate_blocked_total[5m])) by (reason)", "legendFormat": "{{reason}}" }
+        { "expr": "sum(rate(mindpal_eval_gate_blocked_total[5m])) by (reason)", "legendFormat": "{{reason}}" }
       ],
       "fieldConfig": {
         "defaults": { "unit": "ops", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }
@@ -204,8 +204,8 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "sum(rate(openslin_debate_sessions_total[5m])) by (result)", "legendFormat": "{{result}}" },
-        { "expr": "histogram_quantile(0.95, sum(rate(openslin_debate_duration_ms_bucket[5m])) by (le))", "legendFormat": "P95 duration" }
+        { "expr": "sum(rate(mindpal_debate_sessions_total[5m])) by (result)", "legendFormat": "{{result}}" },
+        { "expr": "histogram_quantile(0.95, sum(rate(mindpal_debate_duration_ms_bucket[5m])) by (le))", "legendFormat": "P95 duration" }
       ],
       "fieldConfig": {
         "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 15 } }
@@ -217,8 +217,8 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "sum(rate(openslin_conflict_resolution_total[5m])) by (strategy)", "legendFormat": "{{strategy}}" },
-        { "expr": "sum(rate(openslin_conflict_manual_required_total[5m]))", "legendFormat": "manual_required" }
+        { "expr": "sum(rate(mindpal_conflict_resolution_total[5m])) by (strategy)", "legendFormat": "{{strategy}}" },
+        { "expr": "sum(rate(mindpal_conflict_manual_required_total[5m]))", "legendFormat": "manual_required" }
       ],
       "fieldConfig": {
         "defaults": { "unit": "ops", "custom": { "drawStyle": "bars", "fillOpacity": 40 } }
@@ -230,8 +230,8 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "histogram_quantile(0.95, sum(rate(openslin_sync_push_duration_ms_bucket[5m])) by (le))", "legendFormat": "push P95" },
-        { "expr": "histogram_quantile(0.95, sum(rate(openslin_sync_pull_duration_ms_bucket[5m])) by (le))", "legendFormat": "pull P95" }
+        { "expr": "histogram_quantile(0.95, sum(rate(mindpal_sync_push_duration_ms_bucket[5m])) by (le))", "legendFormat": "push P95" },
+        { "expr": "histogram_quantile(0.95, sum(rate(mindpal_sync_pull_duration_ms_bucket[5m])) by (le))", "legendFormat": "pull P95" }
       ],
       "fieldConfig": {
         "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 10 } }
@@ -243,8 +243,8 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "sum(rate(openslin_sso_login_total[5m])) by (result)", "legendFormat": "sso_{{result}}" },
-        { "expr": "sum(rate(openslin_scim_operation_total[5m])) by (result)", "legendFormat": "scim_{{result}}" }
+        { "expr": "sum(rate(mindpal_sso_login_total[5m])) by (result)", "legendFormat": "sso_{{result}}" },
+        { "expr": "sum(rate(mindpal_scim_operation_total[5m])) by (result)", "legendFormat": "scim_{{result}}" }
       ],
       "fieldConfig": {
         "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 15 } }
@@ -253,7 +253,7 @@
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["openslin", "api", "observability"],
+  "tags": ["mindpal", "api", "observability"],
   "templating": {
     "list": [
       {
@@ -267,6 +267,6 @@
     ]
   },
   "time": { "from": "now-1h", "to": "now" },
-  "title": "OpenSlin System Overview",
-  "uid": "openslin-overview-v1"
+  "title": "MindPal System Overview",
+  "uid": "mindpal-overview-v1"
 }

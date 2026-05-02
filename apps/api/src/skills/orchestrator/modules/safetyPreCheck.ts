@@ -12,7 +12,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { invokeModelChat, type LlmSubject } from "../../../lib/llm";
-import { resolveBoolean, resolveNumber } from "@openslin/shared";
+import { resolveBoolean, resolveNumber } from "@mindpal/shared";
 
 /* ── 结果类型 ── */
 

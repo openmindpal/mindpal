@@ -17,7 +17,7 @@ import type { FastifyInstance } from "fastify";
 import { searchMemory, listMemoryEntries, createMemoryEntry, updateMemoryEntry, getMemoryEntry } from "../../../modules/memory/repo";
 import { searchChunksHybrid } from "../../knowledge-rag/modules/repo";
 import type { EnabledTool } from "../../../modules/agentContext";
-import { evaluateMemoryRisk, resolveNumber, shouldRequireApproval } from "@openslin/shared";
+import { evaluateMemoryRisk, resolveNumber, shouldRequireApproval } from "@mindpal/shared";
 import { admitInlineExecution } from "../../../kernel/executionKernel";
 import { insertAuditEvent } from "../../../modules/audit/auditRepo";
 

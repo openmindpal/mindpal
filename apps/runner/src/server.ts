@@ -1,17 +1,17 @@
 import crypto from "node:crypto";
 import Fastify from "fastify";
 import { z } from "zod";
-import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { normalizeLimits, normalizeNetworkPolicy, validateCapabilityEnvelopeV1, withConcurrency, withTimeout } from "@openslin/shared";
-import { classifyError, toHttpResponse } from "@openslin/shared";
-import { StructuredLogger } from "@openslin/shared";
-import { extractTraceContext } from "@openslin/shared";
+import type { CapabilityEnvelopeV1 } from "@mindpal/shared";
+import { normalizeLimits, normalizeNetworkPolicy, validateCapabilityEnvelopeV1, withConcurrency, withTimeout } from "@mindpal/shared";
+import { classifyError, toHttpResponse } from "@mindpal/shared";
+import { StructuredLogger } from "@mindpal/shared";
+import { extractTraceContext } from "@mindpal/shared";
 import { jsonByteLength, sha256Hex, stableStringify } from "./common";
 import type { NetworkPolicy } from "./runtime";
 import { pushEgressAudit, setEgressAuditSink } from "./runtime";
 import { executeSkillInSandbox } from "./executeSkill";
-import { computeRunnerRequestBodyDigestV1, loadTrustedWorkerKeysFromEnv, signRunnerResponseV1, verifyRunnerRequestSignatureV1 } from "@openslin/shared";
-import type { RunnerExecuteRequestV1, RunnerExecuteResponseV1 } from "@openslin/shared";
+import { computeRunnerRequestBodyDigestV1, loadTrustedWorkerKeysFromEnv, signRunnerResponseV1, verifyRunnerRequestSignatureV1 } from "@mindpal/shared";
+import type { RunnerExecuteRequestV1, RunnerExecuteResponseV1 } from "@mindpal/shared";
 import { createBearerAuthProvider } from "./bearerAuthProvider";
 
 const logger = new StructuredLogger({ module: "runner" });

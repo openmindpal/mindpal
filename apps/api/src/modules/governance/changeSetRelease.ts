@@ -8,7 +8,7 @@ import { ensureSchemaI18nFallback } from "../metadata/i18n";
 import { getActiveSchemaOverride, getByNameVersion, getEffectiveSchema, publishNewReleased, setActiveSchemaOverride, setActiveSchemaVersion } from "../metadata/schemaRepo";
 import { getPageConfigContract } from "../contracts/pageConfigContract";
 import { getToolDefinition, getToolVersionByRef } from "../tools/toolRepo";
-import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
 import { getWorkbenchContract } from "../contracts/workbenchContract";
 import { bumpPolicyCacheEpoch } from "../auth/policyCacheEpochRepo";
 import { getEvalSuite, getLatestEvalRunForChangeSet, listChangeSetEvalBindings, listCoreEvalSuites, getLatestSucceededEvalRunGlobal } from "./evalRepo";

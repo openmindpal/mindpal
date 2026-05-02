@@ -6,12 +6,12 @@ import {
   resolveSkillRuntimeRemoteEndpoint,
   resolveSkillRuntimeContainerFallback,
   type SkillRuntimeBackend,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import { decryptSecretPayload } from "../../secrets/envelope";
 
 /**
  * 获取 Skill 运行时后端偏好
- * 统一从 @openslin/shared 解析
+ * 统一从 @mindpal/shared 解析
  */
 export function getSkillRuntimeBackendPref(): SkillRuntimeBackend {
   return resolveSkillRuntimeBackend().value;

@@ -74,7 +74,7 @@ export const scimRoutes: FastifyPluginAsync = async (app) => {
     setAuditContext(req, { resourceType: "scim", action: "service_provider_config" });
     return {
       schemas: ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
-      documentationUri: "https://docs.openslin.io/scim",
+      documentationUri: "https://docs.mindpal.io/scim",
       patch: { supported: false },
       bulk: { supported: false, maxOperations: 0, maxPayloadSize: 0 },
       filter: { supported: true, maxResults: 100 },

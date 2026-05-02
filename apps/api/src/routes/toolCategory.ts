@@ -8,7 +8,7 @@ import { z } from "zod";
 import { Errors } from "../lib/errors";
 import { setAuditContext } from "../modules/audit/context";
 import { requirePermission } from "../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { deriveToolVisibility } from "../modules/tools/toolRepo";
 
 export const toolCategoryRoutes: FastifyPluginAsync = async (app) => {

@@ -27,7 +27,7 @@ import {
   type SkillRpcError,
   type SkillRpcNotification,
   type SkillExecuteParams,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 /* ── parseRpcMessage ─────────────────────────────────────── */
 describe("parseRpcMessage", () => {

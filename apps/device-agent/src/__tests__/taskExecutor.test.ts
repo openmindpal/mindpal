@@ -48,7 +48,7 @@ vi.mock("../plugins/builtinToolPlugin", () => ({
 import {
   getDefaultExecutionSession,
   type TaskPriority,
-} from "@openslin/device-agent-sdk";
+} from "@mindpal/device-agent-sdk";
 
 const session = () => getDefaultExecutionSession();
 const initTaskQueue = (cfg?: any) => session().initTaskQueue(cfg);

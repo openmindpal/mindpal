@@ -1,10 +1,10 @@
 import type { Pool } from "pg";
-import { computeMinhash, StructuredLogger, sha256Hex } from "@openslin/shared";
+import { computeMinhash, StructuredLogger, sha256Hex } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:knowledge:embedding" });
 import { createVectorStore, resolveVectorStoreConfigFromEnv } from "./vectorStore";
 import { createVectorStoreChainFromEnv } from "./vectorStoreProvider";
-import type { VectorStoreEmbedding } from "@openslin/shared";
+import type { VectorStoreEmbedding } from "@mindpal/shared";
 import { writeKnowledgeAudit as writeAudit } from "./auditWriter";
 
 /* ── 外部 Embedding 模型支持（OpenAI 兼容 API）─────────────────── */

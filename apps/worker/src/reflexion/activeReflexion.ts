@@ -11,7 +11,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import type { Pool } from "pg";
-import { computeMinhash, StructuredLogger } from "@openslin/shared";
+import { computeMinhash, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "activeReflexion" });
 import { encryptMemoryContent } from "../memory/memoryEncryption";

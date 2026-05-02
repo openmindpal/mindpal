@@ -8,7 +8,7 @@
  * 所有策略从 approvals 行自身字段读取，不依赖外部 policy 参数。
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:approvalExpiry" });
 

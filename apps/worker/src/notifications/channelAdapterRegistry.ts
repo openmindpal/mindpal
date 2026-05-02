@@ -9,7 +9,7 @@
  * - 可插拔：运行时动态注册 / 注销适配器
  * - 零硬编码：分发逻辑不包含任何频道名称字面量
  */
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:channelAdapterRegistry" });
 import type { Pool } from "pg";

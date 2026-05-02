@@ -4,10 +4,10 @@
  * 包含 LLM 决策 prompt 构建、输出解析、执行约束辅助函数。
  */
 import type { AgentDecision, AgentDecisionAction, ExecutionConstraints, StepObservation, DecisionQualityScore } from "./loopTypes";
-import { resolveNumber } from "@openslin/shared";
+import { resolveNumber } from "@mindpal/shared";
 import type { EnabledTool } from "../modules/agentContext";
 import { compressStepHistory, renderCompressedSteps, renderRecentSteps } from "./loopObservation";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const logger = new StructuredLogger({ module: "loopThinkDecide" });
 

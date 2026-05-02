@@ -23,8 +23,8 @@ import {
   listPrefixRules,
   loadAliasesFromEnv,
   clearAll,
-} from "@openslin/device-agent-sdk";
-import type { CapabilityDescriptor, DeviceToolPlugin } from "@openslin/device-agent-sdk";
+} from "@mindpal/device-agent-sdk";
+import type { CapabilityDescriptor, DeviceToolPlugin } from "@mindpal/device-agent-sdk";
 
 function makeCap(overrides: Partial<CapabilityDescriptor> & { toolRef: string }): CapabilityDescriptor {
   return { riskLevel: "low", ...overrides };

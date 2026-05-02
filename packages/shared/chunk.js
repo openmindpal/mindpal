@@ -1,2 +1,2 @@
-// 子路径代理: @openslin/shared/chunk
+// 子路径代理: @mindpal/shared/chunk
 module.exports = require("./dist/chunkStrategy");

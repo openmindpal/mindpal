@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { getDeviceRecord } from "./modules/deviceRepo";
 import {
   sendDirectMessage,

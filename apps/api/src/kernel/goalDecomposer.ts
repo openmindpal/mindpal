@@ -11,8 +11,8 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import type { GoalGraph } from "@openslin/shared";
-import { resolveBoolean, resolveNumber } from "@openslin/shared";
+import type { GoalGraph } from "@mindpal/shared";
+import { resolveBoolean, resolveNumber } from "@mindpal/shared";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
 import { analyzeDecompositionQuality, applySemanticRepairs, type PlanningQualityReport } from "./goalDecomposerQuality";
 import { buildDecomposePrompt } from "./goalDecomposerPrompt";

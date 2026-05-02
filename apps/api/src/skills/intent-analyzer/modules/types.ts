@@ -1,7 +1,7 @@
 import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:intentAnalyzerTypes" });
 

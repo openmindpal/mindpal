@@ -2,8 +2,8 @@ import type { Queue } from "bullmq";
 import type Redis from "ioredis";
 import type { Pool } from "pg";
 import crypto from "node:crypto";
-import { tryTransitionRun, type RunStatus, StructuredLogger } from "@openslin/shared";
-import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import { tryTransitionRun, type RunStatus, StructuredLogger } from "@mindpal/shared";
+import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
 
 const _logger = new StructuredLogger({ module: "worker:agentRunScheduler" });
 

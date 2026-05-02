@@ -8,7 +8,7 @@
  * - 状态变更通知
  * - 一致性保证
  */
-import { collabStreamRedisChannel, createCollabStreamSignal } from "@openslin/shared";
+import { collabStreamRedisChannel, createCollabStreamSignal } from "@mindpal/shared";
 import type { Pool } from "pg";
 import type { RoleName, DynamicCollabState, CollabTurn, TurnOutcome } from "./dynamicCoordinator";
 import { broadcast, type AgentMessage } from "./agentProtocol";

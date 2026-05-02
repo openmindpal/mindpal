@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import type { Queue } from "bullmq";
 import { writeAudit } from "../workflow/processor/audit";
-import { isPlainObject } from "@openslin/shared";
+import { isPlainObject } from "@mindpal/shared";
 
 async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();

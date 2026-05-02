@@ -1,5 +1,5 @@
 {
-  "name": "@openslin/web",
+  "name": "@mindpal/web",
   "version": "0.0.0",
   "private": true,
   "license": "Apache-2.0",
@@ -12,7 +12,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@openslin/shared": "workspace:*",
+    "@mindpal/shared": "workspace:*",
     "@tanstack/react-virtual": "^3.13.24",
     "highlight.js": "^11.11.1",
     "lib0": "^0.2.114",

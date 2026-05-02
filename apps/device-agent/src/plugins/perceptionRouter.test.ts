@@ -9,9 +9,9 @@ describe("perceptionRouter background browser", () => {
   });
 
   it("构建后台浏览器启动参数", () => {
-    const args = buildBackgroundBrowserArgs({ port: 9333, profileDir: "D:\\tmp\\openslin-profile", headless: true, extraArgs: ["--lang=zh-CN"] });
+    const args = buildBackgroundBrowserArgs({ port: 9333, profileDir: "D:\\tmp\\mindpal-profile", headless: true, extraArgs: ["--lang=zh-CN"] });
     expect(args).toContain("--remote-debugging-port=9333");
-    expect(args).toContain("--user-data-dir=D:\\tmp\\openslin-profile");
+    expect(args).toContain("--user-data-dir=D:\\tmp\\mindpal-profile");
     expect(args).toContain("--headless=new");
     expect(args).toContain("--lang=zh-CN");
     expect(args.at(-1)).toBe("about:blank");
@@ -20,7 +20,7 @@ describe("perceptionRouter background browser", () => {
   it("可解析后台浏览器启动计划", async () => {
     const plan = await resolveBackgroundBrowserLaunchPlan({
       DEVICE_AGENT_BROWSER_EXECUTABLE: "msedge",
-      DEVICE_AGENT_BROWSER_PROFILE_DIR: "D:\\tmp\\openslin-profile",
+      DEVICE_AGENT_BROWSER_PROFILE_DIR: "D:\\tmp\\mindpal-profile",
       DEVICE_AGENT_BROWSER_DEBUG_PORT: "9666",
       DEVICE_AGENT_BROWSER_HEADLESS: "false",
     } as NodeJS.ProcessEnv, "win32");
@@ -28,7 +28,7 @@ describe("perceptionRouter background browser", () => {
     expect(plan).toBeTruthy();
     expect(plan?.executablePath).toBe("msedge");
     expect(plan?.debugPort).toBe(9666);
-    expect(plan?.profileDir).toBe("D:\\tmp\\openslin-profile");
+    expect(plan?.profileDir).toBe("D:\\tmp\\mindpal-profile");
     expect(plan?.headless).toBe(false);
     expect(plan?.args).toContain("--remote-debugging-port=9666");
   });

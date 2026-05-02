@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors } from "../../lib/errors";
 import { guarded } from "../../middleware/routeGuard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { getDevicePolicy, upsertDevicePolicy } from "./modules/devicePolicyRepo";
 import { createDeviceRecord, getDeviceRecord, listDeviceRecords, revokeDeviceRecord } from "./modules/deviceRepo";
 import { createDevicePairing } from "./modules/pairingRepo";

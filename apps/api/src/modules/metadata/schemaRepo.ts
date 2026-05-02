@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import type { SchemaDef } from "./schemaModel";
-import { isPlainObject, resolveString } from "@openslin/shared";
+import { isPlainObject, resolveString } from "@mindpal/shared";
 
 type Q = Pool | PoolClient;
 type EffectiveScope = { tenantId: string; spaceId?: string; name: string };
@@ -16,7 +16,7 @@ export type StoredSchema = {
 };
 
 // Fallback（configRegistry 不可用时降级）
-const FALLBACK_EXTENSION_NAMESPACES = ["io.openslin.*", "org.openslin.*"];
+const FALLBACK_EXTENSION_NAMESPACES = ["io.mindpal.*", "org.mindpal.*"];
 const NAMESPACE_KEY_RE = /^[a-z][a-z0-9]*(?:[._-]?[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:[._-]?[a-z0-9]+)*)+$/;
 const resolvedVersionCache = new Map<string, number | null>();
 const effectiveSchemaCache = new Map<string, StoredSchema | null>();

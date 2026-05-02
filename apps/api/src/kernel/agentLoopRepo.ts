@@ -5,7 +5,7 @@
  * 保持业务逻辑与数据访问分离。
  */
 import type { Pool } from "pg";
-import type { GoalGraph } from "@openslin/shared";
+import type { GoalGraph } from "@mindpal/shared";
 
 /** 获取 run 下已有步骤的最大 seq，用于确定新步骤起始编号 */
 export async function getMaxStepSeq(pool: Pool, runId: string): Promise<number> {

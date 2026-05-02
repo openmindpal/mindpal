@@ -37,7 +37,7 @@ import { registerMeCommands } from "../commands/me";
 /** 构建完整 CLI program 实例（与 index.ts 一致） */
 function buildProgram(): Command {
   const program = new Command();
-  program.name("openslin-admin").version("0.1.0").exitOverride(); // exitOverride 防止测试中退出进程
+  program.name("mindpal-admin").version("0.1.0").exitOverride(); // exitOverride 防止测试中退出进程
   addGlobalOptions(program);
 
   registerHealthCommands(program);

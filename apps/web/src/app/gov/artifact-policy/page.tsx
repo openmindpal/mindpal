@@ -4,7 +4,7 @@ import GovArtifactPolicyClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadPolicy(locale: string, scopeType: "space" | "tenant") {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const q = new URLSearchParams();
   q.set("scopeType", scopeType);
   const res = await apiFetch(`/governance/artifact-policy?${q.toString()}`, { token, locale, cache: "no-store" });

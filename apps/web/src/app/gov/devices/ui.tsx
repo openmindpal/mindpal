@@ -220,7 +220,7 @@ export default function GovDevicesClient(props: { locale: string; initial?: Init
     const rec = toRecord(pairResult);
     const code = rec?.pairingCode ? toDisplayText(rec.pairingCode) : "";
     if (!code) return "";
-    return `npx openslin-device-agent pair --pairingCode ${code}`;
+    return `npx mindpal-device-agent pair --pairingCode ${code}`;
   }, [pairResult]);
 
   async function copyPairingCommand() {

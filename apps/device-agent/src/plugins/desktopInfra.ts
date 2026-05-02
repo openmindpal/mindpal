@@ -7,8 +7,8 @@ import childProcess from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { apiPostJson } from "@openslin/device-agent-sdk";
-import type { ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
+import { apiPostJson } from "@mindpal/device-agent-sdk";
+import type { ToolExecutionContext, ToolExecutionResult } from "@mindpal/device-agent-sdk";
 import {
   captureScreen,
   cleanupCapture,

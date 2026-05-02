@@ -4,7 +4,7 @@ import CollabRunClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadCollab(locale: string, taskId: string, collabRunId: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/tasks/${encodeURIComponent(taskId)}/collab-runs/${encodeURIComponent(collabRunId)}`, {
     method: "GET",
     token,
@@ -17,7 +17,7 @@ async function loadCollab(locale: string, taskId: string, collabRunId: string) {
 }
 
 async function loadEnvelopes(locale: string, taskId: string, collabRunId: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/tasks/${encodeURIComponent(taskId)}/collab-runs/${encodeURIComponent(collabRunId)}/envelopes?limit=50`, {
     method: "GET",
     token,

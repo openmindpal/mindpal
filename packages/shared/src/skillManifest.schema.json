@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://openslin.dev/schemas/skill-manifest.json",
+  "$id": "https://mindpal.dev/schemas/skill-manifest.json"
   "title": "ExternalSkillManifest",
   "description": "JSON Schema for external skill manifest.json files under skills/.",
   "type": "object",

@@ -23,11 +23,11 @@ let _enabled: boolean = true;
 
 export function initAudit(params: { deviceId: string; auditDir?: string; enabled?: boolean }): void {
   _deviceId = params.deviceId;
-  _auditDir = params.auditDir ?? path.join(os.homedir(), ".openslin", "audit");
+  _auditDir = params.auditDir ?? path.join(os.homedir(), ".mindpal", "audit");
   _enabled = params.enabled ?? true;
 }
 
-export function getAuditDir(): string { return _auditDir ?? path.join(os.homedir(), ".openslin", "audit"); }
+export function getAuditDir(): string { return _auditDir ?? path.join(os.homedir(), ".mindpal", "audit"); }
 export function isAuditEnabled(): boolean { return _enabled; }
 
 function generateEventId(): string { return crypto.randomBytes(12).toString("hex"); }

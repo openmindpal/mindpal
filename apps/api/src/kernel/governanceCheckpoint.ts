@@ -9,7 +9,7 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 /* ── Re-export 拆分模块，保持外部引用兼容 ── */
 export { checkPermission, checkPolicy, checkSafety, checkToolAvailability } from "./governancePreChecks";

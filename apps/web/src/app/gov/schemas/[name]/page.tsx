@@ -4,21 +4,21 @@ import { cookies } from "next/headers";
 import SchemaDetailClient from "./ui";
 
 async function loadVersions(locale: string, name: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/schemas/${encodeURIComponent(name)}/versions?limit=50`, { token, locale, cache: "no-store" });
   const json: unknown = await res.json().catch(() => null);
   return { status: res.status, json };
 }
 
 async function loadLatest(locale: string, name: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/schemas/${encodeURIComponent(name)}/latest`, { token, locale, cache: "no-store" });
   const json: unknown = await res.json().catch(() => null);
   return { status: res.status, json };
 }
 
 async function loadMigrations(locale: string, name: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/governance/schema-migrations?schemaName=${encodeURIComponent(name)}&limit=50`, { token, locale, cache: "no-store" });
   const json: unknown = await res.json().catch(() => null);
   return { status: res.status, json };

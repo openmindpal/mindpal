@@ -3,8 +3,8 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { executeDynamicSkillSandboxed } from "../workflow/processor/dynamicSkillSandbox";
-import type { RuntimeLimits, NetworkPolicy } from "@openslin/shared";
-import { StructuredLogger, resolveString, resolveBoolean } from "@openslin/shared";
+import type { RuntimeLimits, NetworkPolicy } from "@mindpal/shared";
+import { StructuredLogger, resolveString, resolveBoolean } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:skillInvoke" });
 

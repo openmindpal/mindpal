@@ -3,11 +3,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { DeviceAgentConfig } from "@openslin/device-agent-sdk";
-import { heartbeatOnce, runOnce } from "@openslin/device-agent-sdk";
-import { registerPlugin, clearAll as clearPlugins } from "@openslin/device-agent-sdk";
+import type { DeviceAgentConfig } from "@mindpal/device-agent-sdk";
+import { heartbeatOnce, runOnce } from "@mindpal/device-agent-sdk";
+import { registerPlugin, clearAll as clearPlugins } from "@mindpal/device-agent-sdk";
 import desktopPlugin from "../plugins/desktopPlugin";
-import { setBuiltinToolPlugin } from "@openslin/device-agent-sdk";
+import { setBuiltinToolPlugin } from "@mindpal/device-agent-sdk";
 import builtinToolPlugin from "../plugins/builtinToolPlugin";
 
 function json(res: http.ServerResponse, status: number, body: any) {

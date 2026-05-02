@@ -6,7 +6,7 @@
  */
 
 import { getFeishuTenantAccessToken } from "./feishu";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:channelBindingOAuth" });
 

@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import GovObservabilityClient from "./ui";
 
 async function loadSummary(locale: string, window: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const q = new URLSearchParams();
   if (window) q.set("window", window);
   const res = await apiFetch(`/governance/observability/summary?${q.toString()}`, { token, locale, cache: "no-store" });

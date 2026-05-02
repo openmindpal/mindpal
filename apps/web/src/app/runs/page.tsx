@@ -8,7 +8,7 @@ function pickFirst(v: string | string[] | undefined) {
 }
 
 async function loadRuns(locale: string, searchParams: SearchParams) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const q = new URLSearchParams();
   const status = pickFirst(searchParams.status);
   const updatedFrom = pickFirst(searchParams.updatedFrom);

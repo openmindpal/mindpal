@@ -14,7 +14,7 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import type { FailureDiagnosis, WorldState } from "@openslin/shared";
+import type { FailureDiagnosis, WorldState } from "@mindpal/shared";
 import { runPlanningPipeline, type PlanStep } from "../../../kernel/planningKernel";
 import { type RoleName, shouldTriggerReplan, recordCoordinationEvent } from "./dynamicCoordinator";
 import { verifySimple, evaluateReplanFeasibility, type VerificationResult, type FeasibilityResult } from "../../../kernel/verifierAgent";

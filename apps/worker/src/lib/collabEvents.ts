@@ -1,4 +1,4 @@
-import { collabStreamRedisChannel, createCollabStreamSignal } from "@openslin/shared";
+import { collabStreamRedisChannel, createCollabStreamSignal } from "@mindpal/shared";
 import type { Pool } from "pg";
 
 export type AppendCollabEventOnceParams = {

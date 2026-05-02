@@ -1,5 +1,5 @@
 {
-  "name": "@openslin/worker",
+  "name": "@mindpal/worker",
   "version": "0.0.0",
   "private": true,
   "license": "Apache-2.0",
@@ -13,7 +13,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@openslin/shared": "workspace:*",
+    "@mindpal/shared": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/auto-instrumentations-node": "^0.50.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",

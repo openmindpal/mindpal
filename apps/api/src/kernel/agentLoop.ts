@@ -14,8 +14,8 @@
  */
 import crypto from "node:crypto";
 import { performance } from "node:perf_hooks";
-import type { GoalGraph, WorldState, AgentTracingContext, FailureDiagnosis, SemanticAuditEntry } from "@openslin/shared";
-import { ErrorCategory, resolveNumber, startAgentTracing, startIteration, startPhase, endPhase, endAgentTracing } from "@openslin/shared";
+import type { GoalGraph, WorldState, AgentTracingContext, FailureDiagnosis, SemanticAuditEntry } from "@mindpal/shared";
+import { ErrorCategory, resolveNumber, startAgentTracing, startIteration, startPhase, endPhase, endAgentTracing } from "@mindpal/shared";
 import { startSpan as otelStartSpan } from "../lib/tracing";
 import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, recallProceduralStrategies, inferSemanticMeta, type EnabledTool } from "../modules/agentContext";
 import { upsertTaskState, updateMemoryConfidenceFromFacts } from "../modules/memory/repo";
@@ -63,7 +63,7 @@ export { getCacheConfig, getLightIterationConfig, isLightIteration } from "./loo
  * 将现有 OTel Span API 适配为 AgentTracing 依赖注入接口
  * OTel 未启用时 startSpan 返回 noop span，天然兼容
  */
-function createTracerAdapter(): import("@openslin/shared").TracingTracer {
+function createTracerAdapter(): import("@mindpal/shared").TracingTracer {
   return {
     startSpan(name: string, options?: { attributes?: Record<string, string | number | boolean> }) {
       const span = otelStartSpan(name) as any;

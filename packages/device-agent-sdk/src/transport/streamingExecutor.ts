@@ -10,7 +10,7 @@
  * - ./deviceAgentEnv → 配置参数通过 StreamingExecutorConfig 传入
  *
  * SDK 内部导入调整：
- * - @openslin/device-agent-sdk → ../kernel/...
+ * - @mindpal/device-agent-sdk → ../kernel/...
  */
 
 import { executeNativeGuiAction, SCREEN_CHANGING_ACTIONS } from "../kernel/guiActionKernel";

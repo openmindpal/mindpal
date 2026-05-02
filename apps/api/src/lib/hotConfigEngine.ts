@@ -9,21 +9,21 @@
  * 5. 定期 DB 轮询作为兜底（防止 Pub/Sub 消息丢失）
  *
  * ── Redis 频道 ──
- * openslin:config:changed:{tenantId} → 变更通知
+ * mindpal:config:changed:{tenantId} → 变更通知
  *
  * ── 消息格式 ──
  * { configKey: string, action: "set"|"delete", timestamp: number, source: string }
  */
 
 import type { Pool } from "pg";
-import type { RuntimeConfigOverrides } from "@openslin/shared";
-import { resolveNumber, StructuredLogger } from "@openslin/shared";
+import type { RuntimeConfigOverrides } from "@mindpal/shared";
+import { resolveNumber, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "hotConfigEngine" });
 
 // ── 常量 ──────────────────────────────────────────────────
 
-const REDIS_CONFIG_CHANNEL_PREFIX = "openslin:config:changed:";
+const REDIS_CONFIG_CHANNEL_PREFIX = "mindpal:config:changed:";
 
 /** 本地缓存 TTL — 超时后强制从 DB 重新加载（兜底机制）— bootstrap 级别，不做热更新自举 */
 const CACHE_TTL_MS = resolveNumber("CONFIG_CACHE_TTL_MS").value;

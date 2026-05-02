@@ -10,7 +10,7 @@
  * - P1-05: 饥饿检测：低优先级任务等待超阈自动提升优先级
  */
 import type { Pool } from "pg";
-import { StructuredLogger, resolveNumber } from "@openslin/shared";
+import { StructuredLogger, resolveNumber } from "@mindpal/shared";
 
 const logger = new StructuredLogger({ module: "priorityScheduler" });
 

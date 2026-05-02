@@ -17,7 +17,7 @@ importers:
 
   apps/admin-cli:
     dependencies:
-      '@openslin/shared':
+      '@mindpal/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       commander:
@@ -33,7 +33,7 @@ importers:
       '@fastify/websocket':
         specifier: ^11.2.0
         version: 11.2.0
-      '@openslin/shared':
+      '@mindpal/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@opentelemetry/api':
@@ -103,10 +103,10 @@ importers:
 
   apps/device-agent:
     dependencies:
-      '@openslin/device-agent-sdk':
+      '@mindpal/device-agent-sdk':
         specifier: workspace:*
         version: link:../../packages/device-agent-sdk
-      '@openslin/shared':
+      '@mindpal/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       playwright-core:
@@ -119,7 +119,7 @@ importers:
 
   apps/runner:
     dependencies:
-      '@openslin/shared':
+      '@mindpal/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       fastify:
@@ -141,7 +141,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@openslin/shared':
+      '@mindpal/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@tanstack/react-virtual':
@@ -202,7 +202,7 @@ importers:
 
   apps/worker:
     dependencies:
-      '@openslin/shared':
+      '@mindpal/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@opentelemetry/api':
@@ -248,7 +248,7 @@ importers:
 
   packages/device-agent-sdk:
     dependencies:
-      '@openslin/shared':
+      '@mindpal/shared':
         specifier: workspace:*
         version: link:../shared
       ws:
@@ -290,7 +290,7 @@ importers:
 
   skills/schema-create-skill:
     dependencies:
-      '@openslin/shared':
+      '@mindpal/shared':
         specifier: workspace:*
         version: link:../../packages/shared
 

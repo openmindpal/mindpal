@@ -25,9 +25,9 @@ const localStorageMock = {
 };
 vi.stubGlobal("localStorage", localStorageMock);
 
-const SESSION_KEY = "openslin_chat_session";
-const TASK_QUEUE_KEY = "openslin_task_queue_state";
-const MODEL_KEY = "openslin_selected_model";
+const SESSION_KEY = "mindpal_chat_session";
+const TASK_QUEUE_KEY = "mindpal_task_queue_state";
+const MODEL_KEY = "mindpal_selected_model";
 
 beforeEach(() => {
   localStorageMock.clear();

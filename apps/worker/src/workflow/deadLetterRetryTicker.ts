@@ -6,7 +6,7 @@
  */
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 import { classifyDeadLetter, MAX_DEADLETTER_RETRIES } from "./processor/stepErrorClassifier";
 
 const _logger = new StructuredLogger({ module: "worker:deadLetterRetryTicker" });

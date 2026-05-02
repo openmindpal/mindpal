@@ -5,13 +5,13 @@
  * - ./log → ../kernel/log
  * - ./executors (executeDeviceTool, DeviceClaimEnvelope) → ../kernel/taskExecutor, ../kernel/types
  * - ./api → ./httpClient
- * - @openslin/device-agent-sdk (syncPolicyToCache) → ../kernel/auth
+ * - @mindpal/device-agent-sdk (syncPolicyToCache) → ../kernel/auth
  * - ./pluginRegistry (dispatchMessageToPlugins) → ../kernel/capabilityRegistry
  * - ./websocketClient (WebSocketMessage type) → ./websocketClient
  */
 import { safeLog, safeError, sha256_8 } from '../kernel/log';
-import { classifyError } from '@openslin/shared';
-import { createTraceContext, injectTraceHeaders } from '@openslin/shared';
+import { classifyError } from '@mindpal/shared';
+import { createTraceContext, injectTraceHeaders } from '@mindpal/shared';
 import { executeDeviceTool } from '../kernel/taskExecutor';
 import type { DeviceClaimEnvelope } from '../kernel/types';
 import { apiPostJson } from './httpClient';

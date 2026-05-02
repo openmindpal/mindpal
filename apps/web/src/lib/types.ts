@@ -12,7 +12,7 @@ export type FieldDef = {
   displayName?: I18nText | string;
   /** For type=="reference": the target entity name (e.g. "customer") */
   referenceEntity?: string;
-  /** Vendor extensions keyed by namespace (e.g. "io.openslin.ui") */
+  /** Vendor extensions keyed by namespace (e.g. "io.mindpal.ui") */
   extensions?: Record<string, unknown>;
 };
 

@@ -7,7 +7,7 @@
  * - ./api → ./httpClient
  * - ./config → ../config
  * - ./log → ../kernel/log
- * - @openslin/device-agent-sdk (executeDeviceTool, etc.) → ../kernel/...
+ * - @mindpal/device-agent-sdk (executeDeviceTool, etc.) → ../kernel/...
  * - ./websocketClient → ./websocketClient
  */
 

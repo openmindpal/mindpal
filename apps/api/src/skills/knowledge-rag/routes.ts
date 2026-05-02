@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { lookup } from "node:dns/promises";
 import net from "node:net";
 import { z } from "zod";
-import { redactValue, parseDocument, StructuredLogger } from "@openslin/shared";
+import { redactValue, parseDocument, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:knowledgeRoutes" });
 import { Errors } from "../../lib/errors";

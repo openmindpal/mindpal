@@ -10,7 +10,7 @@
 import { context, propagation, trace, SpanStatusCode } from "@opentelemetry/api";
 import type { Span, SpanOptions } from "@opentelemetry/api";
 
-const tracer = trace.getTracer("openslin-api");
+const tracer = trace.getTracer("mindpal-api");
 
 function isOtelEnabled(): boolean {
   const v = String(process.env.OTEL_ENABLED ?? "").toLowerCase();

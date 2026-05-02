@@ -8,7 +8,7 @@
  * - enforceHighRiskDualApproval: P2-14 高风险写操作双通过
  * - rerankByHistoricalSuccess: P2-11 历史成功经验重排
  */
-import type { GoalGraph } from "@openslin/shared";
+import type { GoalGraph } from "@mindpal/shared";
 import type { PlanStep } from "./planningKernel";
 
 /* ================================================================== */

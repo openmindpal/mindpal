@@ -1,4 +1,4 @@
-import { sha256Hex, stableStringifyValue } from "@openslin/shared";
+import { sha256Hex, stableStringifyValue } from "@mindpal/shared";
 
 export { sha256Hex };
 

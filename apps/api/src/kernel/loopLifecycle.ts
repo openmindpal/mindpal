@@ -7,7 +7,7 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import type { GoalGraph, WorldState } from "@openslin/shared";
+import type { GoalGraph, WorldState } from "@mindpal/shared";
 import { discoverEnabledTools, recallRelevantMemory, recallRecentTasks, recallRelevantKnowledge, recallProceduralStrategies, type EnabledTool } from "../modules/agentContext";
 import { upsertTaskState } from "../modules/memory/repo";
 import { writeCheckpoint, registerProcess, startHeartbeat } from "./loopCheckpoint";

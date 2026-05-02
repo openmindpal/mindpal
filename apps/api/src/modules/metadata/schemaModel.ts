@@ -9,7 +9,7 @@ export const fieldDefSchema = z.object({
   description: i18nTextSchema.optional(),
   /** For type=="reference": the target entity name (e.g. "customer") */
   referenceEntity: z.string().min(1).optional(),
-  /** Vendor extensions keyed by namespace (e.g. "io.openslin.ui") */
+  /** Vendor extensions keyed by namespace (e.g. "io.mindpal.ui") */
   extensions: z.record(z.string(), z.unknown()).optional(),
 });
 

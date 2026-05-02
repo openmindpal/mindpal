@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Pool } from "pg";
-import { resolveSupplyChainPolicy, resolveString } from "@openslin/shared";
+import { resolveSupplyChainPolicy, resolveString } from "@mindpal/shared";
 import { stableStringify } from "./common";
 
 /**
@@ -140,7 +140,7 @@ export function verifySkillManifestTrust(params: { toolName: string; depsDigest:
   const pub = params.trustedKeys.get(keyId);
   if (!pub) throw new Error("policy_violation:skill_untrusted:unknown_key");
 
-  const msg = `openslin:skill:${params.toolName}:${signedDigest}`;
+  const msg = `mindpal:skill:${params.toolName}:${signedDigest}`;
   const ok = crypto.verify(null, Buffer.from(msg, "utf8"), pub, Buffer.from(sigBase64, "base64"));
   if (!ok) throw new Error("policy_violation:skill_untrusted:bad_signature");
 }

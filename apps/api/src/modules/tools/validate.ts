@@ -1,5 +1,5 @@
 import { Errors } from "../../lib/errors";
-import { isPlainObject, checkType } from "@openslin/shared";
+import { isPlainObject, checkType } from "@mindpal/shared";
 
 export function validateToolInput(inputSchema: any, input: unknown) {
   const fields = inputSchema?.fields;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { SchemaUiDataBinding } from "@openslin/shared";
+import type { SchemaUiDataBinding } from "@mindpal/shared";
 import { apiFetch } from "@/lib/api";
 
 export interface SchemaUiDataResult {

@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import {
   redactValue,
-  // ── 从 @openslin/shared/memoryCore 导入的共享权威实现 ──
+  // ── 从 @mindpal/shared/memoryCore 导入的共享权威实现 ──
   MINHASH_MODEL_REF,
   computeMinhash,
   minhashOverlapScore,
@@ -14,7 +14,7 @@ import {
   type MemoryRerankInput,
   APPROVAL_REQUIRED_RISK_LEVELS,
   DEFAULT_SOURCE_TRUST_MAP,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import { encryptMemoryContent, decryptMemoryContent, isMemoryEncryptionEnabled } from "./memoryEncryption";
 
 const _logger = new StructuredLogger({ module: "worker:memoryProcessor" });
@@ -45,7 +45,7 @@ export async function memoryWrite(params: {
   const contentText = String(redacted.value ?? "");
   const digest = sha256(contentText);
 
-  // ── 风险评估（统一调用 @openslin/shared 权威实现） ──
+  // ── 风险评估（统一调用 @mindpal/shared 权威实现） ──
   const riskEvaluation = evaluateMemoryRisk({ type, contentText, title });
 
   // ── writeProof 服务端校验 ──
@@ -415,7 +415,7 @@ export async function memoryRead(params: { pool: Pool; tenantId: string; spaceId
     }
   }
 
-  // Rerank：使用 @openslin/shared 统一 12 因子公式
+  // Rerank：使用 @mindpal/shared 统一 12 因子公式
   const candidates = Array.from(seen.values());
   const nowMs = Date.now();
 

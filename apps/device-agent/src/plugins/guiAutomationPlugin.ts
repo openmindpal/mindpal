@@ -27,9 +27,9 @@
  *
  * 工具前缀：device.gui
  */
-import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
-import { apiPostJson } from "@openslin/device-agent-sdk";
+import type { CapabilityDescriptor } from "@mindpal/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@mindpal/device-agent-sdk";
+import { apiPostJson } from "@mindpal/device-agent-sdk";
 import { type PlanStep, type TargetSpec, isTargetCoord, isTargetPercent, isTargetText } from "./guiTypes";
 import {
   captureScreen,
@@ -39,7 +39,7 @@ import {
   type OcrMatch,
   type ScreenCapture,
 } from "./localVision";
-import { executeNativeGuiAction, SCREEN_CHANGING_ACTIONS } from "@openslin/device-agent-sdk";
+import { executeNativeGuiAction, SCREEN_CHANGING_ACTIONS } from "@mindpal/device-agent-sdk";
 
 // ── 类型重导出（从 guiTypes.ts 统一导入） ─────────────────────────────
 
@@ -95,7 +95,7 @@ function hasError(r: { x: number; y: number } | { error: string }): r is { error
 }
 
 import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
-import { getOcrCacheService, type OcrCacheService } from "@openslin/device-agent-sdk";
+import { getOcrCacheService, type OcrCacheService } from "@mindpal/device-agent-sdk";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

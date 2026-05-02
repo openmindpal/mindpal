@@ -182,8 +182,8 @@ Modeling      ──  Schema + Metadata + Universal CRUD                       �
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/openslin.git
-cd openslin
+git clone https://github.com/openmindpal/mindpal.git
+cd mindpal
 ```
 
 ### 2. Start Infrastructure
@@ -207,7 +207,7 @@ Note: all public business APIs are mounted under the `/v1` prefix. The Web front
 
 ```bash
 pnpm install
-pnpm --filter @openslin/api run db:seed    # Migration + seed data + core schema
+pnpm --filter @mindpal/api run db:seed    # Migration + seed data + core schema
 ```
 
 ### 5. Start Services
@@ -248,18 +248,18 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 Read-only / idempotent operations CLI for troubleshooting and ops:
 
 ```bash
-pnpm run dev -w @openslin/admin-cli
+pnpm run dev -w @mindpal/admin-cli
 
 # Examples
-openslin-admin audit verify --apiBase http://localhost:3001/v1 --token <token> --tenantId tenant_dev
-openslin-admin models usage --apiBase http://localhost:3001/v1 --token <token> --range 24h
-openslin-admin queue status --apiBase http://localhost:3001/v1 --token <token>
+mindpal-admin audit verify --apiBase http://localhost:3001/v1 --token <token> --tenantId tenant_dev
+mindpal-admin models usage --apiBase http://localhost:3001/v1 --token <token> --range 24h
+mindpal-admin queue status --apiBase http://localhost:3001/v1 --token <token>
 ```
 
 ## 📁 Project Structure
 
 ```
-openslin/
+mindpal/
 ├── apps/
 │   ├── api/            # Fastify API server (Agent OS Brain)
 │   │   ├── kernel/     # Kernel: Agent Loop/Goal Decomposition/Planning/Execution/Scheduling/Collaboration
@@ -414,7 +414,7 @@ skills/<skill-name>/
 - `POST /devices` — Device registration
 - `POST /devices/:deviceId/pairing` — Device pairing
 - `POST /device-executions` — Create device execution
-- Device agent: `npm run dev -w @openslin/device-agent -- pair|run`
+- Device agent: `npm run dev -w @mindpal/device-agent -- pair|run`
 
 </details>
 
@@ -568,12 +568,12 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 
 | Metric | Description |
 |--------|-------------|
-| `openslin_governance_pipeline_actions_total` | Governance pipeline action count |
-| `openslin_governance_gate_failed_total` | Governance gate failure count |
-| `openslin_knowledge_search_total` / `_duration_ms` | Knowledge search count & latency |
-| `openslin_knowledge_evidence_resolve_total` / `_duration_ms` | Evidence chain resolution count & latency |
-| `openslin_sync_push_total` / `_duration_ms` / `_conflicts_total` | Offline sync push stats |
-| `openslin_sync_pull_total` / `_duration_ms` / `_ops_returned` | Offline sync pull stats |
+| `mindpal_governance_pipeline_actions_total` | Governance pipeline action count |
+| `mindpal_governance_gate_failed_total` | Governance gate failure count |
+| `mindpal_knowledge_search_total` / `_duration_ms` | Knowledge search count & latency |
+| `mindpal_knowledge_evidence_resolve_total` / `_duration_ms` | Evidence chain resolution count & latency |
+| `mindpal_sync_push_total` / `_duration_ms` / `_conflicts_total` | Offline sync push stats |
+| `mindpal_sync_pull_total` / `_duration_ms` / `_ops_returned` | Offline sync pull stats |
 | `worker:workflow:step:success` / `:error` | Worker workflow step success/failure |
 | `worker:tool_execute:success` / `:error` | Tool execution success/failure |
 

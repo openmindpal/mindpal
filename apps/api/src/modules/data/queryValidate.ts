@@ -1,4 +1,4 @@
-import type { PolicyDecision } from "@openslin/shared";
+import type { PolicyDecision } from "@mindpal/shared";
 import type { SchemaDef } from "../metadata/schemaModel";
 import type { EntityQueryRequest } from "./queryModel";
 

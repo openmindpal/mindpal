@@ -7,8 +7,8 @@
  * - P2-13: Plan Critic / Verifier
  * - P4-2:  PlanningQualityReport 类型定义
  */
-import type { GoalGraph } from "@openslin/shared";
-import { validateGoalGraphDAG } from "@openslin/shared";
+import type { GoalGraph } from "@mindpal/shared";
+import { validateGoalGraphDAG } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  Types                                                               */

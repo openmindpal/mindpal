@@ -18,8 +18,8 @@ export interface GlobalOptions {
 /** 从配置文件加载默认值 */
 function loadConfigFile(): Partial<GlobalOptions> {
   const candidates = [
-    resolve(process.cwd(), ".openslin-admin.json"),
-    resolve(process.env.HOME ?? process.env.USERPROFILE ?? "", ".openslin-admin.json"),
+    resolve(process.cwd(), ".mindpal-admin.json"),
+    resolve(process.env.HOME ?? process.env.USERPROFILE ?? "", ".mindpal-admin.json"),
   ];
   for (const p of candidates) {
     if (existsSync(p)) {

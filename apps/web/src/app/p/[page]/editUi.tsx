@@ -9,7 +9,7 @@ import { ReferencePicker } from "../../../components/ui/ReferencePicker";
 
 function isWritable(schema: EffectiveSchema | null, k: string) {
   const f = schema?.fields?.[k];
-  return (f?.extensions?.["io.openslin.access"] as any)?.writable !== false;
+  return (f?.extensions?.["io.mindpal.access"] as any)?.writable !== false;
 }
 
 function toPatch(fields: Record<string, FieldDef>, values: Record<string, unknown>) {
@@ -179,8 +179,8 @@ export default function EntityEditForm(props: {
         }
 
         if (type === "reference") {
-          // Dual-read: prefer extensions["io.openslin.ui"], fallback to legacy top-level fields
-          const uiExt = (def as any)?.extensions?.["io.openslin.ui"] as any;
+          // Dual-read: prefer extensions["io.mindpal.ui"], fallback to legacy top-level fields
+          const uiExt = (def as any)?.extensions?.["io.mindpal.ui"] as any;
           const dep = uiExt?.reference?.dependsOn;
           const cascadeFilter = dep && values[dep.field]
             ? { field: dep.filterField, value: String(values[dep.field]) }

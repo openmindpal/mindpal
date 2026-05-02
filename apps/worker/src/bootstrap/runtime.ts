@@ -6,13 +6,13 @@ import {
   validateProductionBaseline,
   initializeServiceLogging,
   createModuleLogger,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 const _rootLogger = initializeServiceLogging({ serviceName: "worker" });
 const _logger = createModuleLogger("worker:runtime");
 import { registerAdvancedChunkStrategies } from "../knowledge/chunkStrategy";
 import { RedisStreamsBus } from "../lib/redisStreamsBus";
-import { CRITICAL_EVENT_CHANNELS } from "@openslin/shared";
+import { CRITICAL_EVENT_CHANNELS } from "@mindpal/shared";
 
 import "../tickers";
 import type { WorkerConfig } from "../config";
@@ -118,7 +118,7 @@ export async function createWorkerRuntime(cfg: WorkerConfig): Promise<WorkerRunt
   const hostname = (process.env.HOSTNAME ?? process.env.COMPUTERNAME ?? "unknown").replace(/[^a-zA-Z0-9_-]/g, "_");
   const streamsBus = new RedisStreamsBus({
     redis: redisPub,
-    consumerGroup: "openslin-worker-group",
+    consumerGroup: "mindpal-worker-group",
     consumerId: `worker-${hostname}-${process.pid}`,
     maxStreamLength: 10_000,
     blockTimeoutMs: 5_000,

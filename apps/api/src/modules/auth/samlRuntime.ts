@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import type { Pool } from "pg";
 import type { SsoProviderConfigRow } from "./ssoScimRepo";
 import { ensureSubject } from "./subjectRepo";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "samlRuntime" });
 

@@ -1,11 +1,11 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { POLICY_EXPR_JSON_SCHEMA_V1, validatePolicyExpr, validateAbacPolicyRule, evaluateAbacPolicySet } from "@openslin/shared";
-import type { AbacEvaluationRequest, AbacPolicyRule, AbacPolicySet } from "@openslin/shared";
+import { POLICY_EXPR_JSON_SCHEMA_V1, validatePolicyExpr, validateAbacPolicyRule, evaluateAbacPolicySet } from "@mindpal/shared";
+import type { AbacEvaluationRequest, AbacPolicyRule, AbacPolicySet } from "@mindpal/shared";
 import { Errors } from "../lib/errors";
 import { guarded } from "../middleware/routeGuard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { authorize, invalidateRbacCache } from "../modules/auth/authz";
 import { bumpPolicyCacheEpoch } from "../modules/auth/policyCacheEpochRepo";
 

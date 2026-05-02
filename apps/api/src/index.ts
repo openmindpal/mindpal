@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import "./otel";
 import { loadConfig } from "./config";
-import { validateEnvironment, formatValidationResult } from "@openslin/shared";
+import { validateEnvironment, formatValidationResult } from "@mindpal/shared";
 import { migrate } from "./db/migrate";
 import { createPool } from "./db/pool";
 import { createWorkflowQueue } from "./modules/workflow/queue";
 import { buildServer } from "./server";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:lifecycle" });
 

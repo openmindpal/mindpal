@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory, sha256Hex, insertAuditEvent } from "@openslin/shared";
-import type { AuditPoolLike } from "@openslin/shared";
+import { normalizeAuditErrorCategory, sha256Hex, insertAuditEvent } from "@mindpal/shared";
+import type { AuditPoolLike } from "@mindpal/shared";
 import { decryptSecretPayload } from "../secrets/envelope";
 
 function computeBackoffMs(base: number, attemptCount: number) {

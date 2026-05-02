@@ -4,7 +4,7 @@
  * authenticate(): 通过 masterKey 环境变量验证内部服务 token
  * authorize():    内部可信服务默认拥有完整权限
  */
-import type { AuthContext, AuthProvider } from "@openslin/shared";
+import type { AuthContext, AuthProvider } from "@mindpal/shared";
 
 class ServiceAuthProvider implements AuthProvider {
   private readonly masterKey: string;

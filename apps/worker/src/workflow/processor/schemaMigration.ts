@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { isSupportedSchemaMigrationKind, isPlainObject } from "@openslin/shared";
+import { isSupportedSchemaMigrationKind, isPlainObject } from "@mindpal/shared";
 
 function parsePath(path: unknown) {
   const raw = String(path ?? "").trim();

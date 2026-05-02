@@ -3,7 +3,7 @@
  */
 import type { Pool } from "pg";
 import type { StepObservation } from "./loopTypes";
-import { errorActionHint, resolveNumber, resolveBoolean } from "@openslin/shared";
+import { errorActionHint, resolveNumber, resolveBoolean } from "@mindpal/shared";
 
 export const AGENT_LOOP_BATCH_OBSERVE = process.env.AGENT_LOOP_BATCH_OBSERVE !== "false";
 

@@ -11,7 +11,7 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import { redactValue, StructuredLogger } from "@openslin/shared";
+import { redactValue, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:eventReasoning" });
 import { invokeModelChat } from "../../../lib/llm";
@@ -58,7 +58,7 @@ export type ReasoningContext = {
 };
 
 /* ────────────────── Utility ──────────────────── */
-import { isPlainObject } from "@openslin/shared";
+import { isPlainObject } from "@mindpal/shared";
 
 function getByPath(obj: any, path: string[]): unknown {
   let cur: any = obj;

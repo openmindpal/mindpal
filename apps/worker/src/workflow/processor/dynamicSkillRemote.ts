@@ -1,11 +1,11 @@
 import crypto from "node:crypto";
-import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { resolveString } from "@openslin/shared";
+import type { CapabilityEnvelopeV1 } from "@mindpal/shared";
+import { resolveString } from "@mindpal/shared";
 import type { RuntimeLimits, NetworkPolicy } from "./runtime";
 import type { DynamicSkillExecResult } from "./dynamicSkillTypes";
 import { sha256Hex, stableStringify } from "./common";
-import { signRunnerRequestV1, verifyRunnerResponseSignatureV1 } from "@openslin/shared";
-import type { RunnerExecuteRequestV1, RunnerExecuteResponseV1 } from "@openslin/shared";
+import { signRunnerRequestV1, verifyRunnerResponseSignatureV1 } from "@mindpal/shared";
+import type { RunnerExecuteRequestV1, RunnerExecuteResponseV1 } from "@mindpal/shared";
 
 function buildRunnerExecuteUrl(endpoint: string) {
   let u: URL;

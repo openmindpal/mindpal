@@ -20,7 +20,7 @@ import type {
 } from "./taskQueue.types";
 import { TERMINAL_QUEUE_STATUSES, ACTIVE_STATUSES } from "./taskQueue.types";
 import * as repo from "./taskQueueRepo";
-import { StructuredLogger, createMemoryCacheManager, type CacheManager } from "@openslin/shared";
+import { StructuredLogger, createMemoryCacheManager, type CacheManager } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  日志                                                               */

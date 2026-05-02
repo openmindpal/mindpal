@@ -12,8 +12,8 @@
  * - OTEL_DEPLOYMENT_ENVIRONMENT   部署环境 (dev/staging/prod)
  *
  * 用法（在 app 入口）：
- *   import { bootstrapOtel } from "@openslin/shared";
- *   bootstrapOtel({ serviceName: "openslin-api", ... });
+ *   import { bootstrapOtel } from "@mindpal/shared";
+ *   bootstrapOtel({ serviceName: "mindpal-api", ... });
  */
 
 import { resolveBoolean, resolveString } from "./runtimeConfig";

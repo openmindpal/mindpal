@@ -3,7 +3,7 @@
  *
  * 通过 apps.connections.open 获取 WSS URL，建立 WebSocket 接收事件推送，无需公网 URL。
  */
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 import { BaseLongConnectionClient } from "./baseLongConnection";
 
 const _logger = new StructuredLogger({ module: "api:slackSocketMode" });

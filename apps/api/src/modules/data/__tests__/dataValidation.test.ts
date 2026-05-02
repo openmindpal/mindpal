@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { applyWriteFieldRules, applyReadFieldRules } from "../fieldRules";
 import { validateEntityPayload } from "../validate";
-import type { PolicyDecision } from "@openslin/shared";
+import type { PolicyDecision } from "@mindpal/shared";
 
 const allow = (fr?: any): PolicyDecision => ({ decision: "allow", ...fr });
 

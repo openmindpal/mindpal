@@ -1,7 +1,7 @@
 /**
  * Agent Loop 公共类型定义
  *
- * 核心类型已迁移至 @openslin/shared，本文件 re-export 并补充本地独有类型。
+ * 核心类型已迁移至 @mindpal/shared，本文件 re-export 并补充本地独有类型。
  */
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
@@ -9,18 +9,18 @@ import type {
   GoalGraph,
   AgentDecision, StepObservation, ExecutionConstraints, LoopBudget,
   AgentLoopResult as SharedAgentLoopResult,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import type { LlmSubject } from "../lib/llm";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import type { VerificationResult } from "./verifierAgent";
 
-/* ── 从 @openslin/shared re-export 核心类型 ── */
+/* ── 从 @mindpal/shared re-export 核心类型 ── */
 export type {
   AgentDecisionAction, AgentDecision, StepObservation,
   ExecutionConstraints, TokenBudget, CostBudget, LoopBudget,
   DecisionQualityScore,
-} from "@openslin/shared";
-export { isBudgetExhausted, recordTokenUsage, recordCostUsage, createDefaultBudget } from "@openslin/shared";
+} from "@mindpal/shared";
+export { isBudgetExhausted, recordTokenUsage, recordCostUsage, createDefaultBudget } from "@mindpal/shared";
 
 /* ── 本地扩展类型（比共享包多 verification 字段） ── */
 export interface AgentLoopResult extends SharedAgentLoopResult {

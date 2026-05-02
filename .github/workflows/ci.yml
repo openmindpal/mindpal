@@ -19,13 +19,13 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: openslin
-          POSTGRES_USER: openslin
-          POSTGRES_PASSWORD: openslin
+          POSTGRES_DB: mindpal
+          POSTGRES_USER: mindpal
+          POSTGRES_PASSWORD: mindpal
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U openslin -d openslin"
+          --health-cmd "pg_isready -U mindpal -d mindpal"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -41,9 +41,9 @@ jobs:
     env:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: "5432"
-      POSTGRES_DB: openslin
-      POSTGRES_USER: openslin
-      POSTGRES_PASSWORD: openslin
+      POSTGRES_DB: mindpal
+      POSTGRES_USER: mindpal
+      POSTGRES_PASSWORD: mindpal
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: "6379"
       # Disable eval admission gate in tests to allow specific error codes
@@ -76,13 +76,13 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: openslin
-          POSTGRES_USER: openslin
-          POSTGRES_PASSWORD: openslin
+          POSTGRES_DB: mindpal
+          POSTGRES_USER: mindpal
+          POSTGRES_PASSWORD: mindpal
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U openslin -d openslin"
+          --health-cmd "pg_isready -U mindpal -d mindpal"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -98,9 +98,9 @@ jobs:
     env:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: "5432"
-      POSTGRES_DB: openslin
-      POSTGRES_USER: openslin
-      POSTGRES_PASSWORD: openslin
+      POSTGRES_DB: mindpal
+      POSTGRES_USER: mindpal
+      POSTGRES_PASSWORD: mindpal
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: "6379"
       API_PORT: "3001"

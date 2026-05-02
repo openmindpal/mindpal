@@ -16,7 +16,7 @@
  */
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import crypto from "node:crypto";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "realtimeNotification" });
 

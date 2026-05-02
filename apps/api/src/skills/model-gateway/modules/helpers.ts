@@ -1,6 +1,6 @@
 import { Errors } from "../../../lib/errors";
 import { openaiCompatibleProviders } from "./catalog";
-export { isPlainObject } from "@openslin/shared";
+export { isPlainObject } from "@mindpal/shared";
 
 export type OutputSchemaFieldType = "string" | "number" | "boolean" | "json" | "datetime";
 

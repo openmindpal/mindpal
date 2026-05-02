@@ -10,7 +10,7 @@
  */
 import crypto from "node:crypto";
 import type Redis from "ioredis";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:distributedLock" });
 

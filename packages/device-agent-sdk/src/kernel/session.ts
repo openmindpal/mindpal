@@ -387,7 +387,7 @@ export class ExecutionSession {
       ...config.queueConfig,
     };
     this.idempotencyMap = new DurableIdempotencyMap(
-      path.join(os.homedir(), '.openslin', 'cache'),
+      path.join(os.homedir(), '.mindpal', 'cache'),
       24 * 60 * 60 * 1000,
     );
   }

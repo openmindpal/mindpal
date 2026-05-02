@@ -8,7 +8,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { StructuredLogger, resolveString } from "@openslin/shared";
+import { StructuredLogger, resolveString } from "@mindpal/shared";
 
 const logger = new StructuredLogger({ module: "intentAnchoring.rules" });
 

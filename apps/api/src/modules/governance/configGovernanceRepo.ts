@@ -19,7 +19,7 @@ import {
   resolveRuntimeConfig,
   resolveAllRuntimeConfigs,
   type ResolvedConfig,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import { getHotConfigEngine } from "../../lib/hotConfigEngine";
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import type { SearchParams } from "@/lib/types";
 import WorkbenchHostClient from "./ui";
 
 async function loadEffective(locale: string, workbenchKey: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/workbenches/${encodeURIComponent(workbenchKey)}/effective`, {
     method: "GET",
     token,

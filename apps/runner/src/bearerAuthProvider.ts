@@ -5,7 +5,7 @@
  * authenticate(): 比对环境变量 RUNNER_BEARER_TOKEN，匹配则返回 AuthContext
  * authorize():    Runner 信任调用方（Worker），默认返回 true
  */
-import type { AuthContext, AuthProvider } from "@openslin/shared";
+import type { AuthContext, AuthProvider } from "@mindpal/shared";
 
 class BearerAuthProvider implements AuthProvider {
   private readonly expectedToken: string | null;

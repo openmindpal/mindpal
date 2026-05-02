@@ -11,7 +11,7 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type { MetricsRegistry } from "../modules/metrics/metrics";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "serverTimers" });
 import { dispatchAuditOutboxBatch } from "../modules/audit/outboxRepo";

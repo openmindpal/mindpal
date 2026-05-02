@@ -1,7 +1,7 @@
 /**
  * P2-03b: Memory 列级加密桥接层
  *
- * 将 keyring 基础设施与 @openslin/shared 的列级加密工具连接起来，
+ * 将 keyring 基础设施与 @mindpal/shared 的列级加密工具连接起来，
  * 为 memory_entries.content_text 提供透明的加密/解密能力。
  *
  * ── 使用方式 ──
@@ -15,7 +15,7 @@
  */
 
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:memoryEncryption" });
 import {
@@ -27,7 +27,7 @@ import {
   type ColumnKeyMaterial,
   type ColumnEncryptedV1,
   type ColumnDecryptOptions,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import { decryptPartitionKeyMaterial, getPartitionKey } from "../keyring/keyringRepo";
 import { decryptJson, type EncryptedPayload } from "../secrets/crypto";
 

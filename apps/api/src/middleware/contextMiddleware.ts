@@ -7,7 +7,7 @@
  * 租户并发隔离（硬/软限制）和租户 API 请求速率配额。
  */
 import type { FastifyInstance } from "fastify";
-import { resolveNumber, StructuredLogger } from "@openslin/shared";
+import { resolveNumber, StructuredLogger } from "@mindpal/shared";
 import { resolveRequestLocale } from "../lib/locale";
 import { getUserLocalePreference } from "../lib/userPreferences";
 import { getConfigOverridesWithHotCache } from "../lib/hotConfigEngine";
@@ -87,7 +87,7 @@ export function contextMiddleware(app: FastifyInstance): void {
         hardLimit: effectiveHardLimit,
       });
       try {
-        (app.metrics as any).incCounter?.("openslin_tenant_quota_exceeded_total", { tenant_id: tenantId }, 1);
+        (app.metrics as any).incCounter?.("mindpal_tenant_quota_exceeded_total", { tenant_id: tenantId }, 1);
       } catch { /* metrics 可能未注册 */ }
       reply.header("Retry-After", String(ISOLATION_RETRY_AFTER_SEC));
       throw Errors.tenantConcurrencyExceeded(tenantId, effectiveHardLimit, ISOLATION_RETRY_AFTER_SEC);
@@ -108,7 +108,7 @@ export function contextMiddleware(app: FastifyInstance): void {
     if (next > effectiveQuota) {
       _logger.warn("tenant concurrent requests exceeds soft quota", { tenantId, current: next, softQuota: effectiveQuota });
       try {
-        (app.metrics as any).incCounter?.("openslin_tenant_quota_exceeded_total", { tenant_id: tenantId }, 1);
+        (app.metrics as any).incCounter?.("mindpal_tenant_quota_exceeded_total", { tenant_id: tenantId }, 1);
       } catch { /* metrics 可能未注册 */ }
     }
 

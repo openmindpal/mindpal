@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { getBuiltinSkills, validateSkillDependencies } from "../lib/skillPlugin";
-import { getAllBreakerMetrics } from "@openslin/shared";
+import { getAllBreakerMetrics } from "@mindpal/shared";
 
 export const healthRoutes: FastifyPluginAsync = async (app) => {
   const startTime = Date.now();

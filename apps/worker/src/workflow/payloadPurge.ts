@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { attachDlpSummary, redactValue } from "@openslin/shared";
+import { attachDlpSummary, redactValue } from "@mindpal/shared";
 
 function effectiveRetentionDays(v: any) {
   if (v === null || v === undefined) return 7;

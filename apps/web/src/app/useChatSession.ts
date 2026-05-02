@@ -6,9 +6,9 @@ import { t } from "@/lib/i18n";
 import { nextId } from "@/lib/apiError";
 import type { ChatFlowItem, ToolExecState, FrontendTaskQueueEntry, FrontendTaskDependency } from "./homeHelpers";
 
-const SESSION_KEY = "openslin_chat_session";
-const TASK_QUEUE_KEY = "openslin_task_queue_state";
-const MODEL_KEY = "openslin_selected_model";
+const SESSION_KEY = "mindpal_chat_session";
+const TASK_QUEUE_KEY = "mindpal_task_queue_state";
+const MODEL_KEY = "mindpal_selected_model";
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const EMPTY_SESSION = { conversationId: "", flow: [] as ChatFlowItem[], toolExecStates: {} as Record<string, ToolExecState> };

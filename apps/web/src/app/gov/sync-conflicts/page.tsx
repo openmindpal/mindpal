@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import GovSyncConflictsClient from "./ui";
 
 async function loadTickets(locale: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/sync/conflict-tickets?limit=50`, { token, locale, cache: "no-store" });
   const json: unknown = await res.json().catch(() => null);
   return { status: res.status, json };

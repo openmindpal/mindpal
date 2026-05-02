@@ -1,10 +1,10 @@
 /**
  * auditRepo.ts — API 审计仓库
  *
- * 所有审计核心实现已收敛至 @openslin/shared/audit。
+ * 所有审计核心实现已收敛至 @mindpal/shared/audit。
  * 本文件仅做 re-export，保持 API 内部引用路径兼容。
  */
-import type { AuditEventInput as SharedAuditEventInput } from "@openslin/shared";
+import type { AuditEventInput as SharedAuditEventInput } from "@mindpal/shared";
 import {
   AUDIT_ERROR_CATEGORIES,
   normalizeAuditErrorCategory,
@@ -13,8 +13,8 @@ import {
   AuditContractError,
   insertAuditEvent,
   insertAuditEventFromShared,
-} from "@openslin/shared";
-import type { DetailedAuditEventInput } from "@openslin/shared";
+} from "@mindpal/shared";
+import type { DetailedAuditEventInput } from "@mindpal/shared";
 
 // ── Re-exports（保持 API 内部引用路径兼容） ──
 export {

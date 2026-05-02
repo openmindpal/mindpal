@@ -12,7 +12,7 @@
  * - MEMORY_ENCRYPTION_SCOPE_TYPE    加密 scope 类型（默认 "tenant"）
  */
 
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:memoryEncryption" });
 
@@ -24,7 +24,7 @@ import {
   type ColumnKeyMaterial,
   type ColumnEncryptedV1,
   type ColumnDecryptOptions,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import { getActivePartitionKey, getPartitionKey, decryptPartitionKeyMaterial } from "../keyring/keyringRepo";
 
 type Q = Pool | PoolClient;

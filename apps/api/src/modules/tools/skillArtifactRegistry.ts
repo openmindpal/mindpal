@@ -4,7 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import * as tar from "tar";
 import unzipper from "unzipper";
-import { sha256_8, sha256Hex, stableStringifyValue } from "@openslin/shared";
+import { sha256_8, sha256Hex, stableStringifyValue } from "@mindpal/shared";
 import crypto from "node:crypto";
 import { computeDepsDigest, loadSkillManifest, verifySkillManifestTrustWithKeys } from "./skillPackage";
 

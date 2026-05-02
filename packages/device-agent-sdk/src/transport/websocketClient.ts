@@ -10,7 +10,7 @@
  * SDK 内部导入调整：
  * - ./config → ../config
  * - ./log → ../kernel/log
- * - @openslin/device-agent-sdk (listPlugins) → ../kernel/capabilityRegistry
+ * - @mindpal/device-agent-sdk (listPlugins) → ../kernel/capabilityRegistry
  */
 
 import { WebSocket } from 'ws';
@@ -46,7 +46,7 @@ import {
   decryptSecureMessage,
   isSessionExpired,
   shouldRotateKey,
-} from '@openslin/shared';
+} from '@mindpal/shared';
 
 // ── 流式处理器注入接口（解耦 wsStreamingHandlers）────────────────
 

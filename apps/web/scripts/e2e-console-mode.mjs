@@ -197,9 +197,9 @@ async function assertLocalStoragePersistence() {
 
   // Verify localStorage keys are used for state persistence
   const requiredKeys = [
-    "openslin_chat_session",     // Conversation state
-    "openslin_workspace_tabs",   // Workspace tabs
-    "openslin_split_layout",     // Layout state
+    "mindpal_chat_session",     // Conversation state
+    "mindpal_workspace_tabs",   // Workspace tabs
+    "mindpal_split_layout",     // Layout state
   ];
 
   for (const key of requiredKeys) {
@@ -314,7 +314,7 @@ async function getGovWorkflowDeadlettersHtml() {
 
 async function getUiPageHtml(name) {
   const res = await fetch(`${webBase}/p/${encodeURIComponent(name)}?lang=${encodeURIComponent(locale)}`, {
-    headers: { "cache-control": "no-cache", cookie: "openslin_token=admin" },
+    headers: { "cache-control": "no-cache", cookie: "mindpal_token=admin" },
   });
   if (!res.ok) throw new Error(`web_p_page_failed:${res.status}`);
   return await res.text();

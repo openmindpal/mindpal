@@ -146,7 +146,7 @@ describe("browserAutomationRoutes", () => {
     const res = await app.inject({
       method: "POST",
       url: "/browser-automation/type",
-      payload: { selector: "#search", text: "openslin", clear: true, delay: 20 },
+      payload: { selector: "#search", text: "mindpal", clear: true, delay: 20 },
     });
 
     expect(res.statusCode).toBe(200);
@@ -157,7 +157,7 @@ describe("browserAutomationRoutes", () => {
       toolPrefix: "browser",
       command: {
         action: "type",
-        params: { selector: "#search", text: "openslin", delay: 20, clear: true },
+        params: { selector: "#search", text: "mindpal", delay: 20, clear: true },
       },
       timeout: undefined,
       spaceId: undefined,

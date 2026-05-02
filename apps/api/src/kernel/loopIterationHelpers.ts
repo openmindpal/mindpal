@@ -10,8 +10,8 @@ import crypto from "node:crypto";
 import { performance } from "node:perf_hooks";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import type { GoalGraph, WorldState } from "@openslin/shared";
-import { computeGoalProgress, getExecutableSubGoals, worldStateToPromptText, resolveBoolean } from "@openslin/shared";
+import type { GoalGraph, WorldState } from "@mindpal/shared";
+import { computeGoalProgress, getExecutableSubGoals, worldStateToPromptText, resolveBoolean } from "@mindpal/shared";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
 import { recallProceduralStrategies } from "../modules/agentContext";
 import { getEnvironmentSummary } from "./environmentState";
@@ -47,7 +47,7 @@ async function fetchEnvironmentContext(params: {
       const environmentContext = lines.join("\n");
 
       if (worldState && (envSummary.degradedEntities > 0 || envSummary.criticalConstraints > 0)) {
-        const { upsertFact } = await import("@openslin/shared");
+        const { upsertFact } = await import("@mindpal/shared");
         const now = new Date().toISOString();
         worldState = upsertFact(worldState, {
           factId: crypto.randomUUID(), category: "observation",

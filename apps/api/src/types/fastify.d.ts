@@ -5,7 +5,7 @@ import type { Span, Context as OtelContext } from "@opentelemetry/api";
 import type { RedisClient } from "../modules/redis/client";
 import type { ApiConfig } from "../config";
 import type { MetricsRegistry } from "../modules/metrics/metrics";
-import type { AuthContext, AuthProvider } from "@openslin/shared";
+import type { AuthContext, AuthProvider } from "@mindpal/shared";
 
 declare module "fastify" {
   interface FastifyInstance {

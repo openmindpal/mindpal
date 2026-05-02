@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors } from "../lib/errors";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { guarded } from "../middleware/routeGuard";
 import { applyReadFieldRules, applyWriteFieldRules } from "../modules/data/fieldRules";
 import { getIdempotencyRecord, insertIdempotencyRecord } from "../modules/data/idempotencyRepo";

@@ -5,15 +5,15 @@
  * - handleStreamingStart / Step / Stop / Pause / Resume
  * - sendStreamingEvent（通过 WS 上报进度/状态）
  */
-import { safeLog, safeError } from '@openslin/device-agent-sdk';
+import { safeLog, safeError } from '@mindpal/device-agent-sdk';
 import {
   createStreamingExecutor,
   type StreamingExecutor,
   type StreamingStep,
   type StreamingEvent,
   type StreamingExecutorConfig,
-} from '@openslin/device-agent-sdk';
-import type { WebSocketMessage } from '@openslin/device-agent-sdk';
+} from '@mindpal/device-agent-sdk';
+import type { WebSocketMessage } from '@mindpal/device-agent-sdk';
 
 /** 流式会话状态 */
 export interface StreamingState {

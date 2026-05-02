@@ -5,7 +5,7 @@
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { AppError } from "./errors";
-import { getOrCreateBreaker, type CircuitBreakerOptions, StructuredLogger } from "@openslin/shared";
+import { getOrCreateBreaker, type CircuitBreakerOptions, StructuredLogger } from "@mindpal/shared";
 import { createDeltaIterable } from "./streamingPipeline";
 
 const _logger = new StructuredLogger({ module: "llm" });

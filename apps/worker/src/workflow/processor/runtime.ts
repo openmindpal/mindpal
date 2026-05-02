@@ -4,11 +4,11 @@ export {
   isAllowedEgress,
   withConcurrency,
   withTimeout,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 export type {
   EgressEvent,
   NetworkPolicy,
   NetworkPolicyRule,
   RuntimeLimits,
-} from "@openslin/shared";
+} from "@mindpal/shared";

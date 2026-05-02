@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeAll } from "vitest";
-import { executeDeviceTool } from "@openslin/device-agent-sdk";
-import { setBuiltinToolPlugin } from "@openslin/device-agent-sdk";
+import { executeDeviceTool } from "@mindpal/device-agent-sdk";
+import { setBuiltinToolPlugin } from "@mindpal/device-agent-sdk";
 import builtinToolPlugin from "./plugins/builtinToolPlugin";
 
 beforeAll(() => {

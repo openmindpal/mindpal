@@ -1,6 +1,6 @@
 "use client";
 
-import type { SchemaUiConfig } from "@openslin/shared";
+import type { SchemaUiConfig } from "@mindpal/shared";
 import { SchemaRenderer } from "../schema-ui/SchemaRenderer";
 
 interface Props {

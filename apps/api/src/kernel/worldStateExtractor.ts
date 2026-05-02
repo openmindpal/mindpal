@@ -13,18 +13,18 @@
  */
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { resolveBoolean } from "@openslin/shared";
+import { resolveBoolean } from "@mindpal/shared";
 import type {
   WorldState, WorldEntity, WorldRelation, WorldFact,
   GoalGraph, GoalCondition, SuccessCriterion,
   WorldStateEntry, RelationType, WorldStateLimits,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import {
   createWorldState, upsertEntity, addRelation, upsertFact,
   batchUpsertEntities, batchAddRelations,
   mergeWorldStates,
   findEntityByName, findFactByKey, ensureIndexes,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import type { StepObservation } from "./agentLoop";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
 

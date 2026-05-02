@@ -1,2 +1,2 @@
-// 子路径代理: @openslin/shared/vectorStore
+// 子路径代理: @mindpal/shared/vectorStore
 module.exports = require("./dist/vectorStoreProvider");

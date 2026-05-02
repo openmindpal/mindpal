@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import { redactValue, resolveNumber } from "@openslin/shared";
+import { redactValue, resolveNumber } from "@mindpal/shared";
 import { Errors } from "../../../lib/errors";
 import { invokeModelChat, parseToolCallsFromOutput, type LlmSubject } from "../../../lib/llm";
 import { executeInlineTools, formatInlineResultsForLLM, loadInlineWritableEntities } from "./inlineToolExecutor";

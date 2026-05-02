@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
-import type { PolicyDecision, AbacEvaluationRequest, AbacEvaluationResult, AbacPolicySet, AbacPolicyRule } from "@openslin/shared";
-import { validatePolicyExpr, evaluateAbacPolicySet, buildPolicySetIndex, StructuredLogger } from "@openslin/shared";
+import type { PolicyDecision, AbacEvaluationRequest, AbacEvaluationResult, AbacPolicySet, AbacPolicyRule } from "@mindpal/shared";
+import { validatePolicyExpr, evaluateAbacPolicySet, buildPolicySetIndex, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "authz" });
 import { createPolicySnapshot } from "./policySnapshotRepo";

@@ -9,8 +9,8 @@ import {
   isGoalGraphComplete,
   validateGoalGraphDAG,
   topologicalSort,
-} from "@openslin/shared";
-import type { SubGoal, GoalGraph } from "@openslin/shared";
+} from "@mindpal/shared";
+import type { SubGoal, GoalGraph } from "@mindpal/shared";
 import {
   createWorldState,
   upsertEntity,
@@ -20,8 +20,8 @@ import {
   getEntityRelations,
   getEntitiesByCategory,
   worldStateToPromptText,
-} from "@openslin/shared";
-import type { WorldEntity, WorldFact, WorldRelation } from "@openslin/shared";
+} from "@mindpal/shared";
+import type { WorldEntity, WorldFact, WorldRelation } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  GoalGraph 基础函数                                                  */

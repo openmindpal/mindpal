@@ -23,27 +23,27 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # ── OpenSlin API ──
-  - job_name: "openslin-api"
+  # ── MindPal API ──
+  - job_name: "mindpal-api"
     metrics_path: "/metrics"
     scrape_interval: 10s
     static_configs:
       - targets: ["host.docker.internal:3001"]
         labels:
-          service: "openslin-api"
+          service: "mindpal-api"
           component: "api"
           env: "dev"
     # API 需要认证，开发环境跳过
     # bearer_token: "<your-token>"
 
-  # ── OpenSlin API Agent 指标（复用同一端点，添加 agent 组件标签） ──
-  - job_name: "openslin-api-agent"
+  # ── MindPal API Agent 指标（复用同一端点，添加 agent 组件标签） ──
+  - job_name: "mindpal-api-agent"
     metrics_path: "/metrics"
     scrape_interval: 15s
     static_configs:
       - targets: ["host.docker.internal:3001"]
         labels:
-          service: "openslin-api"
+          service: "mindpal-api"
           component: "agent"
           env: "dev"
     metric_relabel_configs:
@@ -51,24 +51,24 @@ scrape_configs:
         regex: "agent_.*"
         action: keep
 
-  # ── OpenSlin Worker ──
-  - job_name: "openslin-worker"
+  # ── MindPal Worker ──
+  - job_name: "mindpal-worker"
     metrics_path: "/metrics"
     scrape_interval: 10s
     static_configs:
       - targets: ["host.docker.internal:3002"]
         labels:
-          service: "openslin-worker"
+          service: "mindpal-worker"
           env: "dev"
 
-  # ── OpenSlin Runner ──
-  - job_name: "openslin-runner"
+  # ── MindPal Runner ──
+  - job_name: "mindpal-runner"
     metrics_path: "/v1/metrics"
     scrape_interval: 15s
     static_configs:
       - targets: ["host.docker.internal:3003"]
         labels:
-          service: "openslin-runner"
+          service: "mindpal-runner"
           env: "dev"
 
   # ── Node Exporter（可选） ──

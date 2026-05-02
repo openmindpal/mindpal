@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import GovNotificationsClient from "./ui";
 
 async function loadOutbox(locale: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/governance/notifications/outbox?status=deadletter&limit=50`, { token, locale, cache: "no-store" });
   const json: unknown = await res.json().catch(() => null);
   return { status: res.status, json };

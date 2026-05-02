@@ -85,7 +85,7 @@ export default function BottomTray({
 }: {
   locale: string;
 }) {
-  const TRAY_KEY = "openslin_bottom_tray";
+  const TRAY_KEY = "mindpal_bottom_tray";
   const trayRef = useRef<HTMLDivElement>(null);
 
   // SSR-safe: use fixed defaults, restore from localStorage in useEffect

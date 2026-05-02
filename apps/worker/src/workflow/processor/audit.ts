@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
-import type { AuditEventInput } from "@openslin/shared";
-import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget, computeEventHash } from "@openslin/shared";
+import type { AuditEventInput } from "@mindpal/shared";
+import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, resolveDlpPolicy, resolveDlpPolicyFromEnv, shouldDenyDlpForTarget, computeEventHash } from "@mindpal/shared";
 
 const policyCache = new Map<string, { at: number; policyJson: any | null; policyDigest: string | null }>();
 

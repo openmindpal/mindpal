@@ -3,7 +3,7 @@
  * 从 processStep.ts 拆分出来
  */
 
-import { validateCapabilityEnvelopeV1, StructuredLogger } from "@openslin/shared";
+import { validateCapabilityEnvelopeV1, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:stepValidation" });
 import { stableStringify } from "./common";

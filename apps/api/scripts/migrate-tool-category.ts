@@ -31,7 +31,7 @@ async function main() {
   const sql = await fs.readFile(migrationFile, 'utf-8');
   
   // 获取数据库连接信息
-  const dbUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/openslin';
+  const dbUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/mindpal';
   console.log('📡 数据库连接:', dbUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@'));
 
   try {

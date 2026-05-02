@@ -6,7 +6,7 @@
  */
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { SchemaUiConfig, SchemaUiHints } from "@openslin/shared";
+import type { SchemaUiConfig, SchemaUiHints } from "@mindpal/shared";
 import { invokeModelChat } from "../../../lib/llm";
 import { listLatestReleased } from "../../../modules/metadata/schemaRepo";
 

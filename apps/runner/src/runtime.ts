@@ -1,27 +1,27 @@
 /**
- * runtime.ts — Runner 运行时模块 (核心已迁移至 @openslin/shared)
+ * runtime.ts — Runner 运行时模块 (核心已迁移至 @mindpal/shared)
  *
  * 统一从共享层导入核心实现，保留 Runner 独有的 Egress 审计功能。
  * @see packages/shared/src/runtime.ts
  */
 
-// ─── 从 @openslin/shared 导入统一实现 ────────────────────────────────────────────
+// ─── 从 @mindpal/shared 导入统一实现 ────────────────────────────────────────────
 export {
   isPlainObject,
   normalizeNetworkPolicy,
   isAllowedHost,
   isAllowedEgress,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 export type {
   NetworkPolicyRule,
   NetworkPolicy,
   EgressEvent,
   EgressCheck,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 // 重新导入类型以供本地使用
-import type { EgressEvent } from "@openslin/shared";
+import type { EgressEvent } from "@mindpal/shared";
 
 // ── Egress 审计日志持久化 ──────────────────────────────────────────
 export type EgressAuditEntry = {

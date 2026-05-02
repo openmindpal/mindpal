@@ -5,7 +5,7 @@ import { resolveChannelSecretPayload } from "./channelSecret";
 import { feishuSendTextToChatWithRetry, getFeishuTenantAccessToken } from "./feishu";
 import type { ChannelProviderPlugin, IngressContext, ParsedInbound } from "./providerAdapters";
 import { registerChannelProvider, inferAttachmentType } from "./providerAdapters";
-import type { UnifiedAttachment } from "@openslin/shared";
+import type { UnifiedAttachment } from "@mindpal/shared";
 import { FeishuWsClient } from "./feishuLongConnection";
 
 function toTextPayload(raw: unknown) {

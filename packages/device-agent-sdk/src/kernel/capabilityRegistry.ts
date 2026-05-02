@@ -9,8 +9,8 @@
  * @layer kernel
  */
 import type { CapabilityDescriptor, RiskLevel, DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult, DeviceMessageContext } from "./types";
-import { DEFAULT_TOOL_ALIASES, DEFAULT_PREFIX_RULES } from "@openslin/shared";
-import type { DeviceModality, DeviceMultimodalCapabilities } from "@openslin/shared";
+import { DEFAULT_TOOL_ALIASES, DEFAULT_PREFIX_RULES } from "@mindpal/shared";
+import type { DeviceModality, DeviceMultimodalCapabilities } from "@mindpal/shared";
 
 // ── 内部注册表 ──────────────────────────────────────────────
 

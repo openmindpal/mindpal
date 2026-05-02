@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import { computeMinhash, resolveBoolean } from "@openslin/shared";
+import { computeMinhash, resolveBoolean } from "@mindpal/shared";
 import type { AgentLoopResult } from "./loopTypes";
 import { encryptMemoryContent } from "../modules/memory/memoryEncryption";
 

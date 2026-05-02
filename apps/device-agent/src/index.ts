@@ -2,13 +2,13 @@
 import os from "node:os";
 import path from "node:path";
 import { parseCli, getStringOpt } from "./cli";
-import { defaultConfigPath, loadConfigFile, saveConfigFile, killExistingInstance, acquireLock, releaseLock } from "@openslin/device-agent-sdk";
-import type { DeviceType, DeviceAgentFullConfig } from "@openslin/device-agent-sdk";
-import { apiPostJson } from "@openslin/device-agent-sdk";
-import { runLoop } from "@openslin/device-agent-sdk";
+import { defaultConfigPath, loadConfigFile, saveConfigFile, killExistingInstance, acquireLock, releaseLock } from "@mindpal/device-agent-sdk";
+import type { DeviceType, DeviceAgentFullConfig } from "@mindpal/device-agent-sdk";
+import { apiPostJson } from "@mindpal/device-agent-sdk";
+import { runLoop } from "@mindpal/device-agent-sdk";
 import { confirmPrompt } from "./prompt";
-import { safeError, safeLog, sha256_8 } from "@openslin/device-agent-sdk";
-import { getDefaultPluginsForDeviceType } from "@openslin/shared";
+import { safeError, safeLog, sha256_8 } from "@mindpal/device-agent-sdk";
+import { getDefaultPluginsForDeviceType } from "@mindpal/shared";
 import { resolveDeviceAgentEnv } from "./deviceAgentEnv";
 import {
   listPlugins,
@@ -21,7 +21,7 @@ import {
   getDefaultExecutionSession,
   setVisionProvider,
   setStreamingHandlers,
-} from "@openslin/device-agent-sdk";
+} from "@mindpal/device-agent-sdk";
 import { loadPluginsFromDir } from "./pluginRegistry";
 import {
   handleStreamingStart,
@@ -121,7 +121,7 @@ async function initDeviceRuntime(cfg: { deviceId: string; deviceToken: string; a
     os: cfg.os,
     agentVersion: cfg.agentVersion,
   }, async (body) => {
-    const { apiPostJson } = await import("@openslin/device-agent-sdk");
+    const { apiPostJson } = await import("@mindpal/device-agent-sdk");
     return apiPostJson({ apiBase, path: "/device-agent/heartbeat", token: cfg.deviceToken, body });
   });
 
@@ -396,7 +396,7 @@ async function main() {
     if (command === "pair") await cmdPair(options);
     else if (command === "run") await cmdRun(options);
     else {
-      safeLog("openslin-device-agent 命令：");
+      safeLog("mindpal-device-agent 命令：");
       safeLog("  pair --pairingCode <配对码> [--apiBase <地址>] [--config <路径>] [--deviceType desktop|mobile]");
       safeLog("        配对设备到服务器（自动根据设备类型加载对应插件）");
       safeLog("  run [--config <路径>] [--heartbeatMs <毫秒>] [--pollMs <毫秒>] [--idleTimeoutMs <毫秒>]");

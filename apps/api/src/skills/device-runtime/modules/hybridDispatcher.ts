@@ -10,7 +10,7 @@
 import type { Pool } from "pg";
 import type { DeviceHealthStatus, DeviceCapability } from "./handshakeProtocol";
 import { getDeviceHealth, acquireExecutionSlot } from "./handshakeProtocol";
-import { resolveToolAlias, isDeviceToolName } from "@openslin/shared";
+import { resolveToolAlias, isDeviceToolName } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  Types                                                               */
@@ -68,7 +68,7 @@ export interface DispatchResult {
 }
 
 /**
- * 工具别名解析：委托给 @openslin/shared 的共享解析器，不再硬编码。
+ * 工具别名解析：委托给 @mindpal/shared 的共享解析器，不再硬编码。
  * 端侧动态注册的别名将通过心跳同步至云端，此处使用默认内置别名作为回退。
  */
 function normalizeToolName(toolName: string): string {

@@ -1,9 +1,9 @@
 /**
  * 浏览器自动化子插件 — 处理 device.browser.* 工具
  */
-import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
-import { getOrCreateSession, touchSession, getActiveSessionByType } from "@openslin/device-agent-sdk";
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
+import type { CapabilityDescriptor } from "@mindpal/device-agent-sdk";
+import { getOrCreateSession, touchSession, getActiveSessionByType } from "@mindpal/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@mindpal/device-agent-sdk";
 import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 import {
   captureScreen,

@@ -4,7 +4,7 @@ import GovChannelsClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadInitial(locale: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const [cfgRes, evRes, spacesRes] = await Promise.all([
     apiFetch(`/governance/channels/webhook/configs?limit=50`, { token, locale, cache: "no-store" }),
     apiFetch(`/governance/channels/ingress-events?status=deadletter&limit=20`, { token, locale, cache: "no-store" }),

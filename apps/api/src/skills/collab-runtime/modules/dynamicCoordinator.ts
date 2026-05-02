@@ -12,7 +12,7 @@
  * - RoleTransition: 角色间的状态转换
  */
 import type { Pool } from "pg";
-import { isConsensusReached, type ConsensusProposal, type ConsensusVote, StructuredLogger } from "@openslin/shared";
+import { isConsensusReached, type ConsensusProposal, type ConsensusVote, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:dynamicCoordinator" });
 import { executeReplan, getReplanAttemptCount, type ReplanContext, type ReplanResult, type GuardReviewResult, DEFAULT_REPLAN_CONFIG } from "./collabReplanner";

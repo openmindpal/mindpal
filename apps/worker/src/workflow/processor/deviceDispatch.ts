@@ -7,7 +7,7 @@
  * 3. 将 run/step 挂起为 needs_device 状态，等待设备回传
  */
 import type { Pool } from "pg";
-import { StructuredLogger, resolveNumber } from "@openslin/shared";
+import { StructuredLogger, resolveNumber } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:deviceDispatch" });
 

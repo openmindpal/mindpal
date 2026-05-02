@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // ── Mock SDK 内部依赖模块（迁移后路径） ──────────────────────────
 
-vi.mock("@openslin/shared", () => ({
+vi.mock("@mindpal/shared", () => ({
   classifyError: vi.fn((err: any) => ({
     category: "internal",
     code: "INTERNAL",
@@ -92,7 +92,7 @@ vi.mock("../../../../packages/device-agent-sdk/src/kernel/auth", () => ({
   getPolicyCacheStatus: vi.fn(),
 }));
 
-import { sendTaskResult, handleDeviceMessage, handleTaskPending, type WsTaskContext } from "@openslin/device-agent-sdk";
+import { sendTaskResult, handleDeviceMessage, handleTaskPending, type WsTaskContext } from "@mindpal/device-agent-sdk";
 import { safeError } from "../../../../packages/device-agent-sdk/src/kernel/log";
 import { dispatchMessageToPlugins } from "../../../../packages/device-agent-sdk/src/kernel/capabilityRegistry";
 import { executeDeviceTool } from "../../../../packages/device-agent-sdk/src/kernel/taskExecutor";

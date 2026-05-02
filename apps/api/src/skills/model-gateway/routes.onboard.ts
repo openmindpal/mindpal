@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors, isAppError } from "../../lib/errors";
 import { requirePermission } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { setAuditContext } from "../../modules/audit/context";
 import { enqueueAuditOutboxForRequest } from "../../modules/audit/requestOutbox";
 import { encryptSecretEnvelope } from "../../modules/secrets/envelope";

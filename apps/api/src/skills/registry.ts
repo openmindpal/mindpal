@@ -1,4 +1,4 @@
-import { StructuredLogger, resolveString } from "@openslin/shared";
+import { StructuredLogger, resolveString } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:skillRegistry" });
 

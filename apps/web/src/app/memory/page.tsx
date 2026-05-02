@@ -4,7 +4,7 @@ import MemoryManagerClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadMemories(locale: string, searchParams: SearchParams) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const q = new URLSearchParams();
   const scope = Array.isArray(searchParams.scope) ? searchParams.scope[0] : searchParams.scope;
   const type = Array.isArray(searchParams.type) ? searchParams.type[0] : searchParams.type;

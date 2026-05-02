@@ -4,7 +4,7 @@ import RunClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadRun(locale: string, runId: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/runs/${encodeURIComponent(runId)}`, { method: "GET", token, locale, cache: "no-store", signal: AbortSignal.timeout(SSR_TIMEOUT_MS) });
   const json: unknown = await res.json().catch(() => null);
   return { status: res.status, json };

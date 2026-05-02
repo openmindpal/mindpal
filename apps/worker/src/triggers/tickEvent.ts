@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import type { Queue } from "bullmq";
 import { fireEventTrigger, toTrigger, type TriggerDefinitionRow } from "./runner";
-import { isPlainObject } from "@openslin/shared";
+import { isPlainObject } from "@mindpal/shared";
 
 function safePath(path: unknown) {
   const raw = String(path ?? "").trim();

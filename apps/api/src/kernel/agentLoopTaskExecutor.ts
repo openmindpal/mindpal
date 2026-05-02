@@ -17,7 +17,7 @@ import type { TaskExecutor } from "./taskQueueManager";
 import type { AgentLoopResult, AgentLoopParams, StepObservation, AgentDecision } from "./loopTypes";
 import { runAgentLoop } from "./agentLoop";
 import { emitTaskEvent } from "../lib/sessionEventBus";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  日志                                                               */

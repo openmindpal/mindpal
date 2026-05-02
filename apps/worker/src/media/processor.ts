@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { sha256HexBytes } from "@openslin/shared";
+import { sha256HexBytes } from "@mindpal/shared";
 import fs from "node:fs/promises";
 import path from "node:path";
 

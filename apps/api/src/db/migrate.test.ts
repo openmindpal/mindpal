@@ -49,7 +49,7 @@ class FakePool {
 const tempDirs: string[] = [];
 
 async function createMigrationDir(files: Record<string, string>) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openslin-migrate-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mindpal-migrate-"));
   tempDirs.push(dir);
   for (const [name, content] of Object.entries(files)) {
     await fs.writeFile(path.join(dir, name), content, "utf8");

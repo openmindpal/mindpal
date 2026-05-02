@@ -9,10 +9,10 @@
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
 import { searchMemory, listRecentTaskStates, touchMemoryAccess } from "./memory/repo";
-import { computeMinhash, minhashOverlapScore } from "@openslin/shared";
-import type { ToolSemanticMeta } from "@openslin/shared";
+import { computeMinhash, minhashOverlapScore } from "@mindpal/shared";
+import type { ToolSemanticMeta } from "@mindpal/shared";
 import { getKnowledgeContract } from "./contracts/knowledgeContract";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 import { invokeModelChat } from "../lib/llm";
 
 const _logger = new StructuredLogger({ module: "agentContext" });

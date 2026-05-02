@@ -3,14 +3,14 @@
  */
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { StructuredLogger } from "@openslin/shared";
-import type { RunSummaryDTO, RunDetailDTO, RunStepDTO } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
+import type { RunSummaryDTO, RunDetailDTO, RunStepDTO } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "routes:runs:query" });
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { getRunForSpace, listRuns, listSteps } from "../../modules/workflow/jobRepo";
 import { buildRunReplay } from "../../modules/workflow/replayRepo";
 import { getTaskState } from "../../modules/memory/repo";

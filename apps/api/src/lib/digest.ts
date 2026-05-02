@@ -5,8 +5,8 @@
  * so that core modules (governance, metadata, workflow, tools) do not depend on
  * Skill-level modules (channels, notifications).
  */
-import { sha256Hex, stableStringifyValue } from "@openslin/shared";
-export { sha256Hex, stableStringify } from "@openslin/shared";
+import { sha256Hex, stableStringifyValue } from "@mindpal/shared";
+export { sha256Hex, stableStringify } from "@mindpal/shared";
 
 /* ------------------------------------------------------------------ */
 /*  digestParams / digestInputV1 – audit & idempotency helpers         */

@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export async function generateMetadata(): Promise<Metadata> {
   const cookieStore = await cookies();
-  const locale = cookieStore.get("openslin_locale")?.value || "zh-CN";
+  const locale = cookieStore.get("mindpal_locale")?.value || "zh-CN";
   return {
     title: {
       default: t(locale, "meta.console.title"),
@@ -34,7 +34,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const cookieStore = await cookies();
-  const lang = cookieStore.get("openslin_locale")?.value || "zh-CN";
+  const lang = cookieStore.get("mindpal_locale")?.value || "zh-CN";
   return (
     <html lang={lang}>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>

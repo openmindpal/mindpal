@@ -10,7 +10,7 @@
  *   - onFailure: 步骤失败时的恢复建议
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:collabRoles" });
 

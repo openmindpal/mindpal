@@ -4,7 +4,7 @@ import { verifyDiscordSignature } from "./discord";
 import { DiscordGatewayClient } from "./discordGateway";
 import type { ChannelProviderPlugin, IngressContext, ParsedInbound } from "./providerAdapters";
 import { registerChannelProvider, inferAttachmentType } from "./providerAdapters";
-import type { UnifiedAttachment } from "@openslin/shared";
+import type { UnifiedAttachment } from "@mindpal/shared";
 
 const discordPlugin: ChannelProviderPlugin = {
   provider: "discord",

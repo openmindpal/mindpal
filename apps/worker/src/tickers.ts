@@ -5,7 +5,7 @@
  * 替代原 index.ts 中 25+ 个内联 setInterval+withLock 块。
  */
 import { registerTicker, type TickerDeps } from "./tickerRegistry";
-import { StructuredLogger, resolveNumber } from "@openslin/shared";
+import { StructuredLogger, resolveNumber } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:tickers" });
 import { tickWorkflowStepPayloadPurge } from "./workflow/payloadPurge";

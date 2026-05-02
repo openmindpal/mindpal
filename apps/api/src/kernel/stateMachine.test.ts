@@ -11,7 +11,7 @@ import {
   tryTransitionStep, tryTransitionRun, tryTransitionCollab,
   normalizeStepStatus, normalizeRunStatus, normalizeCollabPhase,
   checkStateInvariant,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 /* ================================================================== */
 /*  常量定义完整性                                                       */

@@ -13,7 +13,7 @@ import {
   notifyBackgroundTaskFailed,
   notifyTaskNeedsIntervention,
 } from "./completionNotifier";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 import type { TaskDependencyResolver } from "./taskDependencyResolver";
 
 const _logger = new StructuredLogger({ module: "taskQueueOps" });

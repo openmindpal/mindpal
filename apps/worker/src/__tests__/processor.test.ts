@@ -14,7 +14,7 @@ import { tickChannelOutboxDeliveries } from "../channels/outboxDelivery";
 import { tickEmailDeliveries } from "../notifications/smtpDelivery";
 import { encryptJson } from "../secrets/crypto";
 import { decryptSecretPayload, encryptSecretEnvelopeWithKeyVersion } from "../secrets/envelope";
-import { stableStringifyValue, stableStringify } from "@openslin/shared";
+import { stableStringifyValue, stableStringify } from "@mindpal/shared";
 import { tickWorkflowStepPayloadPurge } from "../workflow/payloadPurge";
 import { tickAuditSiemWebhookExport } from "../audit/siemWebhook";
 import { buildSafeToolOutput, computeWriteLeaseResourceRef, isWriteLeaseTool, parseToolRef } from "../workflow/processor/tooling";

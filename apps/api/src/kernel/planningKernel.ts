@@ -18,8 +18,8 @@
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import { isToolAllowedForPolicy } from "@openslin/shared";
-import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import { isToolAllowedForPolicy } from "@mindpal/shared";
+import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
 import { invokeModelChat, parseToolCallsFromOutput, type LlmSubject } from "../lib/llm";
 import { discoverEnabledTools, type EnabledTool } from "../modules/agentContext";
 import { getToolDefinition, getToolVersionByRef, type ToolDefinition } from "../modules/tools/toolRepo";

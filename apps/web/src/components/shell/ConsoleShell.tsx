@@ -9,7 +9,7 @@ import { CommandPalette, useCommandPaletteShortcut, type CommandItem } from "./C
 import { NAV_CONFIG, EXTRA_PALETTE_ITEMS, type NavSubGroupConfig } from "./navConfig";
 import styles from "@/styles/shell.module.css";
 
-const NAV_VISITS_KEY = "openslin_nav_visits";
+const NAV_VISITS_KEY = "mindpal_nav_visits";
 const MAX_RECENT_NAV = 5;
 
 function parseKeywords(locale: string, key: string): string[] {
@@ -41,7 +41,7 @@ function NavLink(props: { href: string; label: string; desc?: string; pathname?:
 
 /* ─── Collapsible sub-group ─── */
 
-const SUBGROUP_STORAGE_KEY = "openslin_nav_subgroups";
+const SUBGROUP_STORAGE_KEY = "mindpal_nav_subgroups";
 
 function NavSubGroup(props: { groupKey: string; label: string; defaultOpen?: boolean; forceOpen?: boolean; children: ReactNode }) {
   const defaultValue = props.forceOpen ? true : (props.defaultOpen ?? false);

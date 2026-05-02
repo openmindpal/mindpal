@@ -16,7 +16,7 @@ import {
   type DebateVerdict, type DebateParty, type DebateCorrection,
   type ConsensusEvolutionEntry,
   type DebateConfig, DEBATE_CONFIG_DEFAULTS,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import type { DebateV2PhaseParams } from "./collabTypes";
 import { loadApprovalRules } from "./approvalRuleEngine";
 

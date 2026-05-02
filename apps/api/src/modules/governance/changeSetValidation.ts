@@ -2,7 +2,7 @@
  * ChangeSet — Item validation + migration / policy / contract checks.
  */
 import type { Pool, PoolClient } from "pg";
-import { validatePolicyExpr, isPlainObject } from "@openslin/shared";
+import { validatePolicyExpr, isPlainObject } from "@mindpal/shared";
 import { Errors } from "../../lib/errors";
 import { getToolVersionByRef } from "../tools/toolRepo";
 import { schemaDefSchema } from "../metadata/schemaModel";
@@ -368,7 +368,7 @@ export function generateSchemaMigrationDraftsV1(params: {
     const fields = entity?.fields ?? {};
     for (const [fieldName, field] of Object.entries<any>(fields)) {
       const ext = field?.extensions;
-      const renameFrom = ext && typeof ext === "object" && !Array.isArray(ext) ? (ext as any)?.["io.openslin.migrate"]?.renameFrom : undefined;
+      const renameFrom = ext && typeof ext === "object" && !Array.isArray(ext) ? (ext as any)?.["io.mindpal.migrate"]?.renameFrom : undefined;
       const fromPath = typeof renameFrom === "string" ? renameFrom.trim() : "";
       if (!fromPath) continue;
       const toPath = String(fieldName ?? "").trim();

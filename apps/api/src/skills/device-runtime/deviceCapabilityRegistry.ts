@@ -6,8 +6,8 @@
  * - 内存级注册表：随 WebSocket 连接生命周期管理，不持久化
  * - 分层自治：端侧自主探测能力，云端协商策略
  */
-import type { DeviceCapabilityDescriptor } from "@openslin/shared";
-import type { DeviceMultimodalPolicy } from "@openslin/shared";
+import type { DeviceCapabilityDescriptor } from "@mindpal/shared";
+import type { DeviceMultimodalPolicy } from "@mindpal/shared";
 
 /** 注册表中的设备条目 */
 export interface DeviceEntry {

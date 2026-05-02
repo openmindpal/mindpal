@@ -1,6 +1,6 @@
 import type { WorkerSkillContribution } from "../../lib/workerSkillContract";
 import { processMediaJob } from "../../media/processor";
-import { resolveString } from "@openslin/shared";
+import { resolveString } from "@mindpal/shared";
 
 export const mediaPipelineWorker: WorkerSkillContribution = {
   skillName: "media.pipeline",

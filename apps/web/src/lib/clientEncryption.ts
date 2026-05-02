@@ -6,7 +6,7 @@
 const ALGO = "AES-GCM";
 const KEY_LENGTH = 256;
 const IV_LENGTH = 12;
-const STORAGE_PREFIX = "openslin_space_key_";
+const STORAGE_PREFIX = "mindpal_space_key_";
 
 /* ─── Key derivation (space-level isolation) ─── */
 

@@ -5,8 +5,8 @@ global:
   resolve_timeout: 5m
   # 生产环境取消注释配置 SMTP
   # smtp_smarthost: 'smtp.example.com:587'
-  # smtp_from: 'alertmanager@openslin.local'
-  # smtp_auth_username: 'alertmanager@openslin.local'
+  # smtp_from: 'alertmanager@mindpal.local'
+  # smtp_auth_username: 'alertmanager@mindpal.local'
   # smtp_auth_password: '<password>'
 
 # 路由树
@@ -72,7 +72,7 @@ receivers:
         max_alerts: 50
     # 生产环境取消注释启用邮件
     # email_configs:
-    #   - to: 'oncall@openslin.local'
+    #   - to: 'oncall@mindpal.local'
     #     send_resolved: true
 
   # 安全告警 Webhook
@@ -82,7 +82,7 @@ receivers:
         send_resolved: true
     # 生产环境取消注释启用邮件
     # email_configs:
-    #   - to: 'security@openslin.local'
+    #   - to: 'security@mindpal.local'
     #     send_resolved: true
 
 # 模板（可选）

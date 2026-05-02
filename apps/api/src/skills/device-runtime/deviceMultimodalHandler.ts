@@ -18,10 +18,10 @@ import {
   DEFAULT_MULTIMODAL_CAPABILITIES,
   type UnifiedAttachment,
   type MultimodalCapabilities,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 import { orchestrateChatTurn } from "../orchestrator/modules/orchestrator";
-import type { DeviceStreamEvent } from "@openslin/shared";
+import type { DeviceStreamEvent } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:deviceMultimodal" });
 
@@ -33,7 +33,7 @@ function safeSend(ws: WsLike, data: DeviceStreamEvent | Record<string, unknown>)
   } catch { /* WS 发送失败忽略 */ }
 }
 
-// 大文件限制和默认支持格式已迁移至 @openslin/shared（DEFAULT_MULTIMODAL_CAPABILITIES）
+// 大文件限制和默认支持格式已迁移至 @mindpal/shared（DEFAULT_MULTIMODAL_CAPABILITIES）
 
 // ── 类型定义 ────────────────────────────────────────────────────
 

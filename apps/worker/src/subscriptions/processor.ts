@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory, sha256Hex, sha256HexBytes, stableStringify, stableStringifyValue } from "@openslin/shared";
+import { normalizeAuditErrorCategory, sha256Hex, sha256HexBytes, stableStringify, stableStringifyValue } from "@mindpal/shared";
 import { ExchangePollError, pollExchangeDelta } from "./exchangeGraph";
 import { invokeFirstPartySkill } from "../lib/skillInvoke";
 

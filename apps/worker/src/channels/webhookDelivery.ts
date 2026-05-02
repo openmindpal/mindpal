@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory, StructuredLogger, sha256Hex, stableStringifyValue } from "@openslin/shared";
+import { normalizeAuditErrorCategory, StructuredLogger, sha256Hex, stableStringifyValue } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:webhookDelivery" });
 import { callDataPlaneJson } from "../workflow/processor/dataPlaneGateway";

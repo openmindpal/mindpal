@@ -1,9 +1,9 @@
 /**
  * Device-Agent Plugin Registry — 外部插件目录加载
  */
-import { initPlugin } from "@openslin/device-agent-sdk";
-import type { DeviceToolPlugin } from "@openslin/device-agent-sdk";
-import type { PluginManifest } from "@openslin/device-agent-sdk";
+import { initPlugin } from "@mindpal/device-agent-sdk";
+import type { DeviceToolPlugin } from "@mindpal/device-agent-sdk";
+import type { PluginManifest } from "@mindpal/device-agent-sdk";
 
 // ── 外部插件加载 ──────────────────────────────────────────────
 

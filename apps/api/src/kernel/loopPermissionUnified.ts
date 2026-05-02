@@ -7,8 +7,8 @@
  *   3. 治理检查 (runPreExecutionChecks)
  */
 import type { Pool } from "pg";
-import { ErrorCategory, StructuredLogger } from "@openslin/shared";
-import type { ToolSemanticMeta } from "@openslin/shared";
+import { ErrorCategory, StructuredLogger } from "@mindpal/shared";
+import type { ToolSemanticMeta } from "@mindpal/shared";
 import { Errors } from "../lib/errors";
 import { authorize } from "../modules/auth/authz";
 import { buildAbacEvaluationRequestFromContext } from "../modules/auth/guard";

@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { compilePolicyExprWhere, compileRowFiltersWhere } from "@openslin/shared";
+import { compilePolicyExprWhere, compileRowFiltersWhere } from "@mindpal/shared";
 import { checkType, digestObject, isPlainObject } from "./common";
 import { callDataPlaneJson } from "./dataPlaneGateway";
 

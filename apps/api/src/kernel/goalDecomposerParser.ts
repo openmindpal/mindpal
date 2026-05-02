@@ -10,11 +10,11 @@
 import crypto from "node:crypto";
 import type {
   GoalGraph, SubGoal, GoalCondition, SuccessCriterion,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import {
   createGoalGraph, validateGoalGraphDAG,
   detectCycleNodes as _detectCycleNodesGeneric, type DagNode,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import type { DecomposeGoalResult } from "./goalDecomposer";
 
 /* ================================================================== */

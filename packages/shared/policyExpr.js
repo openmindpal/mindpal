@@ -1,2 +1,2 @@
-// 子路径代理: @openslin/shared/policyExpr
+// 子路径代理: @mindpal/shared/policyExpr
 module.exports = require("./dist/policyExpr");

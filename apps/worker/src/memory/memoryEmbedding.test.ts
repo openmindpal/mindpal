@@ -5,12 +5,12 @@ import {
   processMemoryEmbeddingJob,
   backfillMemoryEmbeddings,
 } from "./memoryEmbedding";
-import { cosineSimilarity } from "@openslin/shared";
+import { cosineSimilarity } from "@mindpal/shared";
 
 /* ── 全局 mock ─────────────────────────────────────────── */
 
-vi.mock("@openslin/shared", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@openslin/shared")>();
+vi.mock("@mindpal/shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@mindpal/shared")>();
   return {
     ...actual,
     computeMinhash: vi.fn(() => new Array(16).fill(42)),

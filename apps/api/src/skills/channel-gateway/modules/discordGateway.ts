@@ -4,7 +4,7 @@
  * 通过 WebSocket 连接 Discord Gateway，接收 MESSAGE_CREATE 等事件。
  * 实现心跳、Identify、Resume 以及指数退避重连。
  */
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 import { BaseLongConnectionClient } from "./baseLongConnection";
 
 const _logger = new StructuredLogger({ module: "api:discordGateway" });
@@ -248,8 +248,8 @@ export class DiscordGatewayClient extends BaseLongConnectionClient {
         intents: INTENTS,
         properties: {
           os: "linux",
-          browser: "openslin",
-          device: "openslin",
+          browser: "mindpal",
+          device: "mindpal",
         },
       },
     };

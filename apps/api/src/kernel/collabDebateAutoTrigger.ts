@@ -5,7 +5,7 @@
  */
 import type { AgentState, CollabResult, CollabOrchestratorParams } from "./collabTypes";
 import { runDebatePhaseV2 } from "./collabDebate";
-import { collabConfig } from "@openslin/shared";
+import { collabConfig } from "@mindpal/shared";
 import {
   persistDebateSession, persistDebateCorrections,
   persistDebateConsensusEvolution, persistDebateRound,

@@ -6,7 +6,7 @@ import {
   findEntityByName, findFactByKey, ensureIndexes,
   detectWorldStateConflicts,
   type WorldEntity, type WorldRelation, type WorldFact,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations, extractWorldState } from "./worldStateExtractor";
 import type { StepObservation } from "./loopTypes";
 

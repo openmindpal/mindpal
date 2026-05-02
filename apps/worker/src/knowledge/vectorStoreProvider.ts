@@ -12,7 +12,7 @@
  *   → api/skills/knowledge-rag/modules/repo.ts
  */
 
-import { StructuredLogger, sha256_8 } from "@openslin/shared";
+import { StructuredLogger, sha256_8 } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:vectorStoreProvider" });
 import type {
@@ -30,7 +30,7 @@ import type {
   VectorStoreFilterCondition,
   VectorStoreDegradeEvent,
   PgVectorConfig,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 // ─── 工具函数 ──────────────────────────────────────────────────
 

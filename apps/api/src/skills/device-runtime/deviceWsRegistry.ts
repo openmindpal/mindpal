@@ -8,7 +8,7 @@
  * 单实例部署时行为与原版一致，Redis 不可用时降级到纯本地模式。
  */
 
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:deviceWsRegistry" });
 

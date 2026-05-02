@@ -8,7 +8,7 @@ import { Table } from "../../../../components/ui";
 import { resolveReferenceLabels, type RefLabelMap } from "../../../../lib/referenceResolver";
 
 async function loadEffectiveSchema(locale: string, entity: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective`, {
     method: "GET",
     token,
@@ -20,7 +20,7 @@ async function loadEffectiveSchema(locale: string, entity: string) {
 }
 
 async function loadEntity(locale: string, entity: string, id: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, {
     method: "GET",
     token,
@@ -69,7 +69,7 @@ export default async function EntityDetailPage(props: {
   const payload = recObj?.payload && typeof recObj.payload === "object" ? (recObj.payload as Record<string, unknown>) : {};
 
   // Resolve reference field display labels for detail view
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const refLabels: RefLabelMap = await resolveReferenceLabels({
     fields,
     items: recObj ? [recObj] : [],

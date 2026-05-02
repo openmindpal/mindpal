@@ -16,8 +16,8 @@ import {
 } from "./executionKernel";
 import { isToolAllowedByConstraints } from "./loopThinkDecide";
 import { getSharedSubClient } from "./loopRedisClient";
-import { ErrorCategory, StructuredLogger } from "@openslin/shared";
-import type { ToolSemanticMeta, SemanticAuditEntry, FallbackImpact } from "@openslin/shared";
+import { ErrorCategory, StructuredLogger } from "@mindpal/shared";
+import type { ToolSemanticMeta, SemanticAuditEntry, FallbackImpact } from "@mindpal/shared";
 import { performance } from "node:perf_hooks";
 import { authorizeToolExecution, findFallbackTool, AGENT_LOOP_PERMISSION_FALLBACK } from "./loopPermissionUnified";
 

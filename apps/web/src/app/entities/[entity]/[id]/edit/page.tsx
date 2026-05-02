@@ -6,7 +6,7 @@ import type { EffectiveSchema, SearchParams } from "../../../../../lib/types";
 import { EntityForm } from "../../new/ui";
 
 async function loadEffectiveSchema(locale: string, entity: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective`, {
     method: "GET",
     token,
@@ -18,7 +18,7 @@ async function loadEffectiveSchema(locale: string, entity: string) {
 }
 
 async function loadEntity(locale: string, entity: string, id: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, {
     method: "GET",
     token,

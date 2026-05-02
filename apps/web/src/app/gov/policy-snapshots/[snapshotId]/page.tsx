@@ -4,7 +4,7 @@ import GovPolicySnapshotDetailClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadExplain(locale: string, snapshotId: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/governance/policy/snapshots/${encodeURIComponent(snapshotId)}/explain`, {
     token, locale,
     cache: "no-store",

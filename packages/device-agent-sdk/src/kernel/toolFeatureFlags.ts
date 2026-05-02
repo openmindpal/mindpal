@@ -5,7 +5,7 @@
  * 1. 环境变量：FF_TOOL_<toolName>=1/0（"_" 转 "."）
  * 2. 策略下发：CachedPolicy.toolFeatureFlags
  *
- * 熔断逻辑委托给 @openslin/shared CircuitBreaker 实现，
+ * 熔断逻辑委托给 @mindpal/shared CircuitBreaker 实现，
  * 避免与平台底座的重复实现。灰度开关 + 降级规则仍由本模块管理。
  *
  * @layer kernel
@@ -14,7 +14,7 @@
 import {
   getOrCreateBreaker, clearBreakerRegistry,
   type CircuitBreakerState as SharedCircuitState,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 // ── 类型定义 ──────────────────────────────────────────────────
 

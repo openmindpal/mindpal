@@ -17,9 +17,9 @@
  */
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
-import type { CapabilityEnvelopeV1 } from "@openslin/shared";
-import { StructuredLogger } from "@openslin/shared";
-import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import type { CapabilityEnvelopeV1 } from "@mindpal/shared";
+import { StructuredLogger } from "@mindpal/shared";
+import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
 import { Errors } from "../lib/errors";
 
 const _kernelLogger = new StructuredLogger({ module: "executionKernel" });
@@ -484,7 +484,7 @@ async function _handleApprovalOrEnqueue(params: {
   const stepId = step.stepId ?? step.step_id;
 
   // ── 编排预检：预算 / 角色工具策略 / 审批需求评估 ──
-  let preflightResult: import("@openslin/shared").PreflightResult | null = null;
+  let preflightResult: import("@mindpal/shared").PreflightResult | null = null;
   try {
     preflightResult = await preflightCheck({
       pool, runId, stepId, tenantId,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * openslin-admin CLI — 灵智 MindPal 智能体 OS 全量运维管理命令行工具
+ * mindpal-admin CLI — 灵智 MindPal 智能体 OS 全量运维管理命令行工具
  *
  * 架构：Commander.js 框架 + 模块化命令注册
  * 每个领域一个命令模块，通过 registerXxxCommands(program) 注册到根 Command
@@ -40,7 +40,7 @@ import { registerMeCommands } from "./commands/me";
 // ── 主程序构建 ───────────────────────────────────────────────────
 const program = new Command();
 program
-  .name("openslin-admin")
+  .name("mindpal-admin")
   .description("灵智 MindPal 智能体 OS — 运维管理 CLI (覆盖全量 250+ API 端点)")
   .version("0.1.0");
 

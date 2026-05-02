@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compilePolicyExprWhere, validatePolicyExpr } from "@openslin/shared";
+import { compilePolicyExprWhere, validatePolicyExpr } from "@mindpal/shared";
 
 describe("policyExpr contract", () => {
   it("允许白名单 context 路径", () => {

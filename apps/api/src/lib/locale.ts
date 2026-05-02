@@ -1,4 +1,4 @@
-import { resolveLocale } from "@openslin/shared";
+import { resolveLocale } from "@mindpal/shared";
 
 function parseAcceptLanguage(headerValue: string | undefined): string | undefined {
   if (!headerValue) return undefined;

@@ -4,7 +4,7 @@ import {
   resolveRuntimeConfig,
   type DlpPolicy,
   type RuntimeConfigOverrides,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 import { getHotConfigEngine } from "./hotConfigEngine";
 import { getEffectiveSafetyPolicyVersion } from "./safetyContract";

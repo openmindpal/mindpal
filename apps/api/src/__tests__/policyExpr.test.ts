@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compilePolicyExprWhere, evaluateAbacPolicySet, validatePolicyExpr } from "@openslin/shared";
+import { compilePolicyExprWhere, evaluateAbacPolicySet, validatePolicyExpr } from "@mindpal/shared";
 
 describe("policyExpr", () => {
   it("validatePolicyExpr: accepts basic eq expr", () => {

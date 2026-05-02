@@ -4,7 +4,7 @@ import GovWorkbenchDetailClient from "./ui";
 import { cookies } from "next/headers";
 
 async function loadInitial(locale: string, workbenchKey: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const [detailRes, effRes] = await Promise.all([
     apiFetch(`/workbenches/${encodeURIComponent(workbenchKey)}`, { token, locale, cache: "no-store" }),
     apiFetch(`/workbenches/${encodeURIComponent(workbenchKey)}/effective`, { token, locale, cache: "no-store" }),

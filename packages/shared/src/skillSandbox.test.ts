@@ -20,7 +20,7 @@ import {
   createModuleLoadInterceptor,
   lockdownDynamicCodeExecution,
   restoreDynamicCodeExecution,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 describe("P1-3: Skill Sandbox Module Blocking", () => {
   

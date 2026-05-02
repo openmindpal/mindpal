@@ -8,7 +8,7 @@
  *
  * 直接调用 toolGovernanceRepo 和 toolRepo 中的已有仓库函数。
  */
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:systemToolGovernance" });
 import type { Pool } from "pg";

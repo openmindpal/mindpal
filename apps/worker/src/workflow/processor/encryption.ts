@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { decryptSecretPayload, encryptSecretEnvelopeWithKeyVersion } from "../../secrets/envelope";
-import { isPlainObject, resolveString } from "@openslin/shared";
+import { isPlainObject, resolveString } from "@mindpal/shared";
 
 function mergeMetaInput(decrypted: any, metaInput: any) {
   if (!isPlainObject(decrypted) || !isPlainObject(metaInput)) return decrypted;

@@ -18,7 +18,7 @@ import type {
 import { TERMINAL_QUEUE_STATUSES, type TaskStepEntry } from "../homeHelpers";
 import type { SessionSSEEvent } from "../useSessionSSE";
 
-const TASK_QUEUE_KEY = "openslin_task_queue_state";
+const TASK_QUEUE_KEY = "mindpal_task_queue_state";
 
 /* ─── Helpers ─── */
 

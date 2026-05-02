@@ -6,7 +6,7 @@ import type { SearchParams } from "@/lib/types";
 export default async function AdminRbacPage(props: { searchParams: Promise<SearchParams> }) {
   const searchParams = await Promise.resolve(props.searchParams);
   const locale = pickLocale(searchParams);
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
 
   const [rolesRes, permsRes] = await Promise.all([
     apiFetch(`/rbac/roles?limit=200`, { locale, token, cache: "no-store", signal: AbortSignal.timeout(SSR_TIMEOUT_MS) }),

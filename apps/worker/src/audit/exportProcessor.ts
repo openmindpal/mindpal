@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { stableStringify } from "@openslin/shared";
+import { stableStringify } from "@mindpal/shared";
 
 async function chooseArtifactSpaceId(pool: Pool, tenantId: string, preferredSpaceId: string | null) {
   if (preferredSpaceId) return preferredSpaceId;

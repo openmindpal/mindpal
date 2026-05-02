@@ -1,7 +1,7 @@
 /**
  * skillSandboxChild.ts — Runner 侧 Skill 沙箱子进程
  *
- * 使用 @openslin/shared 的统一沙箱执行流程。
+ * 使用 @mindpal/shared 的统一沙箱执行流程。
  * Runner 特有：Worker 线程隔离（threads）、CPU 时间限制、心跳监控。
  * @see packages/shared/src/skillExecutor.ts
  */
@@ -10,8 +10,8 @@ import {
   SANDBOX_BLOCKED_MODULES,
   SANDBOX_FORBIDDEN_MODULES_STRICT,
   getRiskLevel,
-} from "@openslin/shared";
-import type { SandboxIpcPayload, SandboxIpcResultMessage } from "@openslin/shared";
+} from "@mindpal/shared";
+import type { SandboxIpcPayload, SandboxIpcResultMessage } from "@mindpal/shared";
 
 async function main() {
   process.on("message", async (m: any) => {
@@ -38,11 +38,11 @@ async function main() {
     }
     const riskMapJson = JSON.stringify(riskMapEntries);
 
-    // Worker 线程内联代码 — 使用 @openslin/shared 编译产物中的公共函数
+    // Worker 线程内联代码 — 使用 @mindpal/shared 编译产物中的公共函数
     const workerCode = `
       const { parentPort } = require("node:worker_threads");
       const Module = require("node:module");
-      const sharedPath = ${JSON.stringify(require.resolve("@openslin/shared"))};
+      const sharedPath = ${JSON.stringify(require.resolve("@mindpal/shared"))};
       const shared = require(sharedPath);
       const { isAllowedEgress, normalizeNetworkPolicy, pickExecute, buildApiFetch, createEgressWrappedFetch } = shared;
 

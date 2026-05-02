@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { digestInputV1 } from "../../lib/digest";
 import { encryptSecretEnvelope } from "../secrets/envelope";
-import { isPlainObject } from "@openslin/shared";
+import { isPlainObject } from "@mindpal/shared";
 
 function buildStepInputMeta(input: any) {
   if (!isPlainObject(input)) return input ?? null;

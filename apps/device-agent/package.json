@@ -1,12 +1,12 @@
 {
-  "name": "@openslin/device-agent",
+  "name": "@mindpal/device-agent",
   "version": "0.0.0",
   "private": true,
   "license": "Apache-2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "openslin-device-agent": "dist/index.js"
+    "mindpal-device-agent": "dist/index.js"
   },
   "scripts": {
     "dev": "tsx src/index.ts",
@@ -16,8 +16,8 @@
     "lint": "node -e \"process.exit(0)\""
   },
   "dependencies": {
-    "@openslin/device-agent-sdk": "workspace:*",
-    "@openslin/shared": "workspace:*",
+    "@mindpal/device-agent-sdk": "workspace:*",
+    "@mindpal/shared": "workspace:*",
     "playwright-core": "^1.52.0"
   },
   "devDependencies": {

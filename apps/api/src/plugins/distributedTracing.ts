@@ -12,7 +12,7 @@ import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { context, trace, SpanStatusCode, propagation } from "@opentelemetry/api";
 import type { Span } from "@opentelemetry/api";
 
-const tracer = trace.getTracer("openslin-api-http");
+const tracer = trace.getTracer("mindpal-api-http");
 
 function isOtelEnabled(): boolean {
   const v = String(process.env.OTEL_ENABLED ?? "").toLowerCase();

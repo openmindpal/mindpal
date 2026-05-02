@@ -1,4 +1,4 @@
-import { validateProductionBaseline } from "@openslin/shared";
+import { validateProductionBaseline } from "@mindpal/shared";
 import { buildServer } from "./server";
 import { getProcessPool, shutdownPool } from "./skillProcessPool";
 

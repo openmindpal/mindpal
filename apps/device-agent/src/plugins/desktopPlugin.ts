@@ -3,8 +3,8 @@
  * 将 5 个子插件（filePlugin / browserPlugin / desktopControlPlugin / clipboardPlugin / evidencePlugin）
  * 合并为一个统一的 DeviceToolPlugin 接口，支持工具名解析和路由分发。
  */
-import type { DeviceToolPlugin } from "@openslin/device-agent-sdk";
-import { resolveToolAlias as normalizeToolName } from "@openslin/device-agent-sdk";
+import type { DeviceToolPlugin } from "@mindpal/device-agent-sdk";
+import { resolveToolAlias as normalizeToolName } from "@mindpal/device-agent-sdk";
 import filePlugin from "./filePlugin";
 import browserPlugin from "./browserPlugin";
 import desktopControlPlugin from "./desktopControlPlugin";

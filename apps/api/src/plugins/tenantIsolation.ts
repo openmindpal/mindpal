@@ -6,7 +6,7 @@
  * - 软限制：达到 80% 硬限制时输出结构化警告日志（可观测性）
  */
 import type { FastifyPluginAsync } from "fastify";
-import { resolveNumber, StructuredLogger } from "@openslin/shared";
+import { resolveNumber, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:tenantIsolation" });
 import { getConfigOverridesWithHotCache } from "../lib/hotConfigEngine";
@@ -71,7 +71,7 @@ export const tenantIsolationPlugin: FastifyPluginAsync<{
       });
 
       try {
-        (app.metrics as any).incCounter?.("openslin_tenant_quota_exceeded_total", { tenant_id: tenantId }, 1);
+        (app.metrics as any).incCounter?.("mindpal_tenant_quota_exceeded_total", { tenant_id: tenantId }, 1);
       } catch { /* metrics 可能未注册 */ }
 
       reply.header("Retry-After", String(RETRY_AFTER_SEC));
@@ -96,7 +96,7 @@ export const tenantIsolationPlugin: FastifyPluginAsync<{
     if (next > effectiveQuota) {
       _logger.warn("tenant concurrent requests exceeds soft quota", { tenantId, current: next, softQuota: effectiveQuota });
       try {
-        (app.metrics as any).incCounter?.("openslin_tenant_quota_exceeded_total", { tenant_id: tenantId }, 1);
+        (app.metrics as any).incCounter?.("mindpal_tenant_quota_exceeded_total", { tenant_id: tenantId }, 1);
       } catch { /* metrics 可能未注册 */ }
     }
   });

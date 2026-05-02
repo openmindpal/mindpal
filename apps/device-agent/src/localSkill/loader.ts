@@ -11,8 +11,8 @@ import type {
   CapabilityDescriptor,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@openslin/device-agent-sdk";
-import { initPlugin } from "@openslin/device-agent-sdk";
+} from "@mindpal/device-agent-sdk";
+import { initPlugin } from "@mindpal/device-agent-sdk";
 import { resolveDeviceAgentEnv } from "../deviceAgentEnv";
 import type { DeviceSkillManifest } from "./manifest";
 import { validateManifest, verifyManifestSignature } from "./manifest";

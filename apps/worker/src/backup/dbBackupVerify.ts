@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import fss from "node:fs";
 import fs from "node:fs/promises";
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:dbBackupVerify" });
 

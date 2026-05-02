@@ -4,7 +4,7 @@
  */
 
 import type { Pool } from "pg";
-import { normalizeStepStatus, normalizeRunStatus, tryTransitionStep, tryTransitionRun, StructuredLogger } from "@openslin/shared";
+import { normalizeStepStatus, normalizeRunStatus, tryTransitionStep, tryTransitionRun, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:stepSealing" });
 import { computeSealedDigestV1 } from "./sealed";
@@ -109,7 +109,7 @@ export async function sealRunIfFinished(params: { pool: Pool; runId: string }): 
 // 输出摘要构建
 // ────────────────────────────────────────────────────────────────
 
-import type { EgressEvent, NetworkPolicy, RuntimeLimits } from "@openslin/shared";
+import type { EgressEvent, NetworkPolicy, RuntimeLimits } from "@mindpal/shared";
 import { sha256Hex, stableStringify, digestObject } from "./common";
 import { computeEvidenceDigestV1, deriveIsolation } from "./sealed";
 

@@ -1,9 +1,9 @@
 import type { Pool } from "pg";
 import type Redis from "ioredis";
-import { validateCapabilityEnvelopeV1, resolveSupplyChainPolicy, checkTrust, checkDependencyScan, checkSbom, isToolAllowedForPolicy, StructuredLogger, resolveString, buildStepExecutionResult, type StepExecutionResult } from "@openslin/shared";
+import { validateCapabilityEnvelopeV1, resolveSupplyChainPolicy, checkTrust, checkDependencyScan, checkSbom, isToolAllowedForPolicy, StructuredLogger, resolveString, buildStepExecutionResult, type StepExecutionResult } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:processStep" });
-import { acquireWriteLease, releaseWriteLease } from "@openslin/shared";
+import { acquireWriteLease, releaseWriteLease } from "@mindpal/shared";
 import { writeAudit } from "./audit";
 import { executeBuiltinTool } from "./builtinTools";
 import { digestObject, isPlainObject, jsonByteLength, scrubBySchema, sha256Hex, stableStringify, validateBySchema } from "./common";

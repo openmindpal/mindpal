@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { parseDocument, findParserByMimeType, StructuredLogger, sha256Hex, stableStringify } from "@openslin/shared";
+import { parseDocument, findParserByMimeType, StructuredLogger, sha256Hex, stableStringify } from "@mindpal/shared";
 import { writeKnowledgeAudit as writeAudit } from "./auditWriter";
 
 const _logger = new StructuredLogger({ module: "worker:knowledge:ingest" });

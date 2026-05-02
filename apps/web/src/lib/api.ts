@@ -1,7 +1,7 @@
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ??
   (typeof window !== "undefined" ? `http://${window.location.hostname}:4001/v1` : "http://localhost:4001/v1");
 
-export const AUTH_TOKEN_KEY = "openslin_token";
+export const AUTH_TOKEN_KEY = "mindpal_token";
 
 function readCookieValue(name: string) {
   if (typeof document === "undefined") return "";
@@ -80,7 +80,7 @@ export function pickLocale(searchParams: Record<string, string | string[] | unde
 /** Persist locale preference to cookie + update <html lang> for accessibility */
 export function setLocale(locale: string) {
   if (typeof document !== "undefined") {
-    document.cookie = `openslin_locale=${encodeURIComponent(locale)}; path=/; max-age=31536000`;
+    document.cookie = `mindpal_locale=${encodeURIComponent(locale)}; path=/; max-age=31536000`;
     document.documentElement.lang = locale;
   }
 }
@@ -139,7 +139,7 @@ export async function apiFetch(
   if (res.status === 401 && typeof window !== "undefined") {
     setClientAuthToken("");
     const isAlreadyOnHome = window.location.pathname === "/" || window.location.pathname === "";
-    const lastRedirectKey = "__openslin_401_redirect_ts";
+    const lastRedirectKey = "__mindpal_401_redirect_ts";
     const lastRedirect = Number(sessionStorage.getItem(lastRedirectKey) || "0");
     const now = Date.now();
     if (!isAlreadyOnHome && now - lastRedirect > 500) {

@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import GovPolicyDebuggerClient from "./ui";
 
 async function loadEpoch(locale: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/governance/policy/cache/epoch`, { token, locale, cache: "no-store" });
   const json: unknown = await res.json().catch(() => null);
   return { status: res.status, json };

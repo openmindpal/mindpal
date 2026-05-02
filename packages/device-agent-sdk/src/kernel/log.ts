@@ -1,13 +1,13 @@
 /**
  * Device-Agent SDK 内核日志工具
  *
- * 从 @openslin/shared 复用 sha256_8 与 initializeServiceLogging，
+ * 从 @mindpal/shared 复用 sha256_8 与 initializeServiceLogging，
  * 提供与原 apps/device-agent/src/log.ts 相同的接口，
  * 使内核模块可独立于应用层运行。
  *
  * @layer kernel
  */
-import { initializeServiceLogging, sha256_8 } from "@openslin/shared";
+import { initializeServiceLogging, sha256_8 } from "@mindpal/shared";
 
 export { sha256_8 };
 

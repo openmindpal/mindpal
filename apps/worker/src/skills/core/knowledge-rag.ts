@@ -2,7 +2,7 @@ import type { WorkerSkillContribution } from "../../lib/workerSkillContract";
 import { processKnowledgeIndexJob } from "../../knowledge/processor";
 import { processKnowledgeEmbeddingJob } from "../../knowledge/embedding";
 import { processKnowledgeIngestJob } from "../../knowledge/ingest";
-import { resolveString } from "@openslin/shared";
+import { resolveString } from "@mindpal/shared";
 
 export const knowledgeRagWorker: WorkerSkillContribution = {
   skillName: "knowledge.rag",

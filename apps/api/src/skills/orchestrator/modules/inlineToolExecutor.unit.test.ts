@@ -22,7 +22,7 @@ vi.mock("../../knowledge-rag/modules/repo", () => ({
   searchChunksHybrid: vi.fn(),
 }));
 
-vi.mock("@openslin/shared", () => ({
+vi.mock("@mindpal/shared", () => ({
   evaluateMemoryRisk: vi.fn(() => ({ level: "low", reasons: [] })),
   resolveNumber: vi.fn(() => ({ value: 0.6 })),
   shouldRequireApproval: vi.fn(() => false),

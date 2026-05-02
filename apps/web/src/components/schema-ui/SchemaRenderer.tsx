@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import type { SchemaUiConfig, SchemaUiHints } from "@openslin/shared";
+import type { SchemaUiConfig, SchemaUiHints } from "@mindpal/shared";
 import { useSchemaUiData } from "./useSchemaUiData";
 import { MdxBlock } from "./MdxBlock";
 

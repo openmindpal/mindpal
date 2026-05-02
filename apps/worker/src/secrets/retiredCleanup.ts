@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { sha256Hex } from "@openslin/shared";
+import { sha256Hex } from "@mindpal/shared";
 
 export async function tickRetiredSecretsCleanup(params: { pool: Pool }) {
   const graceRaw = String(process.env.SECRETS_ROTATION_GRACE_SEC ?? "").trim();

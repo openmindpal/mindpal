@@ -1,5 +1,5 @@
 import { context, propagation } from "@opentelemetry/api";
-import { resolveBoolean, injectTraceHeaders, createTraceContext } from "@openslin/shared";
+import { resolveBoolean, injectTraceHeaders, createTraceContext } from "@mindpal/shared";
 
 export function attachJobTraceCarrier<T extends Record<string, any>>(data: T): T {
   // Inject unified x-trace-id headers

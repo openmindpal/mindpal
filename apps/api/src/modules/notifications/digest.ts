@@ -1,6 +1,6 @@
-import { sha256Hex, stableStringifyValue } from "@openslin/shared";
+import { sha256Hex, stableStringifyValue } from "@mindpal/shared";
 
-export { sha256Hex } from "@openslin/shared";
+export { sha256Hex } from "@mindpal/shared";
 
 export function digestParams(params: any) {
   if (!params || typeof params !== "object" || Array.isArray(params)) return { keyCount: 0, keys: [], sha256_8: sha256Hex("null").slice(0, 8) };

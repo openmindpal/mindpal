@@ -1,9 +1,9 @@
 /**
  * 证据上传子插件 — 处理 device.evidence.upload
  */
-import { apiPostJson } from "@openslin/device-agent-sdk";
-import type { CapabilityDescriptor } from "@openslin/device-agent-sdk";
-import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@openslin/device-agent-sdk";
+import { apiPostJson } from "@mindpal/device-agent-sdk";
+import type { CapabilityDescriptor } from "@mindpal/device-agent-sdk";
+import type { DeviceToolPlugin, ToolExecutionContext, ToolExecutionResult } from "@mindpal/device-agent-sdk";
 
 // ── 工具实现 ──────────────────────────────────────────────────────
 

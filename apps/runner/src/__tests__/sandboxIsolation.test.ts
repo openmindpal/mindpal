@@ -21,7 +21,7 @@ import {
   resolveSandboxMode,
   pickExecute,
   type DynamicCodeLockState,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 /* ── 模块黑名单 ─────────────────────────────────────────────── */
 describe("SANDBOX_BLOCKED_MODULES", () => {

@@ -2,8 +2,8 @@ import { Worker } from "bullmq";
 import "./otel";
 import { SpanStatusCode, context, trace } from "@opentelemetry/api";
 import { loadConfig } from "./config";
-import { validateEnvironment, formatValidationResult, StructuredLogger, classifyError } from "@openslin/shared";
-import { extractTraceContext, injectTraceHeaders } from "@openslin/shared";
+import { validateEnvironment, formatValidationResult, StructuredLogger, classifyError } from "@mindpal/shared";
+import { extractTraceContext, injectTraceHeaders } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:main" });
 import { extractJobTraceContext } from "./lib/tracing";
@@ -18,7 +18,7 @@ import {
   logWorkerProductionBaseline,
   shutdownWorkerRuntime,
 } from "./bootstrap/runtime";
-import { CRITICAL_EVENT_CHANNELS } from "@openslin/shared";
+import { CRITICAL_EVENT_CHANNELS } from "@mindpal/shared";
 import { createAgentRunScheduler } from "./workflow/agentRunScheduler";
 import { getJobType } from "./jobRepo";
 
@@ -53,7 +53,7 @@ function validateJobData(raw: unknown): WorkflowJobData {
   return { ...d, jobId, runId, stepId, kind: d.kind != null ? String(d.kind) : undefined };
 }
 
-const tracer = trace.getTracer("openslin-worker");
+const tracer = trace.getTracer("mindpal-worker");
 
 async function main() {
   logWorkerProductionBaseline();
@@ -88,7 +88,7 @@ async function main() {
   }
   _logger.info("Redis Streams critical event consumers initialized", {
     channels: [...CRITICAL_EVENT_CHANNELS],
-    consumerGroup: "openslin-worker-group",
+    consumerGroup: "mindpal-worker-group",
   });
 
   async function syncWorkerCollabStateSafe(params: Parameters<typeof applyWorkerCollabState>[0]) {

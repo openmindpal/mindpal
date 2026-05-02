@@ -4,7 +4,7 @@
  * 统一 Worker 与 Runner 的沙箱安全策略，确保拦截行为一致。
  * 包含：模块封禁列表、动态代码执行锁定、沙箱模式解析、入口提取。
  *
- * @module @openslin/shared/skillSandbox
+ * @module @mindpal/shared/skillSandbox
  */
 
 // ─────────────────────────────────────────────────────────────────────────────

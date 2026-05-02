@@ -1,5 +1,5 @@
 {
-  "name": "@openslin/device-agent-sdk",
+  "name": "@mindpal/device-agent-sdk",
   "version": "0.1.0",
   "private": false,
   "license": "Apache-2.0",
@@ -26,7 +26,7 @@
   },
   "files": ["dist"],
   "dependencies": {
-    "@openslin/shared": "workspace:*",
+    "@mindpal/shared": "workspace:*",
     "ws": "^8.18.0"
   },
   "devDependencies": {

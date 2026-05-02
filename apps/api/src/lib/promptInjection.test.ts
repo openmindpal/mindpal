@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import * as shared from "@openslin/shared";
+import * as shared from "@mindpal/shared";
 import { shouldDenyPromptInjectionForTarget, summarizePromptInjection } from "./promptInjection";
 
 describe("promptInjection guard", () => {

@@ -5,10 +5,10 @@
  * and skill routes (orchestrator.ts) can scan for prompt injection
  * WITHOUT importing from the safety-policy Skill's modules.
  *
- * All heavy lifting is delegated to @openslin/shared.
+ * All heavy lifting is delegated to @mindpal/shared.
  */
-import { detectPromptInjection, resolvePromptInjectionPolicy, resolvePromptInjectionPolicyFromEnv, shouldDenyPromptInjection, resolveRuntimeConfig } from "@openslin/shared";
-import type { PromptInjectionMode, PromptInjectionPolicy, RuntimeConfigOverrides } from "@openslin/shared";
+import { detectPromptInjection, resolvePromptInjectionPolicy, resolvePromptInjectionPolicyFromEnv, shouldDenyPromptInjection, resolveRuntimeConfig } from "@mindpal/shared";
+import type { PromptInjectionMode, PromptInjectionPolicy, RuntimeConfigOverrides } from "@mindpal/shared";
 import { getConfigOverridesWithHotCache } from "./hotConfigEngine";
 
 export type PromptInjectionSummary = {

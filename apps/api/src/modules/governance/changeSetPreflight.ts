@@ -5,7 +5,7 @@ import type { Pool } from "pg";
 import { sha256Hex, stableStringify } from "../../lib/digest";
 import { isSupportedModelProvider } from "../../lib/modelProviderContract";
 import { getToolDefinition, getToolVersionByRef } from "../tools/toolRepo";
-import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
+import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
 import { getEvalSuite, getLatestEvalRunForChangeSet, listChangeSetEvalBindings } from "./evalRepo";
 import { evalPassed } from "./evalLogic";
 import { computeSchemaCompatReportV1 } from "../metadata/compat";

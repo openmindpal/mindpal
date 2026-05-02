@@ -8,7 +8,7 @@ import { Card, Table } from "../../../components/ui";
 import { resolveReferenceLabels, type RefLabelMap } from "../../../lib/referenceResolver";
 
 async function loadEffectiveSchema(locale: string, entity: string) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/schemas/${encodeURIComponent(entity)}/effective`, {
     method: "GET",
     token,
@@ -20,7 +20,7 @@ async function loadEffectiveSchema(locale: string, entity: string) {
 }
 
 async function loadEntityQuery(locale: string, entity: string, body: unknown) {
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const res = await apiFetch(`/entities/${encodeURIComponent(entity)}/query`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -158,7 +158,7 @@ export default async function EntityListPage(props: {
   const data = await loadEntityQuery(locale, entity, queryBody);
 
   // Resolve reference field display labels
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const refLabels: RefLabelMap = await resolveReferenceLabels({
     fields,
     items: Array.isArray((data as any)?.items) ? (data as any).items : [],

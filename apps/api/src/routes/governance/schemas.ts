@@ -5,7 +5,7 @@ import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
 import { createSchemaMigration, createSchemaMigrationRun, getSchemaMigrationRun, listSchemaMigrations, setSchemaMigrationRunCanceled, setSchemaMigrationStatus } from "../../modules/metadata/schemaMigrationRepo";
 import { createJobRunStepWithoutToolRef } from "../../modules/workflow/jobRepo";
-import { SUPPORTED_SCHEMA_MIGRATION_KINDS } from "@openslin/shared";
+import { SUPPORTED_SCHEMA_MIGRATION_KINDS } from "@mindpal/shared";
 
 export const governanceSchemasRoutes: FastifyPluginAsync = async (app) => {
   app.post("/governance/schemas/:name/set-active", async (req) => {

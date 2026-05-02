@@ -1,5 +1,5 @@
-export { isPlainObject, sha256Hex, stableStringify, stableStringifyValue, digestObject, checkType } from "@openslin/shared";
-import { isPlainObject, checkType } from "@openslin/shared";
+export { isPlainObject, sha256Hex, stableStringify, stableStringifyValue, digestObject, checkType } from "@mindpal/shared";
+import { isPlainObject, checkType } from "@mindpal/shared";
 
 export function jsonByteLength(v: unknown) {
   try {

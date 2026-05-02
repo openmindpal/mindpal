@@ -18,9 +18,9 @@ import type {
 } from "./taskQueue.types";
 import { TERMINAL_QUEUE_STATUSES } from "./taskQueue.types";
 import * as repo from "./taskQueueRepo";
-import { validateDAG, wouldCreateCycle, type DagNode } from "@openslin/shared";
+import { validateDAG, wouldCreateCycle, type DagNode } from "@mindpal/shared";
 import type { LlmSubject } from "../lib/llm";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  日志                                                               */

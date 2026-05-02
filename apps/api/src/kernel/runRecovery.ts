@@ -15,7 +15,7 @@
  */
 import type { Pool } from "pg";
 import type { WorkflowQueue } from "../modules/workflow/queue";
-import { tryTransitionRun, type RunStatus, StructuredLogger } from "@openslin/shared";
+import { tryTransitionRun, type RunStatus, StructuredLogger } from "@mindpal/shared";
 import { safeTransitionRun } from "./loopStateHelpers";
 
 const logger = new StructuredLogger({ module: "runRecovery" });

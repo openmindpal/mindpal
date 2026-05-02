@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors } from "../../lib/errors";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "routes:governance:tools" });
 import { setAuditContext } from "../../modules/audit/context";
@@ -9,7 +9,7 @@ import { requirePermission } from "../../modules/auth/guard";
 import { sha256Hex } from "../../lib/digest";
 import { getToolNetworkPolicy, listToolNetworkPolicies, upsertToolNetworkPolicy } from "../../modules/governance/toolNetworkPolicyRepo";
 import { deriveToolVisibility, getToolVersionByRef, listToolDefinitions, listToolVersions } from "../../modules/tools/toolRepo";
-import { resolveSupplyChainPolicy, checkTrust, checkDependencyScan, PERM } from "@openslin/shared";
+import { resolveSupplyChainPolicy, checkTrust, checkDependencyScan, PERM } from "@mindpal/shared";
 import { enableToolForScope, disableToolForScope, getActiveToolRef, listActiveToolRefs, listToolRollouts, setActiveToolRef } from "../../modules/governance/toolGovernanceRepo";
 import { autoDiscoverAndRegisterTools, invalidateToolDiscoveryCache } from "../../modules/tools/toolAutoDiscovery";
 

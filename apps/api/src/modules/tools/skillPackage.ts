@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveSupplyChainPolicy, stableStringify, validateManifest } from "@openslin/shared";
+import { resolveSupplyChainPolicy, stableStringify, validateManifest } from "@mindpal/shared";
 
 export function resolveArtifactDir(artifactRef: string) {
   const trimmed = artifactRef.trim();
@@ -90,7 +90,7 @@ export function verifySkillManifestTrust(params: { toolName: string; depsDigest:
   const pub = keys.get(keyId);
   if (!pub) return { status: "untrusted" as const, reason: "unknown_key" as const };
 
-  const msg = `openslin:skill:${params.toolName}:${signedDigest}`;
+  const msg = `mindpal:skill:${params.toolName}:${signedDigest}`;
   const ok = crypto.verify(null, Buffer.from(msg, "utf8"), pub, Buffer.from(sigBase64, "base64"));
   if (!ok) return { status: "untrusted" as const, reason: "bad_signature" as const };
   return { status: "trusted" as const };
@@ -122,7 +122,7 @@ export function verifySkillManifestTrustWithKeys(params: { toolName: string; dep
   const pub = params.trustedKeys.get(keyId);
   if (!pub) return { status: "untrusted" as const, reason: "unknown_key" as const };
 
-  const msg = `openslin:skill:${params.toolName}:${signedDigest}`;
+  const msg = `mindpal:skill:${params.toolName}:${signedDigest}`;
   const ok = crypto.verify(null, Buffer.from(msg, "utf8"), pub, Buffer.from(sigBase64, "base64"));
   if (!ok) return { status: "untrusted" as const, reason: "bad_signature" as const };
   return { status: "trusted" as const };

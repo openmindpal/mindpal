@@ -1,14 +1,14 @@
 /**
  * dynamicSkillSandbox.ts — Worker 侧 Skill 沙箱执行
  *
- * 使用 @openslin/shared 的统一 SkillProcessPool 进行进程管理和 IPC 通信，
+ * 使用 @mindpal/shared 的统一 SkillProcessPool 进行进程管理和 IPC 通信，
  * 消除原先内联的 child_process.fork() 逻辑。
  *
  * Worker 专属逻辑：结果适配为 DynamicSkillExecResult 格式。
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { SkillProcessPool, classifyError } from "@openslin/shared";
+import { SkillProcessPool, classifyError } from "@mindpal/shared";
 import type { RuntimeLimits, NetworkPolicy } from "./runtime";
 import type { DynamicSkillExecResult } from "./dynamicSkillTypes";
 

@@ -1,19 +1,19 @@
 /**
  * Unified Event Bus — 统一事件总线实现
  *
- * P1-01: 基于 @openslin/shared 核心类型，Redis Streams + DB outbox + 进程内分发。
+ * P1-01: 基于 @mindpal/shared 核心类型，Redis Streams + DB outbox + 进程内分发。
  * P2-触发器: 增强 — Webhook 出站分发 + 事件确认/重试 + 通配符通道 + 统一内外分发。
  * 所有事件统一使用 Redis Streams 投递（at-least-once 语义）。
  */
 import type { Pool } from "pg";
 import type {
   EventEnvelope, EventHandler, EventBusSubscription, EventBus,
-} from "@openslin/shared";
-import { eventBusRedisChannel } from "@openslin/shared";
+} from "@mindpal/shared";
+import { eventBusRedisChannel } from "@mindpal/shared";
 
 // re-export shared types for module convenience
 export type { EventEnvelope, EventHandler, EventBusSubscription, EventBus };
-export { EventChannels } from "@openslin/shared";
+export { EventChannels } from "@mindpal/shared";
 
 // ── P2: 扩展 EventBus 接口 ─────────────────────────────────────
 

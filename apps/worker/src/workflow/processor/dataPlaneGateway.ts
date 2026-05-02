@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { resolveString, sha256Hex } from "@openslin/shared";
+import { resolveString, sha256Hex } from "@mindpal/shared";
 
 function apiBase() {
   const raw = String(process.env.WORKER_API_BASE ?? process.env.API_BASE ?? "http://localhost:3001").trim();

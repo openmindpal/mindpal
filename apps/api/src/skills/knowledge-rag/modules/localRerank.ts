@@ -11,7 +11,7 @@
  */
 
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:localRerank" });
 import type { RerankConfig, RerankResult } from "./rerank";

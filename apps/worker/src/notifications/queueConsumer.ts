@@ -8,7 +8,7 @@
  */
 import type { Pool } from "pg";
 import type { Redis as RedisClient } from "ioredis";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:notificationQueue" });
 import { dispatchDelivery } from "./channelAdapterRegistry";

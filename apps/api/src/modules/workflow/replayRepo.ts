@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { getRun, listSteps } from "./jobRepo";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "replayRepo" });
 

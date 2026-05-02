@@ -35,11 +35,11 @@ export type DeviceAgentConfig = {
 };
 
 export function defaultConfigPath() {
-  return path.join(os.homedir(), ".openslin", "device-agent.json");
+  return path.join(os.homedir(), ".mindpal", "device-agent.json");
 }
 
 export function defaultLockPath() {
-  return path.join(os.homedir(), ".openslin", "device-agent.lock");
+  return path.join(os.homedir(), ".mindpal", "device-agent.lock");
 }
 
 // 锁文件结构：包含 PID 和心跳时间戳

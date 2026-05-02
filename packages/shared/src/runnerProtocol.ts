@@ -121,7 +121,7 @@ export function computeRunnerResponseBodyDigestV1(res: RunnerExecuteResponseV1) 
 /** 签名 Runner 请求（Worker 侧使用） */
 export function signRunnerRequestV1(params: { req: RunnerExecuteRequestV1; keyId: string; privateKeyPem: string }) {
   const signedDigest = computeRunnerRequestBodyDigestV1(params.req);
-  const msg = `openslin:runner:execute:${signedDigest}`;
+  const msg = `mindpal:runner:execute:${signedDigest}`;
   const sig = crypto.sign(null, Buffer.from(msg, "utf8"), crypto.createPrivateKey(params.privateKeyPem));
   return { alg: "ed25519" as const, keyId: params.keyId, signedDigest, sigBase64: sig.toString("base64") };
 }
@@ -138,7 +138,7 @@ export function verifyRunnerRequestSignatureV1(params: {
   if (!pub) return { ok: false, error: "unknown_key" };
   const expected = computeRunnerRequestBodyDigestV1(params.req);
   if (sig.signedDigest !== expected) return { ok: false, error: "signed_digest_mismatch" };
-  const msg = `openslin:runner:execute:${expected}`;
+  const msg = `mindpal:runner:execute:${expected}`;
   const ok = crypto.verify(null, Buffer.from(msg, "utf8"), pub, Buffer.from(sig.sigBase64, "base64"));
   if (!ok) return { ok: false, error: "bad_signature" };
   return { ok: true };
@@ -151,7 +151,7 @@ export function verifyRunnerRequestSignatureV1(params: {
 /** 签名 Runner 响应（Runner 侧使用） */
 export function signRunnerResponseV1(params: { res: RunnerExecuteResponseV1; keyId: string; privateKeyPem: string }) {
   const signedDigest = computeRunnerResponseBodyDigestV1(params.res);
-  const msg = `openslin:runner:result:${signedDigest}`;
+  const msg = `mindpal:runner:result:${signedDigest}`;
   const sig = crypto.sign(null, Buffer.from(msg, "utf8"), crypto.createPrivateKey(params.privateKeyPem));
   return { alg: "ed25519" as const, keyId: params.keyId, signedDigest, sigBase64: sig.toString("base64") };
 }
@@ -168,7 +168,7 @@ export function verifyRunnerResponseSignatureV1(params: {
   if (!pub) return { ok: false, error: "unknown_key" };
   const expected = computeRunnerResponseBodyDigestV1(params.res);
   if (sig.signedDigest !== expected) return { ok: false, error: "signed_digest_mismatch" };
-  const msg = `openslin:runner:result:${expected}`;
+  const msg = `mindpal:runner:result:${expected}`;
   const ok = crypto.verify(null, Buffer.from(msg, "utf8"), pub, Buffer.from(sig.sigBase64, "base64"));
   if (!ok) return { ok: false, error: "bad_signature" };
   return { ok: true };

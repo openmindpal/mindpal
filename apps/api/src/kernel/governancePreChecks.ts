@@ -4,7 +4,7 @@
  * 执行前检查：权限、策略（tool_rollouts + tool_governance）、安全（DLP）、工具可用性
  */
 import type { Pool } from "pg";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 import { authorize } from "../modules/auth/authz";
 import type { CheckResult, CheckpointContext } from "./governanceCheckpoint";
 

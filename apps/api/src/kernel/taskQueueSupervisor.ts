@@ -13,7 +13,7 @@
  * 运行方式：由 API 启动流程中的 setInterval 周期性调用（或在 Worker 进程中）。
  */
 import type { Pool } from "pg";
-import { StructuredLogger, resolveNumber } from "@openslin/shared";
+import { StructuredLogger, resolveNumber } from "@mindpal/shared";
 import { listZombieExecutingEntries, listStaleExecutingEntries, updateEntryStatus } from "./taskQueueRepo";
 import { broadcastToSession } from "../lib/sessionEventBus";
 import { persistSchedulerMetrics } from "./sessionScheduler";

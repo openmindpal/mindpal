@@ -14,13 +14,13 @@
 import type { FastifyInstance } from "fastify";
 import type {
   GoalGraph, WorldState, SuccessCriterion,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 import type { PlanStep } from "./planningKernel";
 import {
   worldStateToPromptText, getValidFacts, computeGoalProgress,
-} from "@openslin/shared";
-import { resolveBoolean } from "@openslin/shared";
-import type { SubGoal, CompletionEvidence } from "@openslin/shared";
+} from "@mindpal/shared";
+import { resolveBoolean } from "@mindpal/shared";
+import type { SubGoal, CompletionEvidence } from "@mindpal/shared";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
 import type { StepObservation } from "./agentLoop";
 

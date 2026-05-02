@@ -1,5 +1,5 @@
 /**
- * @openslin/device-agent-sdk — 灵智MindPal端侧代理SDK
+ * @mindpal/device-agent-sdk — 灵智MindPal端侧代理SDK
  *
  * 可嵌入的设备智能体运行时内核，提供：
  * - 设备身份管理与安全认证
@@ -13,7 +13,7 @@
  *
  * @example
  * ```typescript
- * import { createDeviceAgentKernel } from '@openslin/device-agent-sdk';
+ * import { createDeviceAgentKernel } from '@mindpal/device-agent-sdk';
  *
  * const kernel = await createDeviceAgentKernel({
  *   deviceId: 'my-robot-001',
@@ -117,7 +117,7 @@ export interface IDeviceAgentKernel {
  *
  * @example
  * ```typescript
- * import { createDeviceAgentKernel } from '@openslin/device-agent-sdk';
+ * import { createDeviceAgentKernel } from '@mindpal/device-agent-sdk';
  *
  * const kernel = await createDeviceAgentKernel({
  *   deviceId: 'my-robot-001',

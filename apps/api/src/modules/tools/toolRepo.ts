@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import type { ToolPublish } from "./toolModel";
-import type { ToolSemanticMeta } from "@openslin/shared";
+import type { ToolSemanticMeta } from "@mindpal/shared";
 
 type Q = Pool | PoolClient;
 

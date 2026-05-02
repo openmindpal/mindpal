@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import { compilePolicyExprWhere, validatePolicyExpr, compileRowFiltersWhere } from "@openslin/shared";
+import { compilePolicyExprWhere, validatePolicyExpr, compileRowFiltersWhere } from "@mindpal/shared";
 
 export type EntityRecord = {
   id: string;

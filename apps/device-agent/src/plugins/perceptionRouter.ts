@@ -254,7 +254,7 @@ async function allocateDebugPort(preferred?: number): Promise<number> {
 function createProfileDir(env = process.env): string {
   const configured = String(env.DEVICE_AGENT_BROWSER_PROFILE_DIR ?? "").trim();
   if (configured) return path.resolve(configured);
-  return path.join(os.tmpdir(), `openslin-browser-profile-${process.pid}`);
+  return path.join(os.tmpdir(), `mindpal-browser-profile-${process.pid}`);
 }
 
 async function waitForCdpEndpoint(cdpUrl: string, timeoutMs: number): Promise<boolean> {

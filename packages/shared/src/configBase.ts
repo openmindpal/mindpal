@@ -32,9 +32,9 @@ export function loadDbConfig(env: NodeJS.ProcessEnv): DbConfig {
   return {
     host: env.POSTGRES_HOST ?? "127.0.0.1",
     port: Number(env.POSTGRES_PORT ?? 5432),
-    database: env.POSTGRES_DB ?? "openslin",
-    user: env.POSTGRES_USER ?? "openslin",
-    password: env.POSTGRES_PASSWORD ?? "openslin",
+    database: env.POSTGRES_DB ?? "mindpal",
+    user: env.POSTGRES_USER ?? "mindpal",
+    password: env.POSTGRES_PASSWORD ?? "mindpal",
     pool: {
       max: clampInt(env.DB_POOL_MAX, 1, 200, 20),
       min: clampInt(env.DB_POOL_MIN, 0, 50, 2),

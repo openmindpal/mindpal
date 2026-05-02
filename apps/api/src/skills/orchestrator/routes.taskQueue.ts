@@ -25,7 +25,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import type { QueueEntryStatus } from "../../kernel/taskQueue.types";
 import { requirePermission, requireSubject } from "../../modules/auth/guard";
-import { PERM } from "@openslin/shared";
+import { PERM } from "@mindpal/shared";
 import { setAuditContext } from "../../modules/audit/context";
 import { Errors } from "../../lib/errors";
 import {

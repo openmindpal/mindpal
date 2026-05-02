@@ -7,8 +7,8 @@
  * 使用 shared AuditEventInput 标准接口，数据库写入含哈希链保证不可篡改。
  */
 import type { Pool } from "pg";
-import type { AuditEventInput } from "@openslin/shared";
-import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, computeEventHash } from "@openslin/shared";
+import type { AuditEventInput } from "@mindpal/shared";
+import { attachDlpSummary, normalizeAuditErrorCategory, redactValue, computeEventHash } from "@mindpal/shared";
 
 /**
  * 将知识模块审计参数转换为标准 AuditEventInput 并写入 audit_events 表。

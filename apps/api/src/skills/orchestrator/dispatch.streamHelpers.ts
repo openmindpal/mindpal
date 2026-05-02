@@ -4,13 +4,13 @@
  * 共享的 SSE Agent Loop 回调工厂 + 总结流式生成
  * 消灭 dispatch.stream.ts / dispatch.streamAnswer.ts 之间的重复代码
  *
- * 流式事件类型统一使用 @openslin/shared 的 StreamEventType。
+ * 流式事件类型统一使用 @mindpal/shared 的 StreamEventType。
  */
 import { invokeModelChatUpstreamStream } from "../model-gateway/modules/invokeChatUpstreamStream";
 import { getArtifactContent } from "../artifact-manager/modules/artifactRepo";
 import type { AgentLoopResult } from "../../kernel/agentLoop";
 import { emitTaskEvent } from "../../lib/sessionEventBus";
-import { StreamEventType, getStreamEventSseName } from "@openslin/shared";
+import { StreamEventType, getStreamEventSseName } from "@mindpal/shared";
 
 // Re-export 统一流式事件类型，供 dispatch.stream*.ts 模块引用
 export { StreamEventType, getStreamEventSseName };

@@ -7,7 +7,7 @@ import { requirePermission } from "../../modules/auth/guard";
 import { getEffectiveSafetyPolicyVersion } from "../../lib/safetyContract";
 import { getOrchestratorTurn } from "./modules/turnRepo";
 import { safetyPreCheck } from "./modules/safetyPreCheck";
-import { resolvePromptInjectionPolicy, PERM } from "@openslin/shared";
+import { resolvePromptInjectionPolicy, PERM } from "@mindpal/shared";
 import { extractTextForPromptInjectionScan, getPromptInjectionPolicyFromEnv, scanPromptInjection, shouldDenyPromptInjectionForTarget, summarizePromptInjection } from "../../lib/promptInjection";
 import { resolveAndValidateTool, admitAndBuildStepEnvelope, buildStepInputPayload, submitNewToolRun, generateIdempotencyKey } from "../../kernel/executionKernel";
 import { validateToolInput } from "../../modules/tools/validate";

@@ -22,7 +22,7 @@ import { AppError } from "../lib/errors";
 import { type TaskDependencyResolver } from "./taskDependencyResolver";
 import { type SessionScheduler, type SessionConcurrencyConfig } from "./sessionScheduler";
 import type { CheckpointService } from "./loopCheckpoint";
-import { StructuredLogger, resolveNumber } from "@openslin/shared";
+import { StructuredLogger, resolveNumber } from "@mindpal/shared";
 import {
   cascadeCancel as _cascadeCancel,
   handleCompletionDeps,

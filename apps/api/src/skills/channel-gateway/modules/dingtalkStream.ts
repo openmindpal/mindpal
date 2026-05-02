@@ -3,7 +3,7 @@
  *
  * 通过 WebSocket 订阅钉钉事件推送，无需公网 URL。
  */
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 import { BaseLongConnectionClient } from "./baseLongConnection";
 
 const _logger = new StructuredLogger({ module: "api:dingtalkStream" });
@@ -46,7 +46,7 @@ export class DingtalkStreamClient extends BaseLongConnectionClient {
         clientId: this.appKey,
         clientSecret: this.appSecret,
         subscriptions: [{ type: "EVENT", topic: "/v1.0/im/bot/messages/get" }],
-        ua: "openslin",
+        ua: "mindpal",
       }),
     });
     if (!res.ok) throw new Error(`openConnection failed: ${res.status}`);

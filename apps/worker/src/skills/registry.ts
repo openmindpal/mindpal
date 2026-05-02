@@ -11,7 +11,7 @@
  *     - "media.pipeline,ai.event.reasoning": Specific skills disabled
  */
 import { registerWorkerContribution, type WorkerSkillContribution } from "../lib/workerSkillContract";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 import * as path from "node:path";
 
 import manifestEntries from "./worker-skills-manifest.json";

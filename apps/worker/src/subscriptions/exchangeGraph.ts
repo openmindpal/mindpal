@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { sha256_8, sha256Hex } from "@openslin/shared";
+import { sha256_8, sha256Hex } from "@mindpal/shared";
 import { encryptJson } from "../secrets/crypto";
 import { decryptSecretPayload, encryptSecretEnvelopeWithKeyVersion } from "../secrets/envelope";
 import { invokeFirstPartySkill } from "../lib/skillInvoke";

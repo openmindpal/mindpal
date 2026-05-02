@@ -1,7 +1,7 @@
 /**
  * loopCacheConfig.ts — Agent Loop 准备阶段缓存配置与工具
  *
- * 从 agentLoop.ts 提取，环境变量已注册到 @openslin/shared configRegistry。
+ * 从 agentLoop.ts 提取，环境变量已注册到 @mindpal/shared configRegistry。
  * 提供：
  * - getCacheConfig()      — 缓存 TTL / 容量 / 开关
  * - getLightIterationConfig() — 轻迭代模式配置
@@ -9,7 +9,7 @@
  * - isLightIteration  — 轻迭代判断
  */
 
-import { resolveNumber, resolveBoolean, createMemoryCacheManager, type CacheManager, type CacheStats } from "@openslin/shared";
+import { resolveNumber, resolveBoolean, createMemoryCacheManager, type CacheManager, type CacheStats } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  P1-8/P1-9: 准备阶段缓存分层 + 会话级缓存                              */

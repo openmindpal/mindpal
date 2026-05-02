@@ -14,8 +14,8 @@ import {
   createModuleLogger,
   createRequestLogContext,
   getRootLogger,
-} from "@openslin/shared";
-import type { LogLevel, SamplingRule } from "@openslin/shared";
+} from "@mindpal/shared";
+import type { LogLevel, SamplingRule } from "@mindpal/shared";
 
 export const structuredLoggingPlugin: FastifyPluginAsync<{
   /** 最低日志级别 */

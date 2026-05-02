@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { computeMinhash, StructuredLogger } from "@openslin/shared";
+import { computeMinhash, StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:memoryEmbedding" });
 

@@ -34,7 +34,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_intent_rule_matches_total");
+      expect(output).toContain("mindpal_intent_rule_matches_total");
       expect(output).toContain('rule_id="intent_classify"');
       expect(output).toContain('confidence="high"');
       expect(output).toContain('confidence="medium"');
@@ -51,7 +51,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_orchestrator_execution_total");
+      expect(output).toContain("mindpal_orchestrator_execution_total");
       expect(output).toContain('result="ok"');
       expect(output).toContain('tool_type="memory.read"');
     });
@@ -101,7 +101,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_orchestrator_tool_calls_total");
+      expect(output).toContain("mindpal_orchestrator_tool_calls_total");
       expect(output).toContain('tool_ref="builtin:memory.read"');
       expect(output).toContain('result="success"');
       expect(output).toContain('result="failed"');
@@ -111,8 +111,8 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       metrics.setOrchestratorActiveRuns({ count: 15 });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_orchestrator_active_runs");
-      expect(output).toMatch(/openslin_orchestrator_active_runs\s+15/);
+      expect(output).toContain("mindpal_orchestrator_active_runs");
+      expect(output).toMatch(/mindpal_orchestrator_active_runs\s+15/);
     });
 
     it("应该生成正确的执行时长直方图", () => {
@@ -128,7 +128,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       const output = metrics.renderPrometheus();
       
       // 验证直方图结构
-      expect(output).toContain("openslin_orchestrator_execution_duration_ms_bucket");
+      expect(output).toContain("mindpal_orchestrator_execution_duration_ms_bucket");
       expect(output).toContain("le=");
       expect(output).toContain("+Inf");
     });
@@ -144,7 +144,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_device_execution_total");
+      expect(output).toContain("mindpal_device_execution_total");
       expect(output).toContain('result="ok"');
       expect(output).toContain('device_type="mobile"');
     });
@@ -183,7 +183,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_device_messages_total");
+      expect(output).toContain("mindpal_device_messages_total");
       expect(output).toContain('category="task_notification"');
       expect(output).toContain('result="delivered"');
       expect(output).toContain('category="state_sync"');
@@ -194,8 +194,8 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       metrics.setDeviceConnectedClients({ count: 42 });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_device_connected_clients");
-      expect(output).toMatch(/openslin_device_connected_clients\s+42/);
+      expect(output).toContain("mindpal_device_connected_clients");
+      expect(output).toMatch(/mindpal_device_connected_clients\s+42/);
     });
 
     it("应该记录跨设备总线推送指标", () => {
@@ -215,7 +215,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_device_push_notifications_total");
+      expect(output).toContain("mindpal_device_push_notifications_total");
       expect(output).toContain('method="cross_device_bus"');
       expect(output).toContain('method="local_ws"');
       expect(output).toContain('result="ok"');
@@ -238,8 +238,8 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       }
 
       const output = metrics.renderPrometheus();
-      expect(output).toMatch(/openslin_device_push_notifications_total.*method="cross_device_bus".*result="ok".*\s+90/);
-      expect(output).toMatch(/openslin_device_push_notifications_total.*method="cross_device_bus".*result="failed".*\s+10/);
+      expect(output).toMatch(/mindpal_device_push_notifications_total.*method="cross_device_bus".*result="ok".*\s+90/);
+      expect(output).toMatch(/mindpal_device_push_notifications_total.*method="cross_device_bus".*result="failed".*\s+10/);
     });
   });
 
@@ -276,7 +276,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       const output = metrics.renderPrometheus();
       
       // counter 应该是 3
-      expect(output).toMatch(/openslin_orchestrator_intent_route_total.*result="ok".*source="dispatch".*\s+3/);
+      expect(output).toMatch(/mindpal_orchestrator_intent_route_total.*result="ok".*source="dispatch".*\s+3/);
     });
 
     it("不同标签的计数器应该分开计数", () => {
@@ -301,8 +301,8 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       const output = metrics.renderPrometheus();
       
       // 应该有两条不同的记录
-      expect(output).toMatch(/openslin_orchestrator_intent_route_total.*classifier="fast".*\s+1/);
-      expect(output).toMatch(/openslin_orchestrator_intent_route_total.*classifier="llm".*\s+1/);
+      expect(output).toMatch(/mindpal_orchestrator_intent_route_total.*classifier="fast".*\s+1/);
+      expect(output).toMatch(/mindpal_orchestrator_intent_route_total.*classifier="llm".*\s+1/);
     });
 
     it("Gauge 应该更新为最新值", () => {
@@ -313,7 +313,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       const output = metrics.renderPrometheus();
       
       // 应该是最新值 18
-      expect(output).toMatch(/openslin_device_connected_clients\s+18/);
+      expect(output).toMatch(/mindpal_device_connected_clients\s+18/);
     });
 
     it("Histogram 应该正确累加 count 和 sum", () => {
@@ -328,10 +328,10 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       const output = metrics.renderPrometheus();
       
       // count 应该是 5
-      expect(output).toMatch(/openslin_orchestrator_execution_duration_ms_count.*\{[^}]*\}\s+5/);
+      expect(output).toMatch(/mindpal_orchestrator_execution_duration_ms_count.*\{[^}]*\}\s+5/);
       
       // sum 应该是 150 (10+20+30+40+50)
-      expect(output).toMatch(/openslin_orchestrator_execution_duration_ms_sum.*\{[^}]*\}\s+150\.000/);
+      expect(output).toMatch(/mindpal_orchestrator_execution_duration_ms_sum.*\{[^}]*\}\s+150\.000/);
     });
   });
 
@@ -349,10 +349,10 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
 
       const output = metrics.renderPrometheus();
       
-      expect(output).toContain("# HELP openslin_orchestrator_intent_route_total");
-      expect(output).toContain("# TYPE openslin_orchestrator_intent_route_total counter");
-      expect(output).toContain("# HELP openslin_orchestrator_intent_route_duration_ms");
-      expect(output).toContain("# TYPE openslin_orchestrator_intent_route_duration_ms histogram");
+      expect(output).toContain("# HELP mindpal_orchestrator_intent_route_total");
+      expect(output).toContain("# TYPE mindpal_orchestrator_intent_route_total counter");
+      expect(output).toContain("# HELP mindpal_orchestrator_intent_route_duration_ms");
+      expect(output).toContain("# TYPE mindpal_orchestrator_intent_route_duration_ms histogram");
     });
 
     it("应该包含所有新指标的 HELP 注释", () => {
@@ -371,15 +371,15 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       const output = metrics.renderPrometheus();
       
       // Orchestrator 指标
-      expect(output).toContain("# HELP openslin_orchestrator_execution_total");
-      expect(output).toContain("# HELP openslin_orchestrator_tool_calls_total");
-      expect(output).toContain("# HELP openslin_orchestrator_active_runs");
+      expect(output).toContain("# HELP mindpal_orchestrator_execution_total");
+      expect(output).toContain("# HELP mindpal_orchestrator_tool_calls_total");
+      expect(output).toContain("# HELP mindpal_orchestrator_active_runs");
       
       // Device 指标
-      expect(output).toContain("# HELP openslin_device_execution_total");
-      expect(output).toContain("# HELP openslin_device_messages_total");
-      expect(output).toContain("# HELP openslin_device_connected_clients");
-      expect(output).toContain("# HELP openslin_device_push_notifications_total");
+      expect(output).toContain("# HELP mindpal_device_execution_total");
+      expect(output).toContain("# HELP mindpal_device_messages_total");
+      expect(output).toContain("# HELP mindpal_device_connected_clients");
+      expect(output).toContain("# HELP mindpal_device_push_notifications_total");
     });
 
     it("标签值应该正确转义", () => {
@@ -468,7 +468,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_orchestrator_intent_route_total");
+      expect(output).toContain("mindpal_orchestrator_intent_route_total");
     });
 
     it("应该处理极大延迟", () => {
@@ -479,7 +479,7 @@ describe("P3-1: Observability Enhancement - Core Skill Metrics", () => {
       });
 
       const output = metrics.renderPrometheus();
-      expect(output).toContain("openslin_device_execution_total");
+      expect(output).toContain("mindpal_device_execution_total");
       expect(output).toContain('result="timeout"');
     });
 

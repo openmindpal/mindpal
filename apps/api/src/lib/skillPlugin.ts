@@ -13,7 +13,7 @@ import type {
   SkillLayer as _SkillLayer,
   SkillToolDeclaration as _SkillToolDeclaration,
   BuiltinSkillManifest,
-} from "@openslin/shared";
+} from "@mindpal/shared";
 
 /* ------------------------------------------------------------------ */
 /*  Re-export shared types under local names for backward compat       */
@@ -23,7 +23,7 @@ export type SkillLayer = _SkillLayer;
 export type SkillToolDeclaration = _SkillToolDeclaration;
 
 /**
- * Built-in skill manifest — re-exported from @openslin/shared.
+ * Built-in skill manifest — re-exported from @mindpal/shared.
  * Local alias `SkillManifestV2` kept for backward compatibility.
  */
 export type SkillManifestV2 = BuiltinSkillManifest;

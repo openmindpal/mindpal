@@ -6,7 +6,7 @@ import type { SearchParams } from "@/lib/types";
 export default async function SsoProvidersPage(props: { searchParams: Promise<SearchParams> }) {
   const searchParams = await Promise.resolve(props.searchParams);
   const locale = pickLocale(searchParams);
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
 
   const providersRes = await apiFetch(`/sso/providers`, {
     locale,

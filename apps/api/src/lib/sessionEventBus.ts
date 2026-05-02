@@ -17,7 +17,7 @@
 
 import { openSse } from "./sse";
 import type { RequestDlpPolicyContext } from "./dlpPolicy";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 /* ================================================================== */
 /*  日志                                                               */

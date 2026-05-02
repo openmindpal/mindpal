@@ -12,7 +12,7 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "api:evalEnhanced" });
 

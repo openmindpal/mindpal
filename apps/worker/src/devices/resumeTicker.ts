@@ -10,7 +10,7 @@
 import crypto from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { Queue } from "bullmq";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "worker:deviceResumeTicker" });
 

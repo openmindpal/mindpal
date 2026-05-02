@@ -46,7 +46,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ workbenchKey: s
   if (!workbenchKey || !rel) return new NextResponse("Not found", { status: 404 });
   if (rel.includes("..")) return new NextResponse("Not found", { status: 404 });
 
-  const token = (await cookies()).get("openslin_token")?.value ?? "";
+  const token = (await cookies()).get("mindpal_token")?.value ?? "";
   const locale = String(req.headers.get("x-user-locale") ?? "zh-CN");
   const effRes = await apiFetch(`/workbenches/${encodeURIComponent(workbenchKey)}/effective`, {
     method: "GET",

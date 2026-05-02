@@ -7,7 +7,7 @@
 import type { Pool } from "pg";
 import type { AgentLoopResult } from "./agentLoop";
 import { publishAgentResult } from "./collabBus";
-import { StructuredLogger, collabConfig, resolveNumber } from "@openslin/shared";
+import { StructuredLogger, collabConfig, resolveNumber } from "@mindpal/shared";
 
 const logger = new StructuredLogger({ module: "collabEnvelope" });
 

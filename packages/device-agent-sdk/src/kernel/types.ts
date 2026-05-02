@@ -1,4 +1,4 @@
-import type { AuditEvidenceRef } from "@openslin/shared";
+import type { AuditEvidenceRef } from "@mindpal/shared";
 
 /**
  * Device-OS 内核公共类型定义
@@ -132,7 +132,7 @@ export type AuditEventType =
   | "evidence.upload"
   | "replay.trace";
 
-/** 设备端审计证据引用（从 @openslin/shared 统一导入） */
+/** 设备端审计证据引用（从 @mindpal/shared 统一导入） */
 export type EvidenceRef = AuditEvidenceRef;
 
 export interface AuditEvent {

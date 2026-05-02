@@ -21,11 +21,11 @@ import { safeLog, safeError } from "./log";
 // ── 配置路径 ─────────────────────────────────────────────────
 
 export function defaultConfigPath() {
-  return path.join(os.homedir(), ".openslin", "device-agent.json");
+  return path.join(os.homedir(), ".mindpal", "device-agent.json");
 }
 
 export function defaultLockPath() {
-  return path.join(os.homedir(), ".openslin", "device-agent.lock");
+  return path.join(os.homedir(), ".mindpal", "device-agent.lock");
 }
 
 // ── 配置读写 ─────────────────────────────────────────────────

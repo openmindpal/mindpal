@@ -1,12 +1,12 @@
 {
-  "name": "@openslin/schema-create-skill",
+  "name": "@mindpal/schema-create-skill",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "build": "tsc"
   },
   "dependencies": {
-    "@openslin/shared": "workspace:*"
+    "@mindpal/shared": "workspace:*"
   },
   "license": "Apache-2.0"
 }

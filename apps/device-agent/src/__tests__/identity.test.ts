@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { DeviceIdentity, loadConfigFile, saveConfigFile, defaultConfigPath, defaultLockPath } from "@openslin/device-agent-sdk";
-import type { DeviceAgentConfig } from "@openslin/device-agent-sdk";
+import { DeviceIdentity, loadConfigFile, saveConfigFile, defaultConfigPath, defaultLockPath } from "@mindpal/device-agent-sdk";
+import type { DeviceAgentConfig } from "@mindpal/device-agent-sdk";
 
 // Mock fs
 vi.mock("node:fs/promises", () => {

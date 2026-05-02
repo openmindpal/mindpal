@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { attachDlpSummary, normalizeAuditErrorCategory, redactValue } from "@openslin/shared";
+import { attachDlpSummary, normalizeAuditErrorCategory, redactValue } from "@mindpal/shared";
 
 export async function markWorkflowStepDeadletter(params: {
   pool: Pool;
