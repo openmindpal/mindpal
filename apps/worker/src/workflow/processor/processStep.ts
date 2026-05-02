@@ -3,7 +3,7 @@ import type Redis from "ioredis";
 import { validateCapabilityEnvelopeV1, resolveSupplyChainPolicy, checkTrust, checkDependencyScan, checkSbom, isToolAllowedForPolicy, StructuredLogger, resolveString, buildStepExecutionResult, type StepExecutionResult } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "worker:processStep" });
-import { acquireWriteLease, releaseWriteLease } from "../writeLease";
+import { acquireWriteLease, releaseWriteLease } from "@openslin/shared";
 import { writeAudit } from "./audit";
 import { executeBuiltinTool } from "./builtinTools";
 import { digestObject, isPlainObject, jsonByteLength, scrubBySchema, sha256Hex, stableStringify, validateBySchema } from "./common";

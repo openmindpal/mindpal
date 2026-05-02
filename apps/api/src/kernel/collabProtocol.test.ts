@@ -289,12 +289,10 @@ describe("createDebateSession", () => {
         { partyId: "side_a", role: "architect", stance: "pro" },
         { partyId: "side_b", role: "frontend_lead", stance: "con" },
       ],
-      arbiter: "tech_director",
     });
     expect(session.debateId).toBe("d-1");
-    expect(session.sideA).toBe("architect");
-    expect(session.sideB).toBe("frontend_lead");
-    expect(session.arbiter).toBe("tech_director");
+    expect(session.parties[0]!.role).toBe("architect");
+    expect(session.parties[1]!.role).toBe("frontend_lead");
     expect(session.status).toBe("in_progress");
     expect(session.rounds).toHaveLength(0);
     expect(session.maxRounds).toBeGreaterThanOrEqual(1);
@@ -309,7 +307,6 @@ describe("createDebateSession", () => {
         { partyId: "side_a", role: "a", stance: "pro" },
         { partyId: "side_b", role: "b", stance: "con" },
       ],
-      arbiter: "c",
       maxRounds: 5,
     });
     expect(session.maxRounds).toBe(5);
@@ -321,9 +318,10 @@ describe("isDebateConverged", () => {
     debateId: "d-test",
     collabRunId: "cr-test",
     topic: "test",
-    sideA: "a",
-    sideB: "b",
-    arbiter: "c",
+    parties: [
+      { partyId: "a", role: "a", stance: "pro", status: "active", currentConfidence: 0.5, joinedAtRound: 0 },
+      { partyId: "b", role: "b", stance: "con", status: "active", currentConfidence: 0.5, joinedAtRound: 0 },
+    ],
     maxRounds: 3,
     rounds,
     status: "in_progress",

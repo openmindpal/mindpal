@@ -25,7 +25,7 @@ export async function persistDebateSession(params: {
 }): Promise<void> {
   const { pool, tenantId, spaceId, collabRunId, taskId, session, triggerReason } = params;
   const consensusScore = computeDebateConsensusScore(session);
-  const debateVersion = (session.parties?.length ?? 0) > 0 ? 2 : 1;
+  const debateVersion = session.parties.length > 0 ? 2 : 1;
   await pool.query(
     `INSERT INTO collab_debate_sessions
      (debate_id, tenant_id, space_id, collab_run_id, task_id, topic,
@@ -41,12 +41,12 @@ export async function persistDebateSession(params: {
        consensus_score = $22, updated_at = now()`,
     [
       session.debateId, tenantId, spaceId, collabRunId, taskId, session.topic,
-      session.sideA, session.sideB, session.arbiter, session.maxRounds,
+      session.parties[0]?.role ?? '', session.parties[1]?.role ?? '', 'orchestrator_arbiter', session.maxRounds,
       session.rounds.length, session.status, triggerReason ?? null,
       session.verdict?.outcome ?? null, session.verdict?.winnerRole ?? session.verdict?.winnerRoles?.[0] ?? null,
       session.verdict?.synthesizedConclusion ?? null,
       session.status === "in_progress" ? null : new Date().toISOString(),
-      JSON.stringify(session.parties ?? []),
+      JSON.stringify(session.parties),
       JSON.stringify(session.corrections ?? []),
       JSON.stringify(session.consensusEvolution ?? []),
       debateVersion,
@@ -95,8 +95,8 @@ export async function persistDebateRound(params: {
   round: DebateRound;
 }): Promise<void> {
   const { pool, tenantId, debateId, round: r } = params;
-  const sideAConf = r.positions.find((p) => p.fromRole !== r.positions[1]?.fromRole)?.confidence ?? null;
-  const sideBConf = r.positions.find((p) => p.fromRole !== r.positions[0]?.fromRole)?.confidence ?? null;
+  const sideAConf = r.positions[0]?.confidence ?? null;
+  const sideBConf = r.positions[1]?.confidence ?? null;
   await pool.query(
     `INSERT INTO collab_debate_rounds
      (tenant_id, debate_id, round, divergence_detected, side_a_confidence, side_b_confidence)

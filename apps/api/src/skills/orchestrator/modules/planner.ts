@@ -1,16 +1,13 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
 import { digestParams, sha256Hex } from "../../../lib/digest";
+import { sha256_8 } from "@openslin/shared";
 import { authorize } from "../../../modules/auth/authz";
 import { isToolEnabled } from "../../../modules/governance/toolGovernanceRepo";
 import { resolveEffectiveToolRef } from "../../../modules/tools/resolve";
 import { getToolDefinition, getToolVersionByRef, type ToolDefinition } from "../../../modules/tools/toolRepo";
 import { shouldRequireApproval } from "@openslin/shared/approvalDecision";
 import type { FailureDiagnosis } from "@openslin/shared";
-
-function sha256_8(input: string) {
-  return sha256Hex(input).slice(0, 8);
-}
 
 /* ================================================================== */
 /*  Structured Scoring Engine (7.1 + 7.2)                              */

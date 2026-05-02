@@ -1,5 +1,5 @@
-import crypto from "node:crypto";
 import type { Pool } from "pg";
+import { sha256Hex, stableStringify } from "@openslin/shared";
 
 // ── 本地 VectorStore 类型定义（轻量级 legacy 接口） ──
 
@@ -51,24 +51,6 @@ export type VectorStore = {
   capabilities(): VectorStoreCapabilities;
   query(params: { pool: Pool; q: VectorStoreQueryV1 }): Promise<VectorStoreQueryResponse>;
 };
-
-function stableStringifyValue(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stableStringifyValue);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stableStringifyValue(v[k]);
-  return out;
-}
-
-function stableStringify(v: any) {
-  return JSON.stringify(stableStringifyValue(v));
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
 
 export function resolveVectorStoreConfigFromEnv(): VectorStoreConfigV1 {
   const modeRaw = String(process.env.KNOWLEDGE_VECTOR_STORE_MODE ?? "").trim().toLowerCase();

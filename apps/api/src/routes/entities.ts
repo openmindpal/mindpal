@@ -1,9 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors } from "../lib/errors";
-import { requirePermission } from "../modules/auth/guard";
 import { PERM } from "@openslin/shared";
-import { setAuditContext } from "../modules/audit/context";
+import { guarded } from "../middleware/routeGuard";
 import { applyReadFieldRules, applyWriteFieldRules } from "../modules/data/fieldRules";
 import { getIdempotencyRecord, insertIdempotencyRecord } from "../modules/data/idempotencyRepo";
 import { deleteRecord, getRecord, insertRecord, listRecords, queryRecords, updateRecord } from "../modules/data/dataRepo";
@@ -36,11 +35,8 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/entities/:entity", async (req) => {
     const params = z.object({ entity: z.string() }).parse(req.params);
-    setAuditContext(req, { resourceType: "entity", action: "read" });
-    const decision = await requirePermission({ req, ...PERM.ENTITY_READ });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject, decision } = await guarded(req, { resourceType: "entity", action: "read", perm: PERM.ENTITY_READ });
 
-    const subject = req.ctx.subject!;
     const limit = z.coerce.number().int().positive().max(200).optional().parse((req.query as any)?.limit) ?? 50;
     const policyContext = {
       subject: { id: subject.subjectId },
@@ -72,11 +68,8 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/entities/:entity/:id", async (req, reply) => {
     const params = z.object({ entity: z.string(), id: z.string() }).parse(req.params);
-    setAuditContext(req, { resourceType: "entity", action: "read" });
-    const decision = await requirePermission({ req, ...PERM.ENTITY_READ });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject, decision } = await guarded(req, { resourceType: "entity", action: "read", perm: PERM.ENTITY_READ });
 
-    const subject = req.ctx.subject!;
     const policyContext = {
       subject: { id: subject.subjectId },
       tenant: { id: subject.tenantId },
@@ -101,11 +94,8 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/entities/:entity/query", async (req) => {
     const params = z.object({ entity: z.string() }).parse(req.params);
-    setAuditContext(req, { resourceType: "entity", action: "query" });
-    const decision = await requirePermission({ req, ...PERM.ENTITY_READ });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject, decision } = await guarded(req, { resourceType: "entity", action: "query", perm: PERM.ENTITY_READ });
 
-    const subject = req.ctx.subject!;
     const body = entityQueryRequestSchema.parse(req.body);
     const schemaName = await resolveSchemaNameOrThrow({
       tenantId: subject.tenantId,
@@ -191,11 +181,8 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/entities/:entity/export", async (req) => {
     const params = z.object({ entity: z.string() }).parse(req.params);
-    setAuditContext(req, { resourceType: "entity", action: "export" });
-    const decision = await requirePermission({ req, ...PERM.ENTITY_READ });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject, decision } = await guarded(req, { resourceType: "entity", action: "export", perm: PERM.ENTITY_READ });
 
-    const subject = req.ctx.subject!;
     const body = entityQueryRequestSchema
       .extend({
         format: z.enum(["jsonl", "json"]).optional(),
@@ -253,11 +240,8 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/entities/:entity/import", async (req) => {
     const params = z.object({ entity: z.string() }).parse(req.params);
-    setAuditContext(req, { resourceType: "entity", action: "import" });
-    const decision = await requirePermission({ req, ...PERM.ENTITY_CREATE });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject, decision } = await guarded(req, { resourceType: "entity", action: "import", perm: PERM.ENTITY_CREATE });
 
-    const subject = req.ctx.subject!;
     const body = z
       .object({
         schemaName: z.string().min(1).optional(),
@@ -348,11 +332,8 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
       (req.headers["x-idempotency-key"] as string | undefined);
     if (!idempotencyKey) throw Errors.badRequest("缺少 idempotency-key");
 
-    setAuditContext(req, { resourceType: "entity", action: "create", idempotencyKey, requireOutbox: true });
-    const decision = await requirePermission({ req, ...PERM.ENTITY_CREATE });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject, decision } = await guarded(req, { resourceType: "entity", action: "create", perm: PERM.ENTITY_CREATE, idempotencyKey, requireOutbox: true });
 
-    const subject = req.ctx.subject!;
     const policyContext = {
       subject: { id: subject.subjectId },
       tenant: { id: subject.tenantId },
@@ -452,11 +433,8 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
       (req.headers["x-idempotency-key"] as string | undefined);
     if (!idempotencyKey) throw Errors.badRequest("缺少 idempotency-key");
 
-    setAuditContext(req, { resourceType: "entity", action: "update", idempotencyKey, requireOutbox: true });
-    const decision = await requirePermission({ req, ...PERM.ENTITY_UPDATE });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject, decision } = await guarded(req, { resourceType: "entity", action: "update", perm: PERM.ENTITY_UPDATE, idempotencyKey, requireOutbox: true });
 
-    const subject = req.ctx.subject!;
     const policyContext = {
       subject: { id: subject.subjectId },
       tenant: { id: subject.tenantId },
@@ -574,11 +552,8 @@ export const entityRoutes: FastifyPluginAsync = async (app) => {
       (req.headers["x-idempotency-key"] as string | undefined);
     if (!idempotencyKey) throw Errors.badRequest("缺少 idempotency-key");
 
-    setAuditContext(req, { resourceType: "entity", action: "delete", idempotencyKey, requireOutbox: true });
-    const decision = await requirePermission({ req, ...PERM.ENTITY_DELETE });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject, decision } = await guarded(req, { resourceType: "entity", action: "delete", perm: PERM.ENTITY_DELETE, idempotencyKey, requireOutbox: true });
 
-    const subject = req.ctx.subject!;
     const policyContext = {
       subject: { id: subject.subjectId },
       tenant: { id: subject.tenantId },

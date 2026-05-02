@@ -1,10 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-
-function sha256HexBytes(bytes: Buffer) {
-  return crypto.createHash("sha256").update(bytes).digest("hex");
-}
+import { sha256HexBytes } from "@openslin/shared";
 
 function safeJoin(rootDir: string, storageKey: string) {
   const root = path.resolve(rootDir);

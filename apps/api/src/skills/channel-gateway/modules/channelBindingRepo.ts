@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
+import { sha256Hex } from "@openslin/shared";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -38,10 +39,6 @@ function toRow(r: any): ChannelBindingStateRow {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
 
 export function newBindingStateValue() {
   return crypto.randomBytes(32).toString("base64url");

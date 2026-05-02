@@ -17,7 +17,7 @@ import { finalizeCheckpoint } from "./loopCheckpoint";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
 import { checkAndEnforceIntentBoundary } from "./intentAnchoringService";
 import { executeToolCall, waitForStepCompletion } from "./loopToolExecutor";
-import { extractFromObservation, evaluateGoalConditions } from "./worldStateExtractor";
+import { extractFromObservation, evaluateGoalConditions, updateWorldState } from "./worldStateExtractor";
 
 /* ================================================================== */
 /*  done action handler                                                 */
@@ -237,10 +237,7 @@ export async function handleToolCallAction(params: {
 
   // WorldState 增量提取
   let updatedGoalGraph = goalGraph;
-  if (worldState) {
-    worldState = extractFromObservation(obs, worldState);
-    if (updatedGoalGraph) updatedGoalGraph = evaluateGoalConditions(updatedGoalGraph, worldState);
-  }
+  ({ worldState, goalGraph: updatedGoalGraph } = updateWorldState(obs, worldState, updatedGoalGraph));
 
   // 行动验证：单步执行结果校验
   let stepVerification: import("./verifierAgent").StepVerificationResult | undefined;

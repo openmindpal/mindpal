@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
+import { sha256Hex } from "@openslin/shared";
 
 export type ArtifactDownloadTokenRow = {
   tokenId: string;
@@ -15,10 +16,6 @@ export type ArtifactDownloadTokenRow = {
   createdAt: string;
   updatedAt: string;
 };
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
 
 function toRow(r: any): ArtifactDownloadTokenRow {
   return {

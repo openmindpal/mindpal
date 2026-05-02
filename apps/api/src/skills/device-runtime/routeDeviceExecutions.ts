@@ -4,8 +4,9 @@ import { StructuredLogger } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "api:deviceExecutions" });
 import { Errors } from "../../lib/errors";
+import { guarded } from "../../middleware/routeGuard";
 import { setAuditContext } from "../../modules/audit/context";
-import { requirePermission, requireSubject } from "../../modules/auth/guard";
+import { requirePermission } from "../../modules/auth/guard";
 import { PERM } from "@openslin/shared";
 import { getDevicePolicy } from "./modules/devicePolicyRepo";
 import { getDeviceRecord } from "./modules/deviceRepo";
@@ -95,11 +96,8 @@ function toDeviceExecution(e: any) {
 
 export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
   app.post("/device-executions", async (req) => {
-    setAuditContext(req, { resourceType: "device_execution", action: "create" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_EXECUTION_CREATE });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device_execution", action: "create", perm: PERM.DEVICE_EXECUTION_CREATE });
 
-    const subject = requireSubject(req);
     const body = z
       .object({
         deviceId: z.string().uuid(),
@@ -262,11 +260,8 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get("/device-executions", async (req) => {
-    setAuditContext(req, { resourceType: "device_execution", action: "read" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_EXECUTION_READ });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device_execution", action: "read", perm: PERM.DEVICE_EXECUTION_READ });
 
-    const subject = requireSubject(req);
     const q = z
       .object({
         deviceId: z.string().uuid().optional(),
@@ -291,11 +286,8 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/device-executions/:deviceExecutionId", async (req, reply) => {
     const params = z.object({ deviceExecutionId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "device_execution", action: "read" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_EXECUTION_READ });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device_execution", action: "read", perm: PERM.DEVICE_EXECUTION_READ });
 
-    const subject = requireSubject(req);
     const e = await getDeviceExecution({ pool: app.db, tenantId: subject.tenantId, deviceExecutionId: params.deviceExecutionId });
     if (!e) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "DeviceExecution 不存在", "en-US": "DeviceExecution not found" }, traceId: req.ctx.traceId });
     if ((subject.spaceId ?? null) !== (e.spaceId ?? null)) throw Errors.forbidden();
@@ -304,11 +296,8 @@ export const deviceExecutionRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/device-executions/:deviceExecutionId/cancel", async (req) => {
     const params = z.object({ deviceExecutionId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "device_execution", action: "cancel" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_EXECUTION_CANCEL });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device_execution", action: "cancel", perm: PERM.DEVICE_EXECUTION_CANCEL });
 
-    const subject = requireSubject(req);
     const e = await getDeviceExecution({ pool: app.db, tenantId: subject.tenantId, deviceExecutionId: params.deviceExecutionId });
     if (!e) throw Errors.badRequest("DeviceExecution 不存在");
     if ((subject.spaceId ?? null) !== (e.spaceId ?? null)) throw Errors.forbidden();

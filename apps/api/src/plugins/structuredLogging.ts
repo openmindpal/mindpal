@@ -10,10 +10,10 @@
  */
 import type { FastifyPluginAsync } from "fastify";
 import {
-  initRootLogger,
+  initializeServiceLogging,
   createModuleLogger,
   createRequestLogContext,
-  DEFAULT_SAMPLING_RULES,
+  getRootLogger,
 } from "@openslin/shared";
 import type { LogLevel, SamplingRule } from "@openslin/shared";
 
@@ -25,19 +25,18 @@ export const structuredLoggingPlugin: FastifyPluginAsync<{
   /** 是否美化输出（开发模式） */
   pretty?: boolean;
 }> = async (app, opts) => {
-  const isProduction = process.env.NODE_ENV === "production";
-  const minLevel = opts.minLevel ?? (isProduction ? "info" : "debug");
-  const pretty = opts.pretty ?? !isProduction;
+  // 将额外采样规则转换为 Record<string, number>
+  const extraSampling: Record<string, number> = {};
+  for (const rule of opts.extraSamplingRules ?? []) {
+    extraSampling[rule.pathPrefix] = rule.rate;
+  }
 
-  // 合并采样规则
-  const samplingRules = [...DEFAULT_SAMPLING_RULES, ...(opts.extraSamplingRules ?? [])];
-
-  // 初始化全局根日志器（日志输出到 stdout，由 OTel Collector 统一采集）
-  const rootLogger = initRootLogger({
-    module: "api",
-    minLevel,
-    pretty,
-    samplingRules,
+  // 通过统一工厂初始化日志（封装采样规则合并、脱敏、全局注册）
+  const rootLogger = initializeServiceLogging({
+    serviceName: "api",
+    level: opts.minLevel,
+    pretty: opts.pretty,
+    samplingRules: Object.keys(extraSampling).length > 0 ? extraSampling : undefined,
   });
 
   // 创建请求日志器
@@ -94,9 +93,5 @@ export const structuredLoggingPlugin: FastifyPluginAsync<{
     });
   });
 
-  rootLogger.info("Structured logging plugin initialized", {
-    minLevel,
-    pretty,
-    samplingRulesCount: samplingRules.length,
-  });
+  rootLogger.info("Structured logging plugin initialized (via initializeServiceLogging)");
 };

@@ -9,32 +9,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import crypto from "node:crypto";
-
-// ─── Helper Functions (copied from auditRepo.ts for testing) ─────────────
-
-function canonicalize(value: any): any {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== "object") return value;
-  const out: any = {};
-  const keys = Object.keys(value).sort();
-  for (const k of keys) out[k] = canonicalize(value[k]);
-  return out;
-}
-
-function stableStringify(value: any) {
-  return JSON.stringify(canonicalize(value));
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
-
-function computeEventHash(params: { prevHash: string | null; normalized: any }) {
-  const input = stableStringify({ prevHash: params.prevHash ?? null, event: params.normalized });
-  return sha256Hex(input);
-}
+import { canonicalize, stableStringify, sha256Hex, computeEventHash } from "@openslin/shared";
 
 // ─── Tests ───────────────────────────────────────────────────────────────
 

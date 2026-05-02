@@ -1,25 +1,23 @@
 /**
- * Collab Orchestrator — 辩论机制 (v1)
+ * collabDebate.ts — N方辩论 + 动态纠错 + 共识演化 (v2)
  *
- * V1 二方辩论 + 共享辅助函数。
- * V2 N方辩论、持久化 CRUD、自动触发已拆分到独立文件。
- *
- * @see collabDebateV2.ts       — N方辩论 + 动态纠错 + 共识演化
- * @see collabDebateRepo.ts     — 辩论持久化 CRUD
- * @see collabDebateAutoTrigger.ts — 自动分歧检测与辩论触发
+ * 辩论共享辅助函数 + N方辩论执行引擎。
+ * (原 collabDebate.ts 辅助函数已合并于此)
  */
 import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import { type LlmSubject } from "../lib/llm";
+import { invokeModelChat, type LlmSubject } from "../lib/llm";
 import { runAgentLoop } from "./agentLoop";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import {
-  createDebateSessionV2, isDebateConvergedV2,
-  type DebateSession, type DebatePosition, type DebateRound, type DebateVerdict,
+  createDebateSession, isDebateConverged, computeDebateConsensusScore,
+  type DebateSession, type DebatePosition, type DebateRound,
+  type DebateVerdict, type DebateParty, type DebateCorrection,
+  type ConsensusEvolutionEntry,
   type DebateConfig, DEBATE_CONFIG_DEFAULTS,
 } from "@openslin/shared";
-import type { DebatePhaseParams } from "./collabTypes";
+import type { DebateV2PhaseParams } from "./collabTypes";
 import { loadApprovalRules } from "./approvalRuleEngine";
 
 // ── 辩论配置动态加载 ─────────────────────────────────────────
@@ -47,133 +45,9 @@ export async function loadDebateConfig(pool: Pool, tenantId: string): Promise<De
   };
 }
 
-// ── P0-协作: 自主辩论机制 (v1) ────────────────────────────
-
-/**
- * P0-协作: 多智能体自主辩论机制
- *
- * 流程：
- * 1. 正反双方对同一议题独立推理（Round 0）
- * 2. 交换立场，交叉质疑 2-3 轮（Round 1~N）
- * 3. 由 arbiter 审阅所有轮次，仲裁最终结论
- */
-export async function runDebatePhase(params: DebatePhaseParams): Promise<DebateSession> {
-  const {
-    app, pool, queue, subject, locale, authorization, traceId,
-    collabRunId, taskId, topic, sideA, sideB, signal,
-  } = params;
-  const arbiterRole = params.arbiterRole ?? "orchestrator_arbiter";
-  const maxIterationsPerRound = params.maxIterationsPerRound ?? 5;
-
-  // 从 approval_rules 动态加载辩论配置
-  const debateConfig = await loadDebateConfig(pool, subject.tenantId);
-
-  const debateId = crypto.randomUUID();
-  const session = createDebateSessionV2({
-    debateId, collabRunId, topic,
-    parties: [
-      { partyId: sideA.agentId, role: sideA.role, stance: "pro" },
-      { partyId: sideB.agentId, role: sideB.role, stance: "con" },
-    ],
-    arbiter: arbiterRole,
-    maxRounds: params.maxRounds ?? debateConfig.maxRounds,
-  });
-
-  app.log.info({ debateId, topic, sideA: sideA.role, sideB: sideB.role, maxRounds: session.maxRounds },
-    "[CollabOrchestrator] 开始辩论阶段");
-
-  // 辩论轮次循环
-  for (let round = 0; round < session.maxRounds; round++) {
-    if (signal?.aborted) {
-      session.status = "aborted";
-      break;
-    }
-
-    // 构建本轮上下文（历史轮次的立场摘要）
-    const historyContext = buildDebateHistoryContext(session);
-
-    // 正方推理
-    const sideAPosition = await runDebateAgent({
-      app, pool, queue, subject, locale, authorization, traceId,
-      collabRunId, taskId, debateId, round, topic,
-      agent: sideA,
-      opponentRole: sideB.role,
-      historyContext,
-      maxIterations: maxIterationsPerRound,
-      signal,
-    });
-
-    // 反方推理（能看到正方本轮的立场）
-    const sideBPosition = await runDebateAgent({
-      app, pool, queue, subject, locale, authorization, traceId,
-      collabRunId, taskId, debateId, round, topic,
-      agent: sideB,
-      opponentRole: sideA.role,
-      opponentPosition: sideAPosition,
-      historyContext,
-      maxIterations: maxIterationsPerRound,
-      signal,
-    });
-
-    // 检测分歧度
-    const divergence = detectDivergence(sideAPosition, sideBPosition, debateConfig);
-    const debateRound: DebateRound = {
-      round,
-      positions: [sideAPosition, sideBPosition],
-      divergenceDetected: divergence,
-    };
-    session.rounds.push(debateRound);
-
-    app.log.info({
-      debateId, round, divergence,
-      sideAConfidence: sideAPosition.confidence,
-      sideBConfidence: sideBPosition.confidence,
-    }, "[CollabOrchestrator] 辩论轮次完成");
-
-    // 检查是否提前收敛
-    if (isDebateConvergedV2(session)) {
-      session.status = "converged";
-      app.log.info({ debateId, round }, "[CollabOrchestrator] 辩论提前收敛");
-      break;
-    }
-  }
-
-  if (session.status === "in_progress") {
-    session.status = "max_rounds_reached";
-  }
-
-  // 仲裁阶段：arbiter 审阅全部轮次并给出裁决
-  if (session.status !== "aborted") {
-    try {
-      session.verdict = await runDebateArbiter({
-        app, pool, queue, subject, locale, authorization, traceId,
-        collabRunId, taskId, session, arbiterRole,
-        maxIterations: maxIterationsPerRound,
-        signal,
-      });
-      session.status = "verdicted";
-    } catch (e: any) {
-      app.log.warn({ err: e, debateId }, "[CollabOrchestrator] 仲裁失败（降级为 inconclusive）");
-    }
-  }
-
-  // 写入 collab_envelopes 供审计回溯
-  await writeDebateEnvelope({ pool, subject, collabRunId, taskId, session }).catch((e: any) =>
-    app.log.warn({ err: e, debateId }, "[CollabOrchestrator] writeDebateEnvelope 失败"));
-
-  app.log.info({
-    debateId,
-    status: session.status,
-    rounds: session.rounds.length,
-    verdict: session.verdict?.outcome,
-  }, "[CollabOrchestrator] 辩论阶段结束");
-
-  return session;
-}
-
 // ── 辩论辅助函数 ──────────────────────────────────────────────
 
-/** 构建辩论历史上下文（供后续轮次参考，V1/V2 共享） */
+/** 构建辩论历史上下文（供后续轮次参考） */
 export function buildDebateHistoryContext(session: DebateSession): string {
   if (session.rounds.length === 0) return "";
   const sections = session.rounds.map((r) => {
@@ -185,274 +59,7 @@ export function buildDebateHistoryContext(session: DebateSession): string {
   return "\n## Debate History\n" + sections.join("\n\n");
 }
 
-/** 运行单个辩论 Agent（通过 runAgentLoop 实例） */
-async function runDebateAgent(params: {
-  app: FastifyInstance;
-  pool: Pool;
-  queue: WorkflowQueue;
-  subject: LlmSubject & { spaceId: string };
-  locale: string;
-  authorization: string | null;
-  traceId: string | null;
-  collabRunId: string;
-  taskId: string;
-  debateId: string;
-  round: number;
-  topic: string;
-  agent: { agentId: string; role: string; goal: string };
-  opponentRole: string;
-  opponentPosition?: DebatePosition;
-  historyContext: string;
-  maxIterations: number;
-  signal?: AbortSignal;
-}): Promise<DebatePosition> {
-  const { app, pool, queue, subject, locale, authorization, traceId, collabRunId, taskId } = params;
-  const { debateId, round, topic, agent, opponentRole, opponentPosition, historyContext } = params;
-
-  // 构建辩论专用 goal
-  let debateGoal = `You are Agent "${agent.role}" in a structured debate about the following topic:
-
-## Debate Topic
-${topic}
-
-## Your Role & Perspective
-${agent.goal}
-
-## Your Task (Round ${round})
-`;
-
-  if (round === 0) {
-    debateGoal += `This is the opening round. Present your initial position on the topic.
-Structure your response as:
-1. **Claim**: Your core conclusion
-2. **Reasoning**: Step-by-step logic
-3. **Evidence**: Supporting facts or tool outputs
-4. **Confidence**: How certain you are (0.0~1.0)`;
-  } else {
-    debateGoal += `Review the opponent's position and respond with your rebuttal.
-Opponent (${opponentRole}) claimed: ${opponentPosition?.claim ?? "(unavailable)"}
-Opponent reasoning: ${opponentPosition?.reasoning?.slice(0, 500) ?? "(unavailable)"}
-
-Structure your response as:
-1. **Rebuttal**: What you disagree with and why
-2. **Revised Claim**: Your updated position (you may adjust based on valid points)
-3. **Reasoning**: Updated logic
-4. **Confidence**: How certain you are (0.0~1.0)`;
-  }
-
-  if (historyContext) {
-    debateGoal += "\n" + historyContext;
-  }
-
-  // 创建临时 run
-  const runId = crypto.randomUUID();
-  const jobId = crypto.randomUUID();
-  await pool.query(
-    `INSERT INTO runs (run_id, job_id, tenant_id, status, created_at, updated_at)
-     VALUES ($1, $2, $3, 'running', now(), now())`,
-    [runId, jobId, subject.tenantId],
-  );
-  await pool.query(
-    `INSERT INTO jobs (job_id, tenant_id, job_type, run_id, input_digest, created_by_subject_id, trigger, status, created_at, updated_at)
-     VALUES ($1, $2, 'collab.debate', $3, $4, $5, 'debate_phase', 'running', now(), now())`,
-    [jobId, subject.tenantId, runId,
-     JSON.stringify({ debateId, collabRunId, round, role: agent.role }),
-     subject.subjectId],
-  );
-
-  const result = await runAgentLoop({
-    app, pool, queue, subject, locale, authorization, traceId,
-    goal: debateGoal,
-    runId, jobId, taskId,
-    maxIterations: params.maxIterations,
-    signal: params.signal,
-  });
-
-  // 解析 Agent 输出为 DebatePosition
-  return parseDebatePosition({
-    debateId, round, fromRole: agent.role,
-    agentOutput: result.message ?? "",
-    rebuttalTo: opponentPosition?.claim,
-  });
-}
-
-/** 解析 Agent 输出为结构化 DebatePosition */
-function parseDebatePosition(params: {
-  debateId: string;
-  round: number;
-  fromRole: string;
-  agentOutput: string;
-  rebuttalTo?: string;
-}): DebatePosition {
-  const { debateId, round, fromRole, agentOutput, rebuttalTo } = params;
-  const text = agentOutput || "";
-
-  // 尝试提取结构化字段
-  const claimMatch = text.match(/\*?\*?Claim\*?\*?[:：]\s*(.+?)(?=\n|$)/i)
-    ?? text.match(/\*?\*?Revised Claim\*?\*?[:：]\s*(.+?)(?=\n|$)/i);
-  const reasoningMatch = text.match(/\*?\*?Reasoning\*?\*?[:：]\s*([\s\S]+?)(?=\*?\*?(?:Evidence|Confidence|Rebuttal)|$)/i);
-  const confidenceMatch = text.match(/\*?\*?Confidence\*?\*?[:：]\s*(\d+\.?\d*)/i);
-  const evidenceMatch = text.match(/\*?\*?Evidence\*?\*?[:：]\s*([\s\S]+?)(?=\*?\*?(?:Confidence|Rebuttal)|$)/i);
-
-  const claim = claimMatch?.[1]?.trim() || text.slice(0, 200);
-  const reasoning = reasoningMatch?.[1]?.trim() || text;
-  const confidence = Math.min(1, Math.max(0, parseFloat(confidenceMatch?.[1] ?? "0.5")));
-  const evidence = evidenceMatch?.[1]
-    ? evidenceMatch[1].split(/\n|[,，]/).map((e: string) => e.trim()).filter(Boolean)
-    : [];
-
-  return {
-    debateId, round, fromRole, claim, reasoning, evidence, confidence,
-    rebuttalTo,
-    submittedAt: new Date().toISOString(),
-  };
-}
-
-/** 检测双方立场的分歧度 */
-function detectDivergence(posA: DebatePosition, posB: DebatePosition, config: DebateConfig): boolean {
-  const confGap = Math.abs(posA.confidence - posB.confidence);
-  if (posA.confidence >= config.minConfidence && posB.confidence >= config.minConfidence && confGap <= config.divergenceConfDiff) {
-    return false;
-  }
-  return true;
-}
-
-/** 运行仲裁 Agent：审阅全部辩论轮次，给出最终裁决 */
-async function runDebateArbiter(params: {
-  app: FastifyInstance;
-  pool: Pool;
-  queue: WorkflowQueue;
-  subject: LlmSubject & { spaceId: string };
-  locale: string;
-  authorization: string | null;
-  traceId: string | null;
-  collabRunId: string;
-  taskId: string;
-  session: DebateSession;
-  arbiterRole: string;
-  maxIterations: number;
-  signal?: AbortSignal;
-}): Promise<DebateVerdict> {
-  const { app, pool, queue, subject, locale, authorization, traceId, collabRunId, taskId, session, arbiterRole } = params;
-
-  let arbiterGoal = `You are an impartial arbiter reviewing a structured debate.
-
-## Debate Topic
-${session.topic}
-
-## Participants
-- Side A: ${session.sideA}
-- Side B: ${session.sideB}
-
-## Debate Transcript
-`;
-
-  for (const round of session.rounds) {
-    arbiterGoal += `\n### Round ${round.round}\n`;
-    for (const pos of round.positions) {
-      arbiterGoal += `**${pos.fromRole}**:
-- Claim: ${pos.claim}
-- Reasoning: ${pos.reasoning.slice(0, 500)}
-- Confidence: ${pos.confidence}
-`;
-      if (pos.rebuttalTo) {
-        arbiterGoal += `- Rebuttal to: ${pos.rebuttalTo.slice(0, 200)}\n`;
-      }
-    }
-  }
-
-  arbiterGoal += `\n## Your Task
-Render a final verdict. Evaluate each round and each side's arguments.
-Respond with:
-1. **Outcome**: "side_a_wins" | "side_b_wins" | "synthesis" | "inconclusive"
-2. **Winner**: The winning side's role name (or "synthesis" if merging both)
-3. **Reasoning**: Why this outcome
-4. **Synthesized Conclusion**: The best answer combining valid points from both sides
-5. **Round Scores**: For each round, score Side A and Side B from 0.0 to 1.0`;
-
-  // 创建仲裁 run
-  const runId = crypto.randomUUID();
-  const jobId = crypto.randomUUID();
-  await pool.query(
-    `INSERT INTO runs (run_id, job_id, tenant_id, status, created_at, updated_at)
-     VALUES ($1, $2, $3, 'running', now(), now())`,
-    [runId, jobId, subject.tenantId],
-  );
-  await pool.query(
-    `INSERT INTO jobs (job_id, tenant_id, job_type, run_id, input_digest, created_by_subject_id, trigger, status, created_at, updated_at)
-     VALUES ($1, $2, 'collab.debate_arbiter', $3, $4, $5, 'debate_arbiter', 'running', now(), now())`,
-    [jobId, subject.tenantId, runId,
-     JSON.stringify({ debateId: session.debateId, collabRunId, arbiterRole }),
-     subject.subjectId],
-  );
-
-  const result = await runAgentLoop({
-    app, pool, queue, subject, locale, authorization, traceId,
-    goal: arbiterGoal,
-    runId, jobId, taskId,
-    maxIterations: params.maxIterations,
-    signal: params.signal,
-  });
-
-  return parseDebateVerdict({
-    debateId: session.debateId,
-    arbiterRole,
-    arbiterOutput: result.message ?? "",
-    session,
-  });
-}
-
-/** 解析仲裁 Agent 输出为结构化 DebateVerdict */
-function parseDebateVerdict(params: {
-  debateId: string;
-  arbiterRole: string;
-  arbiterOutput: string;
-  session: DebateSession;
-}): DebateVerdict {
-  const { debateId, arbiterRole, arbiterOutput, session } = params;
-  const text = arbiterOutput || "";
-  const textLower = text.toLowerCase();
-
-  let outcome: DebateVerdict["outcome"] = "inconclusive";
-  if (textLower.includes("side_a_wins") || textLower.includes("正方胜")) {
-    outcome = "side_a_wins";
-  } else if (textLower.includes("side_b_wins") || textLower.includes("反方胜")) {
-    outcome = "side_b_wins";
-  } else if (textLower.includes("synthesis") || textLower.includes("综合") || textLower.includes("融合")) {
-    outcome = "synthesis";
-  }
-
-  let winnerRole: string | undefined;
-  if (outcome === "side_a_wins") winnerRole = session.sideA;
-  else if (outcome === "side_b_wins") winnerRole = session.sideB;
-
-  const conclusionMatch = text.match(/\*?\*?Synthesized Conclusion\*?\*?[:：]\s*([\s\S]+?)(?=\*?\*?Round Scores|$)/i);
-  const synthesizedConclusion = conclusionMatch?.[1]?.trim() || text.slice(0, 500);
-
-  const roundScores: DebateVerdict["roundScores"] = session.rounds.map((r) => {
-    const scoreMatch = text.match(new RegExp(`Round\\s*${r.round}[^\\n]*?(\\d+\\.?\\d*).*?(\\d+\\.?\\d*)`, "i"));
-    return {
-      round: r.round,
-      sideAScore: scoreMatch ? parseFloat(scoreMatch[1]!) : 0.5,
-      sideBScore: scoreMatch ? parseFloat(scoreMatch[2]!) : 0.5,
-    };
-  });
-
-  const reasoningMatch = text.match(/\*?\*?Reasoning\*?\*?[:：]\s*([\s\S]+?)(?=\*?\*?(?:Synthesized|Round)|$)/i);
-
-  return {
-    debateId,
-    arbiterRole,
-    outcome,
-    winnerRole,
-    reasoning: reasoningMatch?.[1]?.trim() || text.slice(0, 500),
-    synthesizedConclusion,
-    roundScores,
-    decidedAt: new Date().toISOString(),
-  };
-}
-
-/** 将辩论结果写入 collab_envelopes 供审计回溯（V1/V2 共享） */
+/** 将辩论结果写入 collab_envelopes 供审计回溯 */
 export async function writeDebateEnvelope(params: {
   pool: Pool;
   subject: LlmSubject & { spaceId: string };
@@ -464,9 +71,7 @@ export async function writeDebateEnvelope(params: {
   const payload = {
     debateId: session.debateId,
     topic: session.topic,
-    sideA: session.sideA,
-    sideB: session.sideB,
-    parties: session.parties ?? [],
+    parties: session.parties,
     corrections: session.corrections ?? [],
     consensusEvolution: session.consensusEvolution ?? [],
     rounds: session.rounds.length,
@@ -488,6 +93,380 @@ export async function writeDebateEnvelope(params: {
   );
 }
 
-// ── 旧代码已拆分到独立模块，见文件头注释 ───────────────────
-// EOF — 以下为空（persist*、runDebateIfDivergent、runDebatePhaseV2 已迁移）
+// ── N方辩论主入口 ──────────────────────────────────────────
 
+export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<DebateSession> {
+  const {
+    app, pool, queue, subject, locale, authorization, traceId,
+    collabRunId, taskId, topic, parties, signal,
+  } = params;
+  const arbiterRole = params.arbiterRole ?? "orchestrator_arbiter";
+  const maxIterationsPerRound = params.maxIterationsPerRound ?? 5;
+
+  // 从 approval_rules 动态加载辩论配置
+  const debateConfig = await loadDebateConfig(pool, subject.tenantId);
+
+  const enableCorrection = params.enableCorrection ?? debateConfig.allowCorrections;
+  const consensusThreshold = params.consensusThreshold ?? debateConfig.convergenceThreshold;
+
+  const debateId = crypto.randomUUID();
+  const session = createDebateSession({
+    debateId, collabRunId, topic,
+    parties: parties.map(p => ({ partyId: p.agentId, role: p.role, stance: p.stance, budget: p.budget })),
+    maxRounds: params.maxRounds ?? debateConfig.maxRounds,
+  });
+
+  app.log.info({
+    debateId, topic, partyCount: parties.length, maxRounds: session.maxRounds,
+    parties: parties.map(p => p.role),
+  }, "[CollabOrchestrator] 开始 N方辩论 (v2)");
+
+  for (let round = 0; round < session.maxRounds; round++) {
+    if (signal?.aborted) { session.status = "aborted"; break; }
+
+    const historyContext = buildDebateHistoryContext(session);
+    const roundPositions: DebatePosition[] = [];
+    const activeParties = session.parties.filter((p: DebateParty) => p.status === "active");
+
+    for (let i = 0; i < activeParties.length; i++) {
+      if (signal?.aborted) break;
+      const party = activeParties[i]!;
+      const agent = parties.find(p => p.agentId === party.partyId);
+      if (!agent) continue;
+
+      // Round 0: 各方独立推理，不传入前序方立场，避免顺序偏见
+      // Round 1+: 交叉质询，可看到同轮已发言方的立场
+      const predecessorPositions = round === 0
+        ? []
+        : roundPositions.map(p => ({
+            role: p.fromRole, claim: p.claim, confidence: p.confidence,
+          }));
+
+      const position = await runDebateAgentV2({
+        app, pool, queue, subject, locale, authorization, traceId,
+        collabRunId, taskId, debateId, round, topic,
+        agent, party, predecessorPositions, historyContext,
+        corrections: session.corrections ?? [],
+        maxIterations: maxIterationsPerRound,
+        signal,
+      });
+
+      roundPositions.push(position);
+      party.currentConfidence = position.confidence;
+
+      // 将该方的 pending 纠错标记为 accepted（已在本轮接收并处理）
+      for (const c of session.corrections ?? []) {
+        if (c.targetRole === party.role && c.status === "pending") {
+          c.status = "accepted";
+        }
+      }
+    }
+
+    const divergence = detectNPartyDivergence(roundPositions, debateConfig);
+    const debateRound: DebateRound = { round, positions: roundPositions, divergenceDetected: divergence };
+    session.rounds.push(debateRound);
+
+    if (enableCorrection && roundPositions.length >= 2) {
+      const corrections = await detectAndApplyCorrections({
+        app, pool, subject, locale, authorization, traceId,
+        debateId, round, positions: roundPositions,
+      });
+      if (corrections.length > 0) {
+        if (!session.corrections) session.corrections = [];
+        session.corrections.push(...corrections);
+      }
+    }
+
+    const consensusEntry = computeConsensusEvolution(session, round, debateConfig);
+    if (!session.consensusEvolution) session.consensusEvolution = [];
+    session.consensusEvolution.push(consensusEntry);
+
+    if (isDebateConverged(session, debateConfig.minConfidence, consensusThreshold)) {
+      session.status = "converged";
+      break;
+    }
+  }
+
+  if (session.status === "in_progress") session.status = "max_rounds_reached";
+
+  if (session.status !== "aborted") {
+    try {
+      session.verdict = await runDebateArbiterV2({
+        app, pool, queue, subject, locale, authorization, traceId,
+        collabRunId, taskId, session, arbiterRole,
+        maxIterations: maxIterationsPerRound, signal,
+      });
+      session.status = "verdicted";
+    } catch (e: any) {
+      app.log.warn({ err: e, debateId }, "[CollabOrchestrator] N方仲裁失败");
+    }
+  }
+
+  await writeDebateEnvelope({ pool, subject, collabRunId, taskId, session }).catch((e: unknown) => {
+    app.log.warn({ err: (e as Error)?.message, collabRunId, taskId }, "[CollabDebateV2] writeDebateEnvelope failed");
+  });
+  return session;
+}
+
+// ── V2 辅助函数 ──────────────────────────────────────────
+
+async function runDebateAgentV2(params: {
+  app: FastifyInstance; pool: Pool; queue: WorkflowQueue;
+  subject: LlmSubject & { spaceId: string };
+  locale: string; authorization: string | null; traceId: string | null;
+  collabRunId: string; taskId: string; debateId: string; round: number; topic: string;
+  agent: { agentId: string; role: string; goal: string; stance: string };
+  party: DebateParty;
+  predecessorPositions: Array<{ role: string; claim: string; confidence: number }>;
+  historyContext: string; corrections: DebateCorrection[];
+  maxIterations: number; signal?: AbortSignal;
+}): Promise<DebatePosition> {
+  const { app, pool, queue, subject, locale, authorization, traceId, collabRunId, taskId } = params;
+  const { debateId, round, topic, agent, predecessorPositions, historyContext, corrections } = params;
+
+  let debateGoal = `You are Agent "${agent.role}" (stance: ${agent.stance}) in a multi-party debate.
+
+## Debate Topic
+${topic}
+
+## Your Role & Perspective
+${agent.goal}
+
+## Your Task (Round ${round})
+`;
+
+  if (round === 0) {
+    debateGoal += `This is the opening round. Present your initial position.
+Structure your response as JSON:
+{"claim": "...", "reasoning": "...", "evidence": [...], "confidence": 0.0~1.0}`;
+  } else {
+    debateGoal += `Review other parties' positions and respond.\n`;
+    for (const pp of predecessorPositions) {
+      debateGoal += `  - ${pp.role}: "${pp.claim}" (confidence: ${pp.confidence})\n`;
+    }
+    debateGoal += `\nRespond as JSON: {"claim": "...", "reasoning": "...", "evidence": [...], "confidence": 0.0~1.0}`;
+  }
+
+  const myCorrectionsList = corrections.filter(c => c.targetRole === agent.role && (c.status === "accepted" || c.status === "pending"));
+  if (myCorrectionsList.length > 0) {
+    debateGoal += `\n\n## Corrections Applied to You:\n`;
+    for (const c of myCorrectionsList) {
+      debateGoal += `- [${c.correctionType}] ${c.correctionReason} → Suggested: ${c.suggestedCorrection}\n`;
+    }
+  }
+  debateGoal += historyContext;
+
+  const debateRunId = crypto.randomUUID();
+  const debateJobId = crypto.randomUUID();
+
+  // 写入 runs/jobs 表，确保辩论 Agent 运行可追溯（与 v1 runDebateAgent 对齐）
+  await pool.query(
+    `INSERT INTO runs (run_id, job_id, tenant_id, status, created_at, updated_at)
+     VALUES ($1, $2, $3, 'running', now(), now())`,
+    [debateRunId, debateJobId, subject.tenantId],
+  );
+  await pool.query(
+    `INSERT INTO jobs (job_id, tenant_id, job_type, run_id, input_digest, created_by_subject_id, trigger, status, created_at, updated_at)
+     VALUES ($1, $2, 'collab.debate_v2', $3, $4, $5, 'debate_phase_v2', 'running', now(), now())`,
+    [debateJobId, subject.tenantId, debateRunId,
+     JSON.stringify({ debateId, collabRunId, round, role: agent.role, stance: agent.stance }),
+     subject.subjectId],
+  );
+
+  try {
+    const result = await runAgentLoop({
+      app, pool, queue, subject, locale, authorization, traceId,
+      taskId, runId: debateRunId, jobId: debateJobId,
+      goal: debateGoal, maxIterations: params.maxIterations, signal: params.signal,
+    });
+
+    const text = result.message ?? "";
+    let claim = text.slice(0, 500);
+    let reasoning = "";
+    let evidence: string[] = [];
+    let confidence = 0.5;
+
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        claim = String(parsed.claim ?? claim);
+        reasoning = String(parsed.reasoning ?? "");
+        evidence = Array.isArray(parsed.evidence) ? parsed.evidence.map(String) : [];
+        confidence = Math.max(0, Math.min(1, Number(parsed.confidence ?? 0.5)));
+      }
+    } catch { /* 解析失败 */ }
+
+    return { debateId, round, fromRole: agent.role, claim, reasoning, evidence, confidence, submittedAt: new Date().toISOString() };
+  } catch (err: any) {
+    return { debateId, round, fromRole: agent.role, claim: "(执行失败)", reasoning: err?.message ?? "unknown", evidence: [], confidence: 0, submittedAt: new Date().toISOString() };
+  }
+}
+
+function detectNPartyDivergence(positions: DebatePosition[], config: DebateConfig): boolean {
+  if (positions.length <= 1) return false;
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = i + 1; j < positions.length; j++) {
+      if (Math.abs(positions[i]!.confidence - positions[j]!.confidence) > config.divergenceConfDiff * 2.5) return true;
+    }
+  }
+  return positions.reduce((s, p) => s + p.confidence, 0) / positions.length < config.minConfidence;
+}
+
+async function detectAndApplyCorrections(params: {
+  app: FastifyInstance; pool: Pool;
+  subject: LlmSubject & { spaceId: string };
+  locale: string; authorization: string | null; traceId: string | null;
+  debateId: string; round: number; positions: DebatePosition[];
+}): Promise<DebateCorrection[]> {
+  const { app, debateId, round, positions } = params;
+  const corrections: DebateCorrection[] = [];
+  try {
+    const positionSummary = positions.map(p =>
+      `[${p.fromRole}] Claim: ${p.claim}\nReasoning: ${p.reasoning.slice(0, 300)}`
+    ).join("\n\n");
+
+    const result = await invokeModelChat({
+      app: params.app, subject: params.subject, locale: params.locale,
+      purpose: "debate_correction_detection",
+      authorization: params.authorization, traceId: params.traceId,
+      messages: [
+        { role: "system", content: `你是一个严谨的事实核查和逻辑审查专家。检查以下多方辩论立场，识别任何:
+1. 事实错误 (factual_error)
+2. 逻辑谬误 (logical_fallacy)
+3. 证据冲突 (evidence_conflict)
+4. 幻觉内容 (hallucination)
+5. 偏见检测 (bias_detected)
+
+如果发现错误，返回 JSON 数组:
+[{"targetRole": "...", "correctionType": "...", "originalClaim": "...", "reason": "...", "suggestion": "..."}]
+如果没有错误，返回空数组: []` },
+        { role: "user", content: positionSummary },
+      ],
+    });
+
+    try {
+      const text = result?.outputText ?? "";
+      const jsonMatch = text.match(/\[.*\]/s);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item?.targetRole && item?.correctionType) {
+              corrections.push({
+                correctionId: crypto.randomUUID(),
+                triggeredAtRound: round,
+                correctionType: item.correctionType,
+                targetRole: item.targetRole,
+                correctedBy: "arbiter_auto",
+                originalClaim: String(item.originalClaim ?? ""),
+                correctionReason: String(item.reason ?? ""),
+                suggestedCorrection: String(item.suggestion ?? ""),
+                status: "pending",  // 纠错初始状态为 pending，待被纠错方在下一轮确认
+                evidence: [],
+                createdAt: new Date().toISOString(),
+              });
+            }
+          }
+        }
+      }
+    } catch { /* JSON 解析失败 */ }
+  } catch (err: any) {
+    app.log.warn({ err: err?.message, debateId, round }, "[CollabOrchestrator] 纠错检测 LLM 调用失败");
+  }
+  return corrections;
+}
+
+function computeConsensusEvolution(session: DebateSession, round: number, config: DebateConfig): ConsensusEvolutionEntry {
+  const lastRound = session.rounds[session.rounds.length - 1];
+  const positions = lastRound?.positions ?? [];
+  const partyPositions: Record<string, { claim: string; confidence: number }> = {};
+  for (const p of positions) {
+    partyPositions[p.fromRole] = { claim: p.claim.slice(0, 200), confidence: p.confidence };
+  }
+  const consensusScore = computeDebateConsensusScore(session);
+  let consensusState: ConsensusEvolutionEntry["consensusState"] = "no_consensus";
+  if (consensusScore >= config.convergenceThreshold) consensusState = "full_consensus";
+  else if (consensusScore >= config.minConfidence) consensusState = "majority_consensus";
+  else if (consensusScore >= config.minConfidence * 0.5) consensusState = "partial_consensus";
+  return {
+    step: (session.consensusEvolution?.length ?? 0) + 1, atRound: round, consensusState,
+    partyPositions, agreedPoints: [],
+    divergentPoints: lastRound?.divergenceDetected ? ["存在分歧"] : [],
+    consensusScore,
+    evolutionNote: `Round ${round}: ${consensusState} (score=${consensusScore.toFixed(2)})`,
+    recordedAt: new Date().toISOString(),
+  };
+}
+
+async function runDebateArbiterV2(params: {
+  app: FastifyInstance; pool: Pool; queue: WorkflowQueue;
+  subject: LlmSubject & { spaceId: string };
+  locale: string; authorization: string | null; traceId: string | null;
+  collabRunId: string; taskId: string; session: DebateSession;
+  arbiterRole: string; maxIterations: number; signal?: AbortSignal;
+}): Promise<DebateVerdict> {
+  const { app, session, arbiterRole } = params;
+
+  const partySummaries = session.parties.map(p => {
+    const lastPos = session.rounds[session.rounds.length - 1]?.positions.find(pos => pos.fromRole === p.role);
+    return `[${p.role}] (stance: ${p.stance}) Claim: ${lastPos?.claim ?? "N/A"} | Confidence: ${lastPos?.confidence ?? 0}`;
+  }).join("\n");
+
+  const correctionsSummary = (session.corrections ?? []).map(c =>
+    `[${c.correctionType}] ${c.targetRole}: ${c.correctionReason}`
+  ).join("\n");
+
+  const arbiterGoal = `You are the arbiter in a multi-party debate (${session.parties.length} parties).
+
+## Topic: ${session.topic}
+## Party Final Positions:
+${partySummaries}
+
+## Corrections Applied:
+${correctionsSummary || "None"}
+
+## Consensus Evolution:
+Final consensus score: ${computeDebateConsensusScore(session).toFixed(2)}
+
+Provide your verdict as JSON:
+{
+  "outcome": "multi_synthesis" | "partial_consensus" | "side_a_wins" | "side_b_wins" | "inconclusive",
+  "winnerRoles": [...],
+  "reasoning": "...",
+  "synthesizedConclusion": "...",
+  "correctionSummary": "..."
+}`;
+
+  const result = await invokeModelChat({
+    app: params.app, subject: params.subject, locale: params.locale,
+    purpose: "debate_v2_arbiter", authorization: params.authorization,
+    traceId: params.traceId,
+    messages: [{ role: "user", content: arbiterGoal }],
+  });
+
+  const text = result?.outputText ?? "";
+  let verdict: DebateVerdict = {
+    debateId: session.debateId, arbiterRole, outcome: "inconclusive",
+    reasoning: text.slice(0, 2000), synthesizedConclusion: "",
+    roundScores: session.rounds.map((r, i) => ({
+      round: i, sideAScore: r.positions[0]?.confidence ?? 0, sideBScore: r.positions[1]?.confidence ?? 0,
+      partyScores: Object.fromEntries(r.positions.map(p => [p.fromRole, p.confidence])),
+    })),
+    decidedAt: new Date().toISOString(),
+  };
+
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      verdict.outcome = parsed.outcome ?? "inconclusive";
+      verdict.winnerRoles = Array.isArray(parsed.winnerRoles) ? parsed.winnerRoles : undefined;
+      verdict.reasoning = String(parsed.reasoning ?? verdict.reasoning);
+      verdict.synthesizedConclusion = String(parsed.synthesizedConclusion ?? "");
+      verdict.correctionSummary = String(parsed.correctionSummary ?? "");
+    }
+  } catch { /* 解析失败 */ }
+
+  return verdict;
+}

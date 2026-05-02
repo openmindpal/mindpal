@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory, sha256Hex } from "@openslin/shared";
+import { normalizeAuditErrorCategory, sha256Hex, insertAuditEvent } from "@openslin/shared";
+import type { AuditPoolLike } from "@openslin/shared";
 import { decryptSecretPayload } from "../secrets/envelope";
 
 function computeBackoffMs(base: number, attemptCount: number) {
@@ -24,40 +25,7 @@ function getAllowedDomains(params: { connectorEgressPolicy: any; typeDefaultEgre
   return normalizeAllowedDomains(a);
 }
 
-async function insertAuditEvent(params: {
-  pool: Pool;
-  tenantId: string;
-  resourceType: string;
-  action: string;
-  inputDigest?: any;
-  outputDigest?: any;
-  result: "success" | "denied" | "error";
-  traceId: string;
-  errorCategory?: string | null;
-  latencyMs?: number;
-}) {
-  const errorCategory = normalizeAuditErrorCategory(params.errorCategory);
-  await params.pool.query(
-    `
-      INSERT INTO audit_events (
-        subject_id, tenant_id, space_id, resource_type, action,
-        input_digest, output_digest, result, trace_id, error_category, latency_ms
-      )
-      VALUES (NULL,$1,NULL,$2,$3,$4,$5,$6,$7,$8,$9)
-    `,
-    [
-      params.tenantId,
-      params.resourceType,
-      params.action,
-      params.inputDigest ?? null,
-      params.outputDigest ?? null,
-      params.result,
-      params.traceId,
-      errorCategory,
-      params.latencyMs ?? null,
-    ],
-  );
-}
+
 
 async function listEnabledDestinations(params: { pool: Pool; limit: number }) {
   const res = await params.pool.query(
@@ -323,8 +291,7 @@ async function deliverBatch(params: { pool: Pool; masterKey: string; dest: { id:
         backoffMsBase: 0,
         err: new Error(`policy_violation:egress_denied:${host}`),
       });
-      await insertAuditEvent({
-        pool: params.pool,
+      await insertAuditEvent(params.pool as unknown as AuditPoolLike, {
         tenantId: params.dest.tenantId,
         resourceType: "audit",
         action: "siem.delivery",
@@ -334,7 +301,7 @@ async function deliverBatch(params: { pool: Pool; masterKey: string; dest: { id:
         traceId,
         errorCategory: "policy_violation",
         latencyMs: Date.now() - startedAtMs,
-      });
+      }, { skipHashChain: true });
       return { sent: 0 };
     }
 
@@ -366,8 +333,7 @@ async function deliverBatch(params: { pool: Pool; masterKey: string; dest: { id:
       lastTs: new Date(last.event_ts).toISOString(),
       lastEventId: String(last.event_id),
     });
-    await insertAuditEvent({
-      pool: params.pool,
+    await insertAuditEvent(params.pool as unknown as AuditPoolLike, {
       tenantId: params.dest.tenantId,
       resourceType: "audit",
       action: "siem.delivery",
@@ -376,12 +342,11 @@ async function deliverBatch(params: { pool: Pool; masterKey: string; dest: { id:
       result: "success",
       traceId,
       latencyMs: Date.now() - startedAtMs,
-    });
+    }, { skipHashChain: true });
     return { sent: rows.length };
   } catch (e: any) {
     const out = await markFailure({ pool: params.pool, tenantId: params.dest.tenantId, rows, maxAttempts: 8, backoffMsBase: 500, err: e });
-    await insertAuditEvent({
-      pool: params.pool,
+    await insertAuditEvent(params.pool as unknown as AuditPoolLike, {
       tenantId: params.dest.tenantId,
       resourceType: "audit",
       action: "siem.delivery",
@@ -391,7 +356,7 @@ async function deliverBatch(params: { pool: Pool; masterKey: string; dest: { id:
       traceId,
       errorCategory: "upstream_error",
       latencyMs: Date.now() - startedAtMs,
-    });
+    }, { skipHashChain: true });
     return { sent: 0 };
   }
 }

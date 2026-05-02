@@ -140,31 +140,6 @@ export interface PermissionDelegation {
 
 export type CollabArbitrationStrategy = "priority" | "vote" | "escalate" | "first_writer_wins";
 
-/** 辩论阶段参数 */
-export interface DebatePhaseParams {
-  app: FastifyInstance;
-  pool: Pool;
-  queue: WorkflowQueue;
-  subject: LlmSubject & { spaceId: string };
-  locale: string;
-  authorization: string | null;
-  traceId: string | null;
-  collabRunId: string;
-  taskId: string;
-  /** 辩论议题 */
-  topic: string;
-  /** 正方 Agent 角色定义 */
-  sideA: { agentId: string; role: string; goal: string };
-  /** 反方 Agent 角色定义 */
-  sideB: { agentId: string; role: string; goal: string };
-  /** 仲裁方角色（可选，默认由 orchestrator 充当） */
-  arbiterRole?: string;
-  /** 最大轮次（环境变量可覆盖） */
-  maxRounds?: number;
-  /** 每个 Agent 每轮最大迭代次数 */
-  maxIterationsPerRound?: number;
-  signal?: AbortSignal;
-}
 
 /** N方辩论参数 */
 export interface DebateV2PhaseParams {

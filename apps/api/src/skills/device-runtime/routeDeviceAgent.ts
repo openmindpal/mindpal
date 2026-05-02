@@ -9,6 +9,7 @@ import { randomCode, sha256Hex } from "./modules/crypto";
 import crypto from "node:crypto";
 import { createArtifact } from "../artifact-manager/modules/artifactRepo";
 import { transcribeAudio, synthesizeSpeech } from "../../modules/audioService";
+import { DEVICE_TYPE_PLUGIN_POLICY } from "@openslin/shared";
 
 function requireDevice(req: any) {
   const device = req.ctx.device;
@@ -96,18 +97,9 @@ export const deviceAgentRoutes: FastifyPluginAsync = async (app) => {
     };
 
     // ── 元数据驱动：根据设备类型下发插件策略 ────────────────
-    // 替代端侧 DEVICE_AGENT_BUILTIN_PLUGINS 环境变量的静态控制
-    const DEVICE_TYPE_PLUGIN_POLICY: Record<string, string[]> = {
-      desktop: ["desktop"],
-      mobile: [],
-      iot: [],
-      robot: [],
-      vehicle: [],
-      home: [],
-      gateway: [],
-    };
+    // 使用 @openslin/shared 中的统一策略映射（Single Source of Truth）
     const pluginPolicy = {
-      builtinPlugins: DEVICE_TYPE_PLUGIN_POLICY[body.deviceType] ?? [],
+      builtinPlugins: DEVICE_TYPE_PLUGIN_POLICY.get(body.deviceType) ?? [],
     };
 
     return { deviceId: device.deviceId, deviceToken, policy, policyAutoPopulated, pluginPolicy };

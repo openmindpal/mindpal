@@ -1,283 +1,32 @@
-import type { Pool } from "pg";
-import { AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory, computeEventHash } from "@openslin/shared";
+/**
+ * auditRepo.ts — API 审计仓库
+ *
+ * 所有审计核心实现已收敛至 @openslin/shared/audit。
+ * 本文件仅做 re-export，保持 API 内部引用路径兼容。
+ */
 import type { AuditEventInput as SharedAuditEventInput } from "@openslin/shared";
+import {
+  AUDIT_ERROR_CATEGORIES,
+  normalizeAuditErrorCategory,
+  computeEventHash,
+  isHighRiskAuditAction,
+  AuditContractError,
+  insertAuditEvent,
+  insertAuditEventFromShared,
+} from "@openslin/shared";
+import type { DetailedAuditEventInput } from "@openslin/shared";
 
-export { AUDIT_ERROR_CATEGORIES };
-export { normalizeAuditErrorCategory };
-
-const HIGH_RISK_AUDIT_ACTIONS = new Set<string>([
-  "audit:siem.destination.write",
-  "audit:siem.destination.test",
-  "audit:siem.destination.backfill",
-  "audit:siem.dlq.clear",
-  "audit:siem.dlq.requeue",
-]);
-
-export function isHighRiskAuditAction(params: { resourceType?: string | null; action?: string | null }) {
-  const resourceType = String(params.resourceType ?? "").trim();
-  const action = String(params.action ?? "").trim();
-  if (!resourceType || !action) return false;
-  return HIGH_RISK_AUDIT_ACTIONS.has(`${resourceType}:${action}`);
-}
-
-export class AuditContractError extends Error {
-  errorCode: string;
-  httpStatus: number;
-  details?: unknown;
-
-  constructor(params: { errorCode: string; message: string; httpStatus?: number; details?: unknown }) {
-    super(params.message);
-    this.name = "AuditContractError";
-    this.errorCode = params.errorCode;
-    this.httpStatus = params.httpStatus ?? 409;
-    this.details = params.details;
-  }
-}
-
-export { computeEventHash };
-
-export type AuditEventInput = {
-  subjectId?: string;
-  tenantId?: string;
-  spaceId?: string;
-  resourceType: string;
-  action: string;
-  toolRef?: string;
-  workflowRef?: string;
-  policyDecision?: unknown;
-  inputDigest?: unknown;
-  outputDigest?: unknown;
-  idempotencyKey?: string;
-  result: "success" | "denied" | "error";
-  traceId: string;
-  requestId?: string;
-  runId?: string;
-  stepId?: string;
-  policySnapshotRef?: string;
-  errorCategory?: string;
-  latencyMs?: number;
-  outboxId?: string;
-  timestamp?: string;
-  /** P3-3: 人类可读的自然语言摘要 */
-  humanSummary?: string;
+// ── Re-exports（保持 API 内部引用路径兼容） ──
+export {
+  AUDIT_ERROR_CATEGORIES,
+  normalizeAuditErrorCategory,
+  computeEventHash,
+  isHighRiskAuditAction,
+  AuditContractError,
+  insertAuditEvent,
+  insertAuditEventFromShared,
 };
 
-/**
- * P3-3: 自动生成 humanSummary
- * 当调用方未提供时，根据审计事件属性自动生成可读摘要
- */
-function generateHumanSummary(e: AuditEventInput): string {
-  const parts: string[] = [];
-  const subject = e.subjectId ? `用户 ${e.subjectId.slice(0, 8)}` : "系统";
-  const resultText = e.result === "success" ? "成功" : e.result === "denied" ? "被拒绝" : "失败";
+export type AuditEventInput = DetailedAuditEventInput;
 
-  // 基本描述
-  parts.push(`${subject}对 ${e.resourceType} 执行 ${e.action} 操作，结果: ${resultText}`);
-
-  // 工具信息
-  if (e.toolRef) parts.push(`工具: ${e.toolRef}`);
-
-  // 延迟信息
-  if (e.latencyMs) parts.push(`耗时: ${e.latencyMs}ms`);
-
-  // 错误信息
-  if (e.errorCategory) parts.push(`错误类型: ${e.errorCategory}`);
-
-  return parts.join(" | ");
-}
-
-function withPolicySnapshotRef(policyDecision: unknown, policySnapshotRef: string | null) {
-  if (!policySnapshotRef) return policyDecision ?? null;
-  if (policyDecision && typeof policyDecision === "object" && !Array.isArray(policyDecision)) {
-    const base = policyDecision as Record<string, unknown>;
-    if (typeof base.policySnapshotRef === "string" && base.policySnapshotRef.trim()) return base;
-    if (typeof base.snapshotRef === "string" && base.snapshotRef.trim()) return { ...base, policySnapshotRef: base.snapshotRef };
-    return { ...base, policySnapshotRef };
-  }
-  return { policySnapshotRef };
-}
-
-/**
- * 将 shared 标准 AuditEventInput 转换为 API 内部 AuditEventInput 并写入。
- * 功能目标：提供统一入口，使外部组件可通过 shared 接口格式写入审计。
- */
-export async function insertAuditEventFromShared(pool: Pool, event: SharedAuditEventInput): Promise<void> {
-  const outcomeMap: Record<string, "success" | "denied" | "error"> = {
-    success: "success",
-    failure: "error",
-    denied: "denied",
-  };
-  await insertAuditEvent(pool, {
-    tenantId: event.tenantId,
-    subjectId: event.subject,
-    resourceType: event.resourceType,
-    action: event.action,
-    result: outcomeMap[event.outcome] ?? "error",
-    traceId: event.traceId ?? "",
-    timestamp: event.timestamp,
-    inputDigest: event.details ?? null,
-    outputDigest: event.resourceId ? { resourceId: event.resourceId } : null,
-  });
-}
-
-export async function insertAuditEvent(pool: Pool, e: AuditEventInput) {
-  if (process.env.AUDIT_FORCE_FAIL === "1") throw new Error("audit_force_fail");
-  const policySnapshotRef = String(e.policySnapshotRef ?? "").trim() || null;
-  const missingContextFields: string[] = [];
-  if (isHighRiskAuditAction({ resourceType: e.resourceType, action: e.action })) {
-    if (!String(e.runId ?? "").trim()) missingContextFields.push("runId");
-    if (!String(e.stepId ?? "").trim()) missingContextFields.push("stepId");
-    if (!policySnapshotRef) missingContextFields.push("policySnapshotRef");
-    if (missingContextFields.length > 0) {
-      throw new AuditContractError({
-        errorCode: "AUDIT_CONTEXT_REQUIRED",
-        message: "high_risk_audit_context_required",
-        details: {
-          resourceType: e.resourceType,
-          action: e.action,
-          missing: missingContextFields,
-        },
-      });
-    }
-  }
-  const policyDecision = withPolicySnapshotRef(e.policyDecision, policySnapshotRef);
-  const errorCategory = normalizeAuditErrorCategory(e.errorCategory);
-
-  // P3-3: 自动生成或使用调用方提供的 humanSummary
-  const humanSummary = e.humanSummary ?? generateHumanSummary(e);
-  // 将 humanSummary 注入 outputDigest（兼容现有 schema）
-  const enrichedOutputDigest = e.outputDigest && typeof e.outputDigest === "object" && !Array.isArray(e.outputDigest)
-    ? { ...(e.outputDigest as Record<string, unknown>), humanSummary }
-    : e.outputDigest
-      ? { _original: e.outputDigest, humanSummary }
-      : { humanSummary };
-
-  if (!e.tenantId) {
-    await pool.query(
-      `
-        INSERT INTO audit_events (
-          subject_id, tenant_id, space_id, resource_type, action,
-          tool_ref, workflow_ref, policy_decision, input_digest, output_digest,
-          idempotency_key, result, trace_id, request_id, run_id, step_id, error_category, latency_ms, outbox_id
-        ) VALUES (
-          $1, $2, $3, $4, $5,
-          $6, $7, $8, $9, $10,
-          $11, $12, $13, $14, $15, $16, $17, $18, $19
-        )
-      `,
-      [
-        e.subjectId ?? null,
-        e.tenantId ?? null,
-        e.spaceId ?? null,
-        e.resourceType,
-        e.action,
-        e.toolRef ?? null,
-        e.workflowRef ?? null,
-        policyDecision,
-        e.inputDigest ?? null,
-        enrichedOutputDigest,
-        e.idempotencyKey ?? null,
-        e.result,
-        e.traceId,
-        e.requestId ?? null,
-        e.runId ?? null,
-        e.stepId ?? null,
-        errorCategory,
-        e.latencyMs ?? null,
-        e.outboxId ?? null,
-      ],
-    );
-    return;
-  }
-
-  const ts0 = e.outboxId ? new Date().toISOString() : (e.timestamp ?? new Date().toISOString());
-  const normalizedBase = {
-    subjectId: e.subjectId ?? null,
-    tenantId: e.tenantId ?? null,
-    spaceId: e.spaceId ?? null,
-    resourceType: e.resourceType,
-    action: e.action,
-    toolRef: e.toolRef ?? null,
-    workflowRef: e.workflowRef ?? null,
-    result: e.result,
-    traceId: e.traceId,
-    requestId: e.requestId ?? null,
-    runId: e.runId ?? null,
-    stepId: e.stepId ?? null,
-    idempotencyKey: e.idempotencyKey ?? null,
-    errorCategory,
-    latencyMs: e.latencyMs ?? null,
-    policyDecision,
-    inputDigest: e.inputDigest ?? null,
-    outputDigest: enrichedOutputDigest,
-    outboxId: e.outboxId ?? null,
-  };
-
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [e.tenantId]);
-    const prevRes = await client.query(
-      "SELECT event_hash, timestamp FROM audit_events WHERE tenant_id = $1 AND event_hash IS NOT NULL ORDER BY timestamp DESC, event_id DESC LIMIT 1",
-      [e.tenantId],
-    );
-    const prevHash = prevRes.rowCount ? (prevRes.rows[0].event_hash as string | null) : null;
-    const prevTs = prevRes.rowCount ? (prevRes.rows[0].timestamp as any) : null;
-    let ts = ts0;
-    const tsMs = new Date(ts0).getTime();
-    const prevMs = prevTs ? new Date(prevTs).getTime() : NaN;
-    if (Number.isFinite(prevMs) && Number.isFinite(tsMs) && tsMs <= prevMs) ts = new Date(Math.max(Date.now(), prevMs + 1)).toISOString();
-    if (!Number.isFinite(tsMs) && Number.isFinite(prevMs)) ts = new Date(Math.max(Date.now(), prevMs + 1)).toISOString();
-    const normalized = { timestamp: ts, ...normalizedBase };
-    const eventHash = computeEventHash({ prevHash, normalized });
-
-    await client.query(
-      `
-        INSERT INTO audit_events (
-          timestamp, subject_id, tenant_id, space_id, resource_type, action,
-          tool_ref, workflow_ref, policy_decision, input_digest, output_digest,
-          idempotency_key, result, trace_id, request_id, run_id, step_id, error_category, latency_ms,
-          prev_hash, event_hash, outbox_id
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, $10, $11,
-          $12, $13, $14, $15, $16, $17, $18, $19,
-          $20, $21, $22
-        )
-      `,
-      [
-        ts,
-        e.subjectId ?? null,
-        e.tenantId ?? null,
-        e.spaceId ?? null,
-        e.resourceType,
-        e.action,
-        e.toolRef ?? null,
-        e.workflowRef ?? null,
-        policyDecision,
-        e.inputDigest ?? null,
-        enrichedOutputDigest,
-        e.idempotencyKey ?? null,
-        e.result,
-        e.traceId,
-        e.requestId ?? null,
-        e.runId ?? null,
-        e.stepId ?? null,
-        errorCategory,
-        e.latencyMs ?? null,
-        prevHash,
-        eventHash,
-        e.outboxId ?? null,
-      ],
-    );
-    await client.query("COMMIT");
-  } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
-}
+export type { SharedAuditEventInput };

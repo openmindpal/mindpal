@@ -3,6 +3,7 @@
  * Extracted from routes.closedLoop.ts to reduce file size and enable reuse.
  */
 import { sha256Hex } from "../../lib/digest";
+import { sha256_8 } from "@openslin/shared";
 
 /* ================================================================== */
 /*  Types                                                               */
@@ -131,10 +132,6 @@ export function buildClosedLoopSummaryV1(params: { plan: any; steps: any[]; curs
       stopReason,
     },
   };
-}
-
-export function sha256_8(input: string) {
-  return sha256Hex(input).slice(0, 8);
 }
 
 export function digestText(input: unknown) {

@@ -8,7 +8,7 @@ const skillDirs = readdirSync(SKILLS_DIR, { withFileTypes: true })
   .filter(d => d.isDirectory() && !EXCLUDED.has(d.name))
   .map(d => d.name);
 
-// 确认已知的22个技能（除 template-skill 外；webhook-send-skill 和 slack-send-skill 已合并到 bridge-send-skill）
+// 确认已知的21个技能（除 template-skill 外；webhook-send-skill 和 slack-send-skill 已合并到 bridge-send-skill；template-rust-skill 已删除）
 const EXPECTED_SKILLS = [
   'bridge-send-skill',
   'collab-guard-skill',
@@ -28,17 +28,16 @@ const EXPECTED_SKILLS = [
   'speech-skill',
   'streaming-device-control',
   'template-go-skill',
-  'template-rust-skill',
   'tool-discovery-skill',
   'video-extract-skill',
   'vision-skill',
 ];
 
-// template-go-skill 和 template-rust-skill 使用非 Node 运行时，displayName 等字段结构已统一
+// template-go-skill 使用非 Node 运行时，displayName 等字段结构已统一
 const standardSkillDirs = skillDirs;
 
 describe('All skills manifest validation', () => {
-  it('应发现全部22个技能目录', () => {
+  it('应发现全部21个技能目录', () => {
     expect(skillDirs.sort()).toEqual(EXPECTED_SKILLS.sort());
   });
 

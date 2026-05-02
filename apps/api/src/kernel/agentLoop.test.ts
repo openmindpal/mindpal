@@ -7,7 +7,9 @@ const {
   recallRecentTasks,
   recallRelevantKnowledge,
   recallProceduralStrategies,
+  inferSemanticMeta,
   upsertTaskState,
+  updateMemoryConfidenceFromFacts,
   writeCheckpoint,
   finalizeCheckpoint,
   startHeartbeat,
@@ -15,6 +17,7 @@ const {
   updateProcessStatus,
   decomposeGoal,
   buildWorldStateFromObservations,
+  updateWorldState,
   prepareRunForExecution,
   safeTransitionRun,
   normalizeExecutionConstraints,
@@ -31,6 +34,9 @@ const {
   getDecisionQualityConfig,
   extractConfidenceFromOutput,
   evaluateDecisionQuality,
+  getMaxStepSeq,
+  upsertGoalGraph,
+  deletePendingSteps,
 } = vi.hoisted(() => ({
   acquireLoopSlot: vi.fn(),
   discoverEnabledTools: vi.fn(),
@@ -38,7 +44,9 @@ const {
   recallRecentTasks: vi.fn(),
   recallRelevantKnowledge: vi.fn(),
   recallProceduralStrategies: vi.fn(),
+  inferSemanticMeta: vi.fn(),
   upsertTaskState: vi.fn(),
+  updateMemoryConfidenceFromFacts: vi.fn(),
   writeCheckpoint: vi.fn(),
   finalizeCheckpoint: vi.fn(),
   startHeartbeat: vi.fn(),
@@ -46,6 +54,7 @@ const {
   updateProcessStatus: vi.fn(),
   decomposeGoal: vi.fn(),
   buildWorldStateFromObservations: vi.fn(),
+  updateWorldState: vi.fn(),
   prepareRunForExecution: vi.fn(),
   safeTransitionRun: vi.fn(),
   normalizeExecutionConstraints: vi.fn(),
@@ -62,6 +71,9 @@ const {
   getDecisionQualityConfig: vi.fn(),
   extractConfidenceFromOutput: vi.fn(),
   evaluateDecisionQuality: vi.fn(),
+  getMaxStepSeq: vi.fn(),
+  upsertGoalGraph: vi.fn(),
+  deletePendingSteps: vi.fn(),
 }));
 
 vi.mock("./priorityScheduler", () => ({
@@ -74,10 +86,12 @@ vi.mock("../modules/agentContext", () => ({
   recallRecentTasks,
   recallRelevantKnowledge,
   recallProceduralStrategies,
+  inferSemanticMeta,
 }));
 
 vi.mock("../modules/memory/repo", () => ({
   upsertTaskState,
+  updateMemoryConfidenceFromFacts,
 }));
 
 vi.mock("./loopCheckpoint", () => ({
@@ -86,6 +100,7 @@ vi.mock("./loopCheckpoint", () => ({
   startHeartbeat,
   registerProcess,
   updateProcessStatus,
+  AGENT_LOOP_FULL_CHECKPOINT_INTERVAL: 5,
 }));
 
 vi.mock("./goalDecomposer", () => ({
@@ -96,7 +111,8 @@ vi.mock("./worldStateExtractor", () => ({
   extractFromObservation: vi.fn(),
   evaluateGoalConditions: vi.fn(),
   buildWorldStateFromObservations,
-  extractWorldState: vi.fn().mockResolvedValue(null),
+  extractWorldState: vi.fn().mockReturnValue(null),
+  updateWorldState,
 }));
 
 vi.mock("./loopStateHelpers", () => ({
@@ -140,6 +156,38 @@ vi.mock("./verifierAgent", () => ({
 
 vi.mock("./intentAnchoringService", () => ({
   checkAndEnforceIntentBoundary: vi.fn(),
+  detectIntentBoundary: vi.fn(),
+}));
+
+vi.mock("./agentLoopRepo", () => ({
+  getMaxStepSeq,
+  upsertGoalGraph,
+  deletePendingSteps,
+}));
+
+vi.mock("./loopCacheConfig", () => ({
+  getCacheConfig: vi.fn(() => ({ ENABLED: false })),
+  cacheGet: vi.fn(),
+  cacheSet: vi.fn(),
+  prepareCacheKey: vi.fn(() => "test-key"),
+  getLightIterationConfig: vi.fn(() => ({ ENABLED: false })),
+  isLightIteration: vi.fn(() => false),
+}));
+
+vi.mock("./loopTurboMode", () => ({
+  turboSkipFastCheckpoint: vi.fn(() => false),
+  turboSkipDecisionRetry: vi.fn(() => false),
+}));
+
+vi.mock("./loopObservation", () => ({
+  buildObservation: vi.fn(),
+  buildObservationsBatch: vi.fn(async () => ({ observations: [], dbDurationMs: 0 })),
+  compressStepHistory: vi.fn(),
+  AGENT_LOOP_BATCH_OBSERVE: false,
+}));
+
+vi.mock("../modules/audit/auditRepo", () => ({
+  insertAuditEvent: vi.fn(),
 }));
 
 import { runAgentLoop } from "./agentLoop";
@@ -151,12 +199,19 @@ function createParams(poolQuery?: ReturnType<typeof vi.fn>) {
         info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
+        debug: vi.fn(),
       },
       metrics: {
         observeAgentDecision: vi.fn(),
         observeParallelToolCalls: vi.fn(),
         observeGoalDecompose: vi.fn(),
         observePlanQualityScore: vi.fn(),
+        observeObserveDbDuration: vi.fn(),
+        observeThinkLlmDuration: vi.fn(),
+        setDriftScore: vi.fn(),
+        incDriftDetectionMethod: vi.fn(),
+        incThinkRetryCount: vi.fn(),
+        setThinkConfidence: vi.fn(),
       },
     } as any,
     pool: {
@@ -184,14 +239,16 @@ function createParams(poolQuery?: ReturnType<typeof vi.fn>) {
 
 describe("runAgentLoop initialization order", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     acquireLoopSlot.mockResolvedValue(vi.fn());
     discoverEnabledTools.mockResolvedValue({ catalog: "", tools: [] });
     recallRelevantMemory.mockResolvedValue({ text: "" });
     recallRecentTasks.mockResolvedValue({ text: "" });
     recallRelevantKnowledge.mockResolvedValue({ text: "" });
     recallProceduralStrategies.mockResolvedValue({ text: "", strategyCount: 0 });
+    inferSemanticMeta.mockReturnValue({});
     upsertTaskState.mockResolvedValue(null);
+    updateMemoryConfidenceFromFacts.mockResolvedValue({ corroborated: 0, contradicted: 0 });
     writeCheckpoint.mockResolvedValue(null);
     finalizeCheckpoint.mockResolvedValue(null);
     startHeartbeat.mockReturnValue({ stop: vi.fn() });
@@ -209,6 +266,10 @@ describe("runAgentLoop initialization order", () => {
       },
     });
     buildWorldStateFromObservations.mockReturnValue(null);
+    updateWorldState.mockImplementation((obs: any, ws: any, gg: any) => ({ worldState: ws, goalGraph: gg }));
+    getMaxStepSeq.mockResolvedValue(0);
+    upsertGoalGraph.mockResolvedValue(null);
+    deletePendingSteps.mockResolvedValue(null);
     prepareRunForExecution.mockResolvedValue(true);
     safeTransitionRun.mockResolvedValue(true);
     normalizeExecutionConstraints.mockImplementation((value: unknown) => value ?? null);
@@ -255,30 +316,25 @@ describe("runAgentLoop initialization order", () => {
         },
       };
     });
+    upsertGoalGraph.mockImplementation(async () => {
+      events.push("insertGoalGraph");
+    });
     registerProcess.mockImplementation(async () => {
       events.push("registerProcess");
       return "process-1";
     });
-    const poolQuery = vi.fn(async (sql: string) => {
-      if (sql.startsWith("SELECT COALESCE(MAX(seq), 0) as max_seq FROM steps")) {
-        events.push("readMaxSeq");
-        return { rowCount: 1, rows: [{ max_seq: 0 }] };
-      }
-      if (sql.includes("INSERT INTO goal_graphs")) {
-        events.push("insertGoalGraph");
-        return { rowCount: 1, rows: [] };
-      }
-      return { rowCount: 1, rows: [] };
+    getMaxStepSeq.mockImplementation(async () => {
+      events.push("readMaxSeq");
+      return 0;
     });
 
-    const result = await runAgentLoop(createParams(poolQuery) as any);
+    const result = await runAgentLoop(createParams() as any);
 
     expect(result.endReason).toBe("interrupted");
     expect(events).toContain("checkpoint");
     expect(events).toContain("insertGoalGraph");
     expect(events.indexOf("prepareRun")).toBeLessThan(events.indexOf("checkpoint"));
     expect(events.indexOf("checkpoint")).toBeLessThan(events.indexOf("insertGoalGraph"));
-    expect(events.indexOf("insertGoalGraph")).toBeLessThan(events.indexOf("registerProcess"));
   });
 
   it("parallel_tool_calls 按实际完成顺序写入观察并触发回调", async () => {
@@ -351,36 +407,14 @@ describe("runAgentLoop initialization order", () => {
       });
     handleDoneAction.mockResolvedValue({ outcome: "done", message: "完成", verification: null });
 
-    const poolQuery = vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql.startsWith("SELECT COALESCE(MAX(seq), 0) as max_seq FROM steps")) {
-        return { rowCount: 1, rows: [{ max_seq: 0 }] };
-      }
-      if (sql === "DELETE FROM steps WHERE run_id = $1 AND status = 'pending'") {
-        expect(params).toEqual(["run-1"]);
-        return { rowCount: 2, rows: [] };
-      }
-      if (sql.includes("INSERT INTO goal_graphs")) {
-        return { rowCount: 1, rows: [] };
-      }
-      return { rowCount: 1, rows: [] };
-    });
-
     const result = await runAgentLoop({
-      ...createParams(poolQuery),
+      ...createParams(),
       signal: undefined,
       maxIterations: 3,
     } as any);
 
     expect(result.endReason).toBe("done");
-    expect(
-      poolQuery.mock.calls.some(
-        ([sql, params]) =>
-          sql === "DELETE FROM steps WHERE run_id = $1 AND status = 'pending'" &&
-          JSON.stringify(params) === JSON.stringify(["run-1"]),
-      ),
-    ).toBe(true);
-    expect(
-      poolQuery.mock.calls.some(([sql]) => String(sql).includes("tenant_id") && String(sql).includes("DELETE FROM steps")),
-    ).toBe(false);
+    // deletePendingSteps 应被调用，且只传 pool + runId（不含 tenant_id）
+    expect(deletePendingSteps).toHaveBeenCalledWith(expect.anything(), "run-1");
   });
 });

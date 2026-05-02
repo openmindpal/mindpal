@@ -435,6 +435,84 @@ export function createRequestLogContext(req: {
 }
 
 // ---------------------------------------------------------------------------
+// 服务级日志初始化工厂
+// ---------------------------------------------------------------------------
+
+/** 服务级日志初始化配置 */
+export interface ServiceLoggingConfig {
+  /** 服务名（如 "api", "worker", "device-agent"） */
+  serviceName: string;
+  /** 最低日志级别（默认：生产 info，开发 debug） */
+  level?: LogLevel;
+  /** 路径级采样规则（key = 路径前缀，value = 采样率 0.0~1.0） */
+  samplingRules?: Record<string, number>;
+  /** 额外需要脱敏的字段名（追加到默认列表之后） */
+  sensitiveFields?: string[];
+  /** 是否美化输出（默认根据 NODE_ENV 判断） */
+  pretty?: boolean;
+}
+
+/**
+ * 统一的服务日志初始化工厂。
+ *
+ * 封装了：
+ * - 结构化日志上下文构造
+ * - 默认 + 自定义采样规则合并
+ * - 敏感字段脱敏（默认 + 自定义字段）
+ * - 全局根日志器注册
+ *
+ * 各服务只需调用一次即可完成日志系统初始化。
+ *
+ * @example
+ * // API 服务
+ * const logger = initializeServiceLogging({ serviceName: "api" });
+ *
+ * // Worker 服务
+ * const logger = initializeServiceLogging({ serviceName: "worker" });
+ *
+ * // 设备端
+ * const logger = initializeServiceLogging({ serviceName: "device-agent" });
+ */
+export function initializeServiceLogging(config: ServiceLoggingConfig): StructuredLogger {
+  const isProduction = process.env.NODE_ENV === "production";
+  const minLevel = config.level ?? (isProduction ? "info" : "debug");
+  const pretty = config.pretty ?? !isProduction;
+
+  // 合并采样规则：默认规则 + 自定义规则
+  const samplingRules: SamplingRule[] = [...DEFAULT_SAMPLING_RULES];
+  if (config.samplingRules) {
+    for (const [pathPrefix, rate] of Object.entries(config.samplingRules)) {
+      samplingRules.push({ pathPrefix, rate, infoOnly: true });
+    }
+  }
+
+  // 注册额外敏感字段到全局脱敏模式
+  if (config.sensitiveFields?.length) {
+    for (const field of config.sensitiveFields) {
+      registerSensitiveField(field);
+    }
+  }
+
+  return initRootLogger({
+    module: config.serviceName,
+    minLevel,
+    pretty,
+    samplingRules,
+  });
+}
+
+/**
+ * 运行时注册额外敏感字段（追加到默认脱敏列表）。
+ * 由 initializeServiceLogging 内部调用，也可单独使用。
+ */
+export function registerSensitiveField(field: string): void {
+  const pattern = new RegExp(field, "i");
+  if (!REDACT_KEY_PATTERNS.some((p) => p.source === pattern.source)) {
+    REDACT_KEY_PATTERNS.push(pattern);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Utility: 安全的 JSON.stringify（处理循环引用）
 // ---------------------------------------------------------------------------
 

@@ -1,29 +1,5 @@
 import { Errors } from "../../lib/errors";
-import { isPlainObject } from "@openslin/shared";
-
-function checkType(type: string, value: unknown): boolean {
-  if (value === null || value === undefined) return true;
-  switch (type) {
-    case "string":
-      return typeof value === "string";
-    case "number":
-      return typeof value === "number" && Number.isFinite(value);
-    case "boolean":
-      return typeof value === "boolean";
-    case "datetime":
-      return typeof value === "string";
-    case "json":
-      return true;
-    case "reference":
-      return typeof value === "string";
-    case "array":
-      return Array.isArray(value);
-    case "object":
-      return typeof value === "object" && !Array.isArray(value);
-    default:
-      return false;
-  }
-}
+import { isPlainObject, checkType } from "@openslin/shared";
 
 export function validateToolInput(inputSchema: any, input: unknown) {
   const fields = inputSchema?.fields;

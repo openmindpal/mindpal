@@ -1,23 +1,11 @@
-import crypto from "node:crypto";
+import { sha256Hex, stableStringifyValue } from "@openslin/shared";
 
-function stable(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stable);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stable(v[k]);
-  return out;
-}
-
-export function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
+export { sha256Hex };
 
 export function digestParams(params: any) {
   if (!params || typeof params !== "object" || Array.isArray(params)) return { keyCount: 0, keys: [], sha256_8: sha256Hex("null").slice(0, 8) };
   const keys = Object.keys(params).slice(0, 50);
-  const h = sha256Hex(JSON.stringify(stable(params)));
+  const h = sha256Hex(JSON.stringify(stableStringifyValue(params)));
   return { keyCount: Object.keys(params).length, keys, sha256_8: h.slice(0, 8) };
 }
 

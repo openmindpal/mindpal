@@ -8,6 +8,7 @@ import { apiPostJson } from "@openslin/device-agent-sdk";
 import { runLoop } from "@openslin/device-agent-sdk";
 import { confirmPrompt } from "./prompt";
 import { safeError, safeLog, sha256_8 } from "@openslin/device-agent-sdk";
+import { getDefaultPluginsForDeviceType } from "@openslin/shared";
 import { resolveDeviceAgentEnv } from "./deviceAgentEnv";
 import {
   listPlugins,
@@ -224,26 +225,6 @@ const BUILTIN_PLUGIN_MAP: Record<string, () => Promise<any>> = {
 const BUILTIN_ALIASES: Record<string, string[]> = {
   desktop: ["file", "browser", "desktop-control", "clipboard", "evidence"],
 };
-
-/**
- * 设备类型 → 默认内置插件映射（元数据驱动）
- * 当配置文件中无 pluginConfig 时，根据设备类型自动推断应加载的插件集。
- * 新增设备类型只需在此添加映射，无需修改加载逻辑。
- */
-const DEVICE_TYPE_DEFAULT_PLUGINS: Record<string, string[]> = {
-  desktop: ["desktop", "audio", "localInput", "dialogEngine"],
-  mobile: ["audio", "camera", "localInput", "dialogEngine", "bluetooth"],
-  iot: ["sensorBridge", "localInput", "bluetooth"],
-  robot: ["audio", "camera", "sensorBridge", "localInput", "dialogEngine", "bluetooth"],
-  vehicle: ["audio", "camera", "sensorBridge", "localInput", "dialogEngine", "bluetooth"],
-  home: ["audio", "sensorBridge", "localInput", "dialogEngine", "bluetooth"],
-  gateway: ["sensorBridge", "localInput"],
-};
-
-/** 根据设备类型获取默认插件列表 */
-export function getDefaultPluginsForDeviceType(deviceType: string): string[] {
-  return DEVICE_TYPE_DEFAULT_PLUGINS[deviceType] ?? [];
-}
 
 /**
  * 加载插件（元数据驱动）。

@@ -403,6 +403,7 @@ export async function acquireResumeLock(
 export async function findExpiredCheckpoints(pool: Pool): Promise<Array<{ loopId: string; runId: string; tenantId: string; resumeCount: number }>> {
   const timeoutMs = heartbeatTimeoutMs();
   const maxResumes = Math.max(1, resolveNumber("AGENT_LOOP_MAX_RESUMES", undefined, undefined, 3).value);
+  const scanLimit = Math.max(1, resolveNumber("AGENT_LOOP_RESUME_SCAN_LIMIT", undefined, undefined, 20).value);
   const res = await pool.query<{
     loop_id: string;
     run_id: string;
@@ -415,8 +416,8 @@ export async function findExpiredCheckpoints(pool: Pool): Promise<Array<{ loopId
        AND heartbeat_at < now() - ($1::bigint * interval '1 millisecond')
        AND resume_count < $2
      ORDER BY heartbeat_at ASC
-     LIMIT 20`,
-    [timeoutMs, maxResumes],
+     LIMIT $3`,
+    [timeoutMs, maxResumes, scanLimit],
   );
   return res.rows.map(r => ({
     loopId: r.loop_id,

@@ -430,20 +430,15 @@ export interface DebateSession {
   collabRunId: string;
   /** 辩论议题 */
   topic: string;
-  /** v1 参与方（正方/反方）—— 保持后向兼容 */
-  sideA: string;
-  sideB: string;
-  /** 仲裁方 */
-  arbiter: string;
-  /** v2: N 方辩论参与方列表 */
-  parties?: DebateParty[];
+  /** N 方辩论参与方列表 */
+  parties: DebateParty[];
   /** 最大轮次（环境变量可覆盖） */
   maxRounds: number;
   /** 已完成的轮次 */
   rounds: DebateRound[];
-  /** v2: 纠错记录 */
+  /** 纠错记录 */
   corrections?: DebateCorrection[];
-  /** v2: 共识演化历史 */
+  /** 共识演化历史 */
   consensusEvolution?: ConsensusEvolutionEntry[];
   /** 最终裁决（辩论结束后填充） */
   verdict?: DebateVerdict;
@@ -566,7 +561,6 @@ export function createDebateSession(params: {
   collabRunId: string;
   topic: string;
   parties: Array<{ partyId: string; role: string; stance: string; budget?: number }>;
-  arbiter: string;
   maxRounds?: number;
 }): DebateSession {
   const maxRounds = params.maxRounds ?? Math.max(1, collabConfig("DEBATE_MAX_ROUNDS"));
@@ -583,9 +577,6 @@ export function createDebateSession(params: {
     debateId: params.debateId,
     collabRunId: params.collabRunId,
     topic: params.topic,
-    sideA: parties[0]?.role ?? "party_0",
-    sideB: parties[1]?.role ?? "party_1",
-    arbiter: params.arbiter,
     parties,
     maxRounds,
     rounds: [],

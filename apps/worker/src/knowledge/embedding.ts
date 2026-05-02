@@ -4,7 +4,7 @@ import { computeMinhash, StructuredLogger, sha256Hex } from "@openslin/shared";
 const _logger = new StructuredLogger({ module: "worker:knowledge:embedding" });
 import { createVectorStore, resolveVectorStoreConfigFromEnv } from "./vectorStore";
 import { createVectorStoreChainFromEnv } from "./vectorStoreProvider";
-import type { VectorStoreEmbeddingV2 } from "@openslin/shared";
+import type { VectorStoreEmbedding } from "@openslin/shared";
 import { writeKnowledgeAudit as writeAudit } from "./auditWriter";
 
 /* ── 外部 Embedding 模型支持（OpenAI 兼容 API）─────────────────── */
@@ -401,7 +401,7 @@ export async function processKnowledgeEmbeddingJob(params: { pool: Pool; embeddi
           : (reusableMap.size > 0 ? (() => { for (const r of reusableMap.values()) { if (Array.isArray(r.embedding_vector) && r.embedding_vector.length > 0) return r.embedding_vector.length; } return 0; })() : 0);
         if (dimension > 0) {
           await v2Chain.ensureCollection({ name: collectionName, dimension, distance: "cosine" });
-          const v2Embeddings: VectorStoreEmbeddingV2[] = [];
+          const v2Embeddings: VectorStoreEmbedding[] = [];
           for (let ci2 = 0; ci2 < chunks.length; ci2++) {
             const c2 = chunks[ci2]!;
             /* 增量复用的 chunk 也需要写入 V2 向量存储 */

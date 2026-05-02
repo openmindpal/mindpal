@@ -931,6 +931,26 @@ export function buildWorldStateFromObservations(
   return state;
 }
 
+/**
+ * updateWorldState — 世界状态增量更新统一入口
+ *
+ * 将分散的 extractFromObservation + evaluateGoalConditions 调用收敛为单一入口。
+ * 纯调用点收敛，底层函数不变。
+ */
+export function updateWorldState(
+  obs: StepObservation | StepObservation[],
+  worldState: WorldState | null,
+  goalGraph: GoalGraph | null,
+): { worldState: WorldState | null; goalGraph: GoalGraph | null } {
+  if (!worldState) return { worldState, goalGraph };
+  const obsList = Array.isArray(obs) ? obs : [obs];
+  for (const o of obsList) {
+    worldState = extractFromObservation(o, worldState);
+  }
+  if (goalGraph) goalGraph = evaluateGoalConditions(goalGraph, worldState);
+  return { worldState, goalGraph };
+}
+
 /* ================================================================== */
 /*  extractWorldState — 观察阶段全量上下文提取                              */
 /* ================================================================== */

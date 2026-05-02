@@ -4,7 +4,7 @@
  * 从 collabDebate.ts 拆分而来，负责检测 Agent 结果分歧并自动触发辩论。
  */
 import type { AgentState, CollabResult, CollabOrchestratorParams } from "./collabTypes";
-import { runDebatePhaseV2 } from "./collabDebateV2";
+import { runDebatePhaseV2 } from "./collabDebate";
 import { collabConfig } from "@openslin/shared";
 import {
   persistDebateSession, persistDebateCorrections,
@@ -148,7 +148,7 @@ Side B (${sideBState.role}) 结论: ${sideBState.result?.message?.slice(0, 300) 
       orchestratorParams.app.log.warn({ err: (e as Error)?.message, debateId: debateSession.debateId }, "[CollabOrchestrator] persistDebateRound failed");
     });
     for (const position of round.positions) {
-      const matchingParty = (debateSession.parties ?? []).find((party) => party.role === position.fromRole);
+      const matchingParty = debateSession.parties.find((party) => party.role === position.fromRole);
       const correctionRefs = (debateSession.corrections ?? [])
         .filter((correction) => correction.targetRole === position.fromRole)
         .map((correction) => correction.correctionId);

@@ -1,5 +1,5 @@
-export { isPlainObject, sha256Hex, stableStringify, stableStringifyValue, digestObject } from "@openslin/shared";
-import { isPlainObject } from "@openslin/shared";
+export { isPlainObject, sha256Hex, stableStringify, stableStringifyValue, digestObject, checkType } from "@openslin/shared";
+import { isPlainObject, checkType } from "@openslin/shared";
 
 export function jsonByteLength(v: unknown) {
   try {
@@ -7,26 +7,6 @@ export function jsonByteLength(v: unknown) {
     return Buffer.byteLength(s, "utf8");
   } catch {
     return 0;
-  }
-}
-
-export function checkType(type: string, value: unknown): boolean {
-  if (value === null || value === undefined) return true;
-  switch (type) {
-    case "string":
-      return typeof value === "string";
-    case "number":
-      return typeof value === "number" && Number.isFinite(value);
-    case "boolean":
-      return typeof value === "boolean";
-    case "datetime":
-      return typeof value === "string";
-    case "json":
-      return true;
-    case "reference":
-      return typeof value === "string";
-    default:
-      return false;
   }
 }
 

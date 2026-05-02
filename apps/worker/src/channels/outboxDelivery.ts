@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { normalizeAuditErrorCategory } from "@openslin/shared";
+import { normalizeAuditErrorCategory, sha256Hex } from "@openslin/shared";
 import { decryptSecretPayload } from "../secrets/envelope";
 import { invokeFirstPartySkill } from "../lib/skillInvoke";
 
@@ -31,10 +31,6 @@ function stable(v: any): any {
   const out: any = {};
   for (const k of keys) out[k] = stable(v[k]);
   return out;
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
 }
 
 function hmacHex(secret: string, input: string) {

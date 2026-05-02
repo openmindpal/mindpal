@@ -12,19 +12,18 @@
  *   → api/skills/knowledge-rag/modules/repo.ts
  */
 
-import crypto from "node:crypto";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, sha256_8 } from "@openslin/shared";
 
 const _logger = new StructuredLogger({ module: "worker:vectorStoreProvider" });
 import type {
   VectorStoreProvider,
-  VectorStoreRefV2,
-  VectorStoreCapabilitiesV2,
-  VectorStoreV2,
-  VectorStoreConfigV2,
-  VectorStoreEmbeddingV2,
-  VectorStoreQueryV2,
-  VectorStoreQueryResponseV2,
+  VectorStoreRef,
+  VectorStoreCapabilities,
+  VectorStoreInterface,
+  VectorStoreConfig,
+  VectorStoreEmbedding,
+  VectorStoreQuery,
+  VectorStoreQueryResponse,
   VectorStoreBatchResult,
   VectorStoreCollectionInfo,
   VectorStoreFilter,
@@ -35,24 +34,20 @@ import type {
 
 // ─── 工具函数 ──────────────────────────────────────────────────
 
-function sha256Hex8(s: string): string {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8);
-}
-
 function nowIso(): string {
   return new Date().toISOString();
 }
 
 // ─── Qdrant 适配器 ──────────────────────────────────────────────
 
-type QdrantConfig = Extract<VectorStoreConfigV2, { provider: "qdrant" }>;
+type QdrantConfig = Extract<VectorStoreConfig, { provider: "qdrant" }>;
 
 /**
  * Qdrant REST API 适配器
  * 对接 Qdrant v1.x REST API (兼容 Qdrant Cloud / 本地部署)
  */
-export class QdrantVectorStore implements VectorStoreV2 {
-  readonly ref: VectorStoreRefV2;
+export class QdrantVectorStore implements VectorStoreInterface {
+  readonly ref: VectorStoreRef;
   private readonly cfg: QdrantConfig;
   private readonly baseUrl: string;
 
@@ -62,11 +57,11 @@ export class QdrantVectorStore implements VectorStoreV2 {
     this.ref = {
       provider: "qdrant",
       impl: "qdrant.rest.v1",
-      endpointDigest8: sha256Hex8(cfg.endpoint),
+      endpointDigest8: sha256_8(cfg.endpoint),
     };
   }
 
-  capabilities(): VectorStoreCapabilitiesV2 {
+  capabilities(): VectorStoreCapabilities {
     return {
       kind: "vectorStore.capabilities.v2",
       provider: "qdrant",
@@ -210,7 +205,7 @@ export class QdrantVectorStore implements VectorStoreV2 {
 
   async batchUpsert(params: {
     collection: string;
-    embeddings: VectorStoreEmbeddingV2[];
+    embeddings: VectorStoreEmbedding[];
   }): Promise<VectorStoreBatchResult> {
     const startedAt = Date.now();
     const batchSize = 100;
@@ -268,8 +263,8 @@ export class QdrantVectorStore implements VectorStoreV2 {
 
   async query(params: {
     collection: string;
-    query: VectorStoreQueryV2;
-  }): Promise<VectorStoreQueryResponseV2> {
+    query: VectorStoreQuery;
+  }): Promise<VectorStoreQueryResponse> {
     const startedAt = Date.now();
     try {
       const body: any = {
@@ -329,7 +324,7 @@ export class QdrantVectorStore implements VectorStoreV2 {
 }
 
 /** 将统一过滤条件转换为 Qdrant filter 格式 */
-function buildQdrantFilter(query: VectorStoreQueryV2): any | null {
+function buildQdrantFilter(query: VectorStoreQuery): any | null {
   const must: any[] = [];
   const mustNot: any[] = [];
   const should: any[] = [];
@@ -366,14 +361,14 @@ function filterConditionToQdrant(c: VectorStoreFilterCondition): any {
 
 // ─── Milvus 适配器 ──────────────────────────────────────────────
 
-type MilvusConfig = Extract<VectorStoreConfigV2, { provider: "milvus" }>;
+type MilvusConfig = Extract<VectorStoreConfig, { provider: "milvus" }>;
 
 /**
  * Milvus REST API 适配器
  * 对接 Milvus v2.x RESTful API (兼容 Zilliz Cloud / 本地部署)
  */
-export class MilvusVectorStore implements VectorStoreV2 {
-  readonly ref: VectorStoreRefV2;
+export class MilvusVectorStore implements VectorStoreInterface {
+  readonly ref: VectorStoreRef;
   private readonly cfg: MilvusConfig;
   private readonly baseUrl: string;
 
@@ -383,11 +378,11 @@ export class MilvusVectorStore implements VectorStoreV2 {
     this.ref = {
       provider: "milvus",
       impl: "milvus.rest.v2",
-      endpointDigest8: sha256Hex8(cfg.endpoint),
+      endpointDigest8: sha256_8(cfg.endpoint),
     };
   }
 
-  capabilities(): VectorStoreCapabilitiesV2 {
+  capabilities(): VectorStoreCapabilities {
     return {
       kind: "vectorStore.capabilities.v2",
       provider: "milvus",
@@ -519,7 +514,7 @@ export class MilvusVectorStore implements VectorStoreV2 {
 
   async batchUpsert(params: {
     collection: string;
-    embeddings: VectorStoreEmbeddingV2[];
+    embeddings: VectorStoreEmbedding[];
   }): Promise<VectorStoreBatchResult> {
     const startedAt = Date.now();
     const batchSize = 100;
@@ -582,8 +577,8 @@ export class MilvusVectorStore implements VectorStoreV2 {
 
   async query(params: {
     collection: string;
-    query: VectorStoreQueryV2;
-  }): Promise<VectorStoreQueryResponseV2> {
+    query: VectorStoreQuery;
+  }): Promise<VectorStoreQueryResponse> {
     const startedAt = Date.now();
     try {
       const body: any = {
@@ -646,7 +641,7 @@ export class MilvusVectorStore implements VectorStoreV2 {
 }
 
 /** 将统一过滤条件转换为 Milvus 表达式 */
-function buildMilvusFilter(query: VectorStoreQueryV2): string | null {
+function buildMilvusFilter(query: VectorStoreQuery): string | null {
   const parts: string[] = [];
   // 自动注入 tenant/space 过滤
   parts.push(`tenantId == "${query.tenantId}"`);
@@ -689,15 +684,15 @@ function filterConditionToMilvus(c: VectorStoreFilterCondition): string {
 
 // ─── pgvector (PostgreSQL) 适配器 ─────────────────────────────────
 
-type PgVectorStoreConfig = Extract<VectorStoreConfigV2, { provider: "pgvector" }>;
+type PgVectorStoreConfig = Extract<VectorStoreConfig, { provider: "pgvector" }>;
 
 /**
  * pgvector 适配器
  * 通过 PostgreSQL pgvector 扩展实现 V2 向量存储接口。
  * 使用 pg Pool 直连数据库，无需额外服务。
  */
-export class PgVectorProvider implements VectorStoreV2 {
-  readonly ref: VectorStoreRefV2;
+export class PgVectorProvider implements VectorStoreInterface {
+  readonly ref: VectorStoreRef;
   private readonly cfg: PgVectorStoreConfig;
   private readonly pgConfig: PgVectorConfig;
   /** 动态导入的 pg Pool，延迟初始化 */
@@ -709,7 +704,7 @@ export class PgVectorProvider implements VectorStoreV2 {
     this.ref = {
       provider: "pgvector",
       impl: "pgvector.pg.v1",
-      endpointDigest8: sha256Hex8(cfg.connectionString),
+      endpointDigest8: sha256_8(cfg.connectionString),
     };
   }
 
@@ -725,7 +720,7 @@ export class PgVectorProvider implements VectorStoreV2 {
     }
   }
 
-  capabilities(): VectorStoreCapabilitiesV2 {
+  capabilities(): VectorStoreCapabilities {
     return {
       kind: "vectorStore.capabilities.v2",
       provider: "pgvector",
@@ -848,7 +843,7 @@ export class PgVectorProvider implements VectorStoreV2 {
 
   async batchUpsert(params: {
     collection: string;
-    embeddings: VectorStoreEmbeddingV2[];
+    embeddings: VectorStoreEmbedding[];
   }): Promise<VectorStoreBatchResult> {
     const startedAt = Date.now();
     const tableName = `${params.collection}_vectors`;
@@ -893,8 +888,8 @@ export class PgVectorProvider implements VectorStoreV2 {
 
   async query(params: {
     collection: string;
-    query: VectorStoreQueryV2;
-  }): Promise<VectorStoreQueryResponseV2> {
+    query: VectorStoreQuery;
+  }): Promise<VectorStoreQueryResponse> {
     const startedAt = Date.now();
     const tableName = `${params.collection}_vectors`;
     const op = this.distanceOp();
@@ -978,14 +973,14 @@ export class PgVectorProvider implements VectorStoreV2 {
 
 // ─── External HTTP 适配器 (V2 包装) ──────────────────────────────
 
-type ExternalConfig = Extract<VectorStoreConfigV2, { provider: "external" }>;
+type ExternalConfig = Extract<VectorStoreConfig, { provider: "external" }>;
 
 /**
  * External HTTP 向量存储 V2 适配器
  * 兼容已有的 External HTTP 协议，并扩展 V2 能力
  */
-export class ExternalHttpVectorStore implements VectorStoreV2 {
-  readonly ref: VectorStoreRefV2;
+export class ExternalHttpVectorStore implements VectorStoreInterface {
+  readonly ref: VectorStoreRef;
   private readonly cfg: ExternalConfig;
 
   constructor(cfg: ExternalConfig) {
@@ -993,11 +988,11 @@ export class ExternalHttpVectorStore implements VectorStoreV2 {
     this.ref = {
       provider: "external",
       impl: "external.http.v2",
-      endpointDigest8: sha256Hex8(cfg.endpoint),
+      endpointDigest8: sha256_8(cfg.endpoint),
     };
   }
 
-  capabilities(): VectorStoreCapabilitiesV2 {
+  capabilities(): VectorStoreCapabilities {
     return {
       kind: "vectorStore.capabilities.v2",
       provider: "external",
@@ -1044,7 +1039,7 @@ export class ExternalHttpVectorStore implements VectorStoreV2 {
 
   async batchUpsert(params: {
     collection: string;
-    embeddings: VectorStoreEmbeddingV2[];
+    embeddings: VectorStoreEmbedding[];
   }): Promise<VectorStoreBatchResult> {
     const startedAt = Date.now();
     try {
@@ -1088,8 +1083,8 @@ export class ExternalHttpVectorStore implements VectorStoreV2 {
 
   async query(params: {
     collection: string;
-    query: VectorStoreQueryV2;
-  }): Promise<VectorStoreQueryResponseV2> {
+    query: VectorStoreQuery;
+  }): Promise<VectorStoreQueryResponse> {
     const startedAt = Date.now();
     try {
       const url = this.cfg.endpoint.replace(/\/+$/, "") + "/v1/query";
@@ -1133,7 +1128,7 @@ export class ExternalHttpVectorStore implements VectorStoreV2 {
 // ─── 配置化路由 + 降级链 ─────────────────────────────────────────
 
 /** 从环境变量解析 V2 向量存储配置 */
-export function resolveVectorStoreConfigV2FromEnv(): VectorStoreConfigV2 {
+export function resolveVectorStoreConfigFromEnv(): VectorStoreConfig {
   const provider = String(process.env.VECTOR_STORE_PROVIDER ?? process.env.KNOWLEDGE_VECTOR_STORE_MODE ?? "").trim().toLowerCase();
 
   if (provider === "qdrant") {
@@ -1193,7 +1188,7 @@ export function resolveVectorStoreConfigV2FromEnv(): VectorStoreConfigV2 {
 }
 
 /** 根据配置创建 V2 向量存储实例 */
-export function createVectorStoreV2(cfg: VectorStoreConfigV2): VectorStoreV2 | null {
+export function createVectorStoreInterface(cfg: VectorStoreConfig): VectorStoreInterface | null {
   switch (cfg.provider) {
     case "qdrant": return new QdrantVectorStore(cfg);
     case "milvus": return new MilvusVectorStore(cfg);
@@ -1209,20 +1204,20 @@ export function createVectorStoreV2(cfg: VectorStoreConfigV2): VectorStoreV2 | n
  * 降级顺序: 专业向量DB (Qdrant/Milvus) → External HTTP → PostgreSQL MinHash fallback
  * 每级降级自动记录 degradeReason 和性能指标
  */
-export class DegradingVectorStoreChain implements VectorStoreV2 {
-  readonly ref: VectorStoreRefV2;
-  private readonly chain: VectorStoreV2[];
+export class DegradingVectorStoreChain implements VectorStoreInterface {
+  readonly ref: VectorStoreRef;
+  private readonly chain: VectorStoreInterface[];
   private readonly degradeLog: VectorStoreDegradeEvent[] = [];
   private readonly maxDegradeLogSize = 100;
 
-  constructor(stores: VectorStoreV2[]) {
+  constructor(stores: VectorStoreInterface[]) {
     this.chain = stores.filter(Boolean);
     this.ref = this.chain.length > 0
       ? { ...this.chain[0]!.ref, impl: `degrade_chain[${this.chain.map(s => s.ref.provider).join(">")}]` }
       : { provider: "fallback", impl: "empty_chain" };
   }
 
-  capabilities(): VectorStoreCapabilitiesV2 {
+  capabilities(): VectorStoreCapabilities {
     return this.chain.length > 0
       ? this.chain[0]!.capabilities()
       : {
@@ -1279,7 +1274,7 @@ export class DegradingVectorStoreChain implements VectorStoreV2 {
     return { ok: false, error: "all_stores_failed" };
   }
 
-  async batchUpsert(params: { collection: string; embeddings: VectorStoreEmbeddingV2[] }): Promise<VectorStoreBatchResult> {
+  async batchUpsert(params: { collection: string; embeddings: VectorStoreEmbedding[] }): Promise<VectorStoreBatchResult> {
     for (let i = 0; i < this.chain.length; i++) {
       const store = this.chain[i]!;
       const startedAt = Date.now();
@@ -1324,7 +1319,7 @@ export class DegradingVectorStoreChain implements VectorStoreV2 {
     return { ok: false, count: 0, degraded: true, degradeReason: "all_stores_failed", latencyMs: 0, provider: "fallback" };
   }
 
-  async query(params: { collection: string; query: VectorStoreQueryV2 }): Promise<VectorStoreQueryResponseV2> {
+  async query(params: { collection: string; query: VectorStoreQuery }): Promise<VectorStoreQueryResponse> {
     for (let i = 0; i < this.chain.length; i++) {
       const store = this.chain[i]!;
       const startedAt = Date.now();
@@ -1364,24 +1359,24 @@ export class DegradingVectorStoreChain implements VectorStoreV2 {
  * 自动构建降级顺序: primary provider → external → (internal fallback 由调用方补充)
  */
 export function createVectorStoreChainFromEnv(): DegradingVectorStoreChain {
-  const primaryCfg = resolveVectorStoreConfigV2FromEnv();
-  const stores: VectorStoreV2[] = [];
+  const primaryCfg = resolveVectorStoreConfigFromEnv();
+  const stores: VectorStoreInterface[] = [];
 
   // 主 provider
-  const primary = createVectorStoreV2(primaryCfg);
+  const primary = createVectorStoreInterface(primaryCfg);
   if (primary) stores.push(primary);
 
   // 如果主 provider 不是 external，尝试加入 external 作为第二级降级
   if (primaryCfg.provider !== "external" && primaryCfg.provider !== "fallback") {
     const extEndpoint = String(process.env.KNOWLEDGE_VECTOR_STORE_ENDPOINT ?? "").trim();
     if (extEndpoint) {
-      const extCfg: VectorStoreConfigV2 = {
+      const extCfg: VectorStoreConfig = {
         provider: "external",
         endpoint: extEndpoint,
         bearerToken: String(process.env.KNOWLEDGE_VECTOR_STORE_BEARER_TOKEN ?? "").trim() || null,
         timeoutMs: Math.max(1000, Number(process.env.KNOWLEDGE_VECTOR_STORE_TIMEOUT_MS ?? 1500)),
       };
-      const ext = createVectorStoreV2(extCfg);
+      const ext = createVectorStoreInterface(extCfg);
       if (ext) stores.push(ext);
     }
   }

@@ -7,6 +7,8 @@
  * @module @openslin/shared/runtime
  */
 
+import { resolveNumber } from "./runtimeConfig";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 工具函数
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,11 +91,11 @@ export function normalizeLimits(v: unknown): RuntimeLimits {
   const timeoutMs =
     typeof obj.timeoutMs === "number" && Number.isFinite(obj.timeoutMs) && obj.timeoutMs > 0
       ? obj.timeoutMs
-      : 10_000;
+      : resolveNumber("SKILL_EXECUTION_TIMEOUT_MS", undefined, undefined, 10_000).value;
   const maxConcurrency =
     typeof obj.maxConcurrency === "number" && Number.isFinite(obj.maxConcurrency) && obj.maxConcurrency > 0
       ? obj.maxConcurrency
-      : 10;
+      : resolveNumber("SKILL_MAX_CONCURRENCY", undefined, undefined, 10).value;
   const memoryMbRaw = typeof obj.memoryMb === "number" && Number.isFinite(obj.memoryMb) ? obj.memoryMb : null;
   const memoryMb = memoryMbRaw === null ? null : Math.max(32, Math.min(8192, Math.round(memoryMbRaw)));
   const cpuMsRaw = typeof obj.cpuMs === "number" && Number.isFinite(obj.cpuMs) ? obj.cpuMs : null;
@@ -101,11 +103,11 @@ export function normalizeLimits(v: unknown): RuntimeLimits {
   const maxOutputBytesRaw =
     typeof obj.maxOutputBytes === "number" && Number.isFinite(obj.maxOutputBytes) ? obj.maxOutputBytes : null;
   const maxOutputBytes =
-    maxOutputBytesRaw === null ? 1_000_000 : Math.max(1_000, Math.min(20_000_000, Math.round(maxOutputBytesRaw)));
+    maxOutputBytesRaw === null ? resolveNumber("SKILL_MAX_OUTPUT_BYTES", undefined, undefined, 1_000_000).value : Math.max(1_000, Math.min(20_000_000, Math.round(maxOutputBytesRaw)));
   const maxEgressRequestsRaw =
     typeof obj.maxEgressRequests === "number" && Number.isFinite(obj.maxEgressRequests) ? obj.maxEgressRequests : null;
   const maxEgressRequests =
-    maxEgressRequestsRaw === null ? 50 : Math.max(0, Math.min(1000, Math.round(maxEgressRequestsRaw)));
+    maxEgressRequestsRaw === null ? resolveNumber("SKILL_MAX_EGRESS_REQUESTS", undefined, undefined, 50).value : Math.max(0, Math.min(1000, Math.round(maxEgressRequestsRaw)));
   return { timeoutMs, maxConcurrency, memoryMb, cpuMs, maxOutputBytes, maxEgressRequests };
 }
 

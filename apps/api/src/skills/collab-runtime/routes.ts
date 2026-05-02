@@ -16,7 +16,7 @@ import { getTaskState, upsertTaskState } from "../../modules/memory/repo";
 import { createApproval } from "../../modules/workflow/approvalRepo";
 import { assessToolExecutionRisk } from "../../kernel/approvalRuleEngine";
 import { createJobRun } from "../../modules/workflow/jobRepo";
-import { acquireWriteLease } from "../../modules/workflow/writeLease";
+import { acquireWriteLease } from "@openslin/shared";
 import { digestInputV1 } from "../../lib/digest";
 import { enqueueWorkflowStep, setRunAndJobStatus } from "../../modules/workflow/queue";
 import { createTaskAssignment, registerAgentRole, updateAgentRoleStatus, upsertPermissionContext, updateTaskAssignmentStatus, validateRoleConstraints } from "./modules/collabProtocolRepo";

@@ -1,20 +1,6 @@
-import crypto from "node:crypto";
 import { z } from "zod";
+import { sha256Hex, stableStringify } from "@openslin/shared";
 import { Errors } from "../../../lib/errors";
-
-function stable(v: any): any {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(stable);
-  const keys = Object.keys(v).sort();
-  const out: any = {};
-  for (const k of keys) out[k] = stable((v as any)[k]);
-  return out;
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
 
 function isSafeDomainPattern(s: string) {
   if (!s) return false;
@@ -82,6 +68,6 @@ export function validateWorkbenchManifestV1(input: unknown): { manifest: Workben
   }
   if (domains.length > 0) throw Errors.workbenchManifestDenied("V1 禁止 workbench 插件直接出站");
 
-  const digest = sha256Hex(JSON.stringify(stable(m)));
+  const digest = sha256Hex(stableStringify(m));
   return { manifest: m, digest };
 }

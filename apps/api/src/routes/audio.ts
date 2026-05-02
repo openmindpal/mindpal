@@ -1,15 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { requireSubject } from "../modules/auth/guard";
-import { setAuditContext } from "../modules/audit/context";
+import { guarded } from "../middleware/routeGuard";
 import { transcribeAudio, synthesizeSpeech, getAudioCapabilities, createStreamingSTTSession } from "../modules/audioService";
 import type { VideoStreamClientMessage, VideoStreamServerMessage } from "@openslin/shared";
 
 export const audioRoutes: FastifyPluginAsync = async (app) => {
   // ── POST /v1/audio/transcribe ─────────────────────────────────
   app.post("/v1/audio/transcribe", async (req) => {
-    setAuditContext(req, { resourceType: "audio", action: "transcribe" });
-    requireSubject(req);
+    await guarded(req, { resourceType: "audio", action: "transcribe" });
 
     const body = z
       .object({
@@ -31,8 +29,7 @@ export const audioRoutes: FastifyPluginAsync = async (app) => {
 
   // ── POST /v1/audio/speech ─────────────────────────────────────
   app.post("/v1/audio/speech", async (req, reply) => {
-    setAuditContext(req, { resourceType: "audio", action: "speech" });
-    requireSubject(req);
+    await guarded(req, { resourceType: "audio", action: "speech" });
 
     const body = z
       .object({
@@ -57,8 +54,7 @@ export const audioRoutes: FastifyPluginAsync = async (app) => {
 
   // ── GET /v1/audio/capabilities ────────────────────────────────
   app.get("/v1/audio/capabilities", async (req) => {
-    setAuditContext(req, { resourceType: "audio", action: "capabilities" });
-    requireSubject(req);
+    await guarded(req, { resourceType: "audio", action: "capabilities" });
     return getAudioCapabilities();
   });
 

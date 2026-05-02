@@ -138,32 +138,16 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
   });
 
   // ── 统一错误处理 ──
-  app.setErrorHandler(async (err, req, reply) => {
-    req.log.error({ err, traceId: req.ctx?.traceId, requestId: req.ctx?.requestId }, "request_error");
-    const pgCode = typeof (err as any)?.code === "string" ? String((err as any).code) : "";
 
-    // 42P01/42703: 输出详细缺失表/列名到日志，加速问题定位
-    if (pgCode === "42P01" || pgCode === "42703") {
-      const pgMessage = (err as any)?.message ?? "";
-      const pgDetail = (err as any)?.detail ?? "";
-      const pgTable = (err as any)?.table ?? "";
-      const pgColumn = (err as any)?.column ?? "";
-      req.log.error(
-        {
-          pgCode,
-          pgMessage,
-          pgDetail,
-          pgTable,
-          pgColumn,
-          route: req.routeOptions?.url ?? req.url,
-          method: req.method,
-          traceId: req.ctx?.traceId,
-        },
-        `[DB_SCHEMA_MISMATCH] PostgreSQL ${pgCode === "42P01" ? "undefined_table" : "undefined_column"}: ${pgMessage}`,
-      );
-    }
+  /** 将任意错误分类为标准化 HTTP 响应 { statusCode, body } */
+  function classifyAndRespond(
+    err: unknown,
+    req: { ctx?: { traceId?: string; requestId?: string; audit?: { outputDigest?: unknown } } },
+  ): { statusCode: number; body: Record<string, unknown> } {
+    const traceId = req.ctx?.traceId;
+    const requestId = req.ctx?.requestId;
 
-    // ZodError → ServiceError(INVALID_REQUEST)
+    // 1. ZodError → 400
     if (err instanceof ZodError) {
       const svcErr = new ServiceError({
         category: ErrorCategory.INVALID_REQUEST,
@@ -173,16 +157,11 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
         details: { zodIssues: err.issues },
       });
       const resp = toHttpResponse(svcErr);
-      return reply.status(resp.statusCode).send({
-        ...resp.body,
-        traceId: req.ctx?.traceId,
-        requestId: req.ctx?.requestId,
-      });
+      return { statusCode: resp.statusCode, body: { ...resp.body, traceId, requestId } };
     }
 
-    // AppError（继承自 ServiceError）→ 保留 i18n 格式
+    // 2. AppError（继承自 ServiceError）→ 保留 i18n 格式
     if (isAppError(err)) {
-      const status = err.httpStatus;
       const auditSafetySummary = (() => {
         const digest = req.ctx?.audit?.outputDigest as any;
         if (!digest || typeof digest !== "object") return undefined;
@@ -190,18 +169,19 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
         if (!ss || typeof ss !== "object" || Array.isArray(ss)) return undefined;
         return ss;
       })();
-      const payload: any = {
+      const body: Record<string, unknown> = {
         errorCode: err.errorCode,
         message: err.messageI18n,
-        traceId: req.ctx?.traceId,
-        requestId: req.ctx?.requestId,
+        traceId,
+        requestId,
       };
-      if (auditSafetySummary) payload.safetySummary = auditSafetySummary;
-      return reply.status(status).send(payload);
+      if (auditSafetySummary) body.safetySummary = auditSafetySummary;
+      return { statusCode: err.httpStatus, body };
     }
 
-    // PG 错误 → 对应 AppError
-    const appErr =
+    // 3. PostgreSQL 错误 → 对应 AppError
+    const pgCode = typeof (err as any)?.code === "string" ? String((err as any).code) : "";
+    const pgAppErr =
       pgCode === "22P02"
         ? Errors.badRequest("ID 格式非法")
         : pgCode === "23503"
@@ -209,24 +189,42 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
           : pgCode === "42P01" || pgCode === "42703"
             ? Errors.serviceNotReady(`数据库结构未初始化或版本不匹配 (${pgCode === "42P01" ? "缺少表" : "缺少列"}: ${(err as any)?.message?.match(/(?:relation|column)\s+"([^"]+)"/)?.[1] ?? "unknown"})`)
             : null;
-
-    if (appErr) {
-      return reply.status(appErr.httpStatus).send({
-        errorCode: appErr.errorCode,
-        message: appErr.messageI18n,
-        traceId: req.ctx?.traceId,
-        requestId: req.ctx?.requestId,
-      });
+    if (pgAppErr) {
+      return {
+        statusCode: pgAppErr.httpStatus,
+        body: { errorCode: pgAppErr.errorCode, message: pgAppErr.messageI18n, traceId, requestId },
+      };
     }
 
-    // 兜底：通过 classifyError 统一分类
+    // 4. 兜底：通过 classifyError 统一分类
     const svcErr = classifyError(err);
     const resp = toHttpResponse(svcErr);
-    return reply.status(resp.statusCode).send({
-      ...resp.body,
-      traceId: req.ctx?.traceId,
-      requestId: req.ctx?.requestId,
-    });
+    return { statusCode: resp.statusCode, body: { ...resp.body, traceId, requestId } };
+  }
+
+  app.setErrorHandler(async (err, req, reply) => {
+    req.log.error({ err, traceId: req.ctx?.traceId, requestId: req.ctx?.requestId }, "request_error");
+
+    // PG schema mismatch 详细日志
+    const pgCode = typeof (err as any)?.code === "string" ? String((err as any).code) : "";
+    if (pgCode === "42P01" || pgCode === "42703") {
+      req.log.error(
+        {
+          pgCode,
+          pgMessage: (err as any)?.message ?? "",
+          pgDetail: (err as any)?.detail ?? "",
+          pgTable: (err as any)?.table ?? "",
+          pgColumn: (err as any)?.column ?? "",
+          route: req.routeOptions?.url ?? req.url,
+          method: req.method,
+          traceId: req.ctx?.traceId,
+        },
+        `[DB_SCHEMA_MISMATCH] PostgreSQL ${pgCode === "42P01" ? "undefined_table" : "undefined_column"}: ${(err as any)?.message ?? ""}`,
+      );
+    }
+
+    const { statusCode, body } = classifyAndRespond(err, req);
+    return reply.status(statusCode).send(body);
   });
 
   // ── P2: 内部通信端点（Worker→API，不走标准认证链路）──

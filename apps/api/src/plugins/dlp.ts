@@ -1,6 +1,6 @@
 import { attachDlpSummary, redactValue, shouldDenyDlpForTarget } from "@openslin/shared";
 import { Errors } from "../lib/errors";
-import { digestBody, digestPayload } from "./digests";
+import { digestBody, digestPayload } from "./audit";
 import { resolveRequestDlpPolicyContext } from "../lib/dlpPolicy";
 
 export async function handleDlpPreSerialization(

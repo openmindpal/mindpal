@@ -3,8 +3,7 @@
  */
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { setAuditContext } from "../../modules/audit/context";
-import { requirePermission } from "../../modules/auth/guard";
+import { guarded } from "../../middleware/routeGuard";
 import { schemaUiRequestSchema, schemaUiSavePageSchema } from "./modules/types";
 import { generateSchemaUi } from "./modules/generator";
 import { upsertDraft } from "../ui-page-config/modules/pageRepo";
@@ -15,12 +14,9 @@ export const schemaUiRoutes: FastifyPluginAsync = async (app) => {
    * 接收自然语言输入，返回 SchemaUiConfig
    */
   app.post("/schema-ui/generate", async (req) => {
-    setAuditContext(req, { resourceType: "schema_ui", action: "generate" });
-    const decision = await requirePermission({ req, resourceType: "schema", action: "read" });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "schema_ui", action: "generate", perm: { resourceType: "schema", action: "read" } });
 
     const body = schemaUiRequestSchema.parse(req.body);
-    const subject = req.ctx.subject!;
 
     const config = await generateSchemaUi({
       userInput: body.userInput,
@@ -52,12 +48,9 @@ export const schemaUiRoutes: FastifyPluginAsync = async (app) => {
    * 将 Schema-UI 生成结果持久化为页面草稿
    */
   app.post("/schema-ui/save-page", async (req) => {
-    setAuditContext(req, { resourceType: "schema_ui", action: "save_page" });
-    const decision = await requirePermission({ req, resourceType: "ui_config", action: "write" });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "schema_ui", action: "save_page", perm: { resourceType: "ui_config", action: "write" } });
 
     const body = schemaUiSavePageSchema.parse(req.body);
-    const subject = req.ctx.subject!;
 
     const scope = subject.spaceId
       ? { scopeType: "space" as const, scopeId: subject.spaceId }

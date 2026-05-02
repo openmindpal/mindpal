@@ -131,14 +131,14 @@ export type FieldRuleSide = {
   deny?: string[];
 };
 
-export type FieldRulesV1 = {
+export type FieldRules = {
   read?: FieldRuleSide;
   write?: FieldRuleSide;
 };
 
 export type ConditionalFieldRule = {
   condition?: unknown;   // AbacCondition-style; when null → always applies
-  fieldRules: FieldRulesV1;
+  fieldRules: FieldRules;
 };
 
 export type RowFilterKind =
@@ -157,7 +157,7 @@ export type PolicyDecision = {
   reason?: string;
   matchedRules?: unknown;
   rowFilters?: RowFilterKind | unknown;
-  fieldRules?: FieldRulesV1;
+  fieldRules?: FieldRules;
   conditionalFieldRules?: ConditionalFieldRule[];
   snapshotRef?: string;
   policyRef?: PolicyRef;
@@ -212,20 +212,13 @@ export type { EvidenceSourceRef, EvidenceRef, EvidencePolicy, AnswerEnvelope } f
 export type {
   VectorStoreProvider,
   VectorStoreRef,
-  VectorStoreRef as VectorStoreRefV2,
   VectorStoreCapabilities,
-  VectorStoreCapabilities as VectorStoreCapabilitiesV2,
   VectorStoreInterface,
-  VectorStoreInterface as VectorStoreV2,
   VectorStoreConfig,
-  VectorStoreConfig as VectorStoreConfigV2,
   VectorStoreEmbedding,
-  VectorStoreEmbedding as VectorStoreEmbeddingV2,
   VectorMetadataPayload,
   VectorStoreQuery,
-  VectorStoreQuery as VectorStoreQueryV2,
   VectorStoreQueryResponse,
-  VectorStoreQueryResponse as VectorStoreQueryResponseV2,
   VectorStoreBatchResult,
   VectorStoreCollectionInfo,
   VectorStoreFilter,
@@ -322,8 +315,20 @@ export { checkCapabilityEnvelopeNotExceedV1, validateCapabilityEnvelopeV1 } from
 // ─── 统一错误分类枚举 ─────────────────────────────────────────────────
 export { ErrorCategory, type ErrorCategoryValue, isRetryableError, errorActionHint } from "./errorCategory";
 
-export { AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory } from "./audit";
-export type { AuditErrorCategory, AuditEventInput, AuditWriter } from "./audit";
+export {
+  AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory,
+  HIGH_RISK_AUDIT_ACTIONS, isHighRiskAuditAction,
+  AuditContractError,
+  generateHumanSummary, withPolicySnapshotRef,
+  insertAuditEvent, insertAuditEventFromShared,
+} from "./audit";
+export type {
+  AuditErrorCategory, AuditEventInput, AuditWriter,
+  DetailedAuditEventInput,
+  AuditQueryable, AuditPoolLike, AuditClientLike,
+  InsertAuditEventOptions,
+  AuditEvidenceRef,
+} from "./audit";
 
 export { PERM } from "./permissionActions";
 export type { PermissionAction } from "./permissionActions";
@@ -440,6 +445,9 @@ export {
   SkillProcessPool,
   createSandboxExecutor,
   createSandboxExecutorWithPool,
+  buildApiFetch,
+  createEgressWrappedFetch,
+  runSkillEntry,
 } from "./skillExecutor";
 export type {
   SkillExecuteRequest,
@@ -447,6 +455,16 @@ export type {
   SandboxExecutor,
   SandboxExecutorOptions,
   SkillVersionSwitch,
+  SandboxIpcExecuteMessage,
+  SandboxIpcHeartbeatMessage,
+  SandboxIpcHeartbeatAck,
+  SandboxIpcPayload,
+  SandboxIpcResultMessage,
+  SandboxIpcMessage,
+  ApiFetchContext,
+  EgressWrappedFetchOptions,
+  RunSkillEntryOptions,
+  RunSkillEntryResult,
 } from "./skillExecutor";
 
 // ─── P2-4: 统一协作协议 + P2-03: 通用 DAG 工具函数 ──────────────────────
@@ -550,9 +568,7 @@ export {
   validateCollabMessage,
   validateConsensusProposal,
   createDebateSession,
-  createDebateSession as createDebateSessionV2,
   isDebateConverged,
-  isDebateConverged as isDebateConvergedV2,
   computeDebateConsensusScore,
   COLLAB_CONFIG_DEFAULTS,
   DEBATE_CONFIG_DEFAULTS,
@@ -650,6 +666,8 @@ export {
   shouldSample,
   safeStringify,
   DEFAULT_SAMPLING_RULES,
+  initializeServiceLogging,
+  registerSensitiveField,
 } from "./structuredLogger";
 export type {
   LogLevel,
@@ -657,6 +675,7 @@ export type {
   LogContext,
   SamplingRule,
   StructuredLoggerConfig,
+  ServiceLoggingConfig,
 } from "./structuredLogger";
 
 // ── 工具别名解析器（共享） ──
@@ -826,6 +845,9 @@ export type {
   DeviceSessionState, SecureDeviceMessage,
 } from "./deviceHandshakeSecurity";
 
+// ── 统一字段类型校验 ──
+export { checkType } from "./typeCheck";
+
 // ── 统一附件处理基座（元数据驱动，零硬编码） ──
 export {
   DEFAULT_MULTIMODAL_CAPABILITIES,
@@ -846,4 +868,7 @@ export type {
   VideoStreamClientMessage,
   VideoStreamServerMessage,
 } from "./deviceProtocol";
+
+// ── 设备插件策略映射（Single Source of Truth） ──
+export { DEVICE_TYPE_PLUGIN_POLICY, getDefaultPluginsForDeviceType } from "./devicePluginPolicy";
 

@@ -23,7 +23,7 @@ import { insertAuditEvent } from "../modules/audit/auditRepo";
 import { writeCheckpoint, finalizeCheckpoint, startHeartbeat, registerProcess, updateProcessStatus, AGENT_LOOP_FULL_CHECKPOINT_INTERVAL, type WriteCheckpointParams } from "./loopCheckpoint";
 import { acquireLoopSlot } from "./priorityScheduler";
 import { decomposeGoal } from "./goalDecomposer";
-import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations, extractWorldState } from "./worldStateExtractor";
+import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations, extractWorldState, updateWorldState } from "./worldStateExtractor";
 import { verifyGoalCompletion, verifySimple, type VerificationResult } from "./verifierAgent";
 import { checkAndEnforceIntentBoundary, detectIntentBoundary, type IntentDriftResult } from "./intentAnchoringService";
 
@@ -100,6 +100,43 @@ export async function collectInCompletionOrder<T>(promises: Array<Promise<T>>): 
   return settled;
 }
 
+/**
+ * 私有辅助：检查中断信号是否已触发
+ */
+function checkInterrupt(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
+/* ── Phase tracing helpers（消除 4 阶段重复的 try/startPhase/endPhase 包装） ── */
+
+/** 安全启动 tracing phase，静默失败 */
+function safeStartPhase(ctx: AgentTracingContext | null, name: string, iter: number): void {
+  try { if (ctx) startPhase(ctx, name, iter); } catch { /* noop */ }
+}
+
+/** 安全结束 tracing phase，静默失败 */
+function safeEndPhase(ctx: AgentTracingContext | null, attrs?: Record<string, unknown>): void {
+  try { if (ctx) endPhase(ctx, attrs); } catch { /* noop */ }
+}
+
+/**
+ * executePhase — 纯 tracing 包装器，不添加业务语义。
+ * try/finally 确保 endPhase 在异常/提前退出时也被调用。
+ */
+async function executePhase<T>(
+  ctx: AgentTracingContext | null,
+  phaseName: string,
+  iterations: number,
+  fn: () => Promise<T>,
+): Promise<T> {
+  safeStartPhase(ctx, phaseName, iterations);
+  try {
+    return await fn();
+  } finally {
+    safeEndPhase(ctx);
+  }
+}
+
 /* ================================================================== */
 /*  Main Loop — Observe → Think → Decide → Act                         */
 /* ================================================================== */
@@ -111,13 +148,13 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     signal, userIntervention, onStepComplete, onLoopEnd,
     defaultModelRef, resumeLoopId, resumeState,
   } = params;
-  const maxIterations = params.maxIterations ?? 15;
-  const maxWallTimeMs = params.maxWallTimeMs ?? 10 * 60 * 1000;
+  const maxIterations = params.maxIterations ?? resolveNumber("AGENT_LOOP_MAX_ITERATIONS", undefined, undefined, 15).value;
+  const maxWallTimeMs = params.maxWallTimeMs ?? resolveNumber("AGENT_LOOP_MAX_WALL_TIME_MS", undefined, undefined, 600_000).value;
 
   /* P1-05: 全局并发入口门 */
   let releaseSlot: (() => void) | null = null;
   try {
-    releaseSlot = await acquireLoopSlot({ priority: params.priority ?? 5, timeoutMs: 60_000 });
+    releaseSlot = await acquireLoopSlot({ priority: params.priority ?? resolveNumber("AGENT_LOOP_DEFAULT_PRIORITY", undefined, undefined, 5).value, timeoutMs: resolveNumber("AGENT_LOOP_ADMISSION_TIMEOUT_MS", undefined, undefined, 60_000).value });
   } catch (gateErr: any) {
     app.log.warn({ err: gateErr?.message, runId }, "[AgentLoop] 全局并发入口门拒绝");
     const failResult: AgentLoopResult = {
@@ -219,7 +256,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
   try {
     while (iterations < maxIterations) {
       // 检查中断信号
-      if (signal?.aborted) {
+      if (checkInterrupt(signal)) {
         await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
           app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted) failed");
         });
@@ -271,17 +308,27 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       }
 
       // ── Phase 1: Observe ──
-      try { if (tracingCtx) startPhase(tracingCtx, "observe", iterations); } catch { /* noop */ }
-      if (iterations === 1 && AGENT_LOOP_BATCH_OBSERVE) {
-        const batchResult = await buildObservationsBatch(pool, runId, 0);
-        if (batchResult.observations.length > 0) observations.push(...batchResult.observations);
-        if (batchResult.dbDurationMs > 0) app.metrics.observeObserveDbDuration({ durationMs: batchResult.dbDurationMs });
+      const lastObs = await executePhase(tracingCtx, "observe", iterations, async () => {
+        if (iterations === 1 && AGENT_LOOP_BATCH_OBSERVE) {
+          const batchResult = await buildObservationsBatch(pool, runId, 0);
+          if (batchResult.observations.length > 0) observations.push(...batchResult.observations);
+          if (batchResult.dbDurationMs > 0) app.metrics.observeObserveDbDuration({ durationMs: batchResult.dbDurationMs });
+        }
+        return observations.length > 0 ? observations[observations.length - 1] : null;
+      });
+
+      // ── 信号检查：Observe 完成后 ──
+      if (checkInterrupt(signal)) {
+        await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
+          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/observe) failed");
+        });
+        const result = buildResult("interrupted", "用户中断了任务执行");
+        onLoopEnd?.(result);
+        return result;
       }
-      const lastObs = observations.length > 0 ? observations[observations.length - 1] : null;
-      try { if (tracingCtx) endPhase(tracingCtx); } catch { /* noop */ }
 
       // ── Phase 2: Think ──
-      try { if (tracingCtx) startPhase(tracingCtx, "think", iterations); } catch { /* noop */ }
+      safeStartPhase(tracingCtx, "think", iterations);
       const iterationStartMs = Date.now();
       // 构建迭代上下文（GoalGraph + WorldState + 环境状态 + 动态策略）
       const iterCtx = await buildIterationContext({
@@ -297,6 +344,16 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       let forcePurpose: string | undefined;
       let upgradedFrom: string | undefined;
       const qualityConfig = getDecisionQualityConfig();
+
+      // ── 信号检查：Think/LLM 调用前 ──
+      if (checkInterrupt(signal)) {
+        await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
+          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/think) failed");
+        });
+        const result = buildResult("interrupted", "用户中断了任务执行");
+        onLoopEnd?.(result);
+        return result;
+      }
 
       try {
         const llmResult = await invokeLlmForDecision({
@@ -328,7 +385,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       const estimatedTokens = Math.ceil(modelOutputText.length / 4);
       recordTokenUsage(budget, estimatedTokens);
 
-      try { if (tracingCtx) endPhase(tracingCtx); } catch { /* noop */ }
+      safeEndPhase(tracingCtx);
 
       // 处理 Think 阶段意图漂移检测结果
       if (iterCtx.intentDrift?.drifted) {
@@ -345,7 +402,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       }
 
       // ── Phase 3: Decide ──
-      try { if (tracingCtx) startPhase(tracingCtx, "decide", iterations); } catch { /* noop */ }
+      safeStartPhase(tracingCtx, "decide", iterations);
       const decideStartMs = Date.now();
       let decision = parseAgentDecision(modelOutputText);
 
@@ -429,6 +486,16 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       lastDecision = decision;
       const decideLatencyMs = Date.now() - decideStartMs;
 
+      // ── 信号检查：Decide 解析完成后，Act 执行前 ──
+      if (checkInterrupt(signal)) {
+        await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
+          app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/decide) failed");
+        });
+        const result = buildResult("interrupted", "用户中断了任务执行");
+        onLoopEnd?.(result);
+        return result;
+      }
+
       // P0-2: Agent Decision 打点
       app.metrics.observeAgentDecision({
         result: "ok",
@@ -448,10 +515,10 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         toolRef: decision.toolRef,
       }, "[AgentLoop] 决策");
 
-      try { if (tracingCtx) endPhase(tracingCtx, { "agent.decision": decision.action }); } catch { /* noop */ }
+      safeEndPhase(tracingCtx, { "agent.decision": decision.action });
 
       // ── Phase 4: Act ──
-      try { if (tracingCtx) startPhase(tracingCtx, "act", iterations); } catch { /* noop */ }
+      safeStartPhase(tracingCtx, "act", iterations);
       switch (decision.action) {
         case "done": {
           const doneResult = await handleDoneAction({
@@ -612,6 +679,16 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           }
           currentSeq += calls.length;
 
+          // ── 信号检查：并行工具执行全部返回后 ──
+          if (checkInterrupt(signal)) {
+            await finalizeCheckpoint(pool, loopId, "interrupted").catch((e: unknown) => {
+              app.log.warn({ err: (e as Error)?.message, runId, loopId }, "[AgentLoop] finalizeCheckpoint(interrupted/parallel) failed");
+            });
+            const result = buildResult("interrupted", "用户中断了任务执行");
+            onLoopEnd?.(result);
+            return result;
+          }
+
           // 记录并行工具执行的预算消耗
           for (let i = 0; i < calls.length; i++) {
             recordCostUsage(budget, 0);
@@ -629,12 +706,9 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           });
 
           // P0-2: WorldState 增量提取（并行步骤批量提取）
-          if (worldState) {
-            for (let i = 0; i < calls.length; i++) {
-              const lastObs = observations[observations.length - calls.length + i];
-              if (lastObs) worldState = extractFromObservation(lastObs, worldState);
-            }
-            if (goalGraph) goalGraph = evaluateGoalConditions(goalGraph, worldState);
+          {
+            const parallelObs = observations.slice(observations.length - calls.length);
+            ({ worldState, goalGraph } = updateWorldState(parallelObs, worldState, goalGraph));
           }
           break;
         }
@@ -729,15 +803,13 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       }
 
       // ── Tracing: act phase 结束 ──
-      try {
-        if (tracingCtx) {
-          const actToolCount = decision.action === "parallel_tool_calls"
-            ? (decision.parallelCalls?.length ?? 0)
-            : (decision.action === "tool_call" ? 1 : 0);
-          endPhase(tracingCtx, { "agent.tool_count": actToolCount });
-          tracingToolCallCount += actToolCount;
-        }
-      } catch { /* noop */ }
+      {
+        const actToolCount = decision.action === "parallel_tool_calls"
+          ? (decision.parallelCalls?.length ?? 0)
+          : (decision.action === "tool_call" ? 1 : 0);
+        safeEndPhase(tracingCtx, { "agent.tool_count": actToolCount });
+        tracingToolCallCount += actToolCount;
+      }
 
       // P0-1: 每次迭代结束后写 checkpoint（分层：fast 轻量 / full 完整）
       const decisionAction: string = decision.action;

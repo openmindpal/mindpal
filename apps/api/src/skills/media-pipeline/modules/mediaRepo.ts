@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import crypto from "node:crypto";
+import { sha256HexBytes } from "@openslin/shared";
 
 export type MediaObjectRow = {
   mediaId: string;
@@ -45,10 +45,6 @@ function toMediaObject(r: any): MediaObjectRow {
   };
 }
 
-export function sha256Hex(bytes: Buffer) {
-  return crypto.createHash("sha256").update(bytes).digest("hex");
-}
-
 export async function createMediaObject(params: {
   pool: Pool;
   tenantId: string;
@@ -68,7 +64,7 @@ export async function createMediaObject(params: {
   createdBySubjectId?: string | null;
 }) {
   const bytes = params.contentBytes ?? null;
-  const sha256 = params.sha256 ?? (bytes ? sha256Hex(bytes) : null);
+  const sha256 = params.sha256 ?? (bytes ? sha256HexBytes(bytes) : null);
   const byteSize = params.byteSize ?? (bytes ? bytes.length : null);
   if (!sha256 || !byteSize) throw new Error("media_bytes_or_ref_required");
   const res = await params.pool.query(

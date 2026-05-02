@@ -5,20 +5,7 @@
  * missing, expired, or stale, and enqueues new eval runs.
  * Designed to run periodically (cron/interval) within the worker process.
  */
-import crypto from "node:crypto";
-
-function sha256Hex(input: string) {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
-}
-
-function stableStringify(value: any): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const keys = Object.keys(value).sort();
-  const parts = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`);
-  return `{${parts.join(",")}}`;
-}
+import { sha256Hex, stableStringify } from "@openslin/shared";
 
 function evalReportDigest8FromCases(casesJson: any[]) {
   const cases = Array.isArray(casesJson) ? casesJson : [];

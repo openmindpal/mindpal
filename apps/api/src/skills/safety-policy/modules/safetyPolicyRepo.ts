@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { sha256Hex } from "../../../lib/digest";
+import { sha256Hex, stableStringify } from "@openslin/shared";
 
 export type SafetyPolicyType = "content" | "injection" | "risk";
 export type SafetyPolicyVersionStatus = "draft" | "submitted" | "approved" | "released";
@@ -21,15 +21,6 @@ export type SafetyPolicyVersionRow = {
   createdAt: string;
   publishedAt: string | null;
 };
-
-function stableStringify(v: unknown): string {
-  if (v === null) return "null";
-  if (typeof v !== "object") return JSON.stringify(v);
-  if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
-  const obj = v as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
-}
 
 export function digestSafetyPolicyJson(policyJson: unknown) {
   return sha256Hex(stableStringify(policyJson));

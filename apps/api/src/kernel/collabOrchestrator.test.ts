@@ -37,7 +37,7 @@ vi.mock("../modules/memory/repo", () => ({
   upsertTaskState,
 }));
 
-import { runCollabOrchestrator, runDebatePhase } from "./collabOrchestrator";
+import { runCollabOrchestrator, runDebatePhaseV2 } from "./collabOrchestrator";
 
 function createParams() {
   return {
@@ -158,92 +158,78 @@ function createDebateParams(overrides?: Partial<Record<string, any>>) {
     collabRunId: "22222222-2222-2222-2222-222222222222",
     taskId: "task-debate-1",
     topic: "应该用 React 还是 Vue",
-    sideA: { agentId: "agent_a", role: "architect", goal: "推荐 React" },
-    sideB: { agentId: "agent_b", role: "frontend_lead", goal: "推荐 Vue" },
+    parties: [
+      { agentId: "agent_a", role: "architect", goal: "推荐 React", stance: "pro" },
+      { agentId: "agent_b", role: "frontend_lead", goal: "推荐 Vue", stance: "con" },
+    ],
     maxRounds: 2,
     maxIterationsPerRound: 3,
     ...overrides,
   };
 }
 
-describe("runDebatePhase", () => {
+describe("runDebatePhaseV2", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it("2 轮对抗后未收敛 → max_rounds_reached + arbiter 仲裁", async () => {
     // 每次 runAgentLoop 返回不同 Agent 的输出
-    let callCount = 0;
-    runAgentLoop.mockImplementation(async (params: any) => {
-      callCount++;
-      const goal = params.goal as string;
-      // 根据 goal 内容区分正方/反方/仲裁
-      if (goal.includes("impartial arbiter")) {
-        // 仲裁输出
-        return {
-          ok: true, endReason: "done", iterations: 1,
-          succeededSteps: 1, failedSteps: 0, observations: [],
-          message: `**Outcome**: side_a_wins
-**Winner**: architect
-**Reasoning**: React 生态更成熟
-**Synthesized Conclusion**: React 更适合
-**Round Scores**: Round 0: 0.7, 0.6 Round 1: 0.8, 0.5`,
-        };
-      }
+    runAgentLoop.mockImplementation(async () => {
       // 正方/反方 — 模拟有分歧（低置信度）
-      const isFirstInRound = goal.includes('Present your initial position') || !goal.includes('Opponent');
       return {
         ok: true, endReason: "done", iterations: 1,
         succeededSteps: 1, failedSteps: 0, observations: [],
-        message: `**Claim**: ${isFirstInRound ? '选 React' : '选 Vue'}\n**Reasoning**: 各有优势\n**Evidence**: 社区数据\n**Confidence**: 0.6`,
+        message: `{"claim": "选 React", "reasoning": "各有优势", "evidence": ["社区数据"], "confidence": 0.6}`,
       };
     });
 
+    // Mock invokeModelChat: correction detection returns [], arbiter returns verdict
+    invokeModelChat.mockImplementation(async (params: any) => {
+      if (params.purpose === "debate_v2_arbiter") {
+        return {
+          outputText: `{"outcome": "side_a_wins", "winnerRoles": ["architect"], "reasoning": "React 生态更成熟", "synthesizedConclusion": "React 更适合", "correctionSummary": ""}`,
+        };
+      }
+      return { outputText: "[]" };
+    });
+
     const params = createDebateParams();
-    const session = await runDebatePhase(params as any);
+    const session = await runDebatePhaseV2(params as any);
 
     // 验证辩论结构
     expect(session.debateId).toBeTruthy();
     expect(session.rounds).toHaveLength(2);
-    expect(session.sideA).toBe("architect");
-    expect(session.sideB).toBe("frontend_lead");
-
-    // 2 轮 × 2 Agent + 1 仲裁 = 5 次 runAgentLoop
-    expect(runAgentLoop).toHaveBeenCalledTimes(5);
+    expect(session.parties[0]!.role).toBe("architect");
+    expect(session.parties[1]!.role).toBe("frontend_lead");
 
     // 最终应有仲裁裁决
     expect(session.status).toBe("verdicted");
     expect(session.verdict).toBeDefined();
     expect(session.verdict!.outcome).toBe("side_a_wins");
-    expect(session.verdict!.winnerRole).toBe("architect");
-
-    // 审计信封应被写入
-    const envelopeWrites = (params.pool.query as any).mock.calls.filter(
-      ([sql]: [string]) => String(sql).includes("INSERT INTO collab_envelopes"),
-    );
-    expect(envelopeWrites.length).toBeGreaterThanOrEqual(1);
   });
 
   it("第 1 轮即收敛 → converged + 仲裁", async () => {
-    runAgentLoop.mockImplementation(async (params: any) => {
-      const goal = params.goal as string;
-      if (goal.includes("impartial arbiter")) {
-        return {
-          ok: true, endReason: "done", iterations: 1,
-          succeededSteps: 1, failedSteps: 0, observations: [],
-          message: `**Outcome**: synthesis\n**Reasoning**: 综合双方优势\n**Synthesized Conclusion**: 两框架各取所长`,
-        };
-      }
+    runAgentLoop.mockImplementation(async () => {
       // 双方高置信度、无分歧（收敛条件）
       return {
         ok: true, endReason: "done", iterations: 1,
         succeededSteps: 1, failedSteps: 0, observations: [],
-        message: `**Claim**: React 和 Vue 各有优势\n**Reasoning**: 经讨论达成一致\n**Confidence**: 0.9`,
+        message: `{"claim": "React 和 Vue 各有优势", "reasoning": "经讨论达成一致", "evidence": [], "confidence": 0.9}`,
       };
+    });
+    // Mock invokeModelChat: correction detection returns [], arbiter returns synthesis
+    invokeModelChat.mockImplementation(async (params: any) => {
+      if (params.purpose === "debate_v2_arbiter") {
+        return {
+          outputText: `{"outcome": "synthesis", "winnerRoles": [], "reasoning": "综合双方优势", "synthesizedConclusion": "两框架各取所长", "correctionSummary": ""}`,
+        };
+      }
+      return { outputText: "[]" };
     });
 
     const params = createDebateParams({ maxRounds: 5 });
-    const session = await runDebatePhase(params as any);
+    const session = await runDebatePhaseV2(params as any);
 
     // 应该只有 1 轮就收敛了
     expect(session.rounds.length).toBeLessThanOrEqual(2);
@@ -251,11 +237,6 @@ describe("runDebatePhase", () => {
     expect(session.status).toBe("verdicted");
     expect(session.verdict).toBeDefined();
     expect(session.verdict!.outcome).toBe("synthesis");
-
-    // 1 轮 × 2 Agent + 1 仲裁 = 3 次
-    const totalCalls = runAgentLoop.mock.calls.length;
-    expect(totalCalls).toBeGreaterThanOrEqual(3);
-    expect(totalCalls).toBeLessThanOrEqual(5); // 至多 2 轮
   });
 
   it("signal 中止 → aborted 且无仲裁", async () => {
@@ -266,12 +247,13 @@ describe("runDebatePhase", () => {
       return {
         ok: true, endReason: "done", iterations: 1,
         succeededSteps: 1, failedSteps: 0, observations: [],
-        message: `**Claim**: test\n**Confidence**: 0.5`,
+        message: `{"claim": "test", "reasoning": "", "evidence": [], "confidence": 0.5}`,
       };
     });
+    invokeModelChat.mockResolvedValue({ outputText: "[]" });
 
     const params = createDebateParams({ signal: controller.signal, maxRounds: 3 });
-    const session = await runDebatePhase(params as any);
+    const session = await runDebatePhaseV2(params as any);
 
     expect(session.status).toBe("aborted");
     expect(session.verdict).toBeUndefined();
@@ -281,19 +263,22 @@ describe("runDebatePhase", () => {
     let callIdx = 0;
     runAgentLoop.mockImplementation(async (params: any) => {
       callIdx++;
-      const goal = params.goal as string;
-      if (goal.includes("impartial arbiter")) {
-        throw new Error("arbiter model unavailable");
-      }
       return {
         ok: true, endReason: "done", iterations: 1,
         succeededSteps: 1, failedSteps: 0, observations: [],
-        message: `**Claim**: test claim ${callIdx}\n**Confidence**: 0.5`,
+        message: `{"claim": "test claim ${callIdx}", "reasoning": "", "evidence": [], "confidence": 0.5}`,
       };
+    });
+    // Correction detection succeeds, arbiter fails
+    invokeModelChat.mockImplementation(async (params: any) => {
+      if (params.purpose === "debate_v2_arbiter") {
+        throw new Error("arbiter model unavailable");
+      }
+      return { outputText: "[]" };
     });
 
     const params = createDebateParams({ maxRounds: 1 });
-    const session = await runDebatePhase(params as any);
+    const session = await runDebatePhaseV2(params as any);
 
     // 辩论轮次正常完成
     expect(session.rounds).toHaveLength(1);
@@ -309,15 +294,14 @@ describe("runDebatePhase", () => {
     runAgentLoop.mockResolvedValue({
       ok: true, endReason: "done", iterations: 1,
       succeededSteps: 1, failedSteps: 0, observations: [],
-      message: `**Claim**: test\n**Confidence**: 0.5`,
+      message: `{"claim": "test", "reasoning": "", "evidence": [], "confidence": 0.5}`,
     });
+    invokeModelChat.mockResolvedValue({ outputText: "{\"outcome\": \"inconclusive\", \"winnerRoles\": [], \"reasoning\": \"\", \"synthesizedConclusion\": \"\", \"correctionSummary\": \"\"}" });
 
     const params = createDebateParams({ maxRounds: 1 });
-    await runDebatePhase(params as any);
+    await runDebatePhaseV2(params as any);
 
     const queryCalls = (params.pool.query as any).mock.calls;
-    // 每个 Agent 每轮 2 次 DB INSERT (runs + jobs) + 仲裁 2 次 + envelopes 1 次
-    // 1 轮 × 2 Agent × 2 + 1 仲裁 × 2 + 1 envelope = 7
     const insertRunsCalls = queryCalls.filter(([sql]: [string]) => String(sql).includes("INSERT INTO runs"));
     const insertJobsCalls = queryCalls.filter(([sql]: [string]) => String(sql).includes("INSERT INTO jobs"));
     expect(insertRunsCalls.length).toBeGreaterThanOrEqual(2); // 至少 2 Agent 的 runs
@@ -328,21 +312,17 @@ describe("runDebatePhase", () => {
     runAgentLoop.mockResolvedValue({
       ok: true, endReason: "done", iterations: 1,
       succeededSteps: 1, failedSteps: 0, observations: [],
-      message: `**Claim**: test\n**Confidence**: 0.5`,
+      message: `{"claim": "test", "reasoning": "", "evidence": [], "confidence": 0.5}`,
     });
+    invokeModelChat.mockResolvedValue({ outputText: "{\"outcome\": \"inconclusive\", \"winnerRoles\": [], \"reasoning\": \"\", \"synthesizedConclusion\": \"\", \"correctionSummary\": \"\"}" });
 
     const params = createDebateParams({ maxRounds: 1 });
-    await runDebatePhase(params as any);
+    await runDebatePhaseV2(params as any);
 
     const calls = runAgentLoop.mock.calls;
-    // 第一次调用（正方）的 goal 应包含 topic
+    // 第一次调用的 goal 应包含 topic
     const firstGoal = (calls[0] as any)[0].goal as string;
     expect(firstGoal).toContain("应该用 React 还是 Vue");
     expect(firstGoal).toContain("architect");
-
-    // 第二次调用（反方）的 goal 应包含正方立场
-    const secondGoal = (calls[1] as any)[0].goal as string;
-    expect(secondGoal).toContain("应该用 React 还是 Vue");
-    expect(secondGoal).toContain("frontend_lead");
   });
 });

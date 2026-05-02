@@ -22,7 +22,7 @@ import { AppError } from "../lib/errors";
 import { type TaskDependencyResolver } from "./taskDependencyResolver";
 import { type SessionScheduler, type SessionConcurrencyConfig } from "./sessionScheduler";
 import type { CheckpointService } from "./loopCheckpoint";
-import { StructuredLogger } from "@openslin/shared";
+import { StructuredLogger, resolveNumber } from "@openslin/shared";
 import {
   cascadeCancel as _cascadeCancel,
   handleCompletionDeps,
@@ -95,7 +95,7 @@ export class TaskCheckpointService implements CheckpointService<TaskCheckpointDa
   private pool: Pool;
   private redis: CheckpointRedisClient | null;
   private tenantId: string;
-  private static readonly CHECKPOINT_TTL_SEC = 86400;
+  private static readonly CHECKPOINT_TTL_SEC = resolveNumber("TASK_CHECKPOINT_TTL_SECONDS", undefined, undefined, 86400).value;
 
   constructor(pool: Pool, tenantId: string, redis?: CheckpointRedisClient | null) {
     this.pool = pool;
@@ -738,7 +738,7 @@ export class TaskQueueManager {
   }
 
   /** 检查点 TTL（24 小时） */
-  private static readonly CHECKPOINT_TTL_SEC = 86400;
+  private static readonly CHECKPOINT_TTL_SEC = resolveNumber("TASK_CHECKPOINT_TTL_SECONDS", undefined, undefined, 86400).value;
 
   /**
    * 保存任务检查点。

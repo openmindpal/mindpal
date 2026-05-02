@@ -137,15 +137,10 @@ export function contextMiddleware(app: FastifyInstance): void {
     }
   });
 
-  // ── onResponse: 递减租户并发计数器 ──
+  // ── onResponse: 统一资源清理（递减租户并发计数器） ──
+  // 注：onResponse 在响应发送后总是触发（无论成功或错误），
+  //     因此无需在 onError 中单独递减，避免 double-decrement。
   app.addHook("onResponse", async (req) => {
-    const tenantId = req.ctx?.subject?.tenantId;
-    if (!tenantId) return;
-    decrementTenantCounter(tenantId);
-  });
-
-  // ── onError: 递减租户并发计数器（异常路径） ──
-  app.addHook("onError", async (req) => {
     const tenantId = req.ctx?.subject?.tenantId;
     if (!tenantId) return;
     decrementTenantCounter(tenantId);

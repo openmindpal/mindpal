@@ -3,6 +3,7 @@
  */
 import crypto from "node:crypto";
 import type { Pool } from "pg";
+import { sha256Hex } from "@openslin/shared";
 
 /* ─── TOTP (RFC 6238 / RFC 4226) ─── */
 
@@ -75,10 +76,6 @@ export function generateRecoveryCodes(): { plain: string[]; hashed: string[] } {
     hashed.push(sha256Hex(code));
   }
   return { plain, hashed };
-}
-
-function sha256Hex(input: string) {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
 }
 
 /* ─── DB Persistence ─── */

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
+import { sha256Hex } from "@openslin/shared";
 
 export type OAuthStateRow = {
   id: string;
@@ -17,10 +18,6 @@ export type OAuthStateRow = {
   expiresAt: string;
   consumedAt: string | null;
 };
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
 
 function toRow(r: any): OAuthStateRow {
   return {

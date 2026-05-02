@@ -1,8 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { Errors } from "../../lib/errors";
-import { setAuditContext } from "../../modules/audit/context";
-import { requirePermission, requireSubject } from "../../modules/auth/guard";
+import { guarded } from "../../middleware/routeGuard";
 import { PERM } from "@openslin/shared";
 import { getDevicePolicy, upsertDevicePolicy } from "./modules/devicePolicyRepo";
 import { createDeviceRecord, getDeviceRecord, listDeviceRecords, revokeDeviceRecord } from "./modules/deviceRepo";
@@ -33,11 +32,8 @@ function assertOwnerMatch(subject: { subjectId: string; spaceId?: string | null 
 
 export const deviceRoutes: FastifyPluginAsync = async (app) => {
   app.post("/devices", async (req) => {
-    setAuditContext(req, { resourceType: "device", action: "create" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_CREATE });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device", action: "create", perm: PERM.DEVICE_CREATE });
 
-    const subject = requireSubject(req);
     const body = z
       .object({
         ownerScope: z.enum(["user", "space"]).optional(),
@@ -62,11 +58,8 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get("/devices", async (req) => {
-    setAuditContext(req, { resourceType: "device", action: "read" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_READ });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device", action: "read", perm: PERM.DEVICE_READ });
 
-    const subject = requireSubject(req);
     const q = z
       .object({
         limit: z.coerce.number().int().positive().max(100).optional(),
@@ -90,11 +83,8 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/devices/:deviceId", async (req, reply) => {
     const params = z.object({ deviceId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "device", action: "read" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_READ });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device", action: "read", perm: PERM.DEVICE_READ });
 
-    const subject = requireSubject(req);
     const device = await getDeviceRecord({ pool: app.db, tenantId: subject.tenantId, deviceId: params.deviceId });
     if (!device) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "Device 不存在", "en-US": "Device not found" }, traceId: req.ctx.traceId });
     assertOwnerMatch(subject, device);
@@ -105,11 +95,8 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/devices/:deviceId/pairing", async (req) => {
     const params = z.object({ deviceId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "device", action: "pairing.create" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_PAIRING_CREATE });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device", action: "pairing.create", perm: PERM.DEVICE_PAIRING_CREATE });
 
-    const subject = requireSubject(req);
     const device = await getDeviceRecord({ pool: app.db, tenantId: subject.tenantId, deviceId: params.deviceId });
     if (!device) throw Errors.badRequest("Device 不存在");
     assertOwnerMatch(subject, device);
@@ -123,11 +110,8 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/devices/:deviceId/revoke", async (req) => {
     const params = z.object({ deviceId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "device", action: "revoke" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_REVOKE });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device", action: "revoke", perm: PERM.DEVICE_REVOKE });
 
-    const subject = requireSubject(req);
     const device = await getDeviceRecord({ pool: app.db, tenantId: subject.tenantId, deviceId: params.deviceId });
     if (!device) throw Errors.badRequest("Device 不存在");
     assertOwnerMatch(subject, device);
@@ -140,11 +124,8 @@ export const deviceRoutes: FastifyPluginAsync = async (app) => {
 
   app.put("/devices/:deviceId/policy", async (req) => {
     const params = z.object({ deviceId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "device", action: "policy.update" });
-    const decision = await requirePermission({ req, ...PERM.DEVICE_POLICY_UPDATE });
-    req.ctx.audit!.policyDecision = decision;
+    const { subject } = await guarded(req, { resourceType: "device", action: "policy.update", perm: PERM.DEVICE_POLICY_UPDATE });
 
-    const subject = requireSubject(req);
     const device = await getDeviceRecord({ pool: app.db, tenantId: subject.tenantId, deviceId: params.deviceId });
     if (!device) throw Errors.badRequest("Device 不存在");
     assertOwnerMatch(subject, device);

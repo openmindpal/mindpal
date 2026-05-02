@@ -238,5 +238,17 @@
   { "envKey": "COLLAB_BUS_STREAM_MAXLEN", "level": "runtime", "valueType": "number", "defaultValue": "5000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Redis Stream 最大保留消息数" },
   { "envKey": "COLLAB_MAX_CORRECTION_ROUNDS", "level": "runtime", "valueType": "number", "defaultValue": "3", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "协作最大纠错轮次" },
   { "envKey": "COLLAB_MAX_ENVELOPE_SIZE", "level": "runtime", "valueType": "number", "defaultValue": "1048576", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Envelope 最大字节数" },
-  { "envKey": "COLLAB_CROSS_VALIDATION_STRATEGY", "level": "runtime", "valueType": "string", "defaultValue": "adjacent", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "交叉验证策略 (adjacent/round_robin)" }
+  { "envKey": "COLLAB_CROSS_VALIDATION_STRATEGY", "level": "runtime", "valueType": "string", "defaultValue": "adjacent", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "交叉验证策略 (adjacent/round_robin)" },
+
+  { "envKey": "AGENT_LOOP_MAX_ITERATIONS", "level": "runtime", "valueType": "number", "defaultValue": "15", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent循环最大迭代次数" },
+  { "envKey": "AGENT_LOOP_MAX_WALL_TIME_MS", "level": "runtime", "valueType": "number", "defaultValue": "600000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent循环最大执行时间(毫秒)" },
+  { "envKey": "AGENT_LOOP_DEFAULT_PRIORITY", "level": "runtime", "valueType": "number", "defaultValue": "5", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent循环默认优先级" },
+  { "envKey": "AGENT_LOOP_ADMISSION_TIMEOUT_MS", "level": "runtime", "valueType": "number", "defaultValue": "60000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "Agent循环入口门超时(毫秒)" },
+  { "envKey": "TASK_CHECKPOINT_TTL_SECONDS", "level": "runtime", "valueType": "number", "defaultValue": "86400", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "任务检查点Redis TTL(秒)" },
+  { "envKey": "TASK_CONFIG_CACHE_TTL_MS", "level": "runtime", "valueType": "number", "defaultValue": "300000", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "任务配置缓存TTL(毫秒)" },
+  { "envKey": "AGENT_LOOP_RESUME_SCAN_LIMIT", "level": "runtime", "valueType": "number", "defaultValue": "20", "scopes": ["api"], "sensitive": false, "runtimeMutable": true, "description": "恢复扫描候选数量上限" },
+  { "envKey": "SKILL_EXECUTION_TIMEOUT_MS", "level": "runtime", "valueType": "number", "defaultValue": "10000", "scopes": ["api", "worker", "runner"], "sensitive": false, "runtimeMutable": true, "description": "Skill执行默认超时(毫秒)" },
+  { "envKey": "SKILL_MAX_CONCURRENCY", "level": "runtime", "valueType": "number", "defaultValue": "10", "scopes": ["api", "worker", "runner"], "sensitive": false, "runtimeMutable": true, "description": "Skill最大并发数" },
+  { "envKey": "SKILL_MAX_OUTPUT_BYTES", "level": "runtime", "valueType": "number", "defaultValue": "1000000", "scopes": ["api", "worker", "runner"], "sensitive": false, "runtimeMutable": true, "description": "Skill输出字节上限" },
+  { "envKey": "SKILL_MAX_EGRESS_REQUESTS", "level": "runtime", "valueType": "number", "defaultValue": "50", "scopes": ["api", "worker", "runner"], "sensitive": false, "runtimeMutable": true, "description": "Skill外发请求上限" }
 ]

@@ -1,26 +1,17 @@
 /**
  * skillSandboxChild.ts — Runner 侧 Skill 沙箱子进程
  *
- * 使用统一的沙箱基线模块，确保拦截行为与 Worker 一致。
- * Runner 侧额外提供：Worker 线程隔离、CPU 时间限制、动态代码执行封禁。
- * @see packages/shared/src/skillSandbox.ts
+ * 使用 @openslin/shared 的统一沙箱执行流程。
+ * Runner 特有：Worker 线程隔离（threads）、CPU 时间限制、心跳监控。
+ * @see packages/shared/src/skillExecutor.ts
  */
-import Module from "node:module";
 import { Worker } from "node:worker_threads";
-import type { EgressEvent, NetworkPolicy } from "./runtime";
-import { isAllowedEgress, normalizeNetworkPolicy } from "./runtime";
 import {
-  resolveSandboxMode,
-  buildForbiddenModulesSet,
-  lockdownDynamicCodeExecution,
-  restoreDynamicCodeExecution,
-  pickExecute,
-  createModuleLoadInterceptor,
   SANDBOX_BLOCKED_MODULES,
   SANDBOX_FORBIDDEN_MODULES_STRICT,
-  SANDBOX_FORBIDDEN_MODULES_DATABASE,
   getRiskLevel,
 } from "@openslin/shared";
+import type { SandboxIpcPayload, SandboxIpcResultMessage } from "@openslin/shared";
 
 async function main() {
   process.on("message", async (m: any) => {
@@ -33,45 +24,27 @@ async function main() {
     }
 
     if (m.type !== "execute") return;
-    const payload = m.payload ?? {};
+    const payload: SandboxIpcPayload = m.payload ?? {};
 
     // 将封禁模块列表传递给 Worker 线程（使用统一黑名单）
-    const mode = resolveSandboxMode();
     const allBlocked = JSON.stringify([...SANDBOX_BLOCKED_MODULES]);
     const strictExtra = JSON.stringify([...SANDBOX_FORBIDDEN_MODULES_STRICT]);
 
     // 构建风险等级映射传递给 Worker
     const riskMapEntries: [string, string][] = [];
-    for (const m of SANDBOX_BLOCKED_MODULES) {
-      const level = getRiskLevel(m);
-      if (level) riskMapEntries.push([m, level]);
+    for (const mod of SANDBOX_BLOCKED_MODULES) {
+      const level = getRiskLevel(mod);
+      if (level) riskMapEntries.push([mod, level]);
     }
     const riskMapJson = JSON.stringify(riskMapEntries);
 
+    // Worker 线程内联代码 — 使用 @openslin/shared 编译产物中的公共函数
     const workerCode = `
       const { parentPort } = require("node:worker_threads");
       const Module = require("node:module");
-      // 使用 @openslin/shared 的编译产物，避免 Worker 中 require TypeScript 文件问题
       const sharedPath = ${JSON.stringify(require.resolve("@openslin/shared"))};
-      const { isAllowedEgress, normalizeNetworkPolicy } = require(sharedPath);
-
-      function pickExecute(mod) {
-        if (mod && typeof mod.execute === "function") return mod.execute;
-        if (mod && mod.default && typeof mod.default.execute === "function") return mod.default.execute;
-        if (mod && typeof mod.default === "function") return mod.default;
-        return null;
-      }
-
-      function buildApiFetch(apiBaseUrl, authToken, traceId) {
-        const baseUrl = apiBaseUrl || process.env.API_BASE_URL || "http://localhost:4000";
-        return async function apiFetch(path, init) {
-          const url = path.startsWith("http") ? path : baseUrl + path;
-          const headers = new Headers(init?.headers);
-          if (authToken) headers.set("authorization", "Bearer " + authToken);
-          if (traceId) headers.set("x-trace-id", traceId);
-          return fetch(url, Object.assign({}, init, { headers }));
-        };
-      }
+      const shared = require(sharedPath);
+      const { isAllowedEgress, normalizeNetworkPolicy, pickExecute, buildApiFetch, createEgressWrappedFetch } = shared;
 
       function sandboxMode() {
         const raw = String(process.env.SKILL_SANDBOX_MODE ?? "").trim().toLowerCase();
@@ -80,7 +53,6 @@ async function main() {
         return process.env.NODE_ENV === "production" ? "strict" : "compat";
       }
 
-      // 使用传递进来的统一封禁模块列表（SANDBOX_BLOCKED_MODULES）
       const _riskMap = new Map(${riskMapJson});
       function getRiskLevel(moduleName) {
         const bare = moduleName.startsWith("node:") ? moduleName.slice(5) : moduleName;
@@ -123,25 +95,16 @@ async function main() {
         const origNodeExt = Module._extensions?.[".node"];
         const savedDynCode = lockdownDynamicCodeExecution();
 
-        const wrappedFetch = async (input, init) => {
-          const maxEgressRequests =
-            typeof payload?.limits?.maxEgressRequests === "number" && Number.isFinite(payload.limits.maxEgressRequests)
-              ? Math.max(0, Math.round(payload.limits.maxEgressRequests))
-              : null;
-          if (maxEgressRequests !== null && egress.length >= maxEgressRequests) {
-            throw new Error("resource_exhausted:max_egress_requests");
-          }
-          const url = typeof input === "string" ? input : input?.url ? String(input.url) : "";
-          const method = String(init?.method ?? input?.method ?? "GET").toUpperCase();
-          const chk = isAllowedEgress({ policy: networkPolicy, url, method });
-          if (!chk.allowed) {
-            egress.push({ host: chk.host, method: chk.method, allowed: false, errorCategory: "policy_violation" });
-            throw new Error(chk.reason ?? "policy_violation:egress_denied");
-          }
-          const res = await originalFetch(input, init);
-          egress.push({ host: chk.host, method: chk.method, allowed: true, policyMatch: chk.match, status: res?.status });
-          return res;
-        };
+        const maxEgressRequests =
+          typeof payload?.limits?.maxEgressRequests === "number" && Number.isFinite(payload.limits.maxEgressRequests)
+            ? Math.max(0, Math.round(payload.limits.maxEgressRequests))
+            : null;
+        const wrappedFetch = createEgressWrappedFetch({
+          originalFetch,
+          networkPolicy,
+          egressCollector: egress,
+          maxEgressRequests,
+        });
 
         try {
           if (typeof originalFetch !== "function") throw new Error("skill_sandbox_missing_fetch");
@@ -153,7 +116,6 @@ async function main() {
             if (denied.has(req) || denied.has(norm)) {
               const base = req.startsWith("node:") ? req.slice("node:".length) : req;
               const riskLevel = getRiskLevel(base);
-              // 安全审计日志：记录被拦截的模块加载尝试
               console.warn(JSON.stringify({
                 module: "skillSandbox",
                 action: "blocked_module_access",
@@ -179,6 +141,10 @@ async function main() {
           const exec = pickExecute(mod);
           if (!exec) throw new Error("policy_violation:skill_missing_execute");
 
+          const context = payload.context
+            ? { locale: payload.context.locale, apiFetch: buildApiFetch({ apiBaseUrl: payload.context.apiBaseUrl, authToken: payload.context.authToken, traceId: payload.traceId }) }
+            : undefined;
+
           const output = await exec({
             toolRef: payload.toolRef,
             tenantId: payload.tenantId,
@@ -191,9 +157,7 @@ async function main() {
             networkPolicy: payload.networkPolicy,
             artifactRef: payload.artifactRef,
             depsDigest: payload.depsDigest,
-            context: payload.context
-              ? { locale: payload.context.locale, apiFetch: buildApiFetch(payload.context.apiBaseUrl, payload.context.authToken, payload.traceId) }
-              : undefined,
+            context,
           });
 
           parentPort.postMessage({ type: "result", ok: true, output, depsDigest: payload.depsDigest, egress });
@@ -209,6 +173,7 @@ async function main() {
       });
     `;
 
+    /* ── Runner 特有：CPU 时间限制 ── */
     const cpuTimeLimitMs =
       typeof payload?.cpuTimeLimitMs === "number" && Number.isFinite(payload.cpuTimeLimitMs) && payload.cpuTimeLimitMs > 0 ? Math.floor(payload.cpuTimeLimitMs) : null;
 
@@ -216,7 +181,7 @@ async function main() {
     const startCpu = process.cpuUsage();
     let done = false;
     let cpuTimer: any = null;
-    const finish = (res: any) => {
+    const finish = (res: SandboxIpcResultMessage) => {
       if (done) return;
       done = true;
       if (cpuTimer) clearInterval(cpuTimer);

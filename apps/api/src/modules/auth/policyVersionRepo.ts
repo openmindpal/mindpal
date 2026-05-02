@@ -1,25 +1,5 @@
 import type { Pool } from "pg";
-import crypto from "node:crypto";
-
-function canonicalize(value: any): any {
-  if (value === null || value === undefined) return value;
-  if (value instanceof Date) return value.toISOString();
-  if (Buffer.isBuffer(value)) return value.toString("base64");
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (typeof value !== "object") return value;
-  const out: any = {};
-  const keys = Object.keys(value).sort();
-  for (const k of keys) out[k] = canonicalize(value[k]);
-  return out;
-}
-
-function stableStringify(value: any) {
-  return JSON.stringify(canonicalize(value));
-}
-
-function sha256Hex(s: string) {
-  return crypto.createHash("sha256").update(s, "utf8").digest("hex");
-}
+import { canonicalize, stableStringify, sha256Hex } from "@openslin/shared";
 
 export type PolicyVersionState = "draft" | "released" | "deprecated";
 

@@ -7,7 +7,7 @@
  * 整合为统一的可观测性中间件阶段。
  */
 import type { FastifyInstance } from "fastify";
-import { digestBody } from "../plugins/digests";
+import { digestBody } from "../plugins/audit";
 import { handleDlpPreSerialization } from "../plugins/dlp";
 import { finalizeAudit } from "../plugins/audit";
 

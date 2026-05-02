@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { resolveString } from "@openslin/shared";
+import { resolveString, sha256Hex } from "@openslin/shared";
 
 function apiBase() {
   const raw = String(process.env.WORKER_API_BASE ?? process.env.API_BASE ?? "http://localhost:3001").trim();
@@ -12,10 +12,6 @@ function authnMode() {
   if (mode === "pat") return "pat" as const;
   if (mode === "hmac") return "hmac" as const;
   return "dev" as const;
-}
-
-function sha256Hex(input: string) {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
 }
 
 function buildDevToken(params: { subjectId: string; spaceId?: string | null }) {

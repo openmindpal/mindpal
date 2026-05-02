@@ -1,3 +1,5 @@
+import type { AuditEvidenceRef } from "@openslin/shared";
+
 /**
  * Device-OS 内核公共类型定义
  * @layer kernel
@@ -130,13 +132,8 @@ export type AuditEventType =
   | "evidence.upload"
   | "replay.trace";
 
-export interface EvidenceRef {
-  artifactId: string;
-  storageRef: string;
-  hash: string;
-  mimeType?: string;
-  sizeBytes?: number;
-}
+/** 设备端审计证据引用（从 @openslin/shared 统一导入） */
+export type EvidenceRef = AuditEvidenceRef;
 
 export interface AuditEvent {
   eventId: string;

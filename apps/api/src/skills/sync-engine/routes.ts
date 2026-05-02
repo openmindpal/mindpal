@@ -1,7 +1,6 @@
-import crypto from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { isPlainObject } from "@openslin/shared";
+import { isPlainObject, checkType, stableStringify, sha256Hex } from "@openslin/shared";
 import { Errors } from "../../lib/errors";
 import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
@@ -13,19 +12,6 @@ import { getEffectiveSchema, resolveSchemaNameForEntity } from "../../modules/me
 import { getOpByOpId, getServerWatermark, insertSyncOp, listOpsAfterCursor, upsertWatermark } from "./modules/syncRepo";
 import { getMergeRunById, insertMergeRun } from "./modules/syncMergeRepo";
 import { abandonConflictTicket, createConflictTicket, getConflictTicketById, listConflictTickets, resolveConflictTicket } from "./modules/syncConflictTicketRepo";
-
-function stableStringify(value: any): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const keys = Object.keys(value).sort();
-  const parts = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`);
-  return `{${parts.join(",")}}`;
-}
-
-function sha256Hex(input: string) {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
-}
 
 function toConflictClass(reason: string) {
   if (reason === "base_version_mismatch") return "base_version_stale";
@@ -76,26 +62,6 @@ function buildAutoApplyProposal(params: { patch: any; serverPayload: any }) {
   }
   const digest12 = sha256Hex(stableStringify(params.patch)).slice(0, 12);
   return { kind: "auto_apply_patch_if_unset", decision: "provide_merged_patch", mergedPatchDigest12: digest12, touchedFields: keys };
-}
-
-function checkType(type: string, value: unknown): boolean {
-  if (value === null || value === undefined) return true;
-  switch (type) {
-    case "string":
-      return typeof value === "string";
-    case "number":
-      return typeof value === "number" && Number.isFinite(value);
-    case "boolean":
-      return typeof value === "boolean";
-    case "datetime":
-      return typeof value === "string";
-    case "json":
-      return true;
-    case "reference":
-      return typeof value === "string";
-    default:
-      return false;
-  }
 }
 
 function validatePatch(params: { schema: any; entityName: string; patch: any }) {

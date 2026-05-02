@@ -21,7 +21,7 @@
  * - collabStrategies.ts  — 执行策略（sequential/parallel/pipeline）
  * - collabValidation.ts  — 交叉验证 + 动态纠错 + 角色表现
  * - collabPermissions.ts — 角色权限 + 委派 + 仲裁 + 共识
- * - collabDebate.ts      — 辩论 v1/v2 + 持久化 + 自动触发
+ * - collabDebate.ts      — 辩论辅助 + N方辩论引擎 + 动态纠错 + 共识演化
  */
 import crypto from "node:crypto";
 import { upsertTaskState } from "../modules/memory/repo";
@@ -33,7 +33,7 @@ import { setCollabRunPrimaryRun, updateCollabRunStatus } from "../modules/agentR
 export type {
   CollabAgentRole, CollabPlan, AgentState, CollabResult,
   CollabOrchestratorParams, PermissionDelegation, CollabArbitrationStrategy,
-  DebatePhaseParams, DebateV2PhaseParams,
+  DebateV2PhaseParams,
 } from "./collabTypes";
 
 export {
@@ -57,9 +57,8 @@ export {
   arbitrateCollabConflict, runConsensusRound, arbitrateWithWeightedVote,
 } from "./collabPermissions";
 
-export { runDebatePhase } from "./collabDebate";
 export { runDebateIfDivergent } from "./collabDebateAutoTrigger";
-export { runDebatePhaseV2 } from "./collabDebateV2";
+export { runDebatePhaseV2 } from "./collabDebate";
 
 // ── 内部 import ────────────────────────────────────────────────
 

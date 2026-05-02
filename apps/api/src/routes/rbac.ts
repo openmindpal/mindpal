@@ -4,8 +4,7 @@ import crypto from "node:crypto";
 import { POLICY_EXPR_JSON_SCHEMA_V1, validatePolicyExpr, validateAbacPolicyRule, evaluateAbacPolicySet } from "@openslin/shared";
 import type { AbacEvaluationRequest, AbacPolicyRule, AbacPolicySet } from "@openslin/shared";
 import { Errors } from "../lib/errors";
-import { setAuditContext } from "../modules/audit/context";
-import { requirePermission } from "../modules/auth/guard";
+import { guarded } from "../middleware/routeGuard";
 import { PERM } from "@openslin/shared";
 import { authorize, invalidateRbacCache } from "../modules/auth/authz";
 import { bumpPolicyCacheEpoch } from "../modules/auth/policyCacheEpochRepo";
@@ -136,8 +135,7 @@ function buildAbacCheckRequest(actor: { subjectId: string; tenantId: string; spa
 
 export const rbacRoutes: FastifyPluginAsync = async (app) => {
   app.post("/rbac/policy/preflight", async (req) => {
-    setAuditContext(req, { resourceType: "rbac", action: "policy.preflight" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    await guarded(req, { resourceType: "rbac", action: "policy.preflight", perm: PERM.RBAC_MANAGE });
     const body = z.object({ rowFilters: z.any().optional(), fieldRules: z.any().optional() }).parse(req.body);
     const rf = normalizeRowFilters(body.rowFilters);
     req.ctx.audit!.outputDigest = { rowFilters: Boolean(rf.normalized), usedPayloadPathCount: rf.usedPayloadPaths.length };
@@ -145,9 +143,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/rbac/roles", async (req) => {
-    setAuditContext(req, { resourceType: "rbac", action: "role.create" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "role.create", perm: PERM.RBAC_MANAGE });
     const body = z.object({ id: z.string().min(1).optional(), name: z.string().min(1) }).parse(req.body);
     const id = body.id ?? `role_${crypto.randomUUID()}`;
     await app.db.query("INSERT INTO roles (id, tenant_id, name) VALUES ($1, $2, $3) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name", [
@@ -162,9 +158,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get("/rbac/roles", async (req) => {
-    setAuditContext(req, { resourceType: "rbac", action: "role.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "role.list", perm: PERM.RBAC_MANAGE });
     const limit = z.coerce.number().int().positive().max(500).optional().parse((req.query as any)?.limit) ?? 100;
     const res = await app.db.query("SELECT id, tenant_id, name, created_at FROM roles WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2", [
       subject.tenantId,
@@ -176,9 +170,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/rbac/roles/:roleId", async (req) => {
     const params = z.object({ roleId: z.string().min(1) }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "role.get" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "role.get", perm: PERM.RBAC_MANAGE });
     const res = await app.db.query("SELECT id, tenant_id, name, created_at FROM roles WHERE tenant_id = $1 AND id = $2 LIMIT 1", [
       subject.tenantId,
       params.roleId,
@@ -214,9 +206,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete("/rbac/roles/:roleId", async (req) => {
     const params = z.object({ roleId: z.string().min(1) }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "role.delete" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "role.delete", perm: PERM.RBAC_MANAGE });
     const role = await app.db.query("SELECT id, name, description FROM roles WHERE tenant_id = $1 AND id = $2 LIMIT 1", [subject.tenantId, params.roleId]);
     if (!role.rowCount) throw Errors.badRequest("Role 不存在");
     const permCountRes = await app.db.query("SELECT COUNT(*)::int AS cnt FROM role_permissions WHERE role_id = $1", [params.roleId]);
@@ -233,8 +223,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/rbac/permissions", async (req) => {
-    setAuditContext(req, { resourceType: "rbac", action: "permission.register" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    await guarded(req, { resourceType: "rbac", action: "permission.register", perm: PERM.RBAC_MANAGE });
     const body = z
       .object({
         resourceType: z.string().min(1),
@@ -267,8 +256,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get("/rbac/permissions", async (req) => {
-    setAuditContext(req, { resourceType: "rbac", action: "permission.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    await guarded(req, { resourceType: "rbac", action: "permission.list", perm: PERM.RBAC_MANAGE });
     const limit = z.coerce.number().int().positive().max(500).optional().parse((req.query as any)?.limit) ?? 200;
     const res = await app.db.query(
       "SELECT id, resource_type, action, field_rules_read, field_rules_write, row_filters_read, row_filters_write, created_at FROM permissions ORDER BY created_at DESC LIMIT $1",
@@ -280,9 +268,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/rbac/roles/:roleId/permissions", async (req) => {
     const params = z.object({ roleId: z.string().min(1) }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "role.grant" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "role.grant", perm: PERM.RBAC_MANAGE });
     const body = z
       .object({
         resourceType: z.string().min(1),
@@ -343,9 +329,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete("/rbac/roles/:roleId/permissions", async (req) => {
     const params = z.object({ roleId: z.string().min(1) }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "role.revoke" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "role.revoke", perm: PERM.RBAC_MANAGE });
     const body = z.object({ resourceType: z.string().min(1), action: z.string().min(1) }).parse(req.body);
     const role = await app.db.query("SELECT 1 FROM roles WHERE tenant_id = $1 AND id = $2 LIMIT 1", [subject.tenantId, params.roleId]);
     if (!role.rowCount) throw Errors.badRequest("Role 不存在");
@@ -364,9 +348,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/rbac/bindings", async (req) => {
-    setAuditContext(req, { resourceType: "rbac", action: "binding.create" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const actor = req.ctx.subject!;
+    const { subject: actor } = await guarded(req, { resourceType: "rbac", action: "binding.create", perm: PERM.RBAC_MANAGE });
     const body = z
       .object({
         subjectId: z.string().min(1),
@@ -421,9 +403,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
         subjectId: z.string().min(1).optional(),
       })
       .parse(req.query);
-    setAuditContext(req, { resourceType: "rbac", action: "binding.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const actor = req.ctx.subject!;
+    const { subject: actor } = await guarded(req, { resourceType: "rbac", action: "binding.list", perm: PERM.RBAC_MANAGE });
     const args: Array<string | number> = [actor.tenantId];
     const where: string[] = ["r.tenant_id = $1", "s.tenant_id = $1"];
     if (q.roleId) {
@@ -453,9 +433,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete("/rbac/bindings/:bindingId", async (req) => {
     const params = z.object({ bindingId: z.string().min(3) }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "binding.delete" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const actor = req.ctx.subject!;
+    const { subject: actor } = await guarded(req, { resourceType: "rbac", action: "binding.delete", perm: PERM.RBAC_MANAGE });
 
     const existing = await app.db.query(
       `
@@ -504,9 +482,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
           .optional(),
       })
       .parse(req.body);
-    const actor = req.ctx.subject!;
-    setAuditContext(req, { resourceType: "rbac", action: "check" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
+    const { subject: actor } = await guarded(req, { resourceType: "rbac", action: "check", perm: PERM.RBAC_MANAGE });
 
     const scopeType = body.scopeType ?? (body.scopeId ? "space" : actor.spaceId ? "space" : "tenant");
     const scopeId = body.scopeId ?? (scopeType === "tenant" ? actor.tenantId : actor.spaceId);
@@ -577,9 +553,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   /* ─── ABAC 策略集 CRUD (新引擎) ─── */
 
   app.get("/rbac/abac/policy-sets", async (req) => {
-    setAuditContext(req, { resourceType: "rbac", action: "abac.list" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "abac.list", perm: PERM.RBAC_MANAGE });
     const limit = z.coerce.number().int().positive().max(500).optional().parse((req.query as any)?.limit) ?? 100;
     const res = await app.db.query(
       `SELECT policy_set_id, tenant_id, name, version, resource_type, combining_algorithm, status, description, metadata, created_at, updated_at
@@ -591,9 +565,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/rbac/abac/policy-sets", async (req) => {
-    setAuditContext(req, { resourceType: "rbac", action: "abac.create" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "abac.create", perm: PERM.RBAC_MANAGE });
     const body = z.object({
       name: z.string().min(1).max(200),
       resourceType: z.string().min(1),
@@ -618,9 +590,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/rbac/abac/policy-sets/:policySetId", async (req) => {
     const params = z.object({ policySetId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "abac.get" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "abac.get", perm: PERM.RBAC_MANAGE });
     const psRes = await app.db.query(
       "SELECT * FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2 LIMIT 1",
       [subject.tenantId, params.policySetId],
@@ -636,9 +606,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/rbac/abac/policy-sets/:policySetId/update", async (req) => {
     const params = z.object({ policySetId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "abac.update" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "abac.update", perm: PERM.RBAC_MANAGE });
     const body = z.object({
       combiningAlgorithm: z.enum(["deny_overrides", "permit_overrides", "first_applicable", "deny_unless_permit", "permit_unless_deny"]).optional(),
       description: z.string().max(2000).optional(),
@@ -666,9 +634,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete("/rbac/abac/policy-sets/:policySetId", async (req) => {
     const params = z.object({ policySetId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "abac.delete" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "abac.delete", perm: PERM.RBAC_MANAGE });
     const psSnap = await app.db.query("SELECT name, combining_algorithm, description, status FROM abac_policy_sets WHERE tenant_id = $1 AND policy_set_id = $2 LIMIT 1", [subject.tenantId, params.policySetId]);
     const ruleCountRes = psSnap.rowCount ? await app.db.query("SELECT COUNT(*)::int AS cnt FROM abac_policy_rules WHERE policy_set_id = $1 AND tenant_id = $2", [params.policySetId, subject.tenantId]) : null;
     const psSnapshot = psSnap.rowCount ? { name: psSnap.rows[0].name, combiningAlgorithm: psSnap.rows[0].combining_algorithm, description: psSnap.rows[0].description, status: psSnap.rows[0].status, ruleCount: ruleCountRes!.rows[0].cnt } : null;
@@ -683,9 +649,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/rbac/abac/policy-sets/:policySetId/rules", async (req) => {
     const params = z.object({ policySetId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "abac.rule.create" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "abac.rule.create", perm: PERM.RBAC_MANAGE });
     const body = z.object({
       name: z.string().min(1).max(200),
       description: z.string().max(2000).optional(),
@@ -719,9 +683,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/rbac/abac/rules/:ruleId/update", async (req) => {
     const params = z.object({ ruleId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "abac.rule.update" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "abac.rule.update", perm: PERM.RBAC_MANAGE });
     const body = z.object({
       name: z.string().min(1).max(200).optional(),
       description: z.string().max(2000).optional(),
@@ -761,9 +723,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete("/rbac/abac/rules/:ruleId", async (req) => {
     const params = z.object({ ruleId: z.string().uuid() }).parse(req.params);
-    setAuditContext(req, { resourceType: "rbac", action: "abac.rule.delete" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "abac.rule.delete", perm: PERM.RBAC_MANAGE });
     const ruleSnap = await app.db.query("SELECT name, effect, priority, condition_expr, policy_set_id FROM abac_policy_rules WHERE tenant_id = $1 AND rule_id = $2 LIMIT 1", [subject.tenantId, params.ruleId]);
     const ruleSnapshot = ruleSnap.rowCount ? { name: ruleSnap.rows[0].name, effect: ruleSnap.rows[0].effect, priority: ruleSnap.rows[0].priority, conditionExpr: ruleSnap.rows[0].condition_expr, policySetId: ruleSnap.rows[0].policy_set_id } : null;
     await app.db.query("DELETE FROM abac_policy_rules WHERE tenant_id = $1 AND rule_id = $2", [subject.tenantId, params.ruleId]);
@@ -776,9 +736,7 @@ export const rbacRoutes: FastifyPluginAsync = async (app) => {
   /* ─── ABAC 实时评估端点 ─── */
 
   app.post("/rbac/abac/evaluate", async (req) => {
-    setAuditContext(req, { resourceType: "rbac", action: "abac.evaluate" });
-    req.ctx.audit!.policyDecision = await requirePermission({ req, ...PERM.RBAC_MANAGE });
-    const subject = req.ctx.subject!;
+    const { subject } = await guarded(req, { resourceType: "rbac", action: "abac.evaluate", perm: PERM.RBAC_MANAGE });
     const body = z.object({
       policySetId: z.string().uuid(),
       request: z.object({

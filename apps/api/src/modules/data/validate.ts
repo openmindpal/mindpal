@@ -1,6 +1,6 @@
 import type { SchemaDef } from "../metadata/schemaModel";
 import type { Pool, PoolClient } from "pg";
-import { isPlainObject } from "@openslin/shared";
+import { isPlainObject, checkType } from "@openslin/shared";
 
 type ValidationError = { ok: false; reason: string };
 type ValidationOk = { ok: true };
@@ -86,26 +86,6 @@ export function createConditionalRequiredValidator(params: {
       return [];
     },
   };
-}
-
-function checkType(type: string, value: unknown): boolean {
-  if (value === null || value === undefined) return true;
-  switch (type) {
-    case "string":
-      return typeof value === "string";
-    case "number":
-      return typeof value === "number" && Number.isFinite(value);
-    case "boolean":
-      return typeof value === "boolean";
-    case "datetime":
-      return typeof value === "string";
-    case "json":
-      return true;
-    case "reference":
-      return typeof value === "string";
-    default:
-      return false;
-  }
 }
 
 export function validateEntityPayload(params: {

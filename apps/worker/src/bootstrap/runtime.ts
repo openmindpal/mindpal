@@ -4,10 +4,12 @@ import {
   createRedisConcurrencyBackend,
   setConcurrencyBackend,
   validateProductionBaseline,
-  StructuredLogger,
+  initializeServiceLogging,
+  createModuleLogger,
 } from "@openslin/shared";
 
-const _logger = new StructuredLogger({ module: "worker:runtime" });
+const _rootLogger = initializeServiceLogging({ serviceName: "worker" });
+const _logger = createModuleLogger("worker:runtime");
 import { registerAdvancedChunkStrategies } from "../knowledge/chunkStrategy";
 import { RedisStreamsBus } from "../lib/redisStreamsBus";
 import { CRITICAL_EVENT_CHANNELS } from "@openslin/shared";
