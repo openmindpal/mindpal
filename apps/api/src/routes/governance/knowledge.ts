@@ -5,7 +5,7 @@ import { setAuditContext } from "../../modules/audit/context";
 import { requirePermission } from "../../modules/auth/guard";
 import { sha256Hex } from "../../lib/digest";
 import { getEmbeddingJob, getIngestJob, getIndexJob, getRetrievalLog, listEmbeddingJobs, listIngestJobs, listIndexJobs, listRetrievalLogs, searchChunksHybrid, listDocuments, getDocument, getDocumentChunkCount } from "../../skills/knowledge-rag/modules/repo";
-import { getEvidenceRetentionPolicy, upsertEvidenceRetentionPolicy } from "../../skills/knowledge-rag/modules/evidenceGovernanceRepo";
+import { upsertEvidenceRetentionPolicy, listEvidenceRetentionPolicies, deleteEvidenceRetentionPolicy } from "../../skills/knowledge-rag/modules/evidenceGovernanceRepo";
 import { activateRetrievalStrategy, createRetrievalStrategy, createStrategyEvalRun, getLatestStrategyEvalSummary, getRetrievalStrategy, getStrategyEvalRun, listRetrievalStrategies, listStrategyEvalRuns, setStrategyEvalRunFinished } from "../../skills/knowledge-rag/modules/strategyRepo";
 import { createRetrievalEvalRun, createRetrievalEvalSet, getRetrievalEvalRun, getRetrievalEvalSet, listRetrievalEvalRuns, listRetrievalEvalSets, setRetrievalEvalRunFinished } from "../../skills/knowledge-rag/modules/qualityRepo";
 
@@ -99,42 +99,6 @@ export const governanceKnowledgeRoutes: FastifyPluginAsync = async (app) => {
     if (!row) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "RetrievalLog 不存在", "en-US": "RetrievalLog not found" }, traceId: req.ctx.traceId });
     req.ctx.audit!.outputDigest = { retrievalLogId: row.id, candidateCount: row.candidateCount, returnedCount: row.returnedCount };
     return { log: row };
-  });
-
-  app.get("/governance/knowledge/evidence-retention-policy", async (req) => {
-    const subject = req.ctx.subject!;
-    setAuditContext(req, { resourceType: "knowledge", action: "search" });
-    const decision = await requirePermission({ req, resourceType: "knowledge", action: "search" });
-    req.ctx.audit!.policyDecision = decision;
-    if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
-    const policy = await getEvidenceRetentionPolicy({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId });
-    req.ctx.audit!.outputDigest = { allowSnippet: policy.allowSnippet, retentionDays: policy.retentionDays, maxSnippetLen: policy.maxSnippetLen };
-    return { policy };
-  });
-
-  app.put("/governance/knowledge/evidence-retention-policy", async (req) => {
-    const subject = req.ctx.subject!;
-    setAuditContext(req, { resourceType: "knowledge", action: "ingest" });
-    const decision = await requirePermission({ req, resourceType: "knowledge", action: "ingest" });
-    req.ctx.audit!.policyDecision = decision;
-    if (!subject.spaceId) throw Errors.badRequest("缺少 spaceId");
-    const body = z
-      .object({
-        allowSnippet: z.boolean(),
-        retentionDays: z.number().int().positive().max(3650),
-        maxSnippetLen: z.number().int().positive().max(2000),
-      })
-      .parse(req.body);
-    const row = await upsertEvidenceRetentionPolicy({
-      pool: app.db,
-      tenantId: subject.tenantId,
-      spaceId: subject.spaceId,
-      allowSnippet: body.allowSnippet,
-      retentionDays: body.retentionDays,
-      maxSnippetLen: body.maxSnippetLen,
-    });
-    req.ctx.audit!.outputDigest = { ok: true, allowSnippet: Boolean((row as any).allow_snippet), retentionDays: Number((row as any).retention_days), maxSnippetLen: Number((row as any).max_snippet_len) };
-    return { ok: true };
   });
 
   app.get("/governance/knowledge/retrieval-strategies", async (req) => {
@@ -595,5 +559,411 @@ export const governanceKnowledgeRoutes: FastifyPluginAsync = async (app) => {
     const run = await getRetrievalEvalRun({ pool: app.db, tenantId: subject.tenantId, spaceId: subject.spaceId, id: params.id });
     if (!run) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "EvalRun 不存在", "en-US": "EvalRun not found" }, traceId: req.ctx.traceId });
     return { run };
+  });
+
+  // ─── Knowledge Rerank Config Management APIs ──────────────────────────────
+
+  app.get("/governance/knowledge/rerank-configs", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "list_rerank_configs" });
+    const tenantId = req.ctx.subject!.tenantId;
+    try {
+      const res = await app.db.query(
+        "SELECT * FROM knowledge_rerank_configs WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 100",
+        [tenantId],
+      );
+      const configs = (res.rows as any[]).map((r) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        spaceId: r.space_id,
+        enabled: Boolean(r.enabled),
+        provider: r.provider ?? "external",
+        endpoint: r.endpoint ?? "",
+        model: r.model ?? "rerank-v1",
+        topN: Number(r.top_n ?? 10),
+        timeoutMs: Number(r.timeout_ms ?? 5000),
+        fallbackMode: r.fallback_mode ?? "cross_encoder_then_rule",
+        crossEncoderModelPath: r.cross_encoder_model_path ?? null,
+        crossEncoderModelType: r.cross_encoder_model_type ?? "mock",
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      }));
+      return { configs };
+    } catch {
+      return { configs: [] };
+    }
+  });
+
+  const rerankConfigUpsertSchema = z.object({
+    spaceId: z.string().min(1),
+    enabled: z.boolean().default(true),
+    provider: z.string().default("external"),
+    endpoint: z.string().default(""),
+    apiKey: z.string().optional().default(""),
+    model: z.string().default("rerank-v1"),
+    topN: z.number().min(1).max(100).default(10),
+    timeoutMs: z.number().min(1000).max(30000).default(5000),
+    fallbackMode: z.enum(["external_only", "cross_encoder", "rule", "cross_encoder_then_rule", "none"]).default("cross_encoder_then_rule"),
+    crossEncoderModelPath: z.string().optional().default(""),
+    crossEncoderModelType: z.enum(["onnx", "http_local", "mock"]).default("mock"),
+  });
+
+  app.put("/governance/knowledge/rerank-config", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "upsert_rerank_config" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const body = rerankConfigUpsertSchema.parse(req.body);
+    const res = await app.db.query(
+      `INSERT INTO knowledge_rerank_configs (
+        tenant_id, space_id, enabled, provider, endpoint, api_key, model, top_n, timeout_ms,
+        fallback_mode, cross_encoder_model_path, cross_encoder_model_type, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())
+      ON CONFLICT (tenant_id, space_id) DO UPDATE SET
+        enabled = EXCLUDED.enabled,
+        provider = EXCLUDED.provider,
+        endpoint = EXCLUDED.endpoint,
+        api_key = EXCLUDED.api_key,
+        model = EXCLUDED.model,
+        top_n = EXCLUDED.top_n,
+        timeout_ms = EXCLUDED.timeout_ms,
+        fallback_mode = EXCLUDED.fallback_mode,
+        cross_encoder_model_path = EXCLUDED.cross_encoder_model_path,
+        cross_encoder_model_type = EXCLUDED.cross_encoder_model_type,
+        updated_at = now()
+      RETURNING *`,
+      [
+        tenantId, body.spaceId, body.enabled, body.provider, body.endpoint || null,
+        body.apiKey || null, body.model, body.topN, body.timeoutMs,
+        body.fallbackMode, body.crossEncoderModelPath || null, body.crossEncoderModelType,
+      ],
+    );
+    const r = res.rows[0] as any;
+    return {
+      id: r.id,
+      tenantId: r.tenant_id,
+      spaceId: r.space_id,
+      enabled: Boolean(r.enabled),
+      provider: r.provider,
+      endpoint: r.endpoint ?? "",
+      model: r.model,
+      topN: Number(r.top_n),
+      timeoutMs: Number(r.timeout_ms),
+      fallbackMode: r.fallback_mode ?? "cross_encoder_then_rule",
+      updatedAt: r.updated_at,
+    };
+  });
+
+  app.delete("/governance/knowledge/rerank-config/:spaceId", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "delete_rerank_config" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const spaceId = (req.params as any).spaceId as string;
+    await app.db.query(
+      "DELETE FROM knowledge_rerank_configs WHERE tenant_id = $1 AND space_id = $2",
+      [tenantId, spaceId],
+    );
+    return { success: true };
+  });
+
+  // ─── Knowledge Embedding Model Config APIs ──────────────────────────────
+
+  app.get("/governance/knowledge/embedding-configs", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "list_embedding_configs" });
+    const tenantId = req.ctx.subject!.tenantId;
+    try {
+      const res = await app.db.query(
+        "SELECT * FROM knowledge_embedding_model_configs WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 100",
+        [tenantId],
+      );
+      const configs = (res.rows as any[]).map((r) => ({
+        id: r.id, tenantId: r.tenant_id, spaceId: r.space_id ?? null,
+        modelName: r.model_name, provider: r.provider ?? "openai",
+        endpoint: r.endpoint ?? "", apiKeyRef: r.api_key_ref ?? "",
+        dimensions: Number(r.dimensions ?? 1536), batchSize: Number(r.batch_size ?? 50),
+        concurrency: Number(r.concurrency ?? 2), maxRetries: Number(r.max_retries ?? 2),
+        timeoutMs: Number(r.timeout_ms ?? 30000),
+        isDefault: Boolean(r.is_default), isActive: Boolean(r.is_active),
+        createdAt: r.created_at, updatedAt: r.updated_at,
+      }));
+      return { configs };
+    } catch { return { configs: [] }; }
+  });
+
+  const embeddingConfigSchema = z.object({
+    spaceId: z.string().optional().default(""),
+    modelName: z.string().min(1),
+    provider: z.string().default("openai"),
+    endpoint: z.string().default(""),
+    apiKeyRef: z.string().optional().default(""),
+    dimensions: z.number().min(64).max(4096).default(1536),
+    batchSize: z.number().min(1).max(100).default(50),
+    concurrency: z.number().min(1).max(8).default(2),
+    maxRetries: z.number().min(0).max(5).default(2),
+    timeoutMs: z.number().min(1000).max(120000).default(30000),
+    isDefault: z.boolean().default(false),
+    isActive: z.boolean().default(true),
+  });
+
+  app.put("/governance/knowledge/embedding-config", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "upsert_embedding_config" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const body = embeddingConfigSchema.parse(req.body);
+    const res = await app.db.query(
+      `INSERT INTO knowledge_embedding_model_configs (
+        tenant_id, space_id, model_name, provider, endpoint, api_key_ref,
+        dimensions, batch_size, concurrency, max_retries, timeout_ms,
+        is_default, is_active, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now())
+      ON CONFLICT (tenant_id, space_id, is_active) WHERE space_id IS NOT NULL DO UPDATE SET
+        model_name=EXCLUDED.model_name, provider=EXCLUDED.provider,
+        endpoint=EXCLUDED.endpoint, api_key_ref=EXCLUDED.api_key_ref,
+        dimensions=EXCLUDED.dimensions, batch_size=EXCLUDED.batch_size,
+        concurrency=EXCLUDED.concurrency, max_retries=EXCLUDED.max_retries,
+        timeout_ms=EXCLUDED.timeout_ms, is_default=EXCLUDED.is_default,
+        is_active=EXCLUDED.is_active, updated_at=now()
+      RETURNING *`,
+      [
+        tenantId, body.spaceId || null, body.modelName, body.provider,
+        body.endpoint || null, body.apiKeyRef || null,
+        body.dimensions, body.batchSize, body.concurrency, body.maxRetries,
+        body.timeoutMs, body.isDefault, body.isActive,
+      ],
+    );
+    const r = res.rows[0] as any;
+    return { id: r.id, spaceId: r.space_id, modelName: r.model_name, provider: r.provider, updatedAt: r.updated_at };
+  });
+
+  app.delete("/governance/knowledge/embedding-config/:id", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "delete_embedding_config" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const id = (req.params as any).id as string;
+    await app.db.query("DELETE FROM knowledge_embedding_model_configs WHERE tenant_id = $1 AND id = $2", [tenantId, id]);
+    return { success: true };
+  });
+
+  // ─── Knowledge Chunk Config APIs ────────────────────────────────────────
+
+  app.get("/governance/knowledge/chunk-configs", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "list_chunk_configs" });
+    const tenantId = req.ctx.subject!.tenantId;
+    try {
+      const res = await app.db.query(
+        "SELECT * FROM knowledge_chunk_configs WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 100",
+        [tenantId],
+      );
+      const configs = (res.rows as any[]).map((r) => ({
+        id: r.id, tenantId: r.tenant_id, spaceId: r.space_id,
+        strategy: r.strategy ?? "recursive",
+        maxLen: Number(r.max_len ?? 600), overlap: Number(r.overlap ?? 80),
+        separators: r.separators, semanticThreshold: Number(r.semantic_threshold ?? 0.5),
+        enableParentChild: Boolean(r.enable_parent_child),
+        parentMaxLen: Number(r.parent_max_len ?? 2000), childMaxLen: Number(r.child_max_len ?? 300),
+        tableAware: Boolean(r.table_aware), codeAware: Boolean(r.code_aware),
+        createdAt: r.created_at, updatedAt: r.updated_at,
+      }));
+      return { configs };
+    } catch { return { configs: [] }; }
+  });
+
+  const chunkConfigSchema = z.object({
+    spaceId: z.string().min(1),
+    strategy: z.enum(["fixed","paragraph","recursive","semantic","parent_child","table_aware","code_aware"]).default("recursive"),
+    maxLen: z.number().min(50).max(10000).default(600),
+    overlap: z.number().min(0).max(5000).default(80),
+    semanticThreshold: z.number().min(0).max(1).default(0.5),
+    enableParentChild: z.boolean().default(false),
+    parentMaxLen: z.number().min(200).max(10000).default(2000),
+    childMaxLen: z.number().min(50).max(5000).default(300),
+    tableAware: z.boolean().default(true),
+    codeAware: z.boolean().default(true),
+  });
+
+  app.put("/governance/knowledge/chunk-config", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "upsert_chunk_config" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const body = chunkConfigSchema.parse(req.body);
+    const res = await app.db.query(
+      `INSERT INTO knowledge_chunk_configs (
+        tenant_id, space_id, strategy, max_len, overlap, semantic_threshold,
+        enable_parent_child, parent_max_len, child_max_len, table_aware, code_aware, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
+      ON CONFLICT (tenant_id, space_id) DO UPDATE SET
+        strategy=EXCLUDED.strategy, max_len=EXCLUDED.max_len, overlap=EXCLUDED.overlap,
+        semantic_threshold=EXCLUDED.semantic_threshold, enable_parent_child=EXCLUDED.enable_parent_child,
+        parent_max_len=EXCLUDED.parent_max_len, child_max_len=EXCLUDED.child_max_len,
+        table_aware=EXCLUDED.table_aware, code_aware=EXCLUDED.code_aware, updated_at=now()
+      RETURNING *`,
+      [
+        tenantId, body.spaceId, body.strategy, body.maxLen, body.overlap,
+        body.semanticThreshold, body.enableParentChild, body.parentMaxLen,
+        body.childMaxLen, body.tableAware, body.codeAware,
+      ],
+    );
+    const r = res.rows[0] as any;
+    return { id: r.id, spaceId: r.space_id, strategy: r.strategy, updatedAt: r.updated_at };
+  });
+
+  app.delete("/governance/knowledge/chunk-config/:spaceId", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "delete_chunk_config" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const spaceId = (req.params as any).spaceId as string;
+    await app.db.query("DELETE FROM knowledge_chunk_configs WHERE tenant_id = $1 AND space_id = $2", [tenantId, spaceId]);
+    return { success: true };
+  });
+
+  // ─── Knowledge Vector Store Config APIs ─────────────────────────────────
+
+  app.get("/governance/knowledge/vector-store-configs", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "list_vector_store_configs" });
+    const tenantId = req.ctx.subject!.tenantId;
+    try {
+      const res = await app.db.query(
+        "SELECT * FROM knowledge_vector_store_configs WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 100",
+        [tenantId],
+      );
+      const configs = (res.rows as any[]).map((r) => ({
+        id: r.id, tenantId: r.tenant_id, spaceId: r.space_id,
+        provider: r.provider ?? "pg_fallback",
+        endpoint: r.endpoint ?? "", apiKey: r.api_key ?? "",
+        timeoutMs: Number(r.timeout_ms ?? 10000),
+        collectionPrefix: r.collection_prefix ?? "",
+        dbName: r.db_name ?? "default",
+        enabled: Boolean(r.enabled),
+        createdAt: r.created_at, updatedAt: r.updated_at,
+      }));
+      return { configs };
+    } catch { return { configs: [] }; }
+  });
+
+  const vectorStoreConfigSchema = z.object({
+    spaceId: z.string().min(1),
+    provider: z.enum(["qdrant","milvus","external","pg_fallback"]).default("pg_fallback"),
+    endpoint: z.string().default(""),
+    apiKey: z.string().optional().default(""),
+    timeoutMs: z.number().min(1000).max(60000).default(10000),
+    collectionPrefix: z.string().optional().default(""),
+    dbName: z.string().optional().default("default"),
+    enabled: z.boolean().default(true),
+  });
+
+  app.put("/governance/knowledge/vector-store-config", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "upsert_vector_store_config" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const body = vectorStoreConfigSchema.parse(req.body);
+    const res = await app.db.query(
+      `INSERT INTO knowledge_vector_store_configs (
+        tenant_id, space_id, provider, endpoint, api_key, timeout_ms,
+        collection_prefix, db_name, enabled, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
+      ON CONFLICT (tenant_id, space_id) DO UPDATE SET
+        provider=EXCLUDED.provider, endpoint=EXCLUDED.endpoint, api_key=EXCLUDED.api_key,
+        timeout_ms=EXCLUDED.timeout_ms, collection_prefix=EXCLUDED.collection_prefix,
+        db_name=EXCLUDED.db_name, enabled=EXCLUDED.enabled, updated_at=now()
+      RETURNING *`,
+      [
+        tenantId, body.spaceId, body.provider, body.endpoint || null,
+        body.apiKey || null, body.timeoutMs, body.collectionPrefix || null,
+        body.dbName, body.enabled,
+      ],
+    );
+    const r = res.rows[0] as any;
+    return { id: r.id, spaceId: r.space_id, provider: r.provider, updatedAt: r.updated_at };
+  });
+
+  app.delete("/governance/knowledge/vector-store-config/:spaceId", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "delete_vector_store_config" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const spaceId = (req.params as any).spaceId as string;
+    await app.db.query("DELETE FROM knowledge_vector_store_configs WHERE tenant_id = $1 AND space_id = $2", [tenantId, spaceId]);
+    return { success: true };
+  });
+
+  // ─── Knowledge Retrieval Strategy APIs ──────────────────────────────────
+  // NOTE: GET /governance/knowledge/retrieval-strategies is registered above in this file
+
+  const retrievalStrategySchema = z.object({
+    spaceId: z.string().min(1),
+    name: z.string().min(1),
+    status: z.enum(["draft","active","archived"]).default("draft"),
+    enableHyde: z.boolean().default(false),
+    hydePromptTemplate: z.string().optional().default(""),
+    enableQueryExpansion: z.boolean().default(false),
+    queryExpansionMode: z.enum(["synonym","subquery","both"]).default("synonym"),
+    enableSparseEmbedding: z.boolean().default(false),
+  });
+
+  app.put("/governance/knowledge/retrieval-strategy", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "upsert_retrieval_strategy" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const body = retrievalStrategySchema.parse(req.body);
+    const res = await app.db.query(
+      `INSERT INTO knowledge_retrieval_strategies (
+        tenant_id, space_id, name, version, status, config,
+        enable_hyde, hyde_prompt_template, enable_query_expansion,
+        query_expansion_mode, enable_sparse_embedding, updated_at
+      ) VALUES ($1,$2,$3,1,$4,'{}'::jsonb,$5,$6,$7,$8,$9,now())
+      ON CONFLICT (tenant_id, space_id, name, version) DO UPDATE SET
+        status=EXCLUDED.status, enable_hyde=EXCLUDED.enable_hyde,
+        hyde_prompt_template=EXCLUDED.hyde_prompt_template,
+        enable_query_expansion=EXCLUDED.enable_query_expansion,
+        query_expansion_mode=EXCLUDED.query_expansion_mode,
+        enable_sparse_embedding=EXCLUDED.enable_sparse_embedding, updated_at=now()
+      RETURNING *`,
+      [
+        tenantId, body.spaceId, body.name, body.status,
+        body.enableHyde, body.hydePromptTemplate || null,
+        body.enableQueryExpansion, body.queryExpansionMode,
+        body.enableSparseEmbedding,
+      ],
+    );
+    const r = res.rows[0] as any;
+    return { id: r.id, spaceId: r.space_id, name: r.name, status: r.status, updatedAt: r.updated_at };
+  });
+
+  app.delete("/governance/knowledge/retrieval-strategy/:id", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "delete_retrieval_strategy" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const id = (req.params as any).id as string;
+    await app.db.query("DELETE FROM knowledge_retrieval_strategies WHERE tenant_id = $1 AND id = $2", [tenantId, id]);
+    return { success: true };
+  });
+
+  // ─── Knowledge Evidence Retention Policy APIs ──────────────────────────
+
+  app.get("/governance/knowledge/retention-policies", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "list_retention_policies" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const policies = await listEvidenceRetentionPolicies({ pool: app.db, tenantId });
+    return { policies };
+  });
+
+  app.put("/governance/knowledge/retention-policy", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "upsert_retention_policy" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const body = z.object({
+      spaceId: z.string().min(1),
+      allowSnippet: z.boolean().default(true),
+      retentionDays: z.number().min(1).max(3650).default(30),
+      maxSnippetLen: z.number().min(50).max(5000).default(600),
+    }).parse(req.body);
+    const row = await upsertEvidenceRetentionPolicy({
+      pool: app.db,
+      tenantId,
+      spaceId: body.spaceId,
+      allowSnippet: body.allowSnippet,
+      retentionDays: body.retentionDays,
+      maxSnippetLen: body.maxSnippetLen,
+    });
+    return {
+      spaceId: row.space_id,
+      allowSnippet: Boolean(row.allow_snippet),
+      retentionDays: Number(row.retention_days),
+      updatedAt: row.updated_at,
+    };
+  });
+
+  app.delete("/governance/knowledge/retention-policy/:spaceId", async (req, reply) => {
+    setAuditContext(req, { resourceType: "knowledge", action: "delete_retention_policy" });
+    const tenantId = req.ctx.subject!.tenantId;
+    const spaceId = (req.params as any).spaceId as string;
+    await deleteEvidenceRetentionPolicy({ pool: app.db, tenantId, spaceId });
+    return { success: true };
   });
 };

@@ -39,7 +39,7 @@ function createDecisionRow(decision: "approve" | "reject", decidedBySubjectId: s
 
 function createPool() {
   const state = {
-    approval: createApprovalRow("pending", { approvalPolicy: { requireDualApproval: true } }),
+    approval: createApprovalRow("pending", { approvalPolicy: { requiredApprovals: 2 } }),
     decisions: [] as Array<{ decision: "approve" | "reject"; decidedBySubjectId: string }>,
   };
 

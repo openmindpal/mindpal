@@ -796,6 +796,7 @@ export type {
 } from "./metadataRegistry";
 
 // ── 统一审批判定（API / Worker 共用 Single Source of Truth） ──
+/** @deprecated 使用 API 侧 approvalRuleEngine.assessToolExecutionRisk() 代替 */
 export { shouldRequireApproval } from "./approvalDecision.js";
 
 // ── cache manager ─────────────────────────────────────────────

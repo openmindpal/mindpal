@@ -119,9 +119,9 @@ describe.sequential("knowledge retrieval upgrade e2e", { timeout: 90_000 }, () =
     if (!canRun) return;
     await app.inject({
       method: "PUT",
-      url: "/governance/knowledge/evidence-retention-policy",
+      url: "/governance/knowledge/retention-policy",
       headers,
-      payload: JSON.stringify({ allowSnippet: false, retentionDays: 30, maxSnippetLen: 10 }),
+      payload: JSON.stringify({ spaceId: "space_dev", allowSnippet: false, retentionDays: 30, maxSnippetLen: 10 }),
     });
 
     const doc = await pool.query("SELECT id, version FROM knowledge_documents WHERE tenant_id=$1 AND space_id=$2 ORDER BY created_at DESC LIMIT 1", ["tenant_dev", "space_dev"]);

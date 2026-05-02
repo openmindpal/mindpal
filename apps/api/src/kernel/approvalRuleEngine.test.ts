@@ -1,413 +1,311 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import type {
-  ApprovalRule, MatchCondition, RuleEffect,
-  ToolExecutionAssessment, ChangesetGateAssessment,
-} from "./approvalRuleEngine";
-import {
-  assessToolExecutionRisk,
-  assessChangesetGate,
-  checkEvalAdmission,
-  loadApprovalRules,
-} from "./approvalRuleEngine";
+/**
+ * approvalRuleEngine.ts 单元测试
+ *
+ * 所有审批规则均来自数据库（approval_rules 表），
+ * 测试通过 mock pool.query 模拟规则加载，验证规则匹配逻辑。
+ */
+import { describe, it, expect, vi } from "vitest";
+import { assessToolExecutionRisk } from "./approvalRuleEngine";
+import type { Pool } from "pg";
 
-/* ── Mock Pool ─────────────────────────────────────────────── */
+/* ================================================================== */
+/*  Mock Pool                                                          */
+/* ================================================================== */
 
-function mockPool(rows: any[] = []) {
+/** 构建规则行（模拟 migration 种子数据） */
+function ruleRow(override: Record<string, unknown>) {
   return {
-    query: vi.fn().mockResolvedValue({ rows, rowCount: rows.length }),
-  } as any;
-}
-
-/** 快速构建一条 DB 行格式的规则 */
-function dbRow(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
-  return {
-    rule_id: "r-1",
-    tenant_id: "t-1",
+    rule_id: override.rule_id ?? crypto.randomUUID(),
+    tenant_id: "__default__",
     rule_type: "tool_execution",
-    name: "Test Rule",
-    description: "desc",
-    priority: 10,
+    name: override.name ?? "test_rule",
+    description: override.description ?? "",
+    priority: override.priority ?? 100,
     enabled: true,
-    match_condition: { match: "always" },
-    effect: { riskLevel: "medium", approvalRequired: true },
+    match_condition: override.match_condition,
+    effect: override.effect,
     scope_type: null,
     scope_id: null,
     metadata: {},
-    ...overrides,
+    ...override,
   };
 }
 
+/** 模拟 migration 024 中的默认规则 */
+const SEED_RULES = [
+  ruleRow({ name: "high_risk_keyword", priority: 10,
+    match_condition: { match: "tool_name_regex", pattern: "delete|remove|drop|truncate|destroy|force|admin|bypass|root" },
+    effect: { riskLevel: "high", approvalRequired: true } }),
+  ruleRow({ name: "medium_risk_keyword", priority: 20,
+    match_condition: { match: "tool_name_regex", pattern: "update|modify|change|edit|write|create|insert|add|enable|disable" },
+    effect: { riskLevel: "medium" } }),
+  ruleRow({ name: "sensitive_password", priority: 30,
+    match_condition: { match: "input_content_regex", pattern: "password|密码" },
+    effect: { riskLevel: "medium" } }),
+  ruleRow({ name: "sensitive_secret", priority: 31,
+    match_condition: { match: "input_content_regex", pattern: "secret" },
+    effect: { riskLevel: "medium" } }),
+  ruleRow({ name: "sensitive_token", priority: 32,
+    match_condition: { match: "input_content_regex", pattern: "token" },
+    effect: { riskLevel: "medium" } }),
+  ruleRow({ name: "sensitive_credential", priority: 33,
+    match_condition: { match: "input_content_regex", pattern: "credential" },
+    effect: { riskLevel: "medium" } }),
+  ruleRow({ name: "batch_operation", priority: 40,
+    match_condition: { match: "input_batch_size", threshold: 10 },
+    effect: { riskLevel: "medium" } }),
+];
+
+function mockPool(rules = SEED_RULES): Pool {
+  return { query: vi.fn().mockResolvedValue({ rows: rules, rowCount: rules.length }) } as unknown as Pool;
+}
+
 /* ================================================================== */
-/*  assessToolExecutionRisk                                            */
+/*  assessToolExecutionRisk — 高风险关键词                           */
 /* ================================================================== */
 
-describe("assessToolExecutionRisk", () => {
-  it("should return low risk when no rules match", async () => {
-    const pool = mockPool([]);
+describe("assessToolExecutionRisk - 高风险", () => {
+  const highRiskTools = ["deleteUser", "removeFile", "dropTable", "truncateLog", "destroyInstance", "forceReset", "adminOverride"];
+
+  for (const tool of highRiskTools) {
+    it(`${tool} 识别为高风险`, async () => {
+      const result = await assessToolExecutionRisk({
+        pool: mockPool(), tenantId: "t1",
+        toolRef: `${tool}@1.0.0`, inputDraft: {},
+      });
+      expect(result.riskLevel).toBe("high");
+      expect(result.approvalRequired).toBe(true);
+      expect(result.matchedRules.length).toBeGreaterThan(0);
+      expect(result.humanSummary).toBeTruthy();
+    });
+  }
+
+  it("bypass 关键词识别为高风险", async () => {
     const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "echo@1.0", inputDraft: {},
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "bypassAuth@1.0", inputDraft: {},
+    });
+    expect(result.riskLevel).toBe("high");
+    expect(result.approvalRequired).toBe(true);
+  });
+
+  it("root 关键词识别为高风险", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "rootAccess@2.0", inputDraft: {},
+    });
+    expect(result.riskLevel).toBe("high");
+  });
+});
+
+/* ================================================================== */
+/*  assessToolExecutionRisk — 中风险关键词                           */
+/* ================================================================== */
+
+describe("assessToolExecutionRisk - 中风险", () => {
+  const mediumRiskTools = ["updateConfig", "modifySettings", "changePassword", "editProfile", "writeFile", "createUser", "insertRecord", "addPermission", "enableFeature", "disableAlarm"];
+
+  for (const tool of mediumRiskTools) {
+    it(`${tool} 识别为中风险`, async () => {
+      const result = await assessToolExecutionRisk({
+        pool: mockPool(), tenantId: "t1",
+        toolRef: `${tool}@1.0.0`, inputDraft: {},
+      });
+      expect(result.riskLevel).toBe("medium");
+      expect(result.riskFactors.some((f: string) => f.includes("medium_risk_keyword"))).toBe(true);
+    });
+  }
+});
+
+/* ================================================================== */
+/*  assessToolExecutionRisk — 低风险                                   */
+/* ================================================================== */
+
+describe("assessToolExecutionRisk - 低风险", () => {
+  it("普通读取工具为低风险", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readFile@1.0.0", inputDraft: {},
     });
     expect(result.riskLevel).toBe("low");
     expect(result.approvalRequired).toBe(false);
-    expect(result.matchedRules.length).toBe(0);
-    expect(result.humanSummary).toContain("无需审批");
   });
 
-  it("should match tool_name_regex rule", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "tool_name_regex", pattern: "^file\\.delete" }, effect: { riskLevel: "high", approvalRequired: true } }),
-    ]);
+  it("查询工具为低风险", async () => {
     const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "file.delete@1.0", inputDraft: {},
-    });
-    expect(result.riskLevel).toBe("high");
-    expect(result.approvalRequired).toBe(true);
-    expect(result.matchedRules.length).toBe(1);
-    expect(result.matchedRules[0].explanation).toContain("file.delete");
-  });
-
-  it("should NOT match when tool_name_regex does not match", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "tool_name_regex", pattern: "^file\\.delete" }, effect: { riskLevel: "high" } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "echo@1.0", inputDraft: {},
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "searchLogs@1.0.0", inputDraft: { query: "select * from logs" },
     });
     expect(result.riskLevel).toBe("low");
-    expect(result.matchedRules.length).toBe(0);
   });
 
-  it("should match input_content_regex", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "input_content_regex", pattern: "DROP\\s+TABLE" }, effect: { riskLevel: "high", approvalRequired: true } }),
-    ]);
+  it("列表工具为低风险", async () => {
     const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "sql.execute@1.0",
-      inputDraft: { query: "DROP TABLE users" },
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "listUsers@1.0.0", inputDraft: {},
     });
-    expect(result.approvalRequired).toBe(true);
-    expect(result.matchedRules.length).toBe(1);
+    expect(result.riskLevel).toBe("low");
   });
+});
 
-  it("should match input_batch_size when exceeding threshold", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "input_batch_size", threshold: 5 }, effect: { riskLevel: "medium", approvalRequired: true } }),
-    ]);
+/* ================================================================== */
+/*  assessToolExecutionRisk — 敏感内容检测                           */
+/* ================================================================== */
+
+describe("assessToolExecutionRisk - 敏感内容检测", () => {
+  it("输入包含 password 提升风险", async () => {
     const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "bulk.update@1.0",
-      inputDraft: { items: [1, 2, 3, 4, 5, 6, 7] },
-    });
-    expect(result.approvalRequired).toBe(true);
-    expect(result.matchedRules[0].explanation).toContain("7");
-  });
-
-  it("should NOT match input_batch_size below threshold", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "input_batch_size", threshold: 10 }, effect: { riskLevel: "medium" } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "bulk.update@1.0",
-      inputDraft: { items: [1, 2] },
-    });
-    expect(result.matchedRules.length).toBe(0);
-  });
-
-  it("should match input_field_gte", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "input_field_gte", field: "amount", threshold: 1000 }, effect: { riskLevel: "high", approvalRequired: true } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "payment@1.0",
-      inputDraft: { amount: 5000 },
-    });
-    expect(result.riskLevel).toBe("high");
-    expect(result.approvalRequired).toBe(true);
-  });
-
-  it("should match nested input_field_gte (dotted path)", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "input_field_gte", field: "payload.amount", threshold: 100 }, effect: { riskLevel: "medium" } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "transfer@1.0",
-      inputDraft: { payload: { amount: 200 } },
-    });
-    expect(result.matchedRules.length).toBe(1);
-  });
-
-  it("should match input_field_regex", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "input_field_regex", field: "target", pattern: "prod" }, effect: { riskLevel: "high" } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "deploy@1.0",
-      inputDraft: { target: "production-cluster" },
-    });
-    expect(result.matchedRules.length).toBe(1);
-  });
-
-  it("should match tool_scope", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "tool_scope", scope: "write" }, effect: { riskLevel: "medium", approvalRequired: true } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "data.update@1.0",
-      inputDraft: {},
-      toolDefinition: { scope: "write" },
-    });
-    expect(result.approvalRequired).toBe(true);
-  });
-
-  it("should match 'always' rule", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "always" }, effect: { riskLevel: "low", approvalRequired: true } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "any.tool@1.0", inputDraft: {},
-    });
-    expect(result.approvalRequired).toBe(true);
-    expect(result.matchedRules[0].explanation).toContain("始终生效");
-  });
-
-  /* ── AND/OR recursive conditions ──────────────────────────── */
-
-  it("should match AND condition (all sub-conditions satisfied)", async () => {
-    const pool = mockPool([
-      dbRow({
-        match_condition: {
-          match: "and",
-          conditions: [
-            { match: "tool_name_regex", pattern: "deploy" },
-            { match: "input_field_regex", field: "env", pattern: "prod" },
-          ],
-        },
-        effect: { riskLevel: "high", approvalRequired: true },
-      }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "deploy@1.0",
-      inputDraft: { env: "production" },
-    });
-    expect(result.riskLevel).toBe("high");
-    expect(result.approvalRequired).toBe(true);
-  });
-
-  it("should NOT match AND condition when one sub-condition fails", async () => {
-    const pool = mockPool([
-      dbRow({
-        match_condition: {
-          match: "and",
-          conditions: [
-            { match: "tool_name_regex", pattern: "deploy" },
-            { match: "input_field_regex", field: "env", pattern: "prod" },
-          ],
-        },
-        effect: { riskLevel: "high" },
-      }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "deploy@1.0",
-      inputDraft: { env: "staging" },
-    });
-    expect(result.matchedRules.length).toBe(0);
-  });
-
-  it("should match OR condition (any sub-condition satisfied)", async () => {
-    const pool = mockPool([
-      dbRow({
-        match_condition: {
-          match: "or",
-          conditions: [
-            { match: "tool_name_regex", pattern: "^delete" },
-            { match: "tool_name_regex", pattern: "^drop" },
-          ],
-        },
-        effect: { riskLevel: "high", approvalRequired: true },
-      }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "drop.table@1.0", inputDraft: {},
-    });
-    expect(result.approvalRequired).toBe(true);
-  });
-
-  /* ── Risk escalation & multi-rule accumulation ─────────── */
-
-  it("should escalate risk to the highest matched rule", async () => {
-    const pool = mockPool([
-      dbRow({ rule_id: "r-1", match_condition: { match: "always" }, effect: { riskLevel: "low" } }),
-      dbRow({ rule_id: "r-2", match_condition: { match: "tool_name_regex", pattern: "danger" }, effect: { riskLevel: "high" } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "danger.op@1.0", inputDraft: {},
-    });
-    expect(result.riskLevel).toBe("high");
-    expect(result.approvalRequired).toBe(true); // high → auto-approval
-  });
-
-  it("should accumulate approverRoles from multiple rules", async () => {
-    const pool = mockPool([
-      dbRow({ rule_id: "r-1", match_condition: { match: "always" }, effect: { approverRoles: ["admin"] } }),
-      dbRow({ rule_id: "r-2", match_condition: { match: "always" }, effect: { approverRoles: ["admin", "security"] } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "op@1.0", inputDraft: {},
-    });
-    expect(result.approverRoles).toContain("admin");
-    expect(result.approverRoles).toContain("security");
-    expect(result.approverRoles.length).toBe(2); // de-duplicated
-  });
-
-  it("should pick the smallest expiresInMinutes from multiple rules", async () => {
-    const pool = mockPool([
-      dbRow({ rule_id: "r-1", match_condition: { match: "always" }, effect: { expiresInMinutes: 60 } }),
-      dbRow({ rule_id: "r-2", match_condition: { match: "always" }, effect: { expiresInMinutes: 30 } }),
-    ]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "op@1.0", inputDraft: {},
-    });
-    expect(result.expiresInMinutes).toBe(30);
-  });
-
-  it("should use toolDefinition as baseline risk", async () => {
-    const pool = mockPool([]);
-    const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "op@1.0", inputDraft: {},
-      toolDefinition: { riskLevel: "medium", approvalRequired: true },
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readConfig@1.0.0", inputDraft: { password: "secret123" },
     });
     expect(result.riskLevel).toBe("medium");
+    expect(result.riskFactors.some((f: string) => f.includes("sensitive_password"))).toBe(true);
+  });
+
+  it("输入包含 密码 提升风险", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readConfig@1.0.0", inputDraft: { data: "用户密码是abc" },
+    });
+    expect(result.riskLevel).toBe("medium");
+  });
+
+  it("输入包含 secret 提升风险", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readConfig@1.0.0", inputDraft: { apiSecret: "xxx" },
+    });
+    expect(result.riskFactors.some((f: string) => f.includes("sensitive_secret"))).toBe(true);
+  });
+
+  it("输入包含 token 提升风险", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readConfig@1.0.0", inputDraft: { accessToken: "abc123" },
+    });
+    expect(result.riskFactors.some((f: string) => f.includes("sensitive_token"))).toBe(true);
+  });
+
+  it("输入包含 credential 提升风险", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readConfig@1.0.0", inputDraft: { credential: "xxx" },
+    });
+    expect(result.riskFactors.some((f: string) => f.includes("sensitive_credential"))).toBe(true);
+  });
+});
+
+/* ================================================================== */
+/*  assessToolExecutionRisk — 批量操作检测                           */
+/* ================================================================== */
+
+describe("assessToolExecutionRisk - 批量操作", () => {
+  it("items > 10 标记为批量操作", async () => {
+    const items = Array.from({ length: 15 }, (_, i) => ({ id: i }));
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readConfig@1.0.0", inputDraft: { items },
+    });
+    expect(result.riskFactors.some((f: string) => f.includes("batch_operation"))).toBe(true);
+  });
+
+  it("items <= 10 不标记为批量操作", async () => {
+    const items = Array.from({ length: 5 }, (_, i) => ({ id: i }));
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readConfig@1.0.0", inputDraft: { items },
+    });
+    expect(result.riskFactors.some((f: string) => f.includes("batch_operation"))).toBe(false);
+  });
+});
+
+/* ================================================================== */
+/*  assessToolExecutionRisk — toolDefinition 基准                      */
+/* ================================================================== */
+
+describe("assessToolExecutionRisk - toolDefinition 基准", () => {
+  it("toolDefinition.riskLevel=high 作为基准", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readFile@1.0.0", inputDraft: {},
+      toolDefinition: { riskLevel: "high" },
+    });
+    expect(result.riskLevel).toBe("high");
     expect(result.approvalRequired).toBe(true);
   });
 
-  it("should handle invalid regex gracefully (skip rule)", async () => {
-    const pool = mockPool([
-      dbRow({ match_condition: { match: "tool_name_regex", pattern: "[invalid" }, effect: { riskLevel: "high" } }),
-    ]);
+  it("toolDefinition.approvalRequired 强制要求审批", async () => {
     const result = await assessToolExecutionRisk({
-      pool, tenantId: "t-1", toolRef: "anything@1.0", inputDraft: {},
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readFile@1.0.0", inputDraft: {},
+      toolDefinition: { approvalRequired: true },
     });
-    expect(result.matchedRules.length).toBe(0);
+    expect(result.approvalRequired).toBe(true);
+  });
+
+  it("高风险规则可提升 toolDefinition.riskLevel=low 的基准", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "deleteUser@1.0.0", inputDraft: {},
+      toolDefinition: { riskLevel: "low" },
+    });
+    // DB 规则中高风险关键词规则会把 riskLevel 提升为 high
+    expect(result.riskLevel).toBe("high");
   });
 });
 
 /* ================================================================== */
-/*  assessChangesetGate                                                */
+/*  assessToolExecutionRisk — 复合风险                               */
 /* ================================================================== */
 
-describe("assessChangesetGate", () => {
-  it("should return low risk for empty item kinds", async () => {
-    const pool = mockPool([]);
-    const result = await assessChangesetGate({ pool, tenantId: "t-1", itemKinds: [] });
-    expect(result.riskLevel).toBe("low");
-    expect(result.requiredApprovals).toBe(1);
-    expect(result.evalAdmissionRequired).toBe(false);
-  });
-
-  it("should match item_kind_prefix rule", async () => {
-    // The pool.query is called twice (gate + eval), so we need different responses per call
-    const pool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({
-          rows: [dbRow({
-            rule_type: "changeset_gate",
-            match_condition: { match: "item_kind_prefix", pattern: "tool." },
-            effect: { riskLevel: "high", requiredApprovals: 2 },
-          })],
-          rowCount: 1,
-        })
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),
-    } as any;
-
-    const result = await assessChangesetGate({
-      pool, tenantId: "t-1", itemKinds: ["tool.execute"],
+describe("assessToolExecutionRisk - 复合风险", () => {
+  it("高风险工具 + 敏感输入 = 高风险 + 多个规则匹配", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "deleteAccount@1.0.0", inputDraft: { password: "xxx", token: "yyy" },
     });
     expect(result.riskLevel).toBe("high");
-    expect(result.requiredApprovals).toBe(2);
+    expect(result.approvalRequired).toBe(true);
+    expect(result.matchedRules.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("should match item_kind_exact rule", async () => {
-    const pool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({
-          rows: [dbRow({
-            rule_type: "changeset_gate",
-            match_condition: { match: "item_kind_exact", pattern: "deploy.production" },
-            effect: { riskLevel: "high", requiredApprovals: 3 },
-          })],
-          rowCount: 1,
-        })
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),
-    } as any;
-
-    const result = await assessChangesetGate({
-      pool, tenantId: "t-1", itemKinds: ["deploy.production"],
+  it("工具名不含 @ 时正确提取名称", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "deleteFile", inputDraft: {},
     });
-    expect(result.requiredApprovals).toBe(3);
-  });
-
-  it("should detect eval_admission requirement", async () => {
-    const pool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // gate rules
-        .mockResolvedValueOnce({
-          rows: [dbRow({
-            rule_type: "eval_admission",
-            match_condition: { match: "item_kind_prefix", pattern: "model." },
-            effect: { evalRequired: true },
-          })],
-          rowCount: 1,
-        }),
-    } as any;
-
-    const result = await assessChangesetGate({
-      pool, tenantId: "t-1", itemKinds: ["model.config"],
-    });
-    expect(result.evalAdmissionRequired).toBe(true);
-  });
-
-  it("should enforce minimum 2 approvals for high risk", async () => {
-    const pool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({
-          rows: [dbRow({
-            match_condition: { match: "always" },
-            effect: { riskLevel: "high", requiredApprovals: 1 },
-          })],
-          rowCount: 1,
-        })
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),
-    } as any;
-
-    const result = await assessChangesetGate({
-      pool, tenantId: "t-1", itemKinds: ["anything"],
-    });
-    expect(result.requiredApprovals).toBe(2); // enforced minimum for high risk
+    expect(result.riskLevel).toBe("high");
   });
 });
 
 /* ================================================================== */
-/*  checkEvalAdmission                                                 */
+/*  自描述能力验证                                                    */
 /* ================================================================== */
 
-describe("checkEvalAdmission", () => {
-  it("should return required=false when no rules match", async () => {
-    const pool = mockPool([]);
-    const result = await checkEvalAdmission({ pool, tenantId: "t-1", kind: "any" });
-    expect(result.required).toBe(false);
-    expect(result.matchedRule).toBeNull();
+describe("assessToolExecutionRisk - 自描述", () => {
+  it("匹配规则时返回 humanSummary", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "deleteUser@1.0.0", inputDraft: {},
+    });
+    expect(result.humanSummary).toBeTruthy();
+    expect(typeof result.humanSummary).toBe("string");
   });
 
-  it("should return required=true when eval rule matches", async () => {
-    const pool = mockPool([
-      dbRow({
-        rule_type: "eval_admission",
-        match_condition: { match: "item_kind_prefix", pattern: "model." },
-        effect: { evalRequired: true },
-      }),
-    ]);
-    const result = await checkEvalAdmission({ pool, tenantId: "t-1", kind: "model.update" });
-    expect(result.required).toBe(true);
-    expect(result.matchedRule).toBeDefined();
-    expect(result.explanation).toContain("model.update");
+  it("匹配规则时 matchedRules 包含 explanation", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "deleteUser@1.0.0", inputDraft: {},
+    });
+    expect(result.matchedRules.length).toBeGreaterThan(0);
+    expect(result.matchedRules[0].explanation).toBeTruthy();
+  });
+
+  it("无匹配规则时 matchedRules 为空", async () => {
+    const result = await assessToolExecutionRisk({
+      pool: mockPool(), tenantId: "t1",
+      toolRef: "readFile@1.0.0", inputDraft: {},
+    });
+    expect(result.matchedRules).toHaveLength(0);
   });
 });

@@ -19,7 +19,7 @@ import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type { CapabilityEnvelopeV1 } from "@mindpal/shared";
 import { StructuredLogger } from "@mindpal/shared";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+
 import { Errors } from "../lib/errors";
 
 const _kernelLogger = new StructuredLogger({ module: "executionKernel" });
@@ -32,7 +32,7 @@ import { createApproval } from "../modules/workflow/approvalRepo";
 import { appendStepToRun, createJobRunStep } from "../modules/workflow/jobRepo";
 import { enqueueWorkflowStep, setRunAndJobStatus } from "../modules/workflow/queue";
 import { insertAuditEvent } from "../modules/audit/auditRepo";
-import { resolveConfig } from "../modules/governance/configGovernanceRepo";
+
 import { runPreExecutionChecks, type CheckpointContext, type GovernanceCheckpoint } from "./governanceCheckpoint";
 import { assessToolExecutionRisk } from "./approvalRuleEngine";
 import { markStepNeedsApproval, updateInputDigest } from "./stepRepo";
@@ -361,20 +361,17 @@ export type SubmitResult =
       idempotencyKey?: string | null;
     };
 
-export const APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY = "APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK";
-
 export function buildApprovalInputDigest(params: {
   inputDigest: any;
   resolved: ResolvedTool;
-  requireDualApprovalForHighRisk: boolean;
+  requiredApprovals: number;
 }): Record<string, any> | null {
-  const approvalRequired = shouldRequireApproval(params.resolved.definition ?? {});
   const baseInputDigest =
     params.inputDigest && typeof params.inputDigest === "object" && !Array.isArray(params.inputDigest)
       ? params.inputDigest
       : null;
 
-  if (!(approvalRequired && params.resolved.definition.riskLevel === "high" && params.requireDualApprovalForHighRisk)) {
+  if (params.requiredApprovals <= 1) {
     return baseInputDigest ?? params.inputDigest ?? null;
   }
 
@@ -382,18 +379,9 @@ export function buildApprovalInputDigest(params: {
     ...(baseInputDigest ?? {}),
     approvalPolicy: {
       ...(baseInputDigest?.approvalPolicy && typeof baseInputDigest.approvalPolicy === "object" ? baseInputDigest.approvalPolicy : {}),
-      requireDualApproval: true,
+      requiredApprovals: params.requiredApprovals,
     },
   };
-}
-
-async function shouldRequireDualApprovalForHighRisk(params: { pool: Pool; tenantId: string }): Promise<boolean> {
-  const resolved = await resolveConfig({
-    pool: params.pool,
-    tenantId: params.tenantId,
-    configKey: APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY,
-  });
-  return Boolean(resolved.value);
 }
 
 /**
@@ -520,14 +508,23 @@ async function _handleApprovalOrEnqueue(params: {
     });
   }
 
-  const approvalRequired = shouldRequireApproval(resolved.definition ?? {});
-  const requireDualApprovalForHighRisk = approvalRequired
-    ? await shouldRequireDualApprovalForHighRisk({ pool, tenantId })
-    : false;
+  // ── 规则引擎为单一真相源：一次调用同时产出决策和上下文 ──
+  const assessment = await assessToolExecutionRisk({
+    pool,
+    tenantId,
+    toolRef: resolved.toolRef,
+    inputDraft: (typeof step.inputDigest === "object" && step.inputDigest) ? step.inputDigest : {},
+    toolDefinition: resolved.definition ? {
+      riskLevel: resolved.definition.riskLevel,
+      approvalRequired: resolved.definition.approvalRequired,
+      scope: resolved.definition.scope ?? undefined,
+    } : undefined,
+  });
+  const approvalRequired = assessment.approvalRequired;
   const approvalInputDigest = buildApprovalInputDigest({
     inputDigest: step.inputDigest,
     resolved,
-    requireDualApprovalForHighRisk,
+    requiredApprovals: assessment.requiredApprovals,
   });
 
   // 预检要求审批时，强制进入审批流程
@@ -549,17 +546,7 @@ async function _handleApprovalOrEnqueue(params: {
       toolRef: resolved.toolRef,
       policySnapshotRef: opDecision.snapshotRef ?? null,
       inputDigest: approvalInputDigest,
-      assessmentContext: await assessToolExecutionRisk({
-        pool,
-        tenantId,
-        toolRef: resolved.toolRef,
-        inputDraft: (typeof step.inputDigest === "object" && step.inputDigest) ? step.inputDigest : {},
-        toolDefinition: resolved.definition ? {
-          riskLevel: resolved.definition.riskLevel,
-          approvalRequired: resolved.definition.approvalRequired,
-          scope: resolved.definition.scope ?? undefined,
-        } : undefined,
-      }),
+      assessmentContext: assessment,  // 直接传递，无需二次调用
     });
     await insertAuditEvent(pool, {
       subjectId: subjectId ?? undefined,

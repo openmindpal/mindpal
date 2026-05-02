@@ -2,7 +2,6 @@
  * Skill Manager Routes
  *
  * 提供技能管理的HTTP API：
- * - GET  /skill-manager/list          列出所有技能
  * - GET  /skill-manager/:name/status  获取技能状态
  * - POST /skill-manager/:name/enable  启用技能
  * - POST /skill-manager/:name/disable 禁用技能
@@ -146,7 +145,6 @@ export const skillManagerRoutes: FastifyPluginAsync = async (app) => {
     return { skills };
   };
 
-  app.get("/skill-manager/list", listSkills);
   app.get("/skills", listSkills);
 
   // ─── Get skill status ────────────────────────────────────────────────

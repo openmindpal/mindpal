@@ -3,7 +3,7 @@ import type Redis from "ioredis";
 import type { Pool } from "pg";
 import crypto from "node:crypto";
 import { tryTransitionRun, type RunStatus, StructuredLogger } from "@mindpal/shared";
-import { shouldRequireApproval } from "@mindpal/shared/approvalDecision";
+
 
 const _logger = new StructuredLogger({ module: "worker:agentRunScheduler" });
 
@@ -193,7 +193,7 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
       [currentStepId],
     );
     const preflight = (stepMetaRes.rows[0]?.input_digest as any)?.preflight_result ?? null;
-    if (preflight && !preflight.allowed) {
+    if (preflight && !preflight.ok) {
       await stopRunWithBudget({
         jobId: params.jobId,
         runId: params.runId,
@@ -204,64 +204,6 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
       });
       return;
     }
-    if (preflight?.requiresApproval) {
-      // 预检要求审批：转换 run/step 状态为 needs_approval 并停止入队
-      const runStatus = status as RunStatus;
-      const transResult = tryTransitionRun(runStatus, "needs_approval" as RunStatus);
-      if (transResult.ok) {
-        const apClient = await pool.connect();
-        try {
-          await apClient.query("BEGIN");
-          await apClient.query(
-            "UPDATE runs SET status = 'needs_approval', updated_at = now() WHERE run_id = $1 AND tenant_id = $2",
-            [params.runId, tenantId],
-          );
-          await apClient.query(
-            "UPDATE steps SET status = 'needs_approval', updated_at = now() WHERE step_id = $1",
-            [currentStepId],
-          );
-          await apClient.query(
-            "UPDATE jobs SET status = 'needs_approval', updated_at = now() WHERE job_id = $1",
-            [params.jobId],
-          );
-          if (isCollab && tenantId) {
-            await apClient.query(
-              "UPDATE collab_runs SET status = 'needs_approval', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2",
-              [tenantId, collabRunId],
-            );
-          }
-          await apClient.query("COMMIT");
-        } catch (txErr: any) {
-          await apClient.query("ROLLBACK").catch(() => {});
-          _logger.error("preflight approval tx rollback", { runId: params.runId, stepId: currentStepId, error: txErr?.message ?? String(txErr) });
-          throw txErr;
-        } finally {
-          apClient.release();
-        }
-        if (isCollab && tenantId) {
-          await syncWorkerCollabStateSafe({
-            pool, tenantId, collabRunId,
-            phase: "needs_approval",
-            setCurrentRole: true, currentRole: null,
-            updateType: "phase_change", sourceRole: "system",
-            payload: { reason: "preflight_requires_approval", runId: params.runId, stepId: currentStepId },
-          });
-          await appendCollabEventOnce({
-            pool, redis, tenantId,
-            spaceId: spaceIdHint || null,
-            collabRunId, taskId,
-            type: "collab.run.needs_approval",
-            actorRole: null,
-            runId: params.runId, stepId: currentStepId,
-            payloadDigest: { reason: "preflight_requires_approval" },
-          });
-        }
-      } else {
-        _logger.warn("preflight approval state transition rejected", { currentStatus: runStatus, target: "needs_approval", runId: params.runId });
-      }
-      return; // 不继续入队，等待审批完成后恢复
-    }
-
     const completedPlanStepIds = new Set<string>();
     if (isCollab) {
       const doneRes = await pool.query(
@@ -307,87 +249,6 @@ export function createAgentRunScheduler(deps: SchedulerDeps) {
     const first = ready[0]!;
     const firstActorRole = first.metaInput?.actorRole ? String(first.metaInput.actorRole) : null;
     const firstPlanStepId = first.metaInput?.planStepId ? String(first.metaInput.planStepId) : null;
-    const tc = first.metaInput?.toolContract ?? null;
-    const approvalRequired = shouldRequireApproval({
-      approvalRequired: tc?.approvalRequired,
-      riskLevel: tc?.riskLevel,
-      sourceLayer: tc?.sourceLayer,
-      scope: tc?.scope,
-    });
-    if (approvalRequired) {
-      const spaceId = first.metaInput?.spaceId ? String(first.metaInput.spaceId) : null;
-      const subjectId = first.metaInput?.subjectId ? String(first.metaInput.subjectId) : null;
-      const apClient = await pool.connect();
-      try {
-        await apClient.query("BEGIN");
-        await apClient.query(
-          `
-            INSERT INTO approvals (tenant_id, space_id, run_id, step_id, status, requested_by_subject_id, tool_ref, policy_snapshot_ref, input_digest)
-            VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8)
-            ON CONFLICT (tenant_id, run_id) DO UPDATE SET status = 'pending', step_id = EXCLUDED.step_id, tool_ref = EXCLUDED.tool_ref, policy_snapshot_ref = EXCLUDED.policy_snapshot_ref, input_digest = EXCLUDED.input_digest, updated_at = now()
-          `,
-          [tenantId, spaceId, params.runId, first.stepId, subjectId ?? "unknown", first.toolRef, first.policySnapshotRef, first.inputDigest],
-        );
-        await apClient.query("UPDATE steps SET status = 'needs_approval', updated_at = now() WHERE step_id = $1", [first.stepId]);
-        await apClient.query("UPDATE runs SET status = 'needs_approval', updated_at = now() WHERE run_id = $1", [params.runId]);
-        await apClient.query("UPDATE jobs SET status = 'needs_approval', updated_at = now() WHERE job_id = $1", [params.jobId]);
-        if (tenantId && spaceId) {
-          await apClient.query(
-            "UPDATE memory_task_states SET phase = $4, updated_at = now() WHERE tenant_id = $1 AND space_id = $2 AND run_id = $3 AND deleted_at IS NULL",
-            [tenantId, spaceId, params.runId, "needs_approval"],
-          );
-        }
-        if (isCollab && tenantId) {
-          await apClient.query(
-            "UPDATE collab_runs SET status = 'needs_approval', updated_at = now() WHERE tenant_id = $1 AND collab_run_id = $2",
-            [tenantId, collabRunId],
-          );
-        }
-        await apClient.query("COMMIT");
-      } catch (txErr: any) {
-        await apClient.query("ROLLBACK").catch(() => {});
-        _logger.error("approval tx rollback", { runId: params.runId, jobId: params.jobId, stepId: first.stepId, error: txErr?.message ?? String(txErr) });
-        throw txErr;
-      } finally {
-        apClient.release();
-      }
-      if (isCollab && tenantId) {
-        await syncWorkerCollabStateSafe({
-          pool,
-          tenantId,
-          collabRunId,
-          phase: "needs_approval",
-          setCurrentRole: true,
-          currentRole: firstActorRole,
-          roleName: firstActorRole,
-          roleStatus: "blocked",
-          currentStepId: first.stepId,
-          progress: 0,
-          updateType: "phase_change",
-          sourceRole: firstActorRole ?? "system",
-          payload: {
-            reason: "scheduler_selected_approval_required_step",
-            stepId: first.stepId,
-            planStepId: firstPlanStepId,
-            toolRef: first.toolRef,
-          },
-        });
-        await appendCollabEventOnce({
-          pool,
-          redis,
-          tenantId,
-          spaceId: spaceIdHint || null,
-          collabRunId,
-          taskId,
-          type: "collab.run.needs_approval",
-          actorRole: first.metaInput?.actorRole ? String(first.metaInput.actorRole) : null,
-          runId: params.runId,
-          stepId: first.stepId,
-          payloadDigest: { toolRef: first.toolRef },
-        });
-      }
-      return;
-    }
 
     const maxParallel = isCollab ? 3 : 1;
     const enqueueSlice = ready.slice(0, maxParallel);

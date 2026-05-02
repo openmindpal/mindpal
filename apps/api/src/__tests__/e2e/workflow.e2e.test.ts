@@ -9,8 +9,6 @@ import {
   processStep,
   type TestContext,
 } from "./setup";
-import { setConfigOverride, deleteConfigOverride } from "../../modules/governance/configGovernanceRepo";
-import { APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY } from "../../kernel/executionKernel";
 import { upsertTaskState } from "../../modules/memory/repo";
 
 describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
@@ -162,13 +160,17 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
       "content-type": "application/json",
     };
 
-    await setConfigOverride({
-      pool,
-      tenantId: "tenant_dev",
-      configKey: APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY,
-      configValue: "true",
-      changedBy: "admin",
-    });
+    // 通过规则引擎配置双人审批（替代已废弃的 setConfigOverride）
+    await pool.query(
+      `INSERT INTO approval_rules (tenant_id, rule_type, name, description, priority, match_condition, effect, enabled)
+       VALUES ($1, 'tool_execution', 'e2e_dual_approval', '测试用双人审批规则', 1, $2::jsonb, $3::jsonb, true)
+       ON CONFLICT (tenant_id, rule_type, name) DO UPDATE SET effect = $3::jsonb, enabled = true, updated_at = now()`,
+      [
+        "tenant_dev",
+        JSON.stringify({ match: "tool_name_regex", pattern: ".*" }),
+        JSON.stringify({ riskLevel: "high", approvalRequired: true, requiredApprovals: 2 }),
+      ]
+    );
 
     try {
       const created = await ctx.app.inject({
@@ -223,12 +225,10 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
       );
       expect(resumedStep.rows[0]?.status).toBe("pending");
     } finally {
-      await deleteConfigOverride({
-        pool,
-        tenantId: "tenant_dev",
-        configKey: APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY,
-        changedBy: "admin",
-      });
+      await pool.query(
+        `DELETE FROM approval_rules WHERE tenant_id = $1 AND rule_type = 'tool_execution' AND name = 'e2e_dual_approval'`,
+        ["tenant_dev"]
+      );
     }
   });
 
@@ -241,13 +241,17 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
       "content-type": "application/json",
     };
 
-    await setConfigOverride({
-      pool,
-      tenantId: "tenant_dev",
-      configKey: APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY,
-      configValue: "true",
-      changedBy: "admin",
-    });
+    // 通过规则引擎配置双人审批（替代已废弃的 setConfigOverride）
+    await pool.query(
+      `INSERT INTO approval_rules (tenant_id, rule_type, name, description, priority, match_condition, effect, enabled)
+       VALUES ($1, 'tool_execution', 'e2e_dual_approval', '测试用双人审批规则', 1, $2::jsonb, $3::jsonb, true)
+       ON CONFLICT (tenant_id, rule_type, name) DO UPDATE SET effect = $3::jsonb, enabled = true, updated_at = now()`,
+      [
+        "tenant_dev",
+        JSON.stringify({ match: "tool_name_regex", pattern: ".*" }),
+        JSON.stringify({ riskLevel: "high", approvalRequired: true, requiredApprovals: 2 }),
+      ]
+    );
 
     try {
       const created = await ctx.app.inject({
@@ -277,12 +281,10 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
       expect(duplicateApprove.statusCode).toBe(400);
       expect(JSON.stringify(duplicateApprove.json())).toContain("双人审批需要不同审批人");
     } finally {
-      await deleteConfigOverride({
-        pool,
-        tenantId: "tenant_dev",
-        configKey: APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY,
-        changedBy: "admin",
-      });
+      await pool.query(
+        `DELETE FROM approval_rules WHERE tenant_id = $1 AND rule_type = 'tool_execution' AND name = 'e2e_dual_approval'`,
+        ["tenant_dev"]
+      );
     }
   });
 
@@ -295,13 +297,17 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
       "content-type": "application/json",
     };
 
-    await setConfigOverride({
-      pool,
-      tenantId: "tenant_dev",
-      configKey: APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY,
-      configValue: "true",
-      changedBy: "admin",
-    });
+    // 通过规则引擎配置双人审批（替代已废弃的 setConfigOverride）
+    await pool.query(
+      `INSERT INTO approval_rules (tenant_id, rule_type, name, description, priority, match_condition, effect, enabled)
+       VALUES ($1, 'tool_execution', 'e2e_dual_approval', '测试用双人审批规则', 1, $2::jsonb, $3::jsonb, true)
+       ON CONFLICT (tenant_id, rule_type, name) DO UPDATE SET effect = $3::jsonb, enabled = true, updated_at = now()`,
+      [
+        "tenant_dev",
+        JSON.stringify({ match: "tool_name_regex", pattern: ".*" }),
+        JSON.stringify({ riskLevel: "high", approvalRequired: true, requiredApprovals: 2 }),
+      ]
+    );
 
     const originalAdd = ctx.app.queue.add.bind(ctx.app.queue);
     ctx.app.queue.add = async () => {
@@ -369,12 +375,10 @@ describe.sequential("e2e:workflow", { timeout: 60_000 }, () => {
       expect(taskStateBody.nextAction).toBe("retry_run");
     } finally {
       ctx.app.queue.add = originalAdd;
-      await deleteConfigOverride({
-        pool,
-        tenantId: "tenant_dev",
-        configKey: APPROVAL_REQUIRE_DUAL_APPROVAL_FOR_HIGH_RISK_CONFIG_KEY,
-        changedBy: "admin",
-      });
+      await pool.query(
+        `DELETE FROM approval_rules WHERE tenant_id = $1 AND rule_type = 'tool_execution' AND name = 'e2e_dual_approval'`,
+        ["tenant_dev"]
+      );
     }
   });
 

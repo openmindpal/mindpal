@@ -34,11 +34,11 @@ export function registerKnowledgeCommands(program: Command) {
   // ── retention policy ───────────────────────────────────────────
   k.command("retention-get").description("获取保留策略").action(async (_o, cmd) => {
     const g = resolveGlobalOptions(cmd); const o = toApiOpts(g);
-    printResult(await apiGet(o, "/governance/knowledge/evidence-retention-policy"), g.format);
+    printResult(await apiGet(o, "/governance/knowledge/retention-policies"), g.format);
   });
   k.command("retention-set").description("设置保留策略").option("--body-json <json>", "策略 JSON").action(async (_o, cmd) => {
     const g = resolveGlobalOptions(cmd); const o = toApiOpts(g);
-    printResult(await apiPut(o, "/governance/knowledge/evidence-retention-policy", _o.bodyJson ? JSON.parse(_o.bodyJson) : {}), g.format);
+    printResult(await apiPut(o, "/governance/knowledge/retention-policy", _o.bodyJson ? JSON.parse(_o.bodyJson) : {}), g.format);
   });
 
   // ── strategies ─────────────────────────────────────────────────

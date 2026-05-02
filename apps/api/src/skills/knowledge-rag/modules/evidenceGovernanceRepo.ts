@@ -85,3 +85,25 @@ export async function insertEvidenceAccessEvent(params: {
   );
 }
 
+export async function listEvidenceRetentionPolicies(params: { pool: Pool; tenantId: string }): Promise<Array<EvidenceRetentionPolicyRow & { updatedAt: any }>> {
+  const res = await params.pool.query(
+    "SELECT tenant_id, space_id, allow_snippet, retention_days, max_snippet_len, updated_at FROM knowledge_evidence_retention_policies WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 100",
+    [params.tenantId],
+  );
+  return (res.rows as any[]).map((r) => ({
+    tenantId: r.tenant_id,
+    spaceId: r.space_id,
+    allowSnippet: Boolean(r.allow_snippet),
+    retentionDays: Number(r.retention_days ?? 30),
+    maxSnippetLen: Number(r.max_snippet_len ?? 600),
+    updatedAt: r.updated_at,
+  }));
+}
+
+export async function deleteEvidenceRetentionPolicy(params: { pool: Pool; tenantId: string; spaceId: string }): Promise<void> {
+  await params.pool.query(
+    "DELETE FROM knowledge_evidence_retention_policies WHERE tenant_id = $1 AND space_id = $2",
+    [params.tenantId, params.spaceId],
+  );
+}
+

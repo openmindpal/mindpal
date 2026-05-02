@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import type { Pool } from "pg";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { Errors } from "../lib/errors";
 import { setAuditContext } from "../modules/audit/context";
@@ -9,24 +9,9 @@ import { enqueueAuditOutboxForRequest } from "../modules/audit/requestOutbox";
 import { requirePermission } from "../modules/auth/guard";
 import { upsertTaskState } from "../modules/memory/repo";
 import { getRunForSpace, listSteps } from "../modules/workflow/jobRepo";
-import { addDecision, getApproval, listApprovals } from "../modules/workflow/approvalRepo";
+import { addDecision, getApproval, listApprovals, getApprovalSigningKey, computeInputSignature } from "../modules/workflow/approvalRepo";
 import { enqueueWorkflowStep } from "../modules/workflow/queue";
 
-/* ---- HMAC Binding 签名工具 ---- */
-const HMAC_ALGO = "sha256";
-
-let _signingKeyWarnEmitted = false;
-function warnIfDefaultSigningKey() {
-  if (!_signingKeyWarnEmitted && !process.env.APPROVAL_SIGNING_KEY) {
-    console.warn("[SECURITY] APPROVAL_SIGNING_KEY not set, using insecure default. Set this in production!");
-    _signingKeyWarnEmitted = true;
-  }
-}
-
-function computeInputSignature(inputDigest: unknown, secretKey: string): string {
-  const payload = typeof inputDigest === "string" ? inputDigest : JSON.stringify(inputDigest ?? {});
-  return createHmac(HMAC_ALGO, secretKey).update(payload).digest("hex");
-}
 
 function verifyInputSignature(inputDigest: unknown, signature: string, secretKey: string): boolean {
   const expected = computeInputSignature(inputDigest, secretKey);
@@ -112,6 +97,27 @@ export const approvalRoutes: FastifyPluginAsync = async (app) => {
       throw Errors.badRequest("Approval 不在 pending 状态");
     }
 
+    // ── 元数据驱动：审批人角色验证（角色列表来自规则引擎 effect.approverRoles）──
+    const requiredApproverRoles: string[] =
+      Array.isArray(existing.assessmentContext?.approverRoles)
+        ? existing.assessmentContext.approverRoles
+        : [];
+    if (requiredApproverRoles.length > 0) {
+      const roleRes = await app.db.query(
+        `SELECT r.name FROM role_bindings rb
+         JOIN roles r ON r.id = rb.role_id
+         WHERE rb.subject_id = $1 AND r.tenant_id = $2`,
+        [subject.subjectId, subject.tenantId],
+      );
+      const subjectRoleNames = new Set(roleRes.rows.map((r: any) => String(r.name)));
+      if (!requiredApproverRoles.some((r: string) => subjectRoleNames.has(r))) {
+        req.ctx.audit!.errorCategory = "policy_violation";
+        throw Errors.forbidden(
+          `审批需要角色 [${requiredApproverRoles.join(", ")}]，当前用户不匹配`
+        );
+      }
+    }
+
     if (body.decision === "approve") {
       const run = await getRunForSpace(app.db, subject.tenantId, subject.spaceId, existing.runId);
       if (!run) throw Errors.badRequest("Run 不存在");
@@ -149,9 +155,7 @@ export const approvalRoutes: FastifyPluginAsync = async (app) => {
 
       // --- HMAC Binding 验证 ---
       if (existing.inputSignature) {
-        warnIfDefaultSigningKey();
-        const signingKey = (app as any).config?.approvalSigningKey ?? process.env.APPROVAL_SIGNING_KEY;
-          if (!signingKey) { return reply.status(500).send({ error: "approval_signing_key_missing", message: "APPROVAL_SIGNING_KEY not configured" }); }
+        const signingKey = getApprovalSigningKey();
         if (!verifyInputSignature(existing.inputDigest, existing.inputSignature, signingKey)) {
           await insertAuditEvent(app.db, {
             subjectId: subject.subjectId,

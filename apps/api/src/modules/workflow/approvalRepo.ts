@@ -5,15 +5,24 @@ type Q = Pool | PoolClient;
 
 const HMAC_ALGO = "sha256";
 
+const _INSECURE_DEV_KEY = "__insecure_dev_only__";
 let _signingKeyWarnEmitted = false;
-function warnIfDefaultSigningKey() {
-  if (!_signingKeyWarnEmitted && !process.env.APPROVAL_SIGNING_KEY) {
-    console.warn("[SECURITY] APPROVAL_SIGNING_KEY not set in approvalRepo, using insecure default. Set this in production!");
+
+/** 统一获取审批签名密钥（生成和验证共用，确保一致性） */
+export function getApprovalSigningKey(): string {
+  const key = process.env.APPROVAL_SIGNING_KEY;
+  if (key) return key;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("APPROVAL_SIGNING_KEY must be set in production");
+  }
+  if (!_signingKeyWarnEmitted) {
+    console.warn("[SECURITY] APPROVAL_SIGNING_KEY not set, using insecure dev default.");
     _signingKeyWarnEmitted = true;
   }
+  return _INSECURE_DEV_KEY;
 }
 
-function computeInputSignature(inputDigest: unknown, secretKey: string): string {
+export function computeInputSignature(inputDigest: unknown, secretKey: string): string {
   const payload = typeof inputDigest === "string" ? inputDigest : JSON.stringify(inputDigest ?? {});
   return createHmac(HMAC_ALGO, secretKey).update(payload).digest("hex");
 }
@@ -63,12 +72,10 @@ type ApprovalDecisionState = {
 function getRequiredApprovals(inputDigest: Record<string, unknown> | null | undefined): number {
   const policy = (inputDigest as any)?.approvalPolicy;
   if (!policy) return 1;
-  // 优先读取显式数字配置
   if (typeof policy.requiredApprovals === "number" && policy.requiredApprovals >= 1) {
     return policy.requiredApprovals;
   }
-  // 向后兼容 boolean
-  return policy.requireDualApproval ? 2 : 1;
+  return 1;
 }
 
 function toApproval(r: any): ApprovalRow {
@@ -159,8 +166,7 @@ export async function createApproval(params: {
   }
 
   // --- HMAC Binding: 计算 input_signature（签名密钥从环境变量读取，元数据驱动） ---
-  warnIfDefaultSigningKey();
-  const signingKey = process.env.APPROVAL_SIGNING_KEY ?? "";
+  const signingKey = getApprovalSigningKey();
   const inputSignature = params.inputSignature ?? computeInputSignature(params.inputDigest ?? null, signingKey);
 
   const res = await params.pool.query(
