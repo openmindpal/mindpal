@@ -405,11 +405,11 @@ export default function KnowledgeDocumentsClient(props: { locale: string; initia
                       : r.indexStatus === "queued" || r.indexStatus === "running" ? "warning"
                       : "neutral"
                     }>
-                      {r.indexStatus === "succeeded" ? (props.locale === "en-US" ? "Indexed" : "已索引")
-                       : r.indexStatus === "queued" ? (props.locale === "en-US" ? "Queued" : "待索引")
-                       : r.indexStatus === "running" ? (props.locale === "en-US" ? "Indexing" : "索引中")
-                       : r.indexStatus === "failed" ? (props.locale === "en-US" ? "Failed" : "索引失败")
-                       : (props.locale === "en-US" ? "Pending" : "待处理")}
+                      {r.indexStatus === "succeeded" ? t(props.locale, "gov.knowledgeDocs.indexStatus.succeeded")
+                       : r.indexStatus === "queued" ? t(props.locale, "gov.knowledgeDocs.indexStatus.queued")
+                       : r.indexStatus === "running" ? t(props.locale, "gov.knowledgeDocs.indexStatus.running")
+                       : r.indexStatus === "failed" ? t(props.locale, "gov.knowledgeDocs.indexStatus.failed")
+                       : t(props.locale, "gov.knowledgeDocs.indexStatus.pending")}
                     </Badge>
                   </td>
                   <td>{fmtDateTime(r.updatedAt, props.locale)}</td>

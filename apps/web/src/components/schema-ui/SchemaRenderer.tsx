@@ -150,7 +150,7 @@ function RenderFormInner({ config, properties, onFormChange }: RenderProps & { o
                 onChange={(e) => handleChange(key, e.target.value)}
                 style={{ padding: "0.4rem", borderRadius: "4px", border: "1px solid var(--border, #d1d5db)" }}
               >
-                <option value="">请选择</option>
+                <option value="">Select...</option>
                 {selectOptions.map((v) => <option key={v} value={v}>{v}</option>)}
               </select>
             </label>

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/fmtDateTime";
 import { type ApiError, toApiError, errText } from "@/lib/apiError";
+import { t } from "@/lib/i18n";
 import { Badge, Card, PageHeader, Table, StatusBadge, TabNav, EmptyState } from "@/components/ui";
 
 /* ── types ── */
@@ -62,7 +63,6 @@ const PROVIDER_ORDER: Record<string, number> = {
 
 export default function GovChannelsClient(props: { locale: string; initial: any }) {
   const locale = props.locale;
-  const isZh = locale.includes("zh");
 
   /* ── shared state ── */
   const [busy, setBusy] = useState(false);
@@ -102,7 +102,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
     setBusy(true);
     try { await fn(); } catch (e: any) {
       const apiErr = toApiError(e);
-      setError(errText(locale, apiErr) || e?.message || "操作失败");
+      setError(errText(locale, apiErr) || e?.message || t(locale, "gov.channels.actionFailed"));
     } finally { setBusy(false); }
   }
 
@@ -116,7 +116,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
         setProviders(sorted);
       }
       else if (!res.ok) setError(errText(locale, json as ApiError) || `HTTP ${res.status}`);
-    } catch (e: any) { setError(e?.message || "加载失败"); }
+    } catch (e: any) { setError(e?.message || t(locale, "gov.channels.loadFailed")); }
   }, [locale]);
 
   const refreshEvents = useCallback(async () => {
@@ -159,7 +159,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
   }
 
   async function removeProvider(p: ProviderMeta) {
-    if (!window.confirm(isZh ? `确定移除「${pName(p, locale)}」的配置？将清除所有绑定和配置。` : `Remove ${pName(p, locale)} configuration? All bindings and config will be cleared.`)) return;
+    if (!window.confirm(t(locale, "gov.channels.removeConfirm").replace("{name}", pName(p, locale)))) return;
     await runAction(async () => {
       const res = await apiFetch(`/channels/setup/${encodeURIComponent(p.provider)}/remove`, {
         method: "POST", headers: { "content-type": "application/json" }, locale,
@@ -209,7 +209,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
       }, 3000);
     } catch (e: any) {
       setQrModal(null);
-      setError(e?.message || "初始化失败");
+      setError(e?.message || t(locale, "gov.channels.initFailed"));
     }
   }
 
@@ -267,10 +267,10 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
   return (
     <div>
       <PageHeader
-        title={isZh ? "IM 频道" : "IM Channels"}
+        title={t(locale, "gov.channels.im.title")}
         actions={
           <button onClick={() => refreshProviders()} disabled={busy}>
-            {isZh ? "刷新" : "Refresh"}
+            {t(locale, "gov.channels.refresh")}
           </button>
         }
       />
@@ -297,8 +297,8 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                 <span style={{ fontSize: 18 }}>{icon}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
-                  {connected && <Badge tone="success">{isZh ? "已连接" : "Connected"}</Badge>}
-                  {disabled && <Badge tone="neutral">{isZh ? "已禁用" : "Disabled"}</Badge>}
+                  {connected && <Badge tone="success">{t(locale, "gov.channels.connected")}</Badge>}
+                  {disabled && <Badge tone="neutral">{t(locale, "gov.channels.statusDisabled")}</Badge>}
                 </div>
               </div>
 
@@ -314,21 +314,21 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                       disabled={busy}
                       style={{ width: 16, height: 16 }}
                     />
-                    <span>{isZh ? "启用" : "Enabled"}</span>
+                    <span>{t(locale, "gov.channels.enabled")}</span>
                   </label>
 
                   {/* admission policy */}
                   {p.features.admissionPolicy && connected && (
                     <div style={{ fontSize: 12 }}>
-                      <div style={{ color: "var(--sl-muted)", marginBottom: 4 }}>{isZh ? "准入策略" : "Admission"}</div>
+                      <div style={{ color: "var(--sl-muted)", marginBottom: 4 }}>{t(locale, "gov.channels.admissionLabel")}</div>
                       <select
                         value={p.admissionPolicy ?? "open"}
                         onChange={(e) => setAdmission(p, e.target.value as "open" | "pairing")}
                         disabled={busy}
                         style={{ fontSize: 12, width: "100%", padding: "3px 6px", borderRadius: 4, border: "1px solid var(--sl-border)" }}
                       >
-                        <option value="open">{isZh ? "开放 — 所有人可用" : "Open — everyone"}</option>
-                        <option value="pairing">{isZh ? "配对 — 需管理员允许" : "Pairing — admin approval"}</option>
+                        <option value="open">{t(locale, "gov.channels.admissionOpen")}</option>
+                        <option value="pairing">{t(locale, "gov.channels.admissionPairing")}</option>
                       </select>
                     </div>
                   )}
@@ -337,7 +337,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                   <button
                     onClick={() => removeProvider(p)}
                     disabled={busy}
-                    title={isZh ? "将清除所有绑定和配置" : "All bindings and config will be removed"}
+                    title={t(locale, "gov.channels.removeHint")}
                     style={{
                       fontSize: 12, color: "var(--sl-muted, #94a3b8)", background: "transparent",
                       border: "none", borderRadius: 0,
@@ -345,7 +345,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                       opacity: busy ? 0.5 : 1,
                     }}
                   >
-                    {isZh ? "移除配置" : "Remove"}
+                    {t(locale, "gov.channels.remove")}
                   </button>
                 </div>
               )}
@@ -364,7 +364,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                         border: "none",
                       }}
                     >
-                      {isZh ? "扫码配置" : "QR Setup"}
+                      {t(locale, "gov.channels.qrSetup")}
                     </button>
                   )}
                   {p.setupModes.includes("manual") && !p.setupModes.includes("qr") && (
@@ -383,7 +383,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                         border: "1px solid var(--sl-border)",
                       }}
                     >
-                      {isZh ? "手动配置" : "Manual Setup"}
+                      {t(locale, "gov.channels.manualSetup")}
                     </button>
                   )}
                 </div>
@@ -394,7 +394,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
       </div>
 
       {providers.length === 0 && (
-        <EmptyState text={isZh ? "暂无可用 IM 频道" : "No IM channels available"} />
+        <EmptyState text={t(locale, "gov.channels.noChannels")} />
       )}
 
       {/* ── QR Modal ── */}
@@ -407,15 +407,15 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
             style={{ background: "#fff", borderRadius: 16, padding: "32px 40px", minWidth: 360, maxWidth: 420, textAlign: "center", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}
             onClick={e => e.stopPropagation()}
           >
-            <h3 style={{ margin: "0 0 8px", fontSize: 18 }}>{isZh ? `配置${qrProviderName}` : `Setup ${qrProviderName}`}</h3>
+            <h3 style={{ margin: "0 0 8px", fontSize: 18 }}>{t(locale, "gov.channels.setupProvider").replace("{name}", qrProviderName)}</h3>
             <p style={{ margin: "0 0 20px", fontSize: 13, color: "#64748b" }}>
-              {isZh ? `打开${qrProviderName}，扫描二维码完成授权` : `Open ${qrProviderName} and scan the QR code to authorize`}
+              {t(locale, "gov.channels.scanQrHint").replace("{name}", qrProviderName)}
             </p>
             {qrModal.authorizeUrl ? (
               <>
                 <img
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(qrModal.authorizeUrl)}`}
-                  alt={isZh ? "扫码授权" : "Scan to authorize"}
+                  alt={t(locale, "gov.channels.scanToAuth")}
                   style={{ width: 256, height: 256, borderRadius: 8, border: "1px solid #e2e8f0" }}
                 />
                 <div style={{ marginTop: 10 }}>
@@ -424,22 +424,22 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                     onClick={(e) => { e.preventDefault(); window.open(qrModal.authorizeUrl, "_blank"); }}
                     style={{ fontSize: 12, color: "#64748b", textDecoration: "underline", cursor: "pointer" }}
                   >
-                    {isZh ? "在浏览器中打开授权" : "Open authorization in browser"}
+                    {t(locale, "gov.channels.authorizeInBrowser")}
                   </a>
                 </div>
               </>
             ) : (
               <div style={{ width: 256, height: 256, display: "flex", alignItems: "center", justifyContent: "center", background: "#f1f5f9", borderRadius: 8, margin: "0 auto" }}>
-                {isZh ? "加载中..." : "Loading..."}
+                {t(locale, "gov.channels.loading")}
               </div>
             )}
             <div style={{ marginTop: 16, display: "flex", gap: 8, justifyContent: "center" }}>
-              <button onClick={refreshQr} disabled={busy} style={{ fontSize: 13 }}>{isZh ? "刷新二维码" : "Refresh QR"}</button>
-              <button onClick={closeQr} style={{ fontSize: 13, opacity: 0.6 }}>{isZh ? "取消" : "Cancel"}</button>
+              <button onClick={refreshQr} disabled={busy} style={{ fontSize: 13 }}>{t(locale, "gov.channels.refreshQr")}</button>
+              <button onClick={closeQr} style={{ fontSize: 13, opacity: 0.6 }}>{t(locale, "gov.channels.cancel")}</button>
             </div>
             {qrModal.expiresAt && (
               <p style={{ marginTop: 8, fontSize: 12, color: "#94a3b8" }}>
-                {isZh ? "有效期至" : "Expires at"} {new Date(qrModal.expiresAt).toLocaleTimeString()}
+                {t(locale, "gov.channels.expiresAt")} {new Date(qrModal.expiresAt).toLocaleTimeString()}
               </p>
             )}
           </div>
@@ -457,12 +457,12 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
             onClick={e => e.stopPropagation()}
           >
             <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 600 }}>
-              {isZh ? `配置 ${pName(providers.find(pp => pp.provider === manualModal.provider) ?? { provider: manualModal.provider, displayName: {}, icon: "", setupModes: [], features: {}, status: "unconfigured" as const, workspaceId: null, admissionPolicy: null }, locale)}` : `Configure ${manualModal.provider}`}
+              {t(locale, "gov.channels.configureProvider").replace("{name}", pName(providers.find(pp => pp.provider === manualModal.provider) ?? { provider: manualModal.provider, displayName: {}, icon: "", setupModes: [], features: {}, status: "unconfigured" as const, workspaceId: null, admissionPolicy: null }, locale))}
             </h3>
             {manualModal.fields.map(f => (
               <div key={f.key} style={{ marginBottom: 12 }}>
                 <label style={{ display: "block", fontSize: 12, color: "var(--sl-muted)", marginBottom: 4 }}>
-                  {(isZh ? f.label.zh : f.label.en) || f.key}
+                  {(locale.includes("zh") ? f.label.zh : f.label.en) || f.key}
                   {f.required && <span style={{ color: "var(--sl-danger, #dc2626)" }}> *</span>}
                 </label>
                 <input
@@ -470,7 +470,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                   value={manualModal.values[f.key] ?? ""}
                   onChange={e => setManualModal(prev => prev ? { ...prev, values: { ...prev.values, [f.key]: e.target.value } } : null)}
                   style={{ width: "100%", padding: "6px 8px", fontSize: 13, borderRadius: 4, border: "1px solid var(--sl-border, #e2e8f0)", boxSizing: "border-box" as const }}
-                  placeholder={(isZh ? f.label.zh : f.label.en) || f.key}
+                  placeholder={(locale.includes("zh") ? f.label.zh : f.label.en) || f.key}
                 />
               </div>
             ))}
@@ -479,14 +479,14 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                 onClick={() => setManualModal(null)}
                 style={{ fontSize: 12, padding: "5px 12px", borderRadius: 4, border: "1px solid var(--sl-border)", background: "transparent", cursor: "pointer" }}
               >
-                {isZh ? "取消" : "Cancel"}
+                {t(locale, "gov.channels.cancel")}
               </button>
               <button
                 onClick={submitManual}
                 disabled={busy}
                 style={{ fontSize: 12, padding: "5px 12px", borderRadius: 4, border: "none", background: "var(--sl-accent, #3b82f6)", color: "#fff", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
               >
-                {isZh ? "保存" : "Save"}
+                {t(locale, "gov.channels.save")}
               </button>
             </div>
           </div>
@@ -500,24 +500,24 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
           style={{ all: "unset", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 500, color: "var(--sl-muted)", padding: "6px 0" }}
         >
           <span style={{ fontSize: 10, transition: "transform .15s", transform: opsOpen ? "rotate(90deg)" : "none" }}>▶</span>
-          {isZh ? "运维管理（入站事件 / 出站消息）" : "Ops Management (Ingress / Outbox)"}
+          {t(locale, "gov.channels.opsTitle")}
         </button>
         {opsOpen && (
           <TabNav tabs={[
-            { key: "ingress", label: isZh ? "入站事件" : "Ingress Events", content: (
-              <Card title={isZh ? "入站事件" : "Ingress Events"}>
+            { key: "ingress", label: t(locale, "gov.channels.ingressEvents"), content: (
+              <Card title={t(locale, "gov.channels.ingressEvents")}>
                 <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
                   <StatusBadge locale={locale} status={events.status} />
                   <select value={ingressStatus} onChange={(e) => setIngressStatus(e.target.value)} disabled={busy} style={{ fontSize: 13 }}>
-                    <option value="all">{isZh ? "全部" : "All"}</option>
-                    <option value="received">{isZh ? "已接收" : "Received"}</option>
-                    <option value="processed">{isZh ? "已处理" : "Processed"}</option>
-                    <option value="deadletter">{isZh ? "死信" : "Dead Letter"}</option>
+                    <option value="all">{t(locale, "gov.channels.filterAll")}</option>
+                    <option value="received">{t(locale, "gov.channels.filterReceived")}</option>
+                    <option value="processed">{t(locale, "gov.channels.filterProcessed")}</option>
+                    <option value="deadletter">{t(locale, "gov.channels.filterDeadletter")}</option>
                   </select>
-                  <button onClick={refreshEvents} disabled={busy} style={{ fontSize: 13 }}>{isZh ? "刷新" : "Refresh"}</button>
+                  <button onClick={refreshEvents} disabled={busy} style={{ fontSize: 13 }}>{t(locale, "gov.channels.refresh")}</button>
                 </div>
                 {evItems.length === 0 ? (
-                  <EmptyState text={isZh ? "暂无入站事件" : "No ingress events"} />
+                  <EmptyState text={t(locale, "gov.channels.noIngress")} />
                 ) : (
                   <>
                     <Table>
@@ -526,8 +526,8 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                           <th>Provider</th>
                           <th>Workspace</th>
                           <th>Event ID</th>
-                          <th>{isZh ? "状态" : "Status"}</th>
-                          <th>{isZh ? "操作" : "Actions"}</th>
+                          <th>{t(locale, "gov.channels.colStatus")}</th>
+                          <th>{t(locale, "gov.channels.colActions")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -543,7 +543,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                             </td>
                             <td>
                               <button disabled={busy || !e.id} onClick={() => retryIngress(String(e.id))} style={{ fontSize: 12 }}>
-                                {isZh ? "重试" : "Retry"}
+                                {t(locale, "gov.channels.retry")}
                               </button>
                             </td>
                           </tr>
@@ -556,8 +556,8 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                           {evPage * pageSize + 1}-{Math.min((evPage + 1) * pageSize, evItems.length)} / {evItems.length}
                         </span>
                         <div style={{ display: "flex", gap: 8 }}>
-                          <button disabled={evPage === 0} onClick={() => setEvPage(p => Math.max(0, p - 1))}>{isZh ? "上一页" : "Prev"}</button>
-                          <button disabled={evPage >= evTotalPages - 1} onClick={() => setEvPage(p => p + 1)}>{isZh ? "下一页" : "Next"}</button>
+                          <button disabled={evPage === 0} onClick={() => setEvPage(p => Math.max(0, p - 1))}>{t(locale, "gov.channels.prev")}</button>
+                          <button disabled={evPage >= evTotalPages - 1} onClick={() => setEvPage(p => p + 1)}>{t(locale, "gov.channels.next")}</button>
                         </div>
                       </div>
                     )}
@@ -565,23 +565,23 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                 )}
               </Card>
             )},
-            { key: "outbox", label: isZh ? "出站消息" : "Outbox Messages", content: (
-              <Card title={isZh ? "出站消息" : "Outbox Messages"}>
+            { key: "outbox", label: t(locale, "gov.channels.outboxMessages"), content: (
+              <Card title={t(locale, "gov.channels.outboxMessages")}>
                 <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
                   <StatusBadge locale={locale} status={outbox.status} />
                   <select value={outboxStatus} onChange={(e) => setOutboxStatus(e.target.value)} disabled={busy} style={{ fontSize: 13 }}>
-                    <option value="deadletter">{isZh ? "死信" : "Dead Letter"}</option>
-                    <option value="failed">{isZh ? "失败" : "Failed"}</option>
-                    <option value="queued">{isZh ? "排队中" : "Queued"}</option>
-                    <option value="processing">{isZh ? "处理中" : "Processing"}</option>
-                    <option value="delivered">{isZh ? "已投递" : "Delivered"}</option>
-                    <option value="acked">{isZh ? "已确认" : "Acked"}</option>
-                    <option value="canceled">{isZh ? "已取消" : "Canceled"}</option>
+                    <option value="deadletter">{t(locale, "gov.channels.filterDeadletter")}</option>
+                    <option value="failed">{t(locale, "gov.channels.filterFailed")}</option>
+                    <option value="queued">{t(locale, "gov.channels.filterQueued")}</option>
+                    <option value="processing">{t(locale, "gov.channels.filterProcessing")}</option>
+                    <option value="delivered">{t(locale, "gov.channels.filterDelivered")}</option>
+                    <option value="acked">{t(locale, "gov.channels.filterAcked")}</option>
+                    <option value="canceled">{t(locale, "gov.channels.filterCanceled")}</option>
                   </select>
-                  <button onClick={refreshOutbox} disabled={busy} style={{ fontSize: 13 }}>{isZh ? "刷新" : "Refresh"}</button>
+                  <button onClick={refreshOutbox} disabled={busy} style={{ fontSize: 13 }}>{t(locale, "gov.channels.refresh")}</button>
                 </div>
                 {outboxItems.length === 0 ? (
-                  <EmptyState text={isZh ? "暂无出站消息" : "No outbox messages"} />
+                  <EmptyState text={t(locale, "gov.channels.noOutbox")} />
                 ) : (
                   <>
                     <Table>
@@ -591,11 +591,11 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                           <th>Workspace</th>
                           <th>Chat ID</th>
                           <th>Request ID</th>
-                          <th>{isZh ? "状态" : "Status"}</th>
-                          <th>{isZh ? "重试次数" : "Attempts"}</th>
-                          <th>{isZh ? "下次重试" : "Next Attempt"}</th>
-                          <th>{isZh ? "错误" : "Error"}</th>
-                          <th>{isZh ? "操作" : "Actions"}</th>
+                          <th>{t(locale, "gov.channels.colStatus")}</th>
+                          <th>{t(locale, "gov.channels.colAttempts")}</th>
+                          <th>{t(locale, "gov.channels.colNextAttempt")}</th>
+                          <th>{t(locale, "gov.channels.colError")}</th>
+                          <th>{t(locale, "gov.channels.colActions")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -616,10 +616,10 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                             <td>
                               <div style={{ display: "flex", gap: 6 }}>
                                 <button disabled={busy || !m.id} onClick={() => retryOutbox(String(m.id))} style={{ fontSize: 12 }}>
-                                  {isZh ? "重试" : "Retry"}
+                                  {t(locale, "gov.channels.retry")}
                                 </button>
                                 <button disabled={busy || !m.id} onClick={() => cancelOutbox(String(m.id))} style={{ fontSize: 12 }}>
-                                  {isZh ? "取消" : "Cancel"}
+                                  {t(locale, "gov.channels.cancel")}
                                 </button>
                               </div>
                             </td>
@@ -633,8 +633,8 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                           {outPage * pageSize + 1}-{Math.min((outPage + 1) * pageSize, outboxItems.length)} / {outboxItems.length}
                         </span>
                         <div style={{ display: "flex", gap: 8 }}>
-                          <button disabled={outPage === 0} onClick={() => setOutPage(p => Math.max(0, p - 1))}>{isZh ? "上一页" : "Prev"}</button>
-                          <button disabled={outPage >= outTotalPages - 1} onClick={() => setOutPage(p => p + 1)}>{isZh ? "下一页" : "Next"}</button>
+                          <button disabled={outPage === 0} onClick={() => setOutPage(p => Math.max(0, p - 1))}>{t(locale, "gov.channels.prev")}</button>
+                          <button disabled={outPage >= outTotalPages - 1} onClick={() => setOutPage(p => p + 1)}>{t(locale, "gov.channels.next")}</button>
                         </div>
                       </div>
                     )}

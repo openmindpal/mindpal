@@ -268,9 +268,9 @@ export default function PendingActionsQueue(props: {
       else deadletters.push(it);
     }
     return [
-      { key: "approval" as const, label: t(locale, "pendingActions.group.approval") || "待审批", items: approvals, dot: styles.statusDotOrange },
-      { key: "failed_run" as const, label: t(locale, "pendingActions.group.failedRun") || "失败任务", items: failedRuns, dot: styles.statusDotRed },
-      { key: "deadletter" as const, label: t(locale, "pendingActions.group.deadletter") || "死信队列", items: deadletters, dot: styles.statusDotGray },
+      { key: "approval" as const, label: t(locale, "pendingActions.group.approval") || "Pending Approvals", items: approvals, dot: styles.statusDotOrange },
+      { key: "failed_run" as const, label: t(locale, "pendingActions.group.failedRun") || "Failed Runs", items: failedRuns, dot: styles.statusDotRed },
+      { key: "deadletter" as const, label: t(locale, "pendingActions.group.deadletter") || "Deadletter Queue", items: deadletters, dot: styles.statusDotGray },
     ].filter((g) => g.items.length > 0);
   }, [items, locale]);
 
@@ -394,7 +394,7 @@ export default function PendingActionsQueue(props: {
                         className={styles.paqShowMore}
                         onClick={() => toggleExpand(group.key)}
                       >
-                        {(t(locale, "pendingActions.showMore") || "查看更多 (还有{n}项)").replace("{n}", String(overflowN))}
+                        {(t(locale, "pendingActions.showMore") || "Show more ({n} more)").replace("{n}", String(overflowN))}
                       </button>
                     )}
                   </>
