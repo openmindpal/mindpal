@@ -247,18 +247,22 @@ export {
   // SHA-256
   sha256 as memorySha256,
   // 统一 Rerank
-  computeMemoryRerankScore,
+  computeMemoryRerankScore, DEFAULT_RERANK_WEIGHTS,
   // ILIKE 转义
   escapeIlikePat,
   // Cosine Similarity
   cosineSimilarity,
   // 记忆来源可信度
   DEFAULT_SOURCE_TRUST_MAP,
+  // 类型族感知冲突检测
+  MEMORY_TYPE_FAMILY, MEMORY_FAMILY_CONFLICT_THRESHOLD,
+  getMemoryTypeFamily, getConflictThreshold,
 } from "./memoryCore";
 export type {
   MemoryRiskEvaluation, WriteProof, WriteIntent, MemoryRerankInput,
   MemoryScope,
   MemoryProvenanceConfig,
+  RerankWeights,
 } from "./memoryCore";
 
 // ─── 列级加密（AES-256-GCM，API / Worker 共享） ────────────────────────────
@@ -571,7 +575,6 @@ export {
   isDebateConverged,
   computeDebateConsensusScore,
   COLLAB_CONFIG_DEFAULTS,
-  DEBATE_CONFIG_DEFAULTS,
   getDebateConfigDefaults,
   collabConfig,
 } from "./collabProtocol";
@@ -869,4 +872,9 @@ export type {
 
 // ── 设备插件策略映射（Single Source of Truth） ──
 export { DEVICE_TYPE_PLUGIN_POLICY, getDefaultPluginsForDeviceType } from "./devicePluginPolicy";
+
+// ── Worker 标准（S19/S20/S21） ──────────────────────────────────────────
+export * from "./workerJob";
+export * from "./workerTicker";
+export * from "./workerShutdown";
 

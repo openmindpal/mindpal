@@ -65,6 +65,22 @@
     "./attachment": {
       "types": "./dist/attachmentProcessor.d.ts",
       "default": "./dist/attachmentProcessor.js"
+    },
+    "./collab-protocol": {
+      "types": "./dist/collab-protocol.d.ts",
+      "default": "./dist/collab-protocol.js"
+    },
+    "./device-handshake": {
+      "types": "./dist/device-handshake.d.ts",
+      "default": "./dist/device-handshake.js"
+    },
+    "./audit": {
+      "types": "./dist/audit-barrel.d.ts",
+      "default": "./dist/audit-barrel.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "default": "./dist/worker.js"
     }
   },
   "scripts": {
@@ -80,6 +96,7 @@
     }
   },
   "dependencies": {
+    "@mindpal/protocol": "workspace:*",
     "unzipper": "^0.12.3"
   },
   "optionalDependencies": {

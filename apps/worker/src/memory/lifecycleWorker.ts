@@ -20,6 +20,8 @@ export interface LifecycleWorkerConfig {
   compactThreshold: number;
   /** 干运行模式（只记录不实际删除/合并） */
   dryRun: boolean;
+  /** pinned 记忆最大保留天数（超过后自动取消置顶），默认 90 */
+  pinnedMaxDays?: number;
 }
 
 const DEFAULT_CONFIG: LifecycleWorkerConfig = {
@@ -524,7 +526,7 @@ export async function runLifecycleWorker(params: {
   pool: Pool;
   tenantId?: string;
   spaceId?: string;
-  operations?: Array<"purge" | "compact" | "distill" | "distill_upgrade" | "decay" | "degrade_pending">,
+  operations?: Array<"purge" | "compact" | "distill" | "distill_upgrade" | "decay" | "degrade_pending" | "audit_pinned">,
   config?: Partial<LifecycleWorkerConfig>;
 }): Promise<LifecycleWorkerResult[]> {
   const operations = params.operations ?? ["purge"];
@@ -591,6 +593,16 @@ export async function runLifecycleWorker(params: {
       config: params.config,
     });
     results.push(degradeResult);
+  }
+
+  // 7. 审计长期 pinned 记忆
+  if (operations.includes("audit_pinned")) {
+    const auditPinnedResult = await auditPinnedMemories({
+      pool: params.pool,
+      tenantId: params.tenantId,
+      config: params.config,
+    });
+    results.push(auditPinnedResult);
   }
 
   return results;
@@ -999,4 +1011,84 @@ export async function updateMemoryDecayScores(params: {
   }
 
   return { operation: "decay_update", processed, affected, errors, details, durationMs: Date.now() - startTime };
+}
+
+/* ── Pinned 记忆审计 ── */
+
+/** 审计长期 pinned 记忆：超过 pinnedMaxDays 的自动取消置顶 */
+export async function auditPinnedMemories(params: {
+  pool: Pool;
+  tenantId?: string;
+  config?: Partial<LifecycleWorkerConfig>;
+}): Promise<LifecycleWorkerResult> {
+  const config = { ...DEFAULT_CONFIG, ...params.config };
+  const startTime = Date.now();
+  const pinnedMaxDays = config.pinnedMaxDays
+    ?? (process.env.MEMORY_PINNED_MAX_DAYS ? Number(process.env.MEMORY_PINNED_MAX_DAYS) : 90);
+  const details: LifecycleWorkerResult["details"] = [];
+  let affected = 0;
+  let errors = 0;
+
+  try {
+    const tenantFilter = params.tenantId ? " AND tenant_id = $2" : "";
+    const args: unknown[] = [pinnedMaxDays];
+    if (params.tenantId) args.push(params.tenantId);
+
+    if (!config.dryRun) {
+      const res = await params.pool.query(
+        `UPDATE memory_entries
+         SET pinned = FALSE, updated_at = now()
+         WHERE deleted_at IS NULL
+           AND pinned = TRUE
+           AND pinned_at < now() - make_interval(days => $1)
+           ${tenantFilter}
+         RETURNING id, title, type`,
+        args,
+      );
+
+      affected = res.rowCount ?? 0;
+
+      for (const row of (res.rows as Array<Record<string, unknown>>)) {
+        details.push({
+          id: String(row.id),
+          action: "unpinned",
+          reason: `pinned超过${pinnedMaxDays}天自动解除`,
+        });
+      }
+    } else {
+      const res = await params.pool.query(
+        `SELECT id, title, type
+         FROM memory_entries
+         WHERE deleted_at IS NULL
+           AND pinned = TRUE
+           AND pinned_at < now() - make_interval(days => $1)
+           ${tenantFilter}`,
+        args,
+      );
+
+      affected = res.rowCount ?? 0;
+
+      for (const row of (res.rows as Array<Record<string, unknown>>)) {
+        details.push({
+          id: String(row.id),
+          action: "would_unpin",
+          reason: `pinned超过${pinnedMaxDays}天自动解除`,
+        });
+      }
+    }
+
+    _logger.info("audit_pinned", { affected, pinnedMaxDays, dryRun: config.dryRun, durationMs: Date.now() - startTime });
+  } catch (err) {
+    errors++;
+    _logger.error("audit_pinned error", { err: (err as Error)?.message });
+  }
+
+  return {
+    operation: "audit_pinned",
+    processed: affected,
+    affected,
+    errors,
+    details,
+    durationMs: Date.now() - startTime,
+  };
 }

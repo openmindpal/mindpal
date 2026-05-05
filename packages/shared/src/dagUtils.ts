@@ -335,7 +335,7 @@ export function autoRepairDAG(
           ? Math.max(priorityFn(node.id), priorityFn(dep))
           : 0;
         // 无优先级时，选依赖列表中最后出现的边（启发式：后添加的边更可能是错误）
-        const effectiveScore = priorityFn ? edgeScore : (worstEdge ? 1 : 0);
+        const effectiveScore: number = priorityFn ? edgeScore : (worstEdge ? 1 : 0);
         if (!worstEdge || effectiveScore >= worstEdge.score) {
           worstEdge = { from: node.id, to: dep, score: effectiveScore };
         }

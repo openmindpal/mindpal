@@ -14,7 +14,7 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import { searchMemory, listMemoryEntries, createMemoryEntry, updateMemoryEntry, getMemoryEntry } from "../../../modules/memory/repo";
+import { searchMemory, listMemoryEntries, createMemoryEntry, updateMemoryEntry, getMemoryEntry, deleteMemoryEntry } from "../../../modules/memory/repo";
 import { searchChunksHybrid } from "../../knowledge-rag/modules/repo";
 import type { EnabledTool } from "../../../modules/agentContext";
 import { evaluateMemoryRisk, resolveNumber } from "@mindpal/shared";
@@ -142,6 +142,10 @@ export function isInlineWriteEligible(
   if (isWriteTool) {
     // 判断是否为 memory 类写入（通过 resourceType 元数据，而非硬编码名称）
     if (toolMeta?.def.resourceType === "memory") {
+      // memory.delete：软删除，允许内联执行（riskLevel=medium 但操作可恢复）
+      if (toolMeta?.def.action === "delete") {
+        return true;
+      }
       const type = String(inputDraft?.type ?? "other");
       const risk = evaluateMemoryRisk({ type, contentText: String(inputDraft?.contentText ?? "") });
       return risk.riskLevel === "low" && !risk.approvalRequired;
@@ -859,6 +863,39 @@ async function executeMemoryWriteInline(
   }
 }
 
+// ─── 安全内联删除：memory.delete（软删除，可恢复） ─────────
+
+/**
+ * 内联执行 memory.delete：直接软删除长期记忆条目，跳过工作流管线。
+ * 行为由输入数据驱动：必须传入目标记忆 id。
+ */
+async function executeMemoryDeleteInline(
+  input: Record<string, unknown>,
+  ctx: InlineExecContext,
+): Promise<unknown> {
+  const targetId = typeof input?.id === "string" && input.id.trim() ? input.id.trim() : null;
+  if (!targetId) return { error: "缺少记忆条目ID", ok: false };
+
+  const reason = typeof input?.reason === "string" ? input.reason.trim() : undefined;
+
+  const ok = await deleteMemoryEntry({
+    pool: ctx.pool,
+    tenantId: ctx.tenantId,
+    spaceId: ctx.spaceId,
+    subjectId: ctx.subjectId,
+    id: targetId,
+  });
+
+  if (!ok) return { error: "记忆条目不存在或无权删除", ok: false };
+
+  ctx.app?.log.info(
+    { traceId: ctx.traceId, memoryId: targetId, reason },
+    "[InlineToolExecutor] 内联删除记忆成功",
+  );
+
+  return { deleted: true, id: targetId, reason, message: "已成功删除该记忆" };
+}
+
 // ─── 初始化：声明式 handler 注册表 ────────────────────────────────
 
 /**
@@ -878,6 +915,7 @@ const INLINE_HANDLER_DECLARATIONS: Array<{
   { toolName: "entity.create", handler: executeEntityCreateInline },
   { toolName: "entity.update", handler: executeEntityUpdateInline },
   { toolName: "memory.write", handler: executeMemoryWriteInline },
+  { toolName: "memory.delete", handler: executeMemoryDeleteInline },
 ];
 
 /**

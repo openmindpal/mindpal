@@ -15,6 +15,9 @@ import {
   type MemoryRerankInput,
   type MemoryScope,
   DEFAULT_SOURCE_TRUST_MAP,
+  getMemoryTypeFamily,
+  getConflictThreshold,
+  MEMORY_TYPE_FAMILY,
 } from "@mindpal/shared";
 import { encryptMemoryContent, decryptMemoryContent, decryptMemoryContents } from "./memoryEncryption";
 import { cacheGet, cacheSet } from "../../kernel/loopCacheConfig.js";
@@ -225,21 +228,28 @@ export async function detectMemoryConflicts(params: {
     contentDiffIndicator: "similar" | "different";
   }>;
 }> {
-  const threshold = params.conflictThreshold ?? 0.3;
+  const threshold = params.conflictThreshold ?? getConflictThreshold(params.type);
   const limit = params.candidateLimit ?? 10;
 
   // 计算待写入内容的 minhash
   const embeddingInput = (params.title ? `${params.title} ` : "") + params.contentText;
   const qMinhash = computeMinhash(embeddingInput);
 
-  // 查找语义相近的同类型记忆
+  // 获取同族类型列表用于冲突检测
+  const family = getMemoryTypeFamily(params.type);
+  const familyTypes = Object.entries(MEMORY_TYPE_FAMILY)
+    .filter(([, f]) => f === family)
+    .map(([t]) => t);
+  if (!familyTypes.includes(params.type)) familyTypes.push(params.type);
+
+  // 查找语义相近的同族类型记忆
   const candidatesRes = await params.pool.query(
     `
       SELECT id, type, title, content_text, embedding_minhash
       FROM memory_entries
       WHERE tenant_id = $1
         AND space_id = $2
-        AND type = $3
+        AND type = ANY($3::text[])
         AND deleted_at IS NULL
         AND (expires_at IS NULL OR expires_at > now())
         AND embedding_minhash IS NOT NULL
@@ -247,7 +257,7 @@ export async function detectMemoryConflicts(params: {
       ORDER BY created_at DESC
       LIMIT $5
     `,
-    [params.tenantId, params.spaceId, params.type, qMinhash, limit],
+    [params.tenantId, params.spaceId, familyTypes, qMinhash, limit],
   );
 
   if (!candidatesRes.rowCount) {
@@ -532,19 +542,49 @@ export async function arbitrateMemoryConflict(params: {
   return result;
 }
 
+// ── 访问计数批量缓冲 ─────────────────────────────
+const accessBuffer = new Map<string, number>();
+const FLUSH_INTERVAL_MS = 30_000;
+let flushTimer: ReturnType<typeof setInterval> | null = null;
+
 /**
- * P1-3 Memory OS: 更新记忆访问计数和时间戳（用于衰减计算）
+ * P1-3 Memory OS: 更新记忆访问计数（内存缓冲 + 定期 flush）
  */
-export async function touchMemoryAccess(params: {
+export function touchMemoryAccess(params: {
   pool: Pool;
   tenantId: string;
   memoryIds: string[];
 }) {
-  if (!params.memoryIds.length) return;
-  await params.pool.query(
-    `UPDATE memory_entries SET access_count = access_count + 1, last_accessed_at = now(), updated_at = now() WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL`,
-    [params.tenantId, params.memoryIds],
-  );
+  const { pool, tenantId, memoryIds } = params;
+  if (!memoryIds.length) return;
+  for (const id of memoryIds) {
+    accessBuffer.set(id, (accessBuffer.get(id) ?? 0) + 1);
+  }
+  // 延迟启动 flush 定时器
+  if (!flushTimer) {
+    flushTimer = setInterval(() => flushAccessCounts(pool, tenantId), FLUSH_INTERVAL_MS);
+  }
+}
+
+export async function flushAccessCounts(pool: Pool, tenantId: string) {
+  if (accessBuffer.size === 0) return;
+  const batch = Array.from(accessBuffer.entries());
+  accessBuffer.clear();
+  try {
+    const ids = batch.map(([id]) => id);
+    const counts = batch.map(([, count]) => count);
+    await pool.query(
+      `UPDATE memory_entries
+       SET access_count = access_count + data.cnt,
+           last_accessed_at = now(),
+           updated_at = now()
+       FROM (SELECT unnest($2::uuid[]) AS id, unnest($3::int[]) AS cnt) AS data
+       WHERE memory_entries.tenant_id = $1 AND memory_entries.id = data.id`,
+      [tenantId, ids, counts],
+    );
+  } catch {
+    // flush 失败不影响主流程，下次重试
+  }
 }
 
 /**
@@ -869,7 +909,8 @@ export async function updateMemoryEntry(params: {
   const res = await params.pool.query(
     `UPDATE memory_entries
      SET type = $5, title = $6, content_text = $7, content_digest = $8,
-         embedding_minhash = $9, embedding_updated_at = now(), updated_at = now()
+         embedding_minhash = $9, embedding_updated_at = now(),
+         fact_version = COALESCE(fact_version, 1) + 1, updated_at = now()
      WHERE tenant_id = $1 AND space_id = $2 AND id = $3 AND deleted_at IS NULL
        AND (scope <> 'user' OR owner_subject_id = $4)
      RETURNING *`,
@@ -1156,6 +1197,7 @@ export async function searchMemory(params: {
 }) {
   const baseWhere: string[] = ["tenant_id = $1", "space_id = $2", "deleted_at IS NULL"];
   baseWhere.push("(expires_at IS NULL OR expires_at > now())");
+  baseWhere.push("COALESCE(resolution_status, '') <> 'superseded'");
   const baseArgs: any[] = [params.tenantId, params.spaceId];
   let idx = 3;
 

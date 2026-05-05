@@ -16,7 +16,7 @@ import crypto from "node:crypto";
  * ══════════════════════════════════════════════════════════════════ */
 
 export const MINHASH_K = parseInt(process.env.MINHASH_K ?? "16", 10);
-export const MEMORY_CONFLICT_PENALTY = parseFloat(process.env.MEMORY_CONFLICT_PENALTY ?? "-0.2");
+export const MEMORY_CONFLICT_PENALTY = parseFloat(process.env.MEMORY_CONFLICT_PENALTY ?? "-0.5");
 export const MINHASH_MODEL_REF = "minhash:16@1";
 
 /** 简易分词器：CJK 单字 + Latin 连续子串，最多 512 个 token */
@@ -111,6 +111,51 @@ export const MEMORY_TYPE_RISK_LEVELS: Record<string, "low" | "medium" | "high"> 
     return undefined;
   },
 });
+
+/** 记忆类型→所属族映射，同族内执行冲突检测 */
+export const MEMORY_TYPE_FAMILY: Record<string, string> = {
+  hobby: "preference_family",
+  preference: "preference_family",
+  interest: "preference_family",
+  like: "preference_family",
+  dislike: "preference_family",
+  identity: "identity_family",
+  personal_info: "identity_family",
+  profile: "identity_family",
+  name: "identity_family",
+  contact: "contact_family",
+  email: "contact_family",
+  phone: "contact_family",
+  address: "contact_family",
+  fact: "fact_family",
+  note: "note_family",
+  setting: "setting_family",
+  reminder: "reminder_family",
+};
+
+/** 各族的冲突检测阈值 — 数值越低越严格 */
+export const MEMORY_FAMILY_CONFLICT_THRESHOLD: Record<string, number> = {
+  identity_family: 0.20,   // 身份类严格：同名不同值必须冲突
+  contact_family: 0.20,    // 联系方式严格
+  preference_family: 0.50, // 偏好类宽松：多爱好并存正常
+  fact_family: 0.25,       // 事实类较严格
+  note_family: 0.60,       // 笔记类宽松
+  setting_family: 0.30,    // 设置类适中
+  reminder_family: 0.70,   // 提醒类极宽松
+};
+
+const DEFAULT_CONFLICT_THRESHOLD = 0.3;
+
+/** 获取类型所属族 */
+export function getMemoryTypeFamily(type: string): string {
+  return MEMORY_TYPE_FAMILY[type] ?? `${type}_family`;
+}
+
+/** 获取类型族对应的冲突检测阈值 */
+export function getConflictThreshold(type: string): number {
+  const family = getMemoryTypeFamily(type);
+  return MEMORY_FAMILY_CONFLICT_THRESHOLD[family] ?? DEFAULT_CONFLICT_THRESHOLD;
+}
 
 /** 注册新的记忆类型风险等级 */
 export function registerMemoryTypeRisk(type: string, level: "low" | "medium" | "high"): void {
@@ -301,12 +346,26 @@ export interface MemoryRerankInput {
   type?: string;
 }
 
-/** 记忆分类加权因子（均衡化：避免特定类型记忆因权重偏低被系统性排挤） */
-const MEMORY_CLASS_WEIGHT: Record<string, number> = {
-  procedural: 0.15,
-  semantic: 0.15,
-  episodic: 0.10,
-};
+/** 记忆排名 15 因子默认权重（可通过系统配置覆盖） */
+export const DEFAULT_RERANK_WEIGHTS = {
+  lexical: 1.2,
+  minhash: 1.0,
+  dense: 1.5,
+  recency: 0.05,
+  bothBonus: 0.1,
+  confidence: 0.15,
+  versionMax: 0.1,
+  conflictPenalty: -0.2,
+  classBoosts: { procedural: 0.15, semantic: 0.15, episodic: 0.1 } as Record<string, number>,
+  decayMax: 0.2,
+  distilledPenalty: -0.15,
+  priorityScale: 0.08,
+  globalBoost: 0.1,
+  shortTextBoost: 0.25,
+  titleMatchScale: 0.3,
+} as const;
+
+export type RerankWeights = typeof DEFAULT_RERANK_WEIGHTS;
 
 /**
  * 计算单条记忆候选的 Rerank 得分（16 因子统一公式）。
@@ -333,13 +392,14 @@ export function computeMemoryRerankScore(
   query: string,
   queryMinhash: number[],
   nowMs: number,
+  weights: RerankWeights = DEFAULT_RERANK_WEIGHTS,
 ): number {
   const queryLower = query.toLowerCase();
   const text = (c.contentText ?? "").toLowerCase();
-  const title = (c.title ?? "").toLowerCase();
+  const titleLower = (c.title ?? "").toLowerCase();
 
   // 1. Lexical match
-  const sLex = (text.includes(queryLower) || title.includes(queryLower)) ? 1 : 0;
+  const sLex = (text.includes(queryLower) || titleLower.includes(queryLower)) ? 1 : 0;
   // 2. Minhash overlap
   const sVec = minhashOverlapScore(queryMinhash, c.embeddingMinhash);
   // 3. Dense cosine
@@ -349,43 +409,43 @@ export function computeMemoryRerankScore(
   const ageMs = Number.isFinite(createdAtMs) ? Math.max(0, nowMs - createdAtMs) : 0;
   const recencyBoost = 1 / (1 + ageMs / (24 * 60 * 60 * 1000));
   // 5. Both-stage bonus
-  const bothBonus = c.stage === "both" ? 0.1 : 0;
+  const bothBonus = c.stage === "both" ? weights.bothBonus : 0;
   // 6. Confidence × 30d 半衰期衰减
   const dbConf = Number.isFinite(c.confidence) ? Math.max(0, Math.min(1, c.confidence)) : 0.5;
   const confDecay = Math.exp(-ageMs / (30 * 24 * 60 * 60 * 1000));
-  const confidenceBoost = dbConf * confDecay * 0.15;
+  const confidenceBoost = dbConf * confDecay * weights.confidence;
   // 7. factVersion
   const fv = Number.isFinite(c.factVersion) ? c.factVersion : 1;
-  const versionBoost = Math.min(fv / 10, 0.1);
+  const versionBoost = Math.min(fv / 10, weights.versionMax);
   // 8. Conflict penalty
   const hasConflict = c.conflictMarker && c.conflictMarker.length > 0 && c.resolutionStatus !== "resolved" && c.resolutionStatus !== "superseded";
-  const conflictPenalty = hasConflict ? MEMORY_CONFLICT_PENALTY : 0;
+  const conflictPenalty = hasConflict ? weights.conflictPenalty : 0;
   // 9. Class boost
-  const classBoost = MEMORY_CLASS_WEIGHT[c.memoryClass ?? "semantic"] ?? 0;
+  const classBoost = weights.classBoosts[c.memoryClass ?? "semantic"] ?? 0;
   // 10. Decay boost
   const ds = Number.isFinite(c.decayScore) ? Math.max(0, Math.min(1, c.decayScore)) : 1.0;
-  const decayBoost = (ds - 0.5) * 0.2;
+  const decayBoost = (ds - 0.5) * weights.decayMax;
   // 11. Distilled penalty
-  const distilledPenalty = c.distilledTo ? -0.15 : 0;
+  const distilledPenalty = c.distilledTo ? weights.distilledPenalty : 0;
   // 12. Source priority
   const prio = Number.isFinite(c.sourcePriority) ? Math.max(0, Math.min(100, c.sourcePriority)) : 0;
-  const priorityBoost = (prio / 100) * 0.08;
+  const priorityBoost = (prio / 100) * weights.priorityScale;
   // 13. Global scope boost（全局记忆优先级微增）
-  const globalBoost = c.scope === "global" ? 0.1 : 0;
+  const globalBoost = c.scope === "global" ? weights.globalBoost : 0;
   // 14. 短文本补偿（标题非空且内容较短时加权）
-  const shortTextBoost = (c.title && c.contentText.length <= 120) ? 0.25 : 0;
-  // 15. 标题精确匹配加分（查询词命中标题，帮助"姓名：伏城"等标题明确的记忆提权）
-  // 双向子串匹配：取较短串在较长串中的包含比率，数据驱动、零硬编码
+  const shortTextBoost = (c.title && c.contentText.length <= 120) ? weights.shortTextBoost : 0;
+  // 15. 标题匹配加分（单向子串匹配，轻量化）
   let titleMatchBoost = 0;
-  if (title && queryLower.length >= 1) {
-    const shorter = title.length <= queryLower.length ? title : queryLower;
-    const longer = title.length <= queryLower.length ? queryLower : title;
-    if (longer.includes(shorter)) {
-      titleMatchBoost = 0.3 * (shorter.length / longer.length);
+  if (titleLower && queryLower.length >= 1) {
+    if (titleLower.includes(queryLower)) {
+      titleMatchBoost = weights.titleMatchScale * (queryLower.length / titleLower.length);
+    } else if (queryLower.includes(titleLower)) {
+      titleMatchBoost = weights.titleMatchScale * (titleLower.length / queryLower.length);
     }
   }
 
-  return sLex * 1.2 + sVec + sDense * 1.5 + recencyBoost * 0.05 + bothBonus
+  return sLex * weights.lexical + sVec * weights.minhash + sDense * weights.dense
+    + recencyBoost * weights.recency + bothBonus
     + confidenceBoost + versionBoost + conflictPenalty + classBoost + decayBoost
     + distilledPenalty + priorityBoost + globalBoost + shortTextBoost
     + titleMatchBoost;

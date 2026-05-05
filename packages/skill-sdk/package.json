@@ -1,0 +1,34 @@
+{
+  "name": "@mindpal/skill-sdk",
+  "version": "1.0.0",
+  "description": "MindPal Skill Development SDK - Everything you need to build, test, and publish MindPal Skills",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./manifest": { "types": "./dist/manifest.d.ts", "import": "./dist/manifest.js" },
+    "./rpc": { "types": "./dist/rpc-helpers.d.ts", "import": "./dist/rpc-helpers.js" },
+    "./ndjson": { "types": "./dist/ndjson.d.ts", "import": "./dist/ndjson.js" },
+    "./trust": { "types": "./dist/trust.d.ts", "import": "./dist/trust.js" }
+  },
+  "files": ["dist", "README.md"],
+  "keywords": ["mindpal", "skill", "sdk", "agent", "ai-tools", "json-rpc"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mindpal-space/openslin",
+    "directory": "packages/skill-sdk"
+  },
+  "peerDependencies": {
+    "@mindpal/protocol": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@mindpal/protocol": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist"
+  }
+}

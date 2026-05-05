@@ -74,6 +74,25 @@ const plugin: BuiltinSkillPlugin = {
         inputSchema: { fields: { limit: { type: "number" } } },
         outputSchema: { fields: { tasks: { type: "json" } } },
       },
+      {
+        name: "memory.delete",
+        displayName: { "zh-CN": "删除记忆", "en-US": "Delete Memory" },
+        description: {
+          "zh-CN": "删除长期记忆条目（软删除，可恢复）。需传入要删除的记忆条目ID。",
+          "en-US": "Soft-delete a memory entry by ID. Recoverable.",
+        },
+        scope: "write",
+        resourceType: "memory",
+        action: "delete",
+        riskLevel: "medium",
+        extraPermissions: [{ resourceType: "memory", action: "delete" }],
+        inputSchema: {
+          fields: {
+            id: { type: "string", required: true, description: "要删除的记忆条目ID" },
+            reason: { type: "string", description: "删除原因（审计用）" },
+          },
+        },
+      },
     ],
   },
   routes: memoryRoutes,

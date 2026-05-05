@@ -14,6 +14,9 @@ import {
   type MemoryRerankInput,
   APPROVAL_REQUIRED_RISK_LEVELS,
   DEFAULT_SOURCE_TRUST_MAP,
+  getMemoryTypeFamily,
+  getConflictThreshold,
+  MEMORY_TYPE_FAMILY,
 } from "@mindpal/shared";
 import { encryptMemoryContent, decryptMemoryContent, isMemoryEncryptionEnabled } from "./memoryEncryption";
 
@@ -121,22 +124,29 @@ export async function memoryWrite(params: {
   // ── 冲突检测：写入前检查是否存在语义相近但内容矛盾的记忆 ──
   let conflictDetected = false;
   let conflictMarkers: string[] = [];
-  const CONFLICT_THRESHOLD = 0.3;
+  const conflictThreshold = getConflictThreshold(type);
   try {
+    // 获取同族类型列表用于冲突检测
+    const family = getMemoryTypeFamily(type);
+    const familyTypes = Object.entries(MEMORY_TYPE_FAMILY)
+      .filter(([, f]) => f === family)
+      .map(([t]) => t);
+    if (!familyTypes.includes(type)) familyTypes.push(type);
+
     const conflictCandRes = await params.pool.query(
       `SELECT id, type, title, content_text, embedding_minhash
        FROM memory_entries
-       WHERE tenant_id = $1 AND space_id = $2 AND type = $3
+       WHERE tenant_id = $1 AND space_id = $2 AND type = ANY($3::text[])
          AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
          AND embedding_minhash IS NOT NULL AND embedding_minhash && $4::int[]
        ORDER BY created_at DESC LIMIT 10`,
-      [params.tenantId, params.spaceId, type, minhash],
+      [params.tenantId, params.spaceId, familyTypes, minhash],
     );
     const newContentLower = contentText.toLowerCase().trim();
     for (const row of conflictCandRes.rows as Record<string, unknown>[]) {
       const mh = Array.isArray(row.embedding_minhash) ? (row.embedding_minhash as number[]) : [];
       const overlapScore = minhashOverlapScore(minhash, mh);
-      if (overlapScore >= CONFLICT_THRESHOLD) {
+      if (overlapScore >= conflictThreshold) {
         const existingLower = String(row.content_text ?? "").toLowerCase().trim();
         if (existingLower !== newContentLower) {
           conflictDetected = true;

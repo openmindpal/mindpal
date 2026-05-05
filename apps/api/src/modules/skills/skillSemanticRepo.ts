@@ -6,64 +6,8 @@
  * - 支持语义相似度检索
  * - 支持重复/相似技能检测
  */
-import crypto from "node:crypto";
 import type { Pool } from "pg";
-
-// ─── Minhash 语义向量工具（与系统其他模块对齐）───────────────────────
-const MINHASH_K = 16;
-
-function tokenize(text: string): string[] {
-  const out: string[] = [];
-  const s = text.toLowerCase();
-  let buf = "";
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]!;
-    const code = ch.charCodeAt(0);
-    // CJK 统一表意文字区间：每个汉字作为独立 token
-    if (code >= 0x4e00 && code <= 0x9fff) {
-      if (buf.length >= 2) out.push(buf);
-      buf = "";
-      out.push(ch);
-      if (out.length >= 512) break;
-      continue;
-    }
-    const ok = (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "_" || ch === "-";
-    if (ok) buf += ch;
-    else {
-      if (buf.length >= 2) out.push(buf);
-      buf = "";
-    }
-    if (out.length >= 512) break;
-  }
-  if (buf.length >= 2) out.push(buf);
-  return out;
-}
-
-function hash32(str: string): number {
-  const h = crypto.createHash("sha256").update(str, "utf8").digest();
-  return h.readInt32BE(0);
-}
-
-export function computeMinhash(text: string, k: number = MINHASH_K): number[] {
-  const toks = tokenize(text);
-  const mins = new Array<number>(k).fill(2147483647);
-  for (const t of toks) {
-    for (let i = 0; i < k; i++) {
-      const v = hash32(`${i}:${t}`);
-      if (v < mins[i]!) mins[i] = v;
-    }
-  }
-  return mins.map((x) => (x === 2147483647 ? 0 : x));
-}
-
-/** 计算两个 minhash 向量的 overlap 得分（0~1） */
-export function minhashOverlapScore(a: number[], b: number[]): number {
-  if (!a.length || !b.length) return 0;
-  const setB = new Set(b);
-  let hit = 0;
-  for (const v of a) if (setB.has(v)) hit++;
-  return a.length ? hit / a.length : 0;
-}
+import { computeMinhash, minhashOverlapScore } from "@mindpal/shared";
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface SkillSemanticRow {

@@ -1,35 +1,33 @@
 {
   "name": "@mindpal/device-agent-sdk",
-  "version": "0.1.0",
-  "private": false,
-  "license": "Apache-2.0",
-  "description": "灵智MindPal端侧代理SDK内核 — 可嵌入的设备智能体运行时",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "version": "1.0.0",
+  "description": "MindPal Device Agent SDK - Build intelligent device agents with plugin architecture, secure handshake, and multimodal capabilities",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./kernel": {
-      "types": "./dist/kernel/index.d.ts",
-      "default": "./dist/kernel/index.js"
-    },
-    "./transport": {
-      "types": "./dist/transport/index.d.ts",
-      "default": "./dist/transport/index.js"
-    },
-    "./config": {
-      "types": "./dist/config.d.ts",
-      "default": "./dist/config.js"
-    }
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./kernel": { "types": "./dist/kernel/index.d.ts", "import": "./dist/kernel/index.js" },
+    "./transport": { "types": "./dist/transport/index.d.ts", "import": "./dist/transport/index.js" },
+    "./config": { "types": "./dist/config.d.ts", "import": "./dist/config.js" }
   },
-  "files": ["dist"],
+  "files": ["dist", "README.md"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mindpal-space/openslin",
+    "directory": "packages/device-agent-sdk"
+  },
+  "keywords": ["mindpal", "device-agent", "sdk", "iot", "intelligent-agent", "plugin"],
   "dependencies": {
     "@mindpal/shared": "workspace:*",
     "ws": "^8.18.0"
   },
+  "peerDependencies": {
+    "@mindpal/protocol": "^1.0.0"
+  },
   "devDependencies": {
+    "@mindpal/protocol": "workspace:*",
     "@types/ws": "^8.5.10",
     "typescript": "^5.8.2"
   },

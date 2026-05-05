@@ -344,16 +344,31 @@ export async function searchChunksHybrid(params: {
 }) {
   const k = 16;
   const qMinhash = computeMinhash(params.query, k);
+  /* ── 合并配置：将 strategyConfig + params 归一为单一配置对象 ── */
   const cfg = params.strategyConfig && typeof params.strategyConfig === "object" ? (params.strategyConfig as any) : null;
   const cfgLimits = cfg?.limits && typeof cfg.limits === "object" ? (cfg.limits as any) : null;
-  const lexicalLimit = Math.max(0, Math.min(500, Number(cfgLimits?.lexicalLimit ?? params.lexicalLimit ?? 80)));
-  const embedLimit = Math.max(0, Math.min(500, Number(cfgLimits?.embedLimit ?? params.embedLimit ?? 120)));
-  const metaLimit = Math.max(0, Math.min(500, Number(cfgLimits?.metaLimit ?? Math.max(20, Math.round((params.lexicalLimit ?? 80) / 2)))));
   const cfgWeights = cfg?.weights && typeof cfg.weights === "object" ? (cfg.weights as any) : null;
-  const wLex = Number(cfgWeights?.lex ?? 1.2);
-  const wVec = Number(cfgWeights?.vec ?? 1);
-  const wRecency = Number(cfgWeights?.recency ?? 0.05);
-  const wMetaBoost = Number(cfgWeights?.metaBoost ?? 0.08);
+
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  const limits = {
+    lexical: clamp(Number(cfgLimits?.lexicalLimit ?? params.lexicalLimit ?? 80), 0, 500),
+    embed: clamp(Number(cfgLimits?.embedLimit ?? params.embedLimit ?? 120), 0, 500),
+    meta: clamp(Number(cfgLimits?.metaLimit ?? Math.max(20, Math.round((params.lexicalLimit ?? 80) / 2))), 0, 500),
+  };
+  const weights = {
+    lex: Number(cfgWeights?.lex ?? 1.2),
+    vec: Number(cfgWeights?.vec ?? 1),
+    recency: Number(cfgWeights?.recency ?? 0.05),
+    metaBoost: Number(cfgWeights?.metaBoost ?? 0.08),
+  };
+
+  const lexicalLimit = limits.lexical;
+  const embedLimit = limits.embed;
+  const metaLimit = limits.meta;
+  const wLex = weights.lex;
+  const wVec = weights.vec;
+  const wRecency = weights.recency;
+  const wMetaBoost = weights.metaBoost;
 
   const startedAt = Date.now();
   const docIds = Array.isArray(params.documentIds) ? params.documentIds.map(String).filter(Boolean) : [];
@@ -577,7 +592,20 @@ export async function searchChunksHybrid(params: {
   let rerankStats: { returned: number; reranked: boolean; degraded: boolean; degradeReason: string | null; latencyMs: number } = {
     returned: preRanked.length, reranked: false, degraded: false, degradeReason: null, latencyMs: 0,
   };
-  try {
+
+  // 高置信度早期终止：前 N 个候选得分足够高时跳过 Rerank
+  const TOP_CONFIDENT_COUNT = 5;
+  const CONFIDENCE_THRESHOLD = 0.95;
+  let skipRerank = false;
+  if (preRanked.length >= TOP_CONFIDENT_COUNT) {
+    const topScores = preRanked.slice(0, TOP_CONFIDENT_COUNT);
+    if (topScores.every(s => (s as any)._score >= CONFIDENCE_THRESHOLD)) {
+      scored = preRanked.slice(0, params.limit);
+      skipRerank = true;
+    }
+  }
+
+  if (!skipRerank) try {
     const rerankCfg = await getRerankConfig({ pool: params.pool, tenantId: params.tenantId, spaceId: params.spaceId });
     if (rerankCfg && preRanked.length > 0) {
       const snippets = preRanked.map((c) => String(c.snippet ?? ""));

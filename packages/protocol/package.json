@@ -1,0 +1,29 @@
+{
+  "name": "@mindpal/protocol",
+  "version": "1.0.0",
+  "description": "MindPal Agent OS protocol definitions - standard types, interfaces and utilities for Skill RPC, collaboration messaging, device handshake, and audit systems",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./skill-rpc": { "types": "./dist/skill-rpc.d.ts", "import": "./dist/skill-rpc.js" },
+    "./skill-manifest": { "types": "./dist/skill-manifest.d.ts", "import": "./dist/skill-manifest.js" },
+    "./collab-message": { "types": "./dist/collab-message.d.ts", "import": "./dist/collab-message.js" },
+    "./device-handshake": { "types": "./dist/device-handshake.d.ts", "import": "./dist/device-handshake.js" },
+    "./audit-event": { "types": "./dist/audit-event.d.ts", "import": "./dist/audit-event.js" },
+    "./state-machine": { "types": "./dist/state-machine.d.ts", "import": "./dist/state-machine.js" },
+    "./errors": { "types": "./dist/errors.d.ts", "import": "./dist/errors.js" }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.0.0"
+  }
+}

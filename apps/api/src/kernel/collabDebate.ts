@@ -12,10 +12,11 @@ import { runAgentLoop } from "./agentLoop";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import {
   createDebateSession, isDebateConverged, computeDebateConsensusScore,
+  getDebateConfigDefaults,
   type DebateSession, type DebatePosition, type DebateRound,
   type DebateVerdict, type DebateParty, type DebateCorrection,
   type ConsensusEvolutionEntry,
-  type DebateConfig, DEBATE_CONFIG_DEFAULTS,
+  type DebateConfig,
 } from "@mindpal/shared";
 import type { DebateV2PhaseParams } from "./collabTypes";
 import { loadApprovalRules } from "./approvalRuleEngine";
@@ -32,24 +33,25 @@ const STALE_ROUNDS_THRESHOLD = parseInt(process.env.COLLAB_DEBATE_STALE_ROUNDS ?
 
 /**
  * 从 approval_rules 加载辩论配置（rule_type='debate_config'），
- * 缺省用 DEBATE_CONFIG_DEFAULTS 兜底。
+ * 缺省用 getDebateConfigDefaults() 兜底。
  */
 export async function loadDebateConfig(pool: Pool, tenantId: string): Promise<DebateConfig> {
   const rules = await loadApprovalRules({ pool, tenantId, ruleType: "debate_config" });
   const cfg = (rules[0]?.metadata ?? {}) as Record<string, unknown>;
+  const defaults = getDebateConfigDefaults();
   return {
-    maxRounds:                (cfg.maxRounds as number)                ?? DEBATE_CONFIG_DEFAULTS.maxRounds,
-    convergenceThreshold:     (cfg.convergenceThreshold as number)     ?? DEBATE_CONFIG_DEFAULTS.convergenceThreshold,
-    minConfidence:            (cfg.minConfidence as number)            ?? DEBATE_CONFIG_DEFAULTS.minConfidence,
+    maxRounds:                (cfg.maxRounds as number)                ?? defaults.maxRounds,
+    convergenceThreshold:     (cfg.convergenceThreshold as number)     ?? defaults.convergenceThreshold,
+    minConfidence:            (cfg.minConfidence as number)            ?? defaults.minConfidence,
     arbiterModel:             cfg.arbiterModel as string | undefined,
-    allowCorrections:         (cfg.allowCorrections as boolean)        ?? DEBATE_CONFIG_DEFAULTS.allowCorrections,
-    requireEvidence:          (cfg.requireEvidence as boolean)         ?? DEBATE_CONFIG_DEFAULTS.requireEvidence,
-    scoreDecay:               (cfg.scoreDecay as number)               ?? DEBATE_CONFIG_DEFAULTS.scoreDecay,
-    correctionBonus:          (cfg.correctionBonus as number)          ?? DEBATE_CONFIG_DEFAULTS.correctionBonus,
-    consensusEvolutionWindow: (cfg.consensusEvolutionWindow as number) ?? DEBATE_CONFIG_DEFAULTS.consensusEvolutionWindow,
-    divergenceConfDiff:       (cfg.divergenceConfDiff as number)       ?? DEBATE_CONFIG_DEFAULTS.divergenceConfDiff,
-    minParties:               (cfg.minParties as number)               ?? DEBATE_CONFIG_DEFAULTS.minParties,
-    maxParties:               (cfg.maxParties as number)               ?? DEBATE_CONFIG_DEFAULTS.maxParties,
+    allowCorrections:         (cfg.allowCorrections as boolean)        ?? defaults.allowCorrections,
+    requireEvidence:          (cfg.requireEvidence as boolean)         ?? defaults.requireEvidence,
+    scoreDecay:               (cfg.scoreDecay as number)               ?? defaults.scoreDecay,
+    correctionBonus:          (cfg.correctionBonus as number)          ?? defaults.correctionBonus,
+    consensusEvolutionWindow: (cfg.consensusEvolutionWindow as number) ?? defaults.consensusEvolutionWindow,
+    divergenceConfDiff:       (cfg.divergenceConfDiff as number)       ?? defaults.divergenceConfDiff,
+    minParties:               (cfg.minParties as number)               ?? defaults.minParties,
+    maxParties:               (cfg.maxParties as number)               ?? defaults.maxParties,
   };
 }
 
@@ -176,6 +178,20 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
       }
     }
 
+    // 早期终止：检查是否已有绝对多数持相同立场
+    if (roundPositions.length >= 3) {
+      const stanceCount = new Map<string, number>();
+      for (const pos of roundPositions) {
+        const stance = pos.claim ?? 'unknown';
+        stanceCount.set(stance, (stanceCount.get(stance) ?? 0) + 1);
+      }
+      const maxCount = Math.max(...stanceCount.values());
+      if (maxCount >= Math.ceil(activeParties.length * 2 / 3)) {
+        // 绝对多数已同意，提前结束辩论
+        break;
+      }
+    }
+
     const divergence = detectNPartyDivergence(roundPositions, debateConfig);
     const debateRound: DebateRound = { round, positions: roundPositions, divergenceDetected: divergence };
     session.rounds.push(debateRound);
@@ -279,7 +295,7 @@ async function runDebateAgentV2(params: {
   party: DebateParty;
   predecessorPositions: Array<{ role: string; claim: string; confidence: number }>;
   historyContext: string; corrections: DebateCorrection[];
-  maxIterations: number; signal?: AbortSignal;
+  maxIterations: number; maxWallTimeMs?: number; signal?: AbortSignal;
 }): Promise<DebatePosition> {
   const { app, pool, queue, subject, locale, authorization, traceId, collabRunId, taskId } = params;
   const { debateId, round, topic, agent, predecessorPositions, historyContext, corrections } = params;
@@ -338,6 +354,7 @@ Structure your response as JSON:
       app, pool, queue, subject, locale, authorization, traceId,
       taskId, runId: debateRunId, jobId: debateJobId,
       goal: debateGoal, maxIterations: params.maxIterations, signal: params.signal,
+      maxWallTimeMs: params.maxWallTimeMs ?? 60_000,
     });
 
     const text = result.message ?? "";
