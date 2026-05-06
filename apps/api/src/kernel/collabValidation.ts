@@ -10,7 +10,7 @@ import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { LlmSubject } from "../lib/llm";
-import { runAgentLoop } from "./agentLoop";
+import { createOrchestrationKernel } from "./orchestrationKernel";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import type { AgentState, CollabResult, CollabOrchestratorParams } from "./collabTypes";
 import { writeCollabEnvelope } from "./collabEnvelope";
@@ -222,7 +222,8 @@ export async function runDynamicCorrectionPhase(params: {
       );
 
       // 重新执行 Agent
-      const correctionResult = await runAgentLoop({
+      const correctionKernel = createOrchestrationKernel({ pool, app });
+      const correctionResult = await correctionKernel.startLoop({
         app, pool, queue: orchestratorParams.queue,
         subject, locale: orchestratorParams.locale,
         authorization: orchestratorParams.authorization,
@@ -457,7 +458,8 @@ If the output is satisfactory, confirm it.
 If it needs improvement, explain what's missing or incorrect.`;
 
   // 运行验证者 Agent
-  const validatorResult = await runAgentLoop({
+  const validatorKernel = createOrchestrationKernel({ pool: params.pool, app: params.app });
+  const validatorResult = await validatorKernel.startLoop({
     app: params.app,
     pool: params.pool,
     queue: params.queue,

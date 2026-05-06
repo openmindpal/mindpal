@@ -27,9 +27,8 @@ import type {
   WorldState,
   StepExecutionResult,
   OrchestrationEvent,
-  OrchestrationEventType,
 } from "@mindpal/shared";
-import { StructuredLogger, tryTransitionAgent, mapOrchestrationToAgent } from "@mindpal/shared";
+import { StructuredLogger, tryTransitionAgent, mapOrchestrationToAgent, OrchestrationEventType } from "@mindpal/shared";
 import type { AgentPhase, PreflightResult } from "@mindpal/shared";
 
 import { runAgentLoop, type AgentLoopParams, type AgentLoopResult } from "./agentLoop";
@@ -173,6 +172,134 @@ export function createOrchestrationKernel(deps: {
 }): IOrchestrationKernel {
   const { pool, app } = deps;
 
+  /* ------------------------------------------------------------------ */
+  /*  私有编排决策函数（闭包内部，不暴露到接口）                          */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * 处理步骤失败/超时：元数据驱动重试或终止决策
+   */
+  async function handleStepFailure(result: StepExecutionResult): Promise<void> {
+    const { runId, stepId, status } = result;
+    try {
+      // 1. 查询 run 元数据获取重试策略
+      const runRes = await pool.query(
+        `SELECT input_digest, tenant_id, status as run_status FROM runs WHERE run_id = $1`,
+        [runId],
+      );
+      if (!runRes.rowCount) return;
+
+      const run = runRes.rows[0];
+      if (run.run_status === "failed" || run.run_status === "stopped") return; // 已终态
+
+      const limits = (run.input_digest as any)?.limits ?? {};
+      const maxRetries = Number(limits.maxRetries ?? 0); // 从元数据读取重试上限
+
+      // 2. 如果错误可恢复且有重试余量
+      if (result.error?.recoverable && maxRetries > 0) {
+        const retryRes = await pool.query(
+          `SELECT COUNT(*)::int AS attempt_count FROM steps
+           WHERE run_id = $1 AND tool_ref = $2 AND status = 'failed'`,
+          [runId, result.toolRef ?? ""],
+        );
+        const attempts = retryRes.rows[0]?.attempt_count ?? 0;
+
+        if (attempts < maxRetries) {
+          // 元数据允许重试 → 记录决策，不终止（Agent Loop 自身会处理重试）
+          logger.info("orchestration:retry_allowed", {
+            runId, stepId, attempts, maxRetries, toolRef: result.toolRef,
+          });
+          return;
+        }
+      }
+
+      // 3. 不可恢复 或 重试耗尽 → 终止 run
+      logger.info("orchestration:run_terminating", {
+        runId, stepId,
+        reason: status === "timeout" ? "step_timeout" : "step_failed_unrecoverable",
+        errorCode: result.error?.code,
+      });
+
+      await pool.query(
+        `UPDATE runs SET status = 'failed', updated_at = now(), finished_at = now()
+         WHERE run_id = $1 AND status NOT IN ('failed', 'stopped', 'succeeded')`,
+        [runId],
+      );
+
+      // 发布终止事件
+      const terminateEvent: OrchestrationEvent = {
+        eventType: OrchestrationEventType.RUN_TERMINATED,
+        runId, stepId, tenantId: run.tenant_id ?? "", traceId: "",
+        timestamp: new Date().toISOString(),
+        payload: { reason: result.error?.message ?? status, finalStatus: "failed" },
+      };
+      app.redis?.publish(
+        `orchestration:run_terminated:${runId}`,
+        JSON.stringify(terminateEvent),
+      ).catch(() => {});
+    } catch (err: any) {
+      logger.warn("orchestration:handleStepFailure error", { runId, stepId, error: err?.message });
+    }
+  }
+
+  /**
+   * 处理步骤成功：元数据驱动的预算检查
+   */
+  async function handleStepSuccess(result: StepExecutionResult): Promise<void> {
+    const { runId, stepId } = result;
+    try {
+      // 1. 查询 run 元数据获取预算限制
+      const runRes = await pool.query(
+        `SELECT input_digest, tenant_id, started_at, status as run_status FROM runs WHERE run_id = $1`,
+        [runId],
+      );
+      if (!runRes.rowCount) return;
+
+      const run = runRes.rows[0];
+      if (run.run_status !== "running") return; // 非运行态不检查
+
+      const limits = (run.input_digest as any)?.limits ?? {};
+      const maxSteps = limits.maxSteps ? Number(limits.maxSteps) : null;
+      const maxWallTimeMs = limits.maxWallTimeMs ? Number(limits.maxWallTimeMs) : null;
+
+      // 2. 检查步骤数预算
+      if (maxSteps) {
+        const countRes = await pool.query(
+          `SELECT COUNT(*)::int AS step_count FROM steps WHERE run_id = $1 AND status NOT IN ('canceled')`,
+          [runId],
+        );
+        if ((countRes.rows[0]?.step_count ?? 0) >= maxSteps) {
+          logger.info("orchestration:budget_exceeded_steps", { runId, stepId, maxSteps });
+          await pool.query(
+            `UPDATE runs SET status = 'stopped', updated_at = now(), finished_at = now()
+             WHERE run_id = $1 AND status = 'running'`,
+            [runId],
+          );
+          return;
+        }
+      }
+
+      // 3. 检查时间预算
+      if (maxWallTimeMs && run.started_at) {
+        const elapsed = Date.now() - new Date(run.started_at).getTime();
+        if (elapsed > maxWallTimeMs) {
+          logger.info("orchestration:budget_exceeded_wall_time", { runId, stepId, elapsed, maxWallTimeMs });
+          await pool.query(
+            `UPDATE runs SET status = 'stopped', updated_at = now(), finished_at = now()
+             WHERE run_id = $1 AND status = 'running'`,
+            [runId],
+          );
+          return;
+        }
+      }
+
+      // 4. 预算未超限 → 记录成功（Agent Loop 自行推进后续步骤）
+      logger.info("orchestration:step_completed_ok", { runId, stepId, toolRef: result.toolRef });
+    } catch (err: any) {
+      logger.warn("orchestration:handleStepSuccess error", { runId, stepId, error: err?.message });
+    }
+  }
+
   return {
     async startLoop(params: StartLoopParams): Promise<AgentLoopResult> {
       const { runId } = params;
@@ -242,7 +369,14 @@ export function createOrchestrationKernel(deps: {
     async handleStepResult(result: StepExecutionResult): Promise<void> {
       const { runId, stepId, status } = result;
 
-      logger.info("handling step result", {
+      // 1. 验证事件合法性
+      if (!runId || !stepId) {
+        logger.warn("handleStepResult: invalid step result — missing runId or stepId", { runId, stepId });
+        return;
+      }
+
+      // 2. 记录编排事件（可观测性）
+      logger.info("orchestration:step_result_received", {
         runId,
         stepId,
         status,
@@ -250,30 +384,42 @@ export function createOrchestrationKernel(deps: {
         toolRef: result.toolRef,
       });
 
-      /**
-       * 当前 Agent Loop（agentLoop.ts）通过 Redis Pub/Sub 的 `step:done:{stepId}`
-       * 频道接收步骤完成信号，并从 DB 确认终态。
-       *
-       * 此方法作为编排内核的标准入口，未来将替代 Redis Pub/Sub 的隐式通知：
-       * 1. 验证事件合法性（runId/stepId 存在性、状态转换合法性）
-       * 2. 更新编排内核内存中的 LoopState
-       * 3. 根据步骤结果驱动下一步决策（继续/重试/终止/升级审批）
-       *
-       * TODO: 将 agentLoop.ts 中的 waitForStepCompletion (Redis polling) 迁移到此事件驱动模型
-       */
-
-      if (result.status === "blocked") {
+      // 3. 处理阻塞状态
+      if (status === "blocked") {
         logger.info("step blocked, awaiting external resolution", {
           runId,
           stepId,
           blockReason: result.blockReason,
         });
-        // 阻塞步骤不驱动后续决策——等待审批/设备/仲裁解除后再继续
         return;
       }
 
-      // 当前阶段：事件记录 + 日志可观测
-      // 后续阶段：替换 Redis Pub/Sub，直接驱动 Agent Loop 的 Think-Decide-Act
+      // 4. 发出领域事件供下游消费（监控、审计、未来编排决策）
+      try {
+        const eventPayload: OrchestrationEvent = {
+          eventType: OrchestrationEventType.STEP_COMPLETED,
+          runId,
+          stepId,
+          tenantId: "",
+          traceId: "",
+          timestamp: new Date().toISOString(),
+          payload: { status, durationMs: result.durationMs, toolRef: result.toolRef },
+        };
+        // 通过 Redis Pub/Sub 广播编排事件（复用已有通道）
+        app.redis?.publish(
+          `orchestration:step_completed:${runId}`,
+          JSON.stringify(eventPayload),
+        ).catch(() => {});
+      } catch {
+        // best-effort 事件发布，不阻断主流程
+      }
+
+      // 5. 编排决策：根据 status 驱动状态收口
+      if (status === "failed" || status === "timeout") {
+        await handleStepFailure(result);
+      } else if (status === "completed") {
+        await handleStepSuccess(result);
+      }
     },
 
     async getLoopState(runId: string): Promise<LoopStateSnapshot | null> {
@@ -386,10 +532,9 @@ export async function preflightCheck(params: {
 }): Promise<PreflightResult> {
   const { pool, runId, stepId, tenantId, toolRef, subject } = params;
 
-  // 1. 预算检查
+  // 1. 预算检查（从 input_digest.limits 元数据读取，统一数据源）
   const runMeta = await pool.query(
-    `SELECT r.max_steps, r.max_wall_time_ms, r.max_tokens, r.max_cost_usd,
-            r.started_at, COUNT(s2.step_id) AS step_count
+    `SELECT r.input_digest, r.started_at, COUNT(s2.step_id)::int AS step_count
      FROM runs r
      LEFT JOIN steps s2 ON s2.run_id = r.run_id AND s2.status NOT IN ('canceled')
      WHERE r.run_id = $1 AND r.tenant_id = $2
@@ -401,27 +546,32 @@ export async function preflightCheck(params: {
     return { ok: false, issues: [{ code: "RUN_NOT_FOUND", severity: "error", message: "run_not_found" }] };
   }
   const meta = runMeta.rows[0];
+  const limits = (meta.input_digest as any)?.limits ?? {};
+  const maxSteps = limits.maxSteps ? Number(limits.maxSteps) : null;
+  const maxWallTimeMs = limits.maxWallTimeMs ? Number(limits.maxWallTimeMs) : null;
+  const maxTokens = limits.maxTokens ? Number(limits.maxTokens) : null;
+  const maxCostUsd = limits.maxCostUsd ? Number(limits.maxCostUsd) : null;
 
-  if (meta.max_steps && Number(meta.step_count) >= Number(meta.max_steps)) {
+  if (maxSteps && Number(meta.step_count) >= maxSteps) {
     return { ok: false, issues: [{ code: "BUDGET_EXCEEDED_STEPS", severity: "error", message: "budget_exceeded_max_steps" }] };
   }
-  if (meta.max_wall_time_ms && meta.started_at) {
+  if (maxWallTimeMs && meta.started_at) {
     const elapsed = Date.now() - new Date(meta.started_at).getTime();
-    if (elapsed > Number(meta.max_wall_time_ms)) {
+    if (elapsed > maxWallTimeMs) {
       return { ok: false, issues: [{ code: "BUDGET_EXCEEDED_WALL_TIME", severity: "error", message: "budget_exceeded_wall_time" }] };
     }
   }
-  if (meta.max_tokens || meta.max_cost_usd) {
+  if (maxTokens || maxCostUsd) {
     const usage = await pool.query(
       `SELECT COALESCE(SUM(total_tokens), 0) AS tokens, COALESCE(SUM(cost_usd), 0) AS cost
        FROM model_usage_events WHERE run_id = $1 AND tenant_id = $2`,
       [runId, tenantId],
     );
     const u = usage.rows[0];
-    if (meta.max_tokens && Number(u.tokens) >= Number(meta.max_tokens)) {
+    if (maxTokens && Number(u.tokens) >= maxTokens) {
       return { ok: false, issues: [{ code: "BUDGET_EXCEEDED_TOKENS", severity: "error", message: "budget_exceeded_tokens" }] };
     }
-    if (meta.max_cost_usd && Number(u.cost) >= Number(meta.max_cost_usd)) {
+    if (maxCostUsd && Number(u.cost) >= maxCostUsd) {
       return { ok: false, issues: [{ code: "BUDGET_EXCEEDED_COST", severity: "error", message: "budget_exceeded_cost" }] };
     }
   }

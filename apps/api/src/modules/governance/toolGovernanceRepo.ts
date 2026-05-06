@@ -1,10 +1,7 @@
 /**
  * toolGovernanceRepo — 工具治理层
  *
- * 统一元数据注册层（MetadataRegistry）已在 @mindpal/shared/metadataRegistry 中可用，
- * 提供跨 kind（tool/workflow/permission/connector）的统一元数据 CRUD 与分层解析。
- * 本模块保留原有 tool_rollouts 表的操作作为工具治理的主路径，
- * isToolEnabled 内部增加了对 metadata_registry 的可选查询作为补充解析路径。
+ * 本模块负责 tool_rollouts 表的操作，作为工具治理的主路径。
  */
 import type { Pool } from "pg";
 import { getToolVersionByRef } from "../tools/toolRepo";
@@ -12,7 +9,6 @@ import { resolveSupplyChainPolicy, checkTrust, checkDependencyScan } from "@mind
 import { insertAuditEvent } from "../audit/auditRepo";
 import { Errors } from "../../lib/errors";
 import { StructuredLogger } from "@mindpal/shared";
-import { resolveMetadata, type MetadataRegistryDeps } from "@mindpal/shared";
 
 const _logger = new StructuredLogger({ module: "toolGovernance" });
 
@@ -125,10 +121,6 @@ export async function deleteToolRollout(params: {
 /**
  * Check if a tool is enabled for a given tenant+space.
  *
- * Resolution order:
- *   1. tool_rollouts 表（原有主路径）
- *   2. metadata_registry 表（统一元数据补充路径，仅当 tool_rollouts 无记录时查询）
- *
  * Graceful-disable support:
  *   When `runCreatedAt` is provided and the rollout is in graceful-disable mode
  *   with a grace_deadline still in the future AND the run was created before
@@ -181,33 +173,6 @@ export async function isToolEnabled(params: {
     [params.tenantId, params.toolRef],
   );
   if (tenant.rowCount) return evaluateRow(tenant.rows[0]);
-
-  // 补充路径：查询统一元数据注册层（metadata_registry）
-  // 仅当 tool_rollouts 无记录时 fallback，不改变已有行为
-  try {
-    const metaDeps: MetadataRegistryDeps = { pool: params.pool };
-    const metaEntry = await resolveMetadata(metaDeps, {
-      kind: "tool",
-      name: params.toolRef,
-      tenantId: params.tenantId,
-      spaceId: params.spaceId,
-      runCreatedAt: params.runCreatedAt,
-    });
-    if (metaEntry) {
-      if (metaEntry.enabled) return true;
-      if (
-        metaEntry.rolloutMode === "graceful" &&
-        metaEntry.graceDeadline &&
-        params.runCreatedAt
-      ) {
-        const deadline = new Date(metaEntry.graceDeadline);
-        if (deadline > new Date() && params.runCreatedAt < deadline) return true;
-      }
-      return false;
-    }
-  } catch {
-    // metadata_registry 表可能尚未迁移，静默忽略
-  }
 
   return false;
 }

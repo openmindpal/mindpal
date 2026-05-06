@@ -464,6 +464,8 @@ export async function searchChunksHybrid(params: {
       )
     : ({ rows: [] as any[], rowCount: 0 } as any);
 
+  // Query Expansion: 将扩展查询用 | 拼接用于正则匹配
+  const lexPattern = expandedQueries.map(q => q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
   const lexRes = await params.pool.query(
     `
       SELECT
@@ -472,8 +474,14 @@ export async function searchChunksHybrid(params: {
         embedding_minhash,
         citation_refs, source_page, source_section, hierarchy_path
       FROM knowledge_chunks
-      WHERE tenant_id = $1 AND space_id = $2 AND snippet ILIKE ('%' || $3 || '%')
+      WHERE tenant_id = $1 AND space_id = $2 AND snippet ~* $3
         AND ($5::uuid[] IS NULL OR document_id = ANY($5::uuid[]))
+        AND ($7::text[] IS NULL OR document_id IN (
+          SELECT id FROM knowledge_documents WHERE tenant_id = $1 AND space_id = $2 AND source_type = ANY($7::text[])
+        ))
+        AND ($8::text[] IS NULL OR document_id IN (
+          SELECT id FROM knowledge_documents WHERE tenant_id = $1 AND space_id = $2 AND tags ?| $8::text[]
+        ))
         AND EXISTS (
           SELECT 1
           FROM knowledge_documents d
@@ -489,7 +497,7 @@ export async function searchChunksHybrid(params: {
       ORDER BY match_pos ASC NULLS LAST, created_at DESC
       LIMIT $6
     `,
-    [params.tenantId, params.spaceId, params.query, params.subjectId, hasDocFilter ? docIds : null, lexicalLimit],
+    [params.tenantId, params.spaceId, lexPattern, params.subjectId, hasDocFilter ? docIds : null, lexicalLimit, sourceTypes.length ? sourceTypes : null, tags.length ? tags : null],
   );
   const vsCfg = resolveVectorStoreConfigFromEnv();
   const vectorStore = createVectorStore(vsCfg);
@@ -538,6 +546,12 @@ export async function searchChunksHybrid(params: {
             WHERE tenant_id = $1 AND space_id = $2
               AND id = ANY($3::uuid[])
               AND ($5::uuid[] IS NULL OR document_id = ANY($5::uuid[]))
+              AND ($6::text[] IS NULL OR document_id IN (
+                SELECT id FROM knowledge_documents WHERE tenant_id = $1 AND space_id = $2 AND source_type = ANY($6::text[])
+              ))
+              AND ($7::text[] IS NULL OR document_id IN (
+                SELECT id FROM knowledge_documents WHERE tenant_id = $1 AND space_id = $2 AND tags ?| $7::text[]
+              ))
               AND EXISTS (
                 SELECT 1
                 FROM knowledge_documents d
@@ -551,7 +565,7 @@ export async function searchChunksHybrid(params: {
                   )
               )
           `,
-          [params.tenantId, params.spaceId, chunkIds, params.subjectId, hasDocFilter ? docIds : null],
+          [params.tenantId, params.spaceId, chunkIds, params.subjectId, hasDocFilter ? docIds : null, sourceTypes.length ? sourceTypes : null, tags.length ? tags : null],
         );
 
   const byId = new Map<string, any>();
@@ -657,6 +671,7 @@ export async function searchChunksHybrid(params: {
 
   const hits = scored.map((h) => ({
     ...h,
+    score: h._score,
     rank_reason: {
       kind: rankPolicy,
       stage: h._stage,

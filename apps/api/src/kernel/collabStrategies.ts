@@ -4,7 +4,7 @@
  * 三种调度策略：顺序（sequential）、并行（parallel）、流水线（pipeline）。
  * 由主入口 runCollabOrchestrator 按 CollabPlan.strategy 选择调用。
  */
-import { runAgentLoop } from "./agentLoop";
+import { createOrchestrationKernel } from "./orchestrationKernel";
 import type { CollabAgentRole, AgentState, CollabOrchestratorParams } from "./collabTypes";
 import { readCollabEnvelopes, buildEnvelopeContext, writeCollabEnvelope } from "./collabEnvelope";
 import { StructuredLogger, collabConfig } from "@mindpal/shared";
@@ -39,6 +39,7 @@ export async function executeSequential(
   params: CollabOrchestratorParams,
   maxIterations: number,
 ): Promise<void> {
+  const kernel = createOrchestrationKernel({ pool: params.pool, app: params.app });
   for (const state of states) {
     if (params.signal?.aborted) break;
 
@@ -59,7 +60,7 @@ export async function executeSequential(
         : state.goal;
 
     try {
-      state.result = await runAgentLoop({
+      state.result = await kernel.startLoop({
         app: params.app,
         pool: params.pool,
         queue: params.queue,
@@ -127,6 +128,7 @@ export async function executeParallel(
   params: CollabOrchestratorParams,
   maxIterations: number,
 ): Promise<void> {
+  const kernel = createOrchestrationKernel({ pool: params.pool, app: params.app });
   params.app.log.info({ agentCount: states.length }, "[CollabOrchestrator] 开始并行执行");
 
   const promises = states.map(async (state) => {
@@ -136,7 +138,7 @@ export async function executeParallel(
       "[CollabOrchestrator] 并行 Agent 开始执行",
     );
     try {
-      state.result = await runAgentLoop({
+      state.result = await kernel.startLoop({
         app: params.app,
         pool: params.pool,
         queue: params.queue,
@@ -239,6 +241,7 @@ export async function executePipeline(
   params: CollabOrchestratorParams,
   maxIterations: number,
 ): Promise<void> {
+  const kernel = createOrchestrationKernel({ pool: params.pool, app: params.app });
   params.app.log.info({ agentCount: states.length }, "[CollabOrchestrator] 开始流水线执行");
 
   // ── 新增：依赖图无环检测（在执行前预验证） ──
@@ -481,7 +484,7 @@ export async function executePipeline(
           : state.goal;
 
       try {
-        state.result = await runAgentLoop({
+        state.result = await kernel.startLoop({
           app: params.app,
           pool: params.pool,
           queue: params.queue,

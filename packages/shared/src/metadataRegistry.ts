@@ -49,7 +49,7 @@ export interface MetadataResolveOpts {
 
 /** 依赖注入：仅需一个 pool.query 方法 */
 export interface MetadataRegistryDeps {
-  pool: { query(text: string, values?: unknown[]): Promise<{ rows: unknown[] }> };
+  pool: { query(text: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount?: number }> };
 }
 
 /** metadata_registry 显式字段列表（与 toEntry 映射对齐） */
@@ -104,6 +104,7 @@ export async function registerMetadata(
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      ON CONFLICT (kind, name, tenant_id, scope_type, scope_id)
      DO UPDATE SET
+       /* 当前为最新值覆盖模式：旧 version 不保留，表无 prev_version 列 */
        version        = EXCLUDED.version,
        schema_json    = EXCLUDED.schema_json,
        capabilities   = EXCLUDED.capabilities,
@@ -152,7 +153,7 @@ export async function resolveMetadata(
     `SELECT ${METADATA_REGISTRY_COLS} FROM metadata_registry
      WHERE kind = $1 AND name = $2 AND tenant_id = $3
        AND scope_type = 'space' AND scope_id = $4
-     LIMIT 1`,
+     ORDER BY updated_at DESC LIMIT 1`,
     [opts.kind, opts.name, opts.tenantId, opts.spaceId],
   );
   if (spaceRes.rows.length > 0) return toEntry(spaceRes.rows[0]);
@@ -162,7 +163,7 @@ export async function resolveMetadata(
     `SELECT ${METADATA_REGISTRY_COLS} FROM metadata_registry
      WHERE kind = $1 AND name = $2 AND tenant_id = $3
        AND scope_type = 'tenant' AND scope_id = $3
-     LIMIT 1`,
+     ORDER BY updated_at DESC LIMIT 1`,
     [opts.kind, opts.name, opts.tenantId],
   );
   if (tenantRes.rows.length > 0) return toEntry(tenantRes.rows[0]);
@@ -247,9 +248,7 @@ export async function deactivateMetadata(
        AND scope_type = $6 AND scope_id = $7`,
     [mode, deadline, opts.kind, opts.name, opts.tenantId, opts.scopeType, opts.scopeId],
   );
-  return (res.rows as any).length !== undefined
-    ? (res as any).rowCount > 0
-    : false;
+  return (res.rowCount ?? 0) > 0;
 }
 
 /**
@@ -274,7 +273,8 @@ export async function isMetadataEnabled(
   if (entry.enabled) return true;
   // graceful 模式下检查宽限期
   if (entry.rolloutMode === "graceful" && entry.graceDeadline && opts.runCreatedAt) {
-    return opts.runCreatedAt <= new Date(entry.graceDeadline);
+    const deadline = new Date(entry.graceDeadline);
+    return deadline > new Date() && opts.runCreatedAt <= deadline;
   }
   return false;
 }

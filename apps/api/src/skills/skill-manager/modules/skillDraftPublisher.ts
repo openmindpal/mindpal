@@ -214,8 +214,8 @@ export async function publishSkillDraft(options: PublishOptions): Promise<Publis
       tenantId,
       name: skillName,
       publish: {
-        displayName: manifest?.identity?.displayName ?? { "zh-CN": skillName, "en-US": skillName },
-        description: manifest?.identity?.description ?? { "zh-CN": draft.description, "en-US": draft.description },
+        displayName: manifest?.displayName ?? { "zh-CN": skillName, "en-US": skillName },
+        description: manifest?.description ?? { "zh-CN": draft.description, "en-US": draft.description },
         scope: toolContract?.scope ?? "write",
         resourceType: toolContract?.resourceType ?? "custom",
         action: toolContract?.action ?? "execute",

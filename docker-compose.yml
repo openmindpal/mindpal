@@ -29,6 +29,20 @@ services:
     volumes:
       - minio_data:/data
 
+  # ── Cross-Encoder Rerank 本地服务（可选，按需取消注释） ──
+  # │ 推理延迟: 50-100ms | 内存占用: ~2GB | 数据完全本地不出境
+  # │ 启用后配合 .env 中 KNOWLEDGE_CROSS_ENCODER_MODEL_TYPE=http_local 使用
+  # cross-encoder:
+  #   image: ghcr.io/openslin/cross-encoder-api:latest
+  #   ports:
+  #     - "8089:8080"
+  #   environment:
+  #     - MODEL_NAME=cross-encoder/ms-marco-MiniLM-L-12-v2
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2G
+
 volumes:
   postgres_data:
   redis_data:

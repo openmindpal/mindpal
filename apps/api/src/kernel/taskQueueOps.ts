@@ -340,6 +340,7 @@ export async function pauseAllForShutdown(
   pool: Pool,
   emitEvent: (event: QueueEvent) => void,
   executor: { pause(entry: TaskQueueEntry): Promise<void> } | null,
+  manager?: { saveCheckpoint(entryId: string, data: any, tenantId: string): Promise<void> },
 ): Promise<number> {
   const checkpointRef = `shutdown:${new Date().toISOString()}`;
 
@@ -354,6 +355,12 @@ export async function pauseAllForShutdown(
           entryId: entry.entryId, error: String(err),
         });
       });
+    }
+    // 保存真实 checkpoint
+    if (manager && entry.status === "executing") {
+      try {
+        await manager.saveCheckpoint(entry.entryId, { currentStep: "shutdown", intermediateResults: [], context: {} }, entry.tenantId);
+      } catch { /* best-effort, 不阻塞关闭流程 */ }
     }
   }
 

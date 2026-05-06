@@ -14,7 +14,7 @@ import {
   prepareToolStep,
   submitStepToExistingRun,
 } from "../../kernel/executionKernel";
-import { runAgentLoop } from "../../kernel/agentLoop";
+import { createOrchestrationKernel } from "../../kernel/orchestrationKernel";
 import { createTask } from "../task-manager/modules/taskRepo";
 import { analyzeUserIntent } from "./modules/intentIntegration";
 import { parseAndAnchorUserIntentions } from "../../kernel/intentAnchoringService";
@@ -117,7 +117,7 @@ export async function handleExecuteMode(ctx: DispatchContext): Promise<DispatchR
 
     // 为工具创建 Worker steps
     if (workerSuggestions.length > 0) {
-      let firstOutcome: "queued" | "needs_approval" = "queued";
+      let firstOutcome: "queued" | "needs_approval" | "stopped" = "queued";
       for (let i = 0; i < workerSuggestions.length; i++) {
         const suggestion = workerSuggestions[i];
         const { resolved, opDecision, stepInput } = await prepareToolStep({
@@ -165,14 +165,16 @@ export async function handleExecuteMode(ctx: DispatchContext): Promise<DispatchR
             masterKey: app.cfg.secrets.masterKey,
           });
           // 记录后续步骤的结果（但不影响第一个步骤的outcome）
-          if (subsequentResult.outcome === "needs_approval" && firstOutcome !== "needs_approval") {
+          if (subsequentResult.outcome === "stopped") {
+            firstOutcome = "stopped";
+          } else if (subsequentResult.outcome === "needs_approval" && firstOutcome !== "needs_approval") {
             firstOutcome = "needs_approval";
           }
         }
       }
 
       if (workerSuggestions.length > 0) {
-        phase = firstOutcome === "needs_approval" ? "needs_approval" : "executing";
+        phase = firstOutcome === "stopped" ? "stopped" : firstOutcome === "needs_approval" ? "needs_approval" : "executing";
         await upsertTaskState({
           pool: app.db,
           tenantId: subject.tenantId,
@@ -201,7 +203,8 @@ export async function handleExecuteMode(ctx: DispatchContext): Promise<DispatchR
     const maxIterations = body.constraints?.maxSteps ?? 10;
     const maxWallTimeMs = body.constraints?.maxWallTimeMs ?? 10 * 60 * 1000;
 
-    const agentLoopPromise = runAgentLoop({
+    const kernel = createOrchestrationKernel({ pool: app.db, app });
+    const agentLoopPromise = kernel.startLoop({
       app,
       pool: app.db,
       queue: app.queue as WorkflowQueue,

@@ -329,6 +329,17 @@ export function recoverInterruptedTasks(deps: {
           action: "recovery_complete",
           ...result,
         });
+
+        // 恢复完成后触发调度，确保恢复任务能被立即执行
+        const recoveredSessions = new Set(staleEntries.map(e => `${e.tenantId}::${e.sessionId}`));
+        for (const key of recoveredSessions) {
+          const [tenantId, sessionId] = key.split("::");
+          try {
+            await manager.tryScheduleNext(tenantId, sessionId);
+          } catch (schedErr) {
+            logger.warn("Post-recovery schedule failed", { tenantId, sessionId, err: (schedErr as Error).message });
+          }
+        }
       } catch (err: any) {
         logger.error("Startup recovery scan failed", {
           module: "taskQueueSupervisor",

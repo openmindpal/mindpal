@@ -207,6 +207,7 @@ export async function tickLoopSupervisor(deps: LoopSupervisorDeps): Promise<void
           loopId: cp.loopId,
           runId: cp.runId,
           jobId: cp.jobId,
+          stepId: null,
           taskId: cp.taskId,
           tenantId: cp.tenantId,
           spaceId: cp.spaceId,

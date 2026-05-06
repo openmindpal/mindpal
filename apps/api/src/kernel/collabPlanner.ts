@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
-import { runAgentLoop } from "./agentLoop";
+import { createOrchestrationKernel } from "./orchestrationKernel";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import { setCollabRunPrimaryRun, updateCollabRunStatus } from "../modules/agentRuntime/collabRepo";
 import type { CollabAgentRole, CollabPlan, CollabOrchestratorParams, CollabResult } from "./collabTypes";
@@ -37,12 +37,20 @@ export async function runSingleAgentFallback(params: CollabOrchestratorParams): 
   await setCollabRunPrimaryRun({ pool, tenantId: subject.tenantId, collabRunId, primaryRunId: runId });
   await updateCollabRunStatus({ pool, tenantId: subject.tenantId, collabRunId, status: "executing" });
 
-  const result = await runAgentLoop({
-    ...params,
+  const kernel = createOrchestrationKernel({ pool: params.pool, app: params.app });
+  const result = await kernel.startLoop({
+    app: params.app,
+    pool: params.pool,
+    queue: params.queue,
+    subject: params.subject,
+    locale: params.locale,
+    authorization: params.authorization,
+    traceId: params.traceId,
+    goal,
     runId,
     jobId,
-    goal,
     taskId,
+    signal: params.signal,
   });
 
   await writeCollabEnvelope({

@@ -1373,6 +1373,20 @@ function publishStepDone(
       ).catch(() => {});
     }
     params.redis?.publish(`step:done:${params.stepId}`, "1").catch(() => {});
+
+    // 上报编排内核 HTTP 端点（fire-and-forget，不阻塞主流程）
+    if (result) {
+      const apiBase = process.env.API_INTERNAL_URL || "http://localhost:3000";
+      const secret = process.env.INTERNAL_API_SECRET || process.env.API_SECRET || "";
+      fetch(`${apiBase}/internal/step-result`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": secret,
+        },
+        body: JSON.stringify(result),
+      }).catch(() => { /* best-effort */ });
+    }
   } catch {
     // fire-and-forget
   }

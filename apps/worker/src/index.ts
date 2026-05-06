@@ -41,7 +41,7 @@ interface WorkflowJobData {
 }
 
 /** 运行时检查 job.data 必要字段，避免 `as any` 隐藏结构缺陷 */
-function validateJobData(raw: unknown): WorkflowJobData {
+function validateJobData(raw: unknown, jobName?: string): WorkflowJobData {
   if (raw == null || typeof raw !== "object") {
     throw new ServiceError({ category: ErrorCategory.INVALID_REQUEST, code: "JOB_DATA_INVALID", httpStatus: 400, message: "invalid job data: not an object" });
   }
@@ -49,7 +49,8 @@ function validateJobData(raw: unknown): WorkflowJobData {
   const jobId = d.jobId != null ? String(d.jobId) : "";
   const runId = d.runId != null ? String(d.runId) : "";
   const stepId = d.stepId != null ? String(d.stepId) : "";
-  if (!jobId || !runId || !stepId) {
+  const isLoopResume = jobName === "loop_resume";
+  if (!jobId || !runId || (!stepId && !isLoopResume)) {
     throw new ServiceError({ category: ErrorCategory.INVALID_REQUEST, code: "JOB_DATA_INVALID", httpStatus: 400, message: `invalid job data: missing required fields (jobId=${jobId}, runId=${runId}, stepId=${stepId})` });
   }
   return { ...d, jobId, runId, stepId, kind: d.kind != null ? String(d.kind) : undefined };
@@ -134,7 +135,7 @@ async function main() {
   const worker = new Worker(
     "workflow",
     async (job) => {
-      const data = validateJobData(job.data);
+      const data = validateJobData(job.data, job.name);
       const jobCtx = extractJobTraceContext(data);
       // per-job 超时：优先从 job.data 读取，否则使用全局配置
       const jobTimeout = Number(data.timeoutMs) || cfg.jobTimeoutMs;

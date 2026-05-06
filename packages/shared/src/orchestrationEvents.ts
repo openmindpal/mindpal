@@ -26,6 +26,8 @@ export enum OrchestrationEventType {
   TOOL_INVOKED = "tool.invoked",
   /** 工具执行返回结果 */
   TOOL_RESULT = "tool.result",
+  /** 运行被终止（失败/超时/预算超限） */
+  RUN_TERMINATED = "run_terminated",
 }
 
 /* ================================================================== */

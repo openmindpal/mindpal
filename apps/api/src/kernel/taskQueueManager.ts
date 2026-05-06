@@ -382,18 +382,16 @@ export class TaskQueueManager {
       timestamp: new Date().toISOString(),
     });
 
-    // 委托给执行器（非阻塞）
+    // 委托给执行器（非阻塞 fire-and-forget）
     // 注意：executor 内部通过 callbacks.onFailed 统一处理失败，
     // 此处不再重复调用 markFailed，避免双重事件/双重重试。
     if (this.executor) {
-      try {
-        await this.executor.execute(updated);
-      } catch (err) {
+      this.executor.execute(updated).catch((err) => {
         const e = err instanceof Error ? err : new Error(String(err));
         log("error", `Task execution error`, {
           entryId: entry.entryId, err: e.message, stack: e.stack,
         });
-      }
+      });
     }
   }
 
@@ -729,7 +727,7 @@ export class TaskQueueManager {
   }
 
   async pauseAllForShutdown(): Promise<number> {
-    return _pauseAllForShutdown(this.pool, (evt) => this.emitEvent(evt), this.executor);
+    return _pauseAllForShutdown(this.pool, (evt) => this.emitEvent(evt), this.executor, this);
   }
 
   /* ── 检查点 ────────────────────────────────────────────────── */

@@ -6,12 +6,14 @@
  *
  * 当前端点：
  *   POST /internal/loop-resume             — 恢复中断的 Agent Loop
+ *   POST /internal/step-result             — Worker 步骤完成上报
  *   POST /internal/tool-discovery/rescan   — 手动触发 Skill 包重新扫描
  *   GET  /internal/health                  — 节点可达性检查
  *   POST /internal/alertmanager-webhook     — Alertmanager 告警接收
  */
 import type { FastifyPluginAsync } from "fastify";
-import { runAgentLoop, type AgentLoopParams } from "../../kernel/agentLoop";
+import { createOrchestrationKernel } from "../../kernel/orchestrationKernel";
+import type { StepExecutionResult } from "@mindpal/shared";
 import type { WorkflowQueue } from "../../modules/workflow/queue";
 import { rescanAndRegisterTools } from "../../modules/tools/toolAutoDiscovery";
 import { invalidateToolCatalogQueryCache } from "../../modules/agentContext";
@@ -108,8 +110,8 @@ export const internalRoutes: FastifyPluginAsync = async (app) => {
    *
    * 流程：
    *   1. 校验 payload
-   *   2. 重建 AgentLoopParams（从 checkpoint payload 恢复 subject/state）
-   *   3. 异步启动 runAgentLoop（fire-and-forget）
+   *   2. 重建参数（从 checkpoint payload 恢复 subject/state）
+   *   3. 通过 OrchestrationKernel.startLoop() 异步启动（fire-and-forget）
    *   4. 立即返回 202 Accepted
    * ────────────────────────────────────────────────────────────────── */
   app.post<{ Body: LoopResumeBody }>("/internal/loop-resume", async (req, reply) => {
@@ -195,8 +197,9 @@ export const internalRoutes: FastifyPluginAsync = async (app) => {
       app.log.warn({ err: e?.message, loopId: body.loopId }, "[internal] Failed to update checkpoint status");
     }
 
-    // 重建 AgentLoopParams
-    const loopParams: AgentLoopParams = {
+    // Fire-and-forget：异步启动 loop，不阻塞 HTTP 响应
+    const kernel = createOrchestrationKernel({ pool: app.db, app });
+    kernel.startLoop({
       app,
       pool: app.db,
       queue: app.queue as WorkflowQueue,
@@ -218,10 +221,7 @@ export const internalRoutes: FastifyPluginAsync = async (app) => {
       executionConstraints: body.executionConstraints ?? undefined,
       resumeLoopId: body.loopId,
       resumeState: body.resumeState,
-    };
-
-    // Fire-and-forget：异步启动 loop，不阻塞 HTTP 响应
-    runAgentLoop(loopParams).then(
+    }).then(
       (result) => {
         app.log.info(
           {
@@ -253,6 +253,32 @@ export const internalRoutes: FastifyPluginAsync = async (app) => {
       runId: body.runId,
       message: "loop resume dispatched",
     });
+  });
+
+  /* ──────────────────────────────────────────────────────────────────
+   * POST /internal/step-result
+   *
+   * Worker 步骤执行完成后上报 StepExecutionResult，
+   * 由编排内核记录事件并驱动后续状态转换。
+   * Fire-and-forget 语义：返回 202 即表示已接受。
+   * ────────────────────────────────────────────────────────────────── */
+  app.post<{ Body: StepExecutionResult }>("/internal/step-result", async (req, reply) => {
+    const body = req.body as StepExecutionResult;
+
+    if (!body?.runId || !body?.stepId || !body?.status) {
+      return reply.status(400).send({
+        error: "bad_request",
+        message: "runId, stepId, and status are required",
+      });
+    }
+
+    const kernel = createOrchestrationKernel({ pool: app.db, app });
+    // fire-and-forget: 不阻塞响应
+    kernel.handleStepResult(body).catch((err) => {
+      app.log.warn({ err: err?.message, runId: body.runId, stepId: body.stepId }, "[internal] handleStepResult error");
+    });
+
+    return reply.status(202).send({ ok: true, runId: body.runId, stepId: body.stepId });
   });
 
   /* ──────────────────────────────────────────────────────────────────

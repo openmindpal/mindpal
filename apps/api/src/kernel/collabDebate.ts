@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { invokeModelChat, type LlmSubject } from "../lib/llm";
-import { runAgentLoop } from "./agentLoop";
+import { createOrchestrationKernel } from "./orchestrationKernel";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import {
   createDebateSession, isDebateConverged, computeDebateConsensusScore,
@@ -350,7 +350,8 @@ Structure your response as JSON:
   );
 
   try {
-    const result = await runAgentLoop({
+    const debateKernel = createOrchestrationKernel({ pool, app });
+    const result = await debateKernel.startLoop({
       app, pool, queue, subject, locale, authorization, traceId,
       taskId, runId: debateRunId, jobId: debateJobId,
       goal: debateGoal, maxIterations: params.maxIterations, signal: params.signal,

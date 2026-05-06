@@ -69,6 +69,7 @@ async function main() {
     const { listShutdownPausedEntries, updateEntryStatus } = await import("./kernel/taskQueueRepo");
     const { startTaskQueueSupervisor, recoverInterruptedTasks } = await import("./kernel/taskQueueSupervisor");
     const { getOrCreateTaskQueueSystem } = await import("./kernel/taskQueueFactory");
+    const { startStarvationDetector } = await import("./kernel/sessionScheduler");
 
     // 确保 TaskQueueManager 在启动阶段已初始化，避免 mgr 为 undefined
     const { manager: mgr } = getOrCreateTaskQueueSystem(app);
@@ -81,24 +82,38 @@ async function main() {
       onZombieDetected: (entryId: string, error: string) => mgr.markFailed(entryId, error),
     });
 
+    // 1.1 启动饥饿检测定时器（P1-05/P3-05: 长时间排队任务自动提升优先级）
+    startStarvationDetector(pool);
+
     // 2. 恢复因上次 shutdown 暂停的任务
     const shutdownPaused = await listShutdownPausedEntries(pool);
     if (shutdownPaused.length > 0) {
       let recovered = 0;
       for (const entry of shutdownPaused) {
         try {
-          await updateEntryStatus(pool, {
-            entryId: entry.entryId,
-            status: "queued",
-            checkpointRef: null,
-          });
+          // 尝试恢复 checkpoint 数据
+          const checkpoint = await mgr.restoreFromCheckpoint(entry.entryId);
+          if (checkpoint) {
+            // checkpoint 有效 → 保留 checkpointRef，执行器下次执行时读取恢复
+            await updateEntryStatus(pool, {
+              entryId: entry.entryId,
+              status: "queued",
+            });
+          } else {
+            // checkpoint 数据不可用 → 降级为冷启动重排队
+            await updateEntryStatus(pool, {
+              entryId: entry.entryId,
+              status: "queued",
+              checkpointRef: null,
+            });
+          }
           recovered++;
         } catch (e: any) {
-          _logger.warn(`Failed to recover entry ${entry.entryId}`, { err: e?.message });
+          _logger.warn("shutdown entry recovery failed", { entryId: entry.entryId, err: e?.message });
         }
       }
       if (recovered > 0) {
-        _logger.info(`Recovered ${recovered}/${shutdownPaused.length} shutdown-paused tasks to queued`);
+        _logger.info("Shutdown-paused tasks recovered", { total: shutdownPaused.length, recovered });
       }
     }
 
@@ -126,10 +141,12 @@ async function main() {
     forceTimer.unref();
 
     try {
-      // 0) P1-G5: 停止 Supervisor
+      // 0) P1-G5: 停止 Supervisor 和饥饿检测器
       try {
         const { stopTaskQueueSupervisor } = await import("./kernel/taskQueueSupervisor");
+        const { stopStarvationDetector } = await import("./kernel/sessionScheduler");
         stopTaskQueueSupervisor();
+        stopStarvationDetector();
       } catch { /* ignore */ }
 
       // 0.1) P3-15: 暂停所有活跃任务并写入 checkpoint

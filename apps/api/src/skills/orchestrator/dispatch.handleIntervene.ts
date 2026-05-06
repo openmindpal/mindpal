@@ -10,7 +10,7 @@ import { createOrchestratorTurn } from "./modules/turnRepo";
 import { handleRecoveryEvent } from "../../kernel/runRecovery";
 import { replanFromCurrent } from "../../kernel/runtimeStepManager";
 import { runPlanningPipeline } from "../../kernel/planningKernel";
-import { runAgentLoop, type AgentLoopParams } from "../../kernel/agentLoop";
+import { createOrchestrationKernel } from "../../kernel/orchestrationKernel";
 import type { AgentDecision } from "../../kernel/loopTypes";
 import type { WorkflowQueue } from "../../modules/workflow/queue";
 import { createTaskQueueManager } from "../../kernel/taskQueueManager";
@@ -135,9 +135,10 @@ export async function handleInterveneMode(ctx: DispatchContext): Promise<Dispatc
             "UPDATE agent_loop_checkpoints SET status = 'resuming', heartbeat_at = now(), updated_at = now() WHERE loop_id = $1 AND status = 'paused'",
             [cp.loop_id],
           );
-          // 重建 AgentLoopParams 并 fire-and-forget 启动 Agent Loop
+          // 重建参数并通过 OrchestrationKernel fire-and-forget 启动 Agent Loop
           const subjectPayload = (cp.subject_payload ?? {}) as Record<string, unknown>;
-          const loopParams: AgentLoopParams = {
+          const kernel = createOrchestrationKernel({ pool: app.db, app });
+          kernel.startLoop({
             app,
             pool: app.db,
             queue: app.queue as WorkflowQueue,
@@ -169,9 +170,8 @@ export async function handleInterveneMode(ctx: DispatchContext): Promise<Dispatc
               taskHistory: cp.task_history != null ? String(cp.task_history) : undefined,
               knowledgeContext: cp.knowledge_context != null ? String(cp.knowledge_context) : undefined,
             },
-            userIntervention: message, // 用户的回复作为干预消息传入 Agent Loop
-          };
-          runAgentLoop(loopParams).catch((err) => {
+            userIntervention: message,
+          }).catch((err) => {
             app.log.error({ err: err?.message, runId: activeCtx.runId, loopId: cp.loop_id }, "[intervene:resume] Agent Loop 恢复失败");
           });
           app.log.info({ runId: activeCtx.runId, loopId: cp.loop_id }, "[intervene:resume] Agent Loop 已从 checkpoint 恢复");

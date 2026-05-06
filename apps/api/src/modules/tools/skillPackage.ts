@@ -16,15 +16,12 @@ export async function loadSkillManifest(artifactDir: string) {
   const raw = await fs.readFile(p, "utf8");
   const manifest = JSON.parse(raw);
 
-  // Runtime validation: warn on schema violations but do not block loading
   const validation = validateManifest(manifest);
   if (!validation.valid) {
-    console.warn(
-      `[skillPackage] manifest validation warnings for ${p}: ${validation.errors.join("; ")}`,
-    );
+    throw new Error(`[skillPackage] manifest validation failed for ${p}: ${validation.errors.join("; ")}`);
   }
 
-  return { path: p, raw, manifest };
+  return { path: p, raw, manifest, validationErrors: [] };
 }
 
 export async function computeDepsDigest(params: { artifactDir: string; manifest: any }) {

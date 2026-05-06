@@ -362,6 +362,13 @@ export type SubmitResult =
       stepId: string;
       approvalId: string;
       idempotencyKey?: string | null;
+    }
+  | {
+      outcome: "stopped";
+      jobId: string;
+      runId: string;
+      stepId: string;
+      idempotencyKey?: string | null;
     };
 
 export function buildApprovalInputDigest(params: {
@@ -581,7 +588,7 @@ async function _handleApprovalOrEnqueue(params: {
       [stepId],
     );
     await setRunAndJobStatus({ pool, tenantId, runId, jobId, runStatus: "stopped", jobStatus: "stopped" });
-    return { outcome: "queued", jobId, runId, stepId, idempotencyKey } as SubmitResult;
+    return { outcome: "stopped", jobId, runId, stepId, idempotencyKey } as SubmitResult;
   }
 
   const { assessment, approvalRequired } = evaluation;

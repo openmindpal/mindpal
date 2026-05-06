@@ -261,9 +261,11 @@ const _manifestTierLookup = new Map(
 export async function loadSkillManifests(): Promise<SkillManifestLoadResult> {
   const plugins = await getAllAvailablePlugins();
   const rows: SkillManifestRow[] = [];
+  const disabledSet = parseEnvDisabledBuiltins();
   for (const [key] of plugins) {
     const tier = _manifestTierLookup.get(key) ?? "optional";
-    rows.push({ skillKey: key, tier, status: "enabled" });
+    const status = disabledSet.has(key) ? "disabled" : "enabled";
+    rows.push({ skillKey: key, tier, status });
   }
 
   const degraded = _pluginLoadErrors.length > 0;

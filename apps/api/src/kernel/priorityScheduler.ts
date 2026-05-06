@@ -165,7 +165,8 @@ export async function tryScheduleProcess(params: {
 }
 
 /**
- * 获取下一批待调度的进程（按优先级降序 + 等待时间升序）。
+ * 获取下一批待调度的进程（按优先级升序 + 等待时间升序）。
+ * 数值越低优先级越高，与 sessionScheduler 语义一致。
  */
 export async function getNextPendingProcesses(params: {
   pool: Pool;
@@ -180,7 +181,7 @@ export async function getNextPendingProcesses(params: {
   }>(
     `SELECT process_id, priority, run_id, parent_process_id FROM agent_processes
      WHERE tenant_id = $1 AND status = 'pending'
-     ORDER BY priority DESC, created_at ASC
+     ORDER BY priority ASC, created_at ASC
      LIMIT $2`,
     [tenantId, limit],
   );
@@ -373,19 +374,20 @@ export async function detectAndBoostStarvedProcesses(params: {
   pool: Pool;
 }): Promise<{ boosted: number }> {
   const { pool } = params;
+  // 数值越低优先级越高，饥饿提升通过降低数值实现
   const res = await pool.query(
     `UPDATE agent_processes
-     SET priority = LEAST(priority + $1, 10),
+     SET priority = GREATEST(priority - $1, 0),
          updated_at = now()
      WHERE status = 'pending'
        AND created_at < now() - ($2::bigint * interval '1 millisecond')
-       AND priority < 10
+       AND priority > 0
      RETURNING process_id, priority`,
     [getStarvationPriorityBoost(), getStarvationThresholdMs()],
   );
   const boosted = res.rowCount ?? 0;
   if (boosted > 0) {
-    logger.info(`Boosted ${boosted} starved processes by +${getStarvationPriorityBoost()} priority`);
+    logger.info(`Boosted ${boosted} starved processes by -${getStarvationPriorityBoost()} priority (lower = higher priority)`);
   }
   return { boosted };
 }

@@ -24,6 +24,7 @@ export interface LoopResumePayload {
   loopId: string;
   runId: string;
   jobId: string;
+  stepId?: string | null;
   taskId: string | null;
   tenantId: string;
   spaceId: string | null;

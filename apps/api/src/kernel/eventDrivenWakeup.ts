@@ -5,7 +5,7 @@
  *
  * 核心能力：
  * - AgentWakeupRule: 事件类型 → Agent 配置映射
- * - 在 EventBus 上订阅关键频道，匹配时自动启动 runAgentLoop
+ * - 在 EventBus 上订阅关键频道，匹配时通过 OrchestrationKernel.startLoop() 自动启动 Agent Loop
  * - 去重: 同一事件不会重复唤醒同一 Agent
  * - 冷却时间: 同一规则触发后有最小间隔
  * - DB 持久化规则 + 进程内缓存
@@ -15,7 +15,7 @@ import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
 import type { EventEnvelope, EventBusSubscription } from "@mindpal/shared";
 import { channelMatchesPattern, type ExtendedEventBus } from "../lib/eventBus";
-import { runAgentLoop, type AgentLoopParams } from "./agentLoop";
+import { createOrchestrationKernel } from "./orchestrationKernel";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 
 /* ================================================================== */
@@ -235,7 +235,13 @@ export function createWakeupManager(params: WakeupManagerParams): WakeupManager 
       });
 
       // 异步启动 Agent Loop（fire-and-forget）
-      const loopParams: AgentLoopParams = {
+      app.log.info(
+        { ruleId: rule.ruleId, ruleName: rule.name, eventId: event.eventId, eventType: event.eventType, runId },
+        "[EventWakeup] 事件驱动唤醒 Agent Loop",
+      );
+
+      const kernel = createOrchestrationKernel({ pool, app });
+      kernel.startLoop({
         app,
         pool,
         queue,
@@ -254,14 +260,7 @@ export function createWakeupManager(params: WakeupManagerParams): WakeupManager 
         maxIterations: rule.agentConfig.maxIterations ?? 10,
         maxWallTimeMs: rule.agentConfig.maxWallTimeMs ?? 5 * 60 * 1000,
         defaultModelRef: rule.agentConfig.defaultModelRef,
-      };
-
-      app.log.info(
-        { ruleId: rule.ruleId, ruleName: rule.name, eventId: event.eventId, eventType: event.eventType, runId },
-        "[EventWakeup] 事件驱动唤醒 Agent Loop",
-      );
-
-      runAgentLoop(loopParams)
+      })
         .then((result) => {
           app.log.info(
             { ruleId: rule.ruleId, runId, ok: result.ok, endReason: result.endReason },
