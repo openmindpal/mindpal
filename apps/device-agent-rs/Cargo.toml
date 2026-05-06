@@ -1,0 +1,32 @@
+[package]
+name = "mindpal-device-agent"
+version = "0.1.0"
+edition = "2021"
+description = "MindPal Device Agent - Lightweight runtime for robot/vehicle/IoT scenarios"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+thiserror = "2"
+hex = "0.4"
+dirs = "5"
+anyhow = "1"
+gethostname = "0.4"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,14 @@
+# MindPal Device Agent 交叉编译配置
+# 使用方法：cargo build --release --target <target>
+
+# ── ARM64 Linux（机器人/汽车主板，如 Jetson、树莓派4）──
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+
+# ── ARMv7 Linux（IoT 设备、嵌入式网关）──
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+
+# ── RISC-V 64（新一代嵌入式芯片）──
+[target.riscv64gc-unknown-linux-gnu]
+linker = "riscv64-linux-gnu-gcc"
