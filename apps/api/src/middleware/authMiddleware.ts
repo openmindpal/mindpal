@@ -87,7 +87,13 @@ export function authMiddleware(app: FastifyInstance): void {
       const token = auth.toLowerCase().startsWith("device ") ? auth.slice("device ".length).trim() : "";
       if (token) {
         const device = await getDeviceByTokenHash({ pool: app.db, deviceTokenHash: sha256Hex(token) });
-        if (device) (req.ctx as any).device = device;
+        if (device) {
+          if (device.status === "disabled" || device.status === "revoked") {
+            app.log.debug({ deviceId: device.deviceId }, "[authn] device token valid but device disabled/revoked, skipping injection");
+          } else {
+            (req.ctx as any).device = device;
+          }
+        }
       }
     }
 
@@ -96,6 +102,17 @@ export function authMiddleware(app: FastifyInstance): void {
     if (subject) {
       const ensured = await ensureSubject({ pool: app.db, tenantId: subject.tenantId, subjectId: subject.subjectId });
       if (!ensured.ok) throw Errors.unauthorized(req.ctx.locale);
+    }
+
+    // ── 5. CSRF Double-Submit Cookie Verification ──
+    const isCookieAuth = !headerAuth && !!cookieAuth;
+    const isMutating = ["POST", "PUT", "DELETE", "PATCH"].includes(req.method);
+    if (isCookieAuth && isMutating) {
+      const csrfCookie = readCookieValue(req.headers.cookie, "mindpal_csrf");
+      const csrfHeader = (req.headers["x-csrf-token"] as string) ?? "";
+      if (!csrfCookie || csrfCookie !== csrfHeader) {
+        throw Errors.forbidden("CSRF_TOKEN_MISMATCH");
+      }
     }
   });
 }

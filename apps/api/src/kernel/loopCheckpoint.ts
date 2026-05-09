@@ -14,7 +14,9 @@
  */
 import type { Pool } from "pg";
 import type { StepObservation, AgentDecision, AgentLoopParams } from "./agentLoop";
-import { resolveNumber } from "@mindpal/shared";
+import { resolveNumber, StructuredLogger } from "@mindpal/shared";
+
+const _logger = new StructuredLogger({ module: "loopCheckpoint" });
 
 /* ================================================================== */
 /*  通用检查点接口                                                       */
@@ -290,7 +292,9 @@ export function startHeartbeat(pool: Pool, loopId: string): { stop: () => void }
     pool.query(
       "UPDATE agent_loop_checkpoints SET heartbeat_at = now(), updated_at = now() WHERE loop_id = $1 AND status IN ('running','resuming')",
       [loopId],
-    ).catch(() => { /* 心跳写入失败不阻塞主循环 */ });
+    ).catch((err: unknown) => {
+      _logger.debug("[Checkpoint] heartbeat write failed (non-blocking)", { loopId, error: String((err as Error)?.message ?? err) });
+    });
   }, intervalMs);
   timer.unref(); // 不阻止进程退出
 

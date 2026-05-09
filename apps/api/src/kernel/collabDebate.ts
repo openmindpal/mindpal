@@ -154,8 +154,8 @@ export async function runDebatePhaseV2(params: DebateV2PhaseParams): Promise<Deb
       // Round 1+: 交叉质询，可看到同轮已发言方的立场
       const predecessorPositions = round === 0
         ? []
-        : roundPositions.map(p => ({
-            role: p.fromRole, claim: p.claim, confidence: p.confidence,
+        : roundPositions.filter(p => p.fromRole).map(p => ({
+            role: p.fromRole!, claim: p.claim, confidence: p.confidence,
           }));
 
       const position = await runDebateAgentV2({
@@ -460,6 +460,7 @@ function computeConsensusEvolution(session: DebateSession, round: number, config
   const positions = lastRound?.positions ?? [];
   const partyPositions: Record<string, { claim: string; confidence: number }> = {};
   for (const p of positions) {
+    if (!p.fromRole) continue;
     partyPositions[p.fromRole] = { claim: p.claim.slice(0, 200), confidence: p.confidence };
   }
   const consensusScore = computeDebateConsensusScore(session);

@@ -160,7 +160,7 @@ Modeling      ──  Schema + Metadata + Universal CRUD                       �
 | Backend | Fastify 5 + WebSocket |
 | Frontend | Next.js 16 + React 19 |
 | UI Libraries | react-markdown + MDX rendering |
-| Database | PostgreSQL 16 (28 migration files) |
+| Database | PostgreSQL 16 (21 migration files) |
 | Cache / Message | Redis 7 + ioredis |
 | Task Queue | BullMQ 5.58 |
 | Object Storage | MinIO |
@@ -267,7 +267,7 @@ mindpal/
 │   │   ├── modules/    # 32 domain modules (auth/governance/model/knowledge/memory)
 │   │   ├── skills/     # 39 built-in skills (4 tiers: kernel/core/optional/extension)
 │   │   ├── plugins/    # 15 middlewares (logging/tracing/versioning/notifications/DLP/audit)
-│   │   └── migrations/ # 24 SQL migration files
+│   │   └── migrations/ # 21 SQL migration files
 │   ├── web/            # Next.js frontend (React 19 + ReactFlow + i18n)
 │   ├── worker/         # BullMQ async worker node (knowledge/memory/governance/notifications)
 │   ├── device-agent/   # Desktop Agent (Playwright + GUI automation + visual perception)

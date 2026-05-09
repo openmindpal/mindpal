@@ -236,7 +236,9 @@ export function createOrchestrationKernel(deps: {
       app.redis?.publish(
         `orchestration:run_terminated:${runId}`,
         JSON.stringify(terminateEvent),
-      ).catch(() => {});
+      ).catch((err: unknown) => {
+        app.log.debug({ runId, error: String((err as Error)?.message ?? err) }, "[Orchestration] run_terminated publish failed (best-effort)");
+      });
     } catch (err: any) {
       logger.warn("orchestration:handleStepFailure error", { runId, stepId, error: err?.message });
     }
@@ -409,7 +411,9 @@ export function createOrchestrationKernel(deps: {
         app.redis?.publish(
           `orchestration:step_completed:${runId}`,
           JSON.stringify(eventPayload),
-        ).catch(() => {});
+        ).catch((err: unknown) => {
+          app.log.debug({ runId, error: String((err as Error)?.message ?? err) }, "[Orchestration] step_completed publish failed (best-effort)");
+        });
       } catch {
         // best-effort 事件发布，不阻断主流程
       }

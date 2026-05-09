@@ -23,6 +23,7 @@ import { settingsRoutes } from "./system/settings";
 import { healthRoutes } from "./system/health";
 import { diagnosticsRoutes } from "./system/diagnostics";
 import { metricsRoutes } from "./system/metrics";
+import { csrfRoutes } from "./system/csrf";
 import { meRoutes } from "./me";
 import { authTokenRoutes } from "./auth/authTokens";
 import { scimRoutes } from "./scimRoutes";
@@ -64,6 +65,7 @@ async function systemRoutes(app: FastifyInstance) {
   app.register(diagnosticsRoutes);
   app.register(metricsRoutes);
   app.register(settingsRoutes);
+  app.register(csrfRoutes);
 }
 
 // ── 身份与用户路由 ──

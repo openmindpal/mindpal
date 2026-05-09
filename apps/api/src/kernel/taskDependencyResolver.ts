@@ -10,7 +10,7 @@
  * P2-04: 级联操作（cancel cascade / fail cascade / complete trigger）
  * P2-05: output_to_input 映射
  */
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { FastifyInstance } from "fastify";
 import type {
   TaskQueueEntry, TaskDependency, DepType, DepSource,
@@ -86,6 +86,7 @@ export class TaskDependencyResolver {
   /**
    * 创建一条依赖关系。
    * 自动检查循环依赖，如果会造成循环则拒绝。
+   * 使用事务 + advisory lock 防止并发竞态导致隐藏循环。
    */
   async createDependency(params: {
     tenantId: string;
@@ -98,74 +99,96 @@ export class TaskDependencyResolver {
   }): Promise<{ ok: true; dep: TaskDependency } | { ok: false; error: string }> {
     const { tenantId, sessionId, fromEntryId, toEntryId, depType, source, outputMapping } = params;
 
-    // 自引用检查
+    // 自引用检查（无需事务）
     if (fromEntryId === toEntryId) {
       return { ok: false, error: "Cannot create self-dependency" };
     }
 
-    // 验证条目存在性
-    const [fromEntry, toEntry] = await Promise.all([
-      repo.getEntry(this.pool, fromEntryId, { tenantId, sessionId }),
-      repo.getEntry(this.pool, toEntryId, { tenantId, sessionId }),
-    ]);
-    if (!fromEntry) return { ok: false, error: `Entry ${fromEntryId} not found` };
-    if (!toEntry) return { ok: false, error: `Entry ${toEntryId} not found` };
-    if (fromEntry.sessionId !== sessionId || toEntry.sessionId !== sessionId) {
-      return { ok: false, error: "Entries must belong to the same session" };
-    }
+    const client: PoolClient = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Advisory lock on session to serialize concurrent dependency creation
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [sessionId]);
 
-    // 循环依赖检查
-    const allEntries = await repo.listActiveEntries(this.pool, tenantId, sessionId);
-    const allDeps = await repo.listSessionDependencies(this.pool, tenantId, sessionId);
-    const dagNodes = this.buildDagNodes(allEntries, allDeps);
-
-    if (wouldCreateCycle(dagNodes, fromEntryId, toEntryId)) {
-      return { ok: false, error: "Adding this dependency would create a circular dependency" };
-    }
-
-    // 创建依赖
-    const dep = await repo.insertDependency(this.pool, {
-      tenantId,
-      sessionId,
-      fromEntryId,
-      toEntryId,
-      depType,
-      source: source ?? "manual",
-      outputMapping,
-    });
-
-    // 如果上游已完成，立即标记依赖已解析
-    if (TERMINAL_QUEUE_STATUSES.has(toEntry.status)) {
-      if (toEntry.status === "completed") {
-        await repo.updateDependencyStatus(this.pool, dep.depId, "resolved");
-      } else {
-        await repo.updateDependencyStatus(this.pool, dep.depId, "blocked");
+      // 验证条目存在性
+      const [fromEntry, toEntry] = await Promise.all([
+        repo.getEntry(client, fromEntryId, { tenantId, sessionId }),
+        repo.getEntry(client, toEntryId, { tenantId, sessionId }),
+      ]);
+      if (!fromEntry) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: `Entry ${fromEntryId} not found` };
       }
-    }
+      if (!toEntry) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: `Entry ${toEntryId} not found` };
+      }
+      if (fromEntry.sessionId !== sessionId || toEntry.sessionId !== sessionId) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: "Entries must belong to the same session" };
+      }
 
-    log("info", `Dependency created`, {
-      depId: dep.depId, from: fromEntryId, to: toEntryId,
-      depType, source: source ?? "manual",
-    });
+      // 循环依赖检查
+      const allEntries = await repo.listActiveEntries(client, tenantId, sessionId);
+      const allDeps = await repo.listSessionDependencies(client, tenantId, sessionId);
+      const dagNodes = this.buildDagNodes(allEntries, allDeps);
 
-    // 发射 depCreated 事件
-    this.onEvent?.({
-      type: "depCreated",
-      sessionId,
-      entryId: fromEntryId,
-      data: {
+      if (wouldCreateCycle(dagNodes, fromEntryId, toEntryId)) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: "Adding this dependency would create a circular dependency" };
+      }
+
+      // 创建依赖
+      const dep = await repo.insertDependency(client, {
         tenantId,
-        depId: dep.depId,
+        sessionId,
         fromEntryId,
         toEntryId,
         depType,
-        source: dep.source,
-        status: dep.status,
-        outputMapping: dep.outputMapping,
-      },
-    });
+        source: source ?? "manual",
+        outputMapping,
+      });
 
-    return { ok: true, dep };
+      // 如果上游已完成，立即标记依赖已解析
+      if (TERMINAL_QUEUE_STATUSES.has(toEntry.status)) {
+        if (toEntry.status === "completed") {
+          await repo.updateDependencyStatus(client, dep.depId, "resolved");
+        } else {
+          await repo.updateDependencyStatus(client, dep.depId, "blocked");
+        }
+      }
+
+      await client.query("COMMIT");
+
+      log("info", `Dependency created`, {
+        depId: dep.depId, from: fromEntryId, to: toEntryId,
+        depType, source: source ?? "manual",
+      });
+
+      // 事务成功后才触发事件
+      this.onEvent?.({
+        type: "depCreated",
+        sessionId,
+        entryId: fromEntryId,
+        data: {
+          tenantId,
+          depId: dep.depId,
+          fromEntryId,
+          toEntryId,
+          depType,
+          source: dep.source,
+          status: dep.status,
+          outputMapping: dep.outputMapping,
+        },
+      });
+
+      return { ok: true, dep };
+    } catch (e: unknown) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   /**

@@ -42,7 +42,7 @@ function toRow(r: any): DeviceRecordRow {
 }
 
 export async function getDeviceByTokenHash(params: { pool: Pool; deviceTokenHash: string }) {
-  const res = await params.pool.query("SELECT * FROM device_records WHERE device_token_hash = $1 AND status = 'active' LIMIT 1", [
+  const res = await params.pool.query("SELECT * FROM device_records WHERE device_token_hash = $1 LIMIT 1", [
     params.deviceTokenHash,
   ]);
   if (!res.rowCount) return null;

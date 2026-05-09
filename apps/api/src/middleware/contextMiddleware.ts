@@ -12,15 +12,72 @@ import { resolveRequestLocale } from "../lib/locale";
 import { getUserLocalePreference } from "../lib/userPreferences";
 import { getConfigOverridesWithHotCache } from "../lib/hotConfigEngine";
 import { Errors } from "../lib/errors";
-import {
-  tenantConcurrency,
-  decrementTenantCounter,
-} from "../plugins/tenantIsolation";
-import {
-  rateBuckets,
-  getEffectiveQuota,
-  checkAndIncrementApiRate,
-} from "../plugins/tenantQuota";
+
+/* ── Tenant Concurrency (formerly tenantIsolation.ts) ── */
+export const tenantConcurrency = new Map<string, number>();
+
+/** 递减租户并发计数器（确保不会小于 0） */
+export function decrementTenantCounter(tenantId: string): void {
+  const current = Math.max(0, (tenantConcurrency.get(tenantId) ?? 0) - 1);
+  if (current === 0) {
+    tenantConcurrency.delete(tenantId);
+  } else {
+    tenantConcurrency.set(tenantId, current);
+  }
+}
+
+/* ── Tenant API Rate Quota (formerly tenantQuota.ts) ── */
+interface TenantQuotaConfig {
+  storageBytes: number;
+  apiRequestsPerMinute: number;
+  computeSecondsPerHour: number;
+}
+
+const DEFAULT_QUOTA: TenantQuotaConfig = {
+  storageBytes: 10 * 1024 * 1024 * 1024,
+  apiRequestsPerMinute: 600,
+  computeSecondsPerHour: 3600,
+};
+
+interface RateBucket {
+  count: number;
+  windowStart: number;
+}
+
+export const rateBuckets = new Map<string, RateBucket>();
+
+const quotaOverrides = new Map<string, Partial<TenantQuotaConfig>>();
+
+function getEffectiveQuota(tenantId: string): TenantQuotaConfig {
+  const override = quotaOverrides.get(tenantId);
+  if (!override) return DEFAULT_QUOTA;
+  return {
+    storageBytes: override.storageBytes ?? DEFAULT_QUOTA.storageBytes,
+    apiRequestsPerMinute: override.apiRequestsPerMinute ?? DEFAULT_QUOTA.apiRequestsPerMinute,
+    computeSecondsPerHour: override.computeSecondsPerHour ?? DEFAULT_QUOTA.computeSecondsPerHour,
+  };
+}
+
+function checkAndIncrementApiRate(tenantId: string, limit: number): { exceeded: boolean; current: number; resetMs: number } {
+  const now = Date.now();
+  const windowMs = 60_000;
+  let bucket = rateBuckets.get(tenantId);
+
+  if (!bucket || now - bucket.windowStart >= windowMs) {
+    bucket = { count: 1, windowStart: now };
+    rateBuckets.set(tenantId, bucket);
+    return { exceeded: false, current: 1, resetMs: windowMs };
+  }
+
+  bucket.count += 1;
+  const resetMs = windowMs - (now - bucket.windowStart);
+
+  if (bucket.count > limit) {
+    return { exceeded: true, current: bucket.count, resetMs };
+  }
+
+  return { exceeded: false, current: bucket.count, resetMs };
+}
 
 const _logger = new StructuredLogger({ module: "api:contextMiddleware" });
 

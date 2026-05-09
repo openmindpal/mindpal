@@ -8,7 +8,7 @@
  */
 import type { Pool } from "pg";
 import type { FastifyInstance } from "fastify";
-import { StructuredLogger, resolveBoolean, resolveNumber } from "@mindpal/shared";
+import { StructuredLogger, resolveBoolean, resolveNumber, sha256Hex } from "@mindpal/shared";
 import type { SimilarityStrategy } from "@mindpal/shared";
 import type {
   IntentAnchor,
@@ -309,9 +309,26 @@ async function _llmBasedDetection(params: {
 }): Promise<{ isViolation: boolean; violation?: BoundaryViolationType; shouldPause: boolean; reason?: string } | null> {
   const { pool, tenantId, spaceId, runId, stepId, proposedAction, currentContext, app, subject, anchors } = params;
 
+  const redis = (app as any).redis as { get(key: string): Promise<string | null>; setex(key: string, ttl: number, value: string): Promise<unknown> } | undefined;
+
   for (const anchor of anchors) {
     if (anchor.instructionType !== "prohibition" && anchor.instructionType !== "constraint") continue;
     try {
+      // 缓存读取
+      const cacheKey = `intent_boundary:${tenantId}:${anchor.anchorId}:${sha256Hex(proposedAction + (currentContext ?? ""))}`;
+      if (redis) {
+        const cached = await redis.get(cacheKey).catch(() => null);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (parsed.isViolation) {
+              return parsed;
+            }
+            continue; // 缓存表示无违规，跳过此anchor
+          } catch { /* 缓存解析失败，继续正常流程 */ }
+        }
+      }
+
       const conflict = await _llmSemanticConflictCheck({
         app, subject,
         instruction: anchor.originalInstruction,
@@ -319,6 +336,7 @@ async function _llmBasedDetection(params: {
         proposedAction,
         context: currentContext,
       });
+
       if (conflict.isConflict) {
         const violationType: ViolationType =
           anchor.instructionType === "prohibition" ? "prohibition_violation" : "constraint_breach";
@@ -340,12 +358,31 @@ async function _llmBasedDetection(params: {
             context: currentContext,
           },
         });
-        return {
-          isViolation: true,
+
+        const result = {
+          isViolation: true as const,
           violation,
           shouldPause: true,
           reason: `[LLM] 检测到${getViolationTypeLabel(violationType)}: ${conflict.reason}`,
         };
+
+        // 写入缓存（违规结果）
+        if (redis) {
+          const ttl = resolveNumber("INTENT_BOUNDARY_CACHE_TTL_S", undefined, undefined, 300).value;
+          redis.setex(cacheKey, ttl, JSON.stringify({ isViolation: true, shouldPause: true, reason: result.reason })).catch((err: unknown) => {
+            logger.debug("intent boundary cache write failed", { error: String((err as Error)?.message ?? err) });
+          });
+        }
+
+        return result;
+      }
+
+      // 写入缓存（无违规结果）
+      if (redis) {
+        const ttl = resolveNumber("INTENT_BOUNDARY_CACHE_TTL_S", undefined, undefined, 300).value;
+        redis.setex(cacheKey, ttl, JSON.stringify({ isViolation: false })).catch((err: unknown) => {
+          logger.debug("intent boundary cache write failed", { error: String((err as Error)?.message ?? err) });
+        });
       }
     } catch (err) {
       logger.warn(`LLM semantic check failed: ${(err as Error)?.message}`);

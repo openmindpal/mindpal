@@ -319,6 +319,9 @@ export { checkCapabilityEnvelopeNotExceedV1, validateCapabilityEnvelopeV1 } from
 // ─── 统一错误分类枚举 ─────────────────────────────────────────────────
 export { ErrorCategory, type ErrorCategoryValue, isRetryableError, errorActionHint } from "./errorCategory";
 
+// ─── 统一重试策略 ─────────────────────────────────────────────────
+export { withRetry, type RetryOptions, type RetryStrategy } from "./retry";
+
 export {
   AUDIT_ERROR_CATEGORIES, normalizeAuditErrorCategory,
   HIGH_RISK_AUDIT_ACTIONS, isHighRiskAuditAction,

@@ -867,7 +867,9 @@ export async function admitInlineExecution(
       traceId: "",
       inputDigest: { reason: "rbac_denied:tool/execute", subject: subjectId, resource: toolRef, requestedAction: "execute", matchedPolicy: (genericDecision as Record<string, unknown>).snapshotRef ?? null },
       policySnapshotRef: (genericDecision as Record<string, unknown>).snapshotRef as string | undefined,
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      _kernelLogger.debug("[ExecutionKernel] audit insert failed (best-effort)", { toolRef, error: String((err as Error)?.message ?? err) });
+    });
     return { admitted: false, reason: "rbac_denied:tool/execute" };
   }
 
@@ -887,7 +889,9 @@ export async function admitInlineExecution(
       traceId: "",
       inputDigest: { reason: `rbac_denied:${resourceType}/${action}`, subject: subjectId, resource: toolRef, requestedAction: action, matchedPolicy: (specificDecision as Record<string, unknown>).snapshotRef ?? null },
       policySnapshotRef: (specificDecision as Record<string, unknown>).snapshotRef as string | undefined,
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      _kernelLogger.debug("[ExecutionKernel] audit insert failed (best-effort)", { toolRef, error: String((err as Error)?.message ?? err) });
+    });
     return { admitted: false, reason: `rbac_denied:${resourceType}/${action}` };
   }
 

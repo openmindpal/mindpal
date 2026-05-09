@@ -244,3 +244,15 @@ ALTER TABLE memory_entries
 CREATE INDEX IF NOT EXISTS idx_memory_entries_embedding_model_ref
   ON memory_entries (tenant_id, space_id, embedding_model_ref)
   WHERE embedding_vector IS NOT NULL AND deleted_at IS NULL;
+
+-- ═══ Memory Confidence/Salience Constraints (merged from 028) ═══
+
+-- 这两个字段表示置信度/显著性，必须在 [0.0, 1.0] 范围内
+
+-- 清洗不合规数据：将超出 [0.0, 1.0] 范围的值夹紧到合法范围
+UPDATE memory_entries SET confidence = GREATEST(0.0, LEAST(1.0, confidence)) WHERE confidence < 0.0 OR confidence > 1.0;
+UPDATE memory_entries SET salience = GREATEST(0.0, LEAST(1.0, salience)) WHERE salience < 0.0 OR salience > 1.0;
+
+ALTER TABLE memory_entries
+  ADD CONSTRAINT chk_memory_confidence CHECK (confidence BETWEEN 0.0 AND 1.0),
+  ADD CONSTRAINT chk_memory_salience CHECK (salience BETWEEN 0.0 AND 1.0);

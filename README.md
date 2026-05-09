@@ -157,7 +157,7 @@
 | 后端框架 | Fastify 5 + WebSocket |
 | 前端框架 | Next.js 16 + React 19 |
 | UI 库 | react-markdown + MDX 渲染 |
-| 数据库 | PostgreSQL 16（24 个迁移文件） |
+| 数据库 | PostgreSQL 16（21 个迁移文件） |
 | 缓存/消息 | Redis 7 + ioredis |
 | 任务队列 | BullMQ 5.58 |
 | 对象存储 | MinIO |
@@ -264,7 +264,7 @@ mindpal/
 │   │   ├── modules/    # 32 个领域模块（认证/治理/模型/知识/记忆等）
 │   │   ├── skills/     # 39 个内建技能（四层：kernel/core/optional/extension）
 │   │   ├── plugins/    # 15 个中间件（日志/追踪/版本化/通知/DLP/审计等）
-│   │   └── migrations/ # 24 个 SQL 迁移文件
+│   │   └── migrations/ # 21 个 SQL 迁移文件
 │   ├── web/            # Next.js 前端（React 19 + ReactFlow + 国际化）
 │   ├── worker/         # BullMQ 异步工作节点（知识/记忆/治理/通知）
 │   ├── device-agent/   # 桌面端 Agent（Playwright + GUI 自动化 + 视觉感知）

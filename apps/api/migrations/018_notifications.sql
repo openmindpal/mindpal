@@ -211,3 +211,13 @@ CREATE TABLE IF NOT EXISTS notification_ws_connections (
 CREATE INDEX IF NOT EXISTS idx_notif_ws_subject ON notification_ws_connections(tenant_id, subject_id);
 CREATE INDEX IF NOT EXISTS idx_notif_ws_node ON notification_ws_connections(node_id);
 CREATE INDEX IF NOT EXISTS idx_notif_ws_heartbeat ON notification_ws_connections(last_heartbeat_at);
+
+-- ═══ Rate Limit Constraints (merged from 028) ═══
+
+-- 清洗不合规数据：将非正数的 rate_limit 设为默认值
+UPDATE notification_preferences SET rate_limit_per_hour = 100 WHERE rate_limit_per_hour <= 0;
+UPDATE notification_preferences SET rate_limit_per_day = 500 WHERE rate_limit_per_day <= 0;
+
+ALTER TABLE notification_preferences
+  ADD CONSTRAINT chk_rate_limit_hour CHECK (rate_limit_per_hour > 0),
+  ADD CONSTRAINT chk_rate_limit_day CHECK (rate_limit_per_day > 0);

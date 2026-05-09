@@ -492,7 +492,9 @@ export class TaskQueueManager {
         const e = err instanceof Error ? err : new Error(String(err));
         log("error", `Failed to pause task execution`, { entryId, err: e.message, stack: e.stack });
         // 暂停失败：将任务标记为 error 状态，避免状态不一致
-        await repo.updateEntryStatus(this.pool, { entryId, status: "failed", lastError: `pause_failed: ${e.message}` }).catch(() => {});
+        await repo.updateEntryStatus(this.pool, { entryId, status: "failed", lastError: `pause_failed: ${e.message}` }).catch((e2: unknown) => {
+          log("warn", "pause cleanup markFailed failed", { entryId, error: String((e2 as Error)?.message ?? e2) });
+        });
       }
     }
 
@@ -818,7 +820,9 @@ export class TaskQueueManager {
     try {
       await repo.deleteCheckpoint(this.pool, entryId);
       if (this.redis) {
-        await this.redis.del(this.checkpointRedisKey(entryId)).catch(() => {});
+        await this.redis.del(this.checkpointRedisKey(entryId)).catch((err: unknown) => {
+          log("info", "redis checkpoint key delete failed (best-effort)", { entryId, error: String((err as Error)?.message ?? err) });
+        });
       }
     } catch (err) {
       log("warn", `Failed to clear checkpoint`, { entryId, error: String(err) });

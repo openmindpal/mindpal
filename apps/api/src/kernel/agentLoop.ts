@@ -180,11 +180,20 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
   const { toolDiscovery, auditCtx, loopStartedAt } = s;
 
   let _loopFinalResult: AgentLoopResult | null = null;
-  const budget: LoopBudget = createDefaultBudget();
   const failureDiagnoses: FailureDiagnosis[] = [];
   const semanticAuditTrail: SemanticAuditEntry[] = [];
   let degradedCompletion = false;
   let checkpointConsecutiveFailures = 0;
+
+  /* ================================================================ */
+  /*  预算控制（Budget Control）                                         */
+  /*  Token 预算、迭代次数、超时检测逻辑                                    */
+  /*  核心函数已提取至 loopTypes.ts:                                       */
+  /*    - createDefaultBudget / isBudgetExhausted                        */
+  /*    - recordTokenUsage / recordCostUsage                             */
+  /*  此处仅保留 budget 实例及内联检查点                                     */
+  /* ================================================================ */
+  const budget: LoopBudget = createDefaultBudget();
 
   /* ── Turbo 策略：循环初始化时获取一次，避免每次迭代重复读取 ── */
   const turbo = getTurboPolicy();
@@ -211,6 +220,13 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
     _loopFinalResult = r;
     return r;
   }
+
+  /* ================================================================ */
+  /*  优雅降级（Graceful Degradation）                                    */
+  /*  此闭包捕获循环局部状态（observations, succeededSteps, failedSteps,   */
+  /*  iterations, lastDecision, goalGraph, failureDiagnoses, budget 等）  */
+  /*  因高度耦合闭包变量，不适合提取为独立模块。                               */
+  /* ================================================================ */
 
   /**
    * 优雅降级：在资源耗尽退出前，收集已完成的步骤和中间结果，
@@ -274,7 +290,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
         return result;
       }
 
-      // 检查超时
+      // ── 预算控制：超时检查（wall-clock timeout） ──
       if (Date.now() - loopStartedAt > maxWallTimeMs) {
         await finalizeCheckpoint(pool, loopId, "failed").catch((e: unknown) => {
           const err = e instanceof Error ? e : new Error(String(e));
@@ -304,7 +320,7 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       // ── Tracing: 迭代开始 ──
       try { if (tracingCtx) startIteration(tracingCtx, iterations); } catch { /* noop */ }
 
-      // ── 预算检查 ──
+      // ── 预算控制：Token/Cost 预算耗尽检查 ──
       const budgetCheck = isBudgetExhausted(budget);
       if (budgetCheck.exhausted) {
         app.log.warn({ runId, iteration: iterations, reason: budgetCheck.reason }, "[AgentLoop] 预算耗尽");
@@ -853,7 +869,9 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       // 熔断检查：连续 checkpoint 失败超过阈值时中止循环
       if (checkpointConsecutiveFailures >= MAX_CHECKPOINT_FAILURES) {
         app.log.error({ runId, loopId, consecutiveFailures: checkpointConsecutiveFailures }, "[AgentLoop] Checkpoint 连续失败超过阈值，中止循环");
-        await safeTransitionRun(pool, runId, "failed", { finishedAt: true, log: app.log }).catch(() => {});
+        await safeTransitionRun(pool, runId, "failed", { finishedAt: true, log: app.log }).catch((err: unknown) => {
+          app.log.warn({ runId, loopId, error: String((err as Error)?.message ?? err) }, "[AgentLoop] safeTransitionRun to failed state also failed");
+        });
         const result = gracefulDegradation("error", `Checkpoint 连续失败 ${checkpointConsecutiveFailures} 次，循环中止`);
         onLoopEnd?.(result);
         return result;

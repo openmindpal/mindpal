@@ -317,3 +317,19 @@ CREATE TRIGGER trg_tool_definitions_updated_at
   BEFORE UPDATE ON tool_definitions
   FOR EACH ROW
   EXECUTE FUNCTION update_tool_definitions_updated_at();
+
+-- ═══ Tool Semantic Meta (merged from 025) ═══
+
+-- 工具语义元数据：在 tool_definitions 表添加 semantic_meta JSONB 列
+ALTER TABLE tool_definitions ADD COLUMN IF NOT EXISTS semantic_meta JSONB DEFAULT NULL;
+COMMENT ON COLUMN tool_definitions.semantic_meta IS 'P4: ToolSemanticMeta — operationType/precisionLevel/sideEffects/semanticEquivalents/notEquivalentTo';
+
+-- ═══ Tool Priority Constraint (merged from 028) ═══
+
+-- 工具优先级 1-10，数值越大优先级越高（与 COMMENT 定义一致）
+
+-- 清洗不合规数据：将超出 [1, 10] 范围的 priority 夹紧到合法范围
+UPDATE tool_definitions SET priority = GREATEST(1, LEAST(10, priority)) WHERE priority < 1 OR priority > 10;
+
+ALTER TABLE tool_definitions
+  ADD CONSTRAINT chk_tool_priority CHECK (priority BETWEEN 1 AND 10);

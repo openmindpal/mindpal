@@ -1,20 +1,7 @@
 import type { Pool } from "pg";
+import type { DeviceRecordRow } from "../../lib/deviceAuth";
 
-export type DeviceRecordRow = {
-  deviceId: string;
-  tenantId: string;
-  ownerScope: string;
-  ownerSubjectId: string | null;
-  spaceId: string | null;
-  deviceType: string;
-  os: string;
-  agentVersion: string;
-  status: string;
-  enrolledAt: string;
-  lastSeenAt: string | null;
-  revokedAt: string | null;
-  updatedAt: string;
-};
+export { type DeviceRecordRow, getDeviceByTokenHash } from "../../lib/deviceAuth";
 
 function toRow(r: any): DeviceRecordRow {
   return {
@@ -164,11 +151,4 @@ export async function rotateDeviceRecordToken(params: { pool: Pool; tenantId: st
   return toRow(res.rows[0]);
 }
 
-export async function getDeviceByTokenHash(params: { pool: Pool; deviceTokenHash: string }) {
-  const res = await params.pool.query("SELECT * FROM device_records WHERE device_token_hash = $1 AND status = 'active' LIMIT 1", [
-    params.deviceTokenHash,
-  ]);
-  if (!res.rowCount) return null;
-  return toRow(res.rows[0]);
-}
 

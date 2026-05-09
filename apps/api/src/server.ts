@@ -19,6 +19,7 @@ import { autoDiscoverAndRegisterTools } from "./modules/tools/toolAutoDiscovery"
 import { runBoundaryScan, formatBoundaryScanReport } from "./lib/startupBoundaryScan";
 import { internalRoutes } from "./routes/system/internal";
 import { createDbAuthProvider } from "./modules/auth/dbAuthProvider";
+import { validateVectorDimensions } from "./db/pool";
 
 // ── Middleware (3 阶段) ──
 import { authMiddleware } from "./middleware/authMiddleware";
@@ -88,7 +89,7 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
 
   const corsAllowedMethods = "GET,POST,PUT,DELETE,OPTIONS";
   const corsAllowedHeaders =
-    "content-type,authorization,x-tenant-id,x-space-id,x-user-locale,x-space-locale,x-tenant-locale,x-schema-name,x-trace-id,idempotency-key";
+    "content-type,authorization,x-tenant-id,x-space-id,x-user-locale,x-space-locale,x-tenant-locale,x-schema-name,x-trace-id,idempotency-key,x-csrf-token";
   // P2-1: 允许前端读取自定义响应头
   const corsExposeHeaders = "x-request-id,x-trace-id,x-ratelimit-remaining,x-ratelimit-reset";
 
@@ -290,6 +291,9 @@ export function buildServer(cfg: ApiConfig, deps: { db: Pool; queue: Queue }) {
       registeredSkills.push(name);
     }
     app.log.info({ registeredSkills: registeredSkills.length, skills: registeredSkills }, "[startup] Built-in skills registered");
+
+    // ── P2-1: 向量维度一致性校验 ──
+    await validateVectorDimensions(app.db, app.log);
 
     try {
       const discovery = await autoDiscoverAndRegisterTools(app.db);

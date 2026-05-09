@@ -16,7 +16,7 @@
  */
 import crypto from "node:crypto";
 import type { Pool } from "pg";
-import { StructuredLogger, collabConfig, resolveString, resolveNumber } from "@mindpal/shared";
+import { StructuredLogger, collabConfig, resolveString, resolveNumber, withRetry } from "@mindpal/shared";
 import type { CollabMessageEnvelope, MessagePriority } from "@mindpal/shared";
 
 const logger = new StructuredLogger({ module: "collabBus" });
@@ -216,37 +216,31 @@ export function createCollabBusInstance(config: CollabBusConfig): CollabBusInsta
       return;
     }
 
-    // 写 Redis Stream（带 1 次快速重试）
+    // 写 Redis Stream（使用统一重试策略）
     const target = msg.toRole ?? "broadcast";
     const sKey = streamKey(msg.collabRunId, target);
     const json = JSON.stringify(msg);
     let streamSent = false;
+    const _redis = redis!;
 
     try {
-      await redis.xadd(sKey, "MAXLEN", "~", String(collabConfig("COLLAB_BUS_STREAM_MAXLEN")), "*",
-        "data", json,
-        "priority", String(msg.priority ?? "normal"),
-        "kind", msg.messageType,
-        "from", msg.fromRole,
-      );
-      streamSent = true;
-    } catch (err1: unknown) {
-      // 快速重试一次（50ms 延迟）
-      try {
-        await new Promise(r => setTimeout(r, 50));
-        await redis.xadd(sKey, "MAXLEN", "~", String(collabConfig("COLLAB_BUS_STREAM_MAXLEN")), "*",
+      await withRetry(
+        () => _redis.xadd!(sKey, "MAXLEN", "~", String(collabConfig("COLLAB_BUS_STREAM_MAXLEN")), "*",
           "data", json,
           "priority", String(msg.priority ?? "normal"),
           "kind", msg.messageType,
           "from", msg.fromRole,
-        );
-        streamSent = true;
-      } catch (err2: unknown) {
-        logger.warn("collab.bus.redis_retry_exhausted", {
-          channel,
-          error: (err2 as Error)?.message,
-        });
-      }
+        ),
+        { maxAttempts: 2, baseDelayMs: 50, strategy: "fixed", onRetry: (attempt, err) => {
+          logger.debug("collab.bus.redis_stream_retry", { channel, attempt, error: String((err as Error)?.message ?? err) });
+        }},
+      );
+      streamSent = true;
+    } catch (err: unknown) {
+      logger.warn("collab.bus.redis_retry_exhausted", {
+        channel,
+        error: String((err as Error)?.message ?? err),
+      });
     }
 
     if (!streamSent) {
