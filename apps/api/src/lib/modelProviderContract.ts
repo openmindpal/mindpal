@@ -10,10 +10,17 @@ export const openaiCompatibleProviders = [
   "openai_compatible",
   "deepseek",
   "hunyuan",
-  "qianwen",
+  "qwen",
   "zhipu",
   "doubao",
   "kimi",
+  "ernie",
+  "spark",
+  "baichuan",
+  "yi",
+  "minimax",
+  "step",
+  "sensenova",
   "custom_openai",
 ] as const;
 

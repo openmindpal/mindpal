@@ -149,7 +149,7 @@ export interface DeviceMultimodalPolicy {
   maxFileSizeBytes: number;
   supportedFormats: Partial<Record<DeviceModality, string[]>>;
   /** 流式策略下发 */
-  streaming?: { supported: boolean; maxConcurrentStreams?: number } | null;
+  streaming?: { supported: boolean; maxConcurrentStreams?: number; sttStreaming?: boolean; ttsStreaming?: boolean } | null;
   /** VAD 策略下发 */
   vad?: {
     enabled: boolean;
@@ -161,7 +161,7 @@ export interface DeviceMultimodalPolicy {
     sensitivityProfile?: SensitivityProfile;
   } | null;
   /** 视频帧流策略下发 */
-  videoStream?: { supported: boolean; frameIntervalMs?: number; maxFrameWidth?: number; format?: "jpeg" | "png" } | null;
+  videoStream?: { supported: boolean; frameIntervalMs?: number; maxFrameWidth?: number; format?: "jpeg" | "png"; realtimeAnalysis?: boolean } | null;
 }
 
 /** 设备多模态附件 */

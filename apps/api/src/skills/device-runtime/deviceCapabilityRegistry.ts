@@ -119,6 +119,22 @@ export class DeviceCapabilityRegistry {
       policy.allowedModalities = modalities;
     }
 
+    // ── 元数据驱动：流式 STT/TTS 能力协商 ────────────────────────
+    // STT/TTS streaming 通过 WebSocket 推送，端侧无额外开销，默认开启
+    policy.streaming = {
+      supported: true,
+      sttStreaming: true,
+      ttsStreaming: true,
+    };
+
+    // ── 元数据驱动：视频实时分析能力协商 ──────────────────────────
+    if (camera) {
+      const edgeMs = descriptor.capabilities.compute.edgeInferenceMs ?? 100;
+      if (edgeMs < 100 && policy.videoStream) {
+        policy.videoStream.realtimeAnalysis = true;
+      }
+    }
+
     return policy;
   }
 }

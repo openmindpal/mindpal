@@ -152,6 +152,54 @@ export const audioRoutes: FastifyPluginAsync = async (app) => {
     let keyframeInterval = 5; // 每5帧取1帧作为关键帧
     const keyframes: Array<{ data: string; timestamp: number }> = [];
     const MAX_KEYFRAMES = 10; // 最多缓存10个关键帧
+    let realtimeAnalysis = false; // 实时分析开关（由客户端 config 消息驱动）
+
+    /** 内联辅助：异步分析单个关键帧（复用 LLM 多模态能力） */
+    async function analyzeKeyframe(imageBase64: string, frameId: number): Promise<void> {
+      try {
+        const llmEndpoint = (process.env.SKILL_LLM_ENDPOINT || "").trim();
+        const llmApiKey = (process.env.SKILL_LLM_API_KEY || "").trim();
+        const llmModel = (process.env.SKILL_VISION_MODEL || process.env.SKILL_LLM_MODEL || "gpt-4o").trim();
+        if (!llmEndpoint) return;
+
+        const url = llmEndpoint.replace(/\/+$/, "") + "/chat/completions";
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15_000);
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(llmApiKey ? { Authorization: `Bearer ${llmApiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            model: llmModel,
+            messages: [{
+              role: "user",
+              content: [
+                { type: "text", text: "简要描述这个画面中的关键内容，50字以内。" },
+                { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+              ],
+            }],
+            max_tokens: 100,
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) return;
+
+        const json: any = await res.json();
+        const description = json.choices?.[0]?.message?.content ?? "";
+        if (description && socket.readyState === 1) {
+          const analysisMsg: VideoStreamServerMessage = {
+            type: "analysis",
+            frameId,
+            analysis: { description },
+          };
+          socket.send(JSON.stringify(analysisMsg));
+        }
+      } catch { /* 分析失败不中断流，静默忽略 */ }
+    }
 
     // 3. 消息处理
     socket.on("message", (raw: any) => {
@@ -163,6 +211,10 @@ export const audioRoutes: FastifyPluginAsync = async (app) => {
           // 客户端配置：调整 keyframe 间隔
           if (msg.config?.frameRate) {
             keyframeInterval = Math.max(1, Math.ceil(msg.config.frameRate / 2));
+          }
+          // 读取实时分析配置
+          if (typeof (msg.config as any)?.realtimeAnalysis === "boolean") {
+            realtimeAnalysis = (msg.config as any).realtimeAnalysis;
           }
           const ack: VideoStreamServerMessage = { type: "ack" };
           socket.send(JSON.stringify(ack));
@@ -177,24 +229,38 @@ export const audioRoutes: FastifyPluginAsync = async (app) => {
             keyframes.push({ data: msg.data, timestamp: msg.timestamp ?? Date.now() });
             const ack: VideoStreamServerMessage = { type: "ack", frameId: frameCount };
             socket.send(JSON.stringify(ack));
+
+            // 实时分析：关键帧抽取后立即异步调用视觉分析
+            if (realtimeAnalysis) {
+              analyzeKeyframe(msg.data, frameCount).catch(() => {});
+            }
           }
           return;
         }
 
         if (msg.type === "finish") {
-          // 将缓存的关键帧信息返回
-          if (keyframes.length > 0) {
+          if (realtimeAnalysis) {
+            // 实时分析已在每个关键帧触发，finish时只返回简短完成确认
             const result: VideoStreamServerMessage = {
               type: "analysis",
-              analysis: { description: `Processed ${keyframes.length} keyframes from ${frameCount} total frames` },
+              analysis: { description: `Stream completed. ${keyframes.length} keyframes analyzed in real-time.` },
             };
             socket.send(JSON.stringify(result));
           } else {
-            const result: VideoStreamServerMessage = {
-              type: "analysis",
-              analysis: { description: "No keyframes captured" },
-            };
-            socket.send(JSON.stringify(result));
+            // 降级路径：实时分析未开启，返回批量统计
+            if (keyframes.length > 0) {
+              const result: VideoStreamServerMessage = {
+                type: "analysis",
+                analysis: { description: `Processed ${keyframes.length} keyframes from ${frameCount} total frames` },
+              };
+              socket.send(JSON.stringify(result));
+            } else {
+              const result: VideoStreamServerMessage = {
+                type: "analysis",
+                analysis: { description: "No keyframes captured" },
+              };
+              socket.send(JSON.stringify(result));
+            }
           }
           socket.close();
           return;

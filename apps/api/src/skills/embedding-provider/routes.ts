@@ -144,7 +144,7 @@ function getDefaultEmbeddingModel(provider: string): string {
     openai_compatible: "text-embedding-ada-002",
     deepseek: "text-embedding-ada-002", // DeepSeek 目前不提供单独 embedding API
     zhipu: "embedding-2",
-    qianwen: "text-embedding-v1",
+    qwen: "text-embedding-v1",
     doubao: "doubao-embedding",
   };
   return embeddingModels[provider] ?? "text-embedding-ada-002";
@@ -167,7 +167,7 @@ export const embeddingRoutes: FastifyPluginAsync = async (app) => {
     const bindings = await listBindings(pool, tenantId, spaceId ? "space" : "tenant", spaceId || tenantId);
 
     // 筛选支持 embedding 的 provider
-    const embeddingCapableProviders = ["openai_compatible", "openai", "deepseek", "zhipu", "qianwen", "doubao"];
+    const embeddingCapableProviders = ["openai_compatible", "openai", "deepseek", "zhipu", "qwen", "doubao"];
     const filtered = bindings.filter((b) => embeddingCapableProviders.includes(b.provider));
 
     const defaultBindingId = await getDefaultEmbeddingBindingId(pool, tenantId, spaceId);

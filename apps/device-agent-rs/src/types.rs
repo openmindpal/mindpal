@@ -379,3 +379,82 @@ pub fn parse_tool_ref(tool_ref: &str) -> ParsedToolRef {
 pub fn tool_name(tool_ref: &str) -> String {
     parse_tool_ref(tool_ref).name
 }
+
+// ── 流式策略配置 ─────────────────────────────────────────────
+
+/// 多模态流式策略（从元数据 multimodalPolicy.streaming 读取）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamingPolicy {
+    pub stt_streaming: Option<bool>,
+    pub tts_streaming: Option<bool>,
+}
+
+/// 多模态策略容器
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MultimodalPolicy {
+    pub streaming: Option<StreamingPolicy>,
+}
+
+impl StreamingPolicy {
+    pub fn stt_enabled(&self) -> bool {
+        self.stt_streaming.unwrap_or(false)
+    }
+    pub fn tts_enabled(&self) -> bool {
+        self.tts_streaming.unwrap_or(false)
+    }
+}
+
+// ── STT/TTS 协议消息 ─────────────────────────────────────────
+
+/// 设备端 → 服务端：请求TTS合成
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceTtsRequest {
+    #[serde(rename = "type")]
+    pub msg_type: String, // "device_tts_request"
+    pub session_id: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice: Option<String>,
+    pub seq_no: u32,
+}
+
+/// 服务端 → 设备端：TTS音频段
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceTtsAudio {
+    #[serde(rename = "type")]
+    pub msg_type: String, // "device_tts_audio"
+    pub session_id: String,
+    pub seq_no: u32,
+    pub audio_base64: String,
+    pub format: String,
+    pub done: bool,
+}
+
+/// STT 流式推送消息（设备端 → STT服务）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SttMessage {
+    #[serde(rename = "audio_chunk")]
+    AudioChunk { data: String },
+    #[serde(rename = "finish")]
+    Finish,
+}
+
+/// STT 服务响应消息
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum SttResponse {
+    #[serde(rename = "interim")]
+    Interim { text: String },
+    #[serde(rename = "final")]
+    Final {
+        text: String,
+        confidence: Option<f64>,
+    },
+    #[serde(rename = "error")]
+    Error { error: String },
+}

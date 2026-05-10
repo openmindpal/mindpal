@@ -115,3 +115,26 @@ export interface VideoStreamServerMessage {
   /** 错误信息（type="error" 时） */
   error?: string;
 }
+
+/* ================================================================== */
+/*  TTS 流式消息协议                                                     */
+/* ================================================================== */
+
+/** 设备端 → 服务端：请求TTS合成 */
+export interface DeviceTtsRequest {
+  type: "device_tts_request";
+  sessionId: string;
+  text: string;
+  voice?: string;
+  seqNo: number;
+}
+
+/** 服务端 → 设备端：TTS音频段推送 */
+export interface DeviceTtsAudio {
+  type: "device_tts_audio";
+  sessionId: string;
+  seqNo: number;
+  audioBase64: string;
+  format: string;
+  done: boolean;
+}

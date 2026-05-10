@@ -23,6 +23,7 @@ hex = "0.4"
 dirs = "5"
 anyhow = "1"
 gethostname = "0.4"
+base64 = "0.22"
 
 [profile.release]
 opt-level = "z"

@@ -63,7 +63,8 @@ import {
 } from "./modules/crossDeviceBus";
 import { processDeviceQuery } from "./deviceMultimodalHandler";
 import { deviceCapabilityRegistry } from "./deviceCapabilityRegistry";
-import type { DeviceCapabilityDescriptor, DeviceCommand, DeviceCommandAck } from "@mindpal/shared";
+import type { DeviceCapabilityDescriptor, DeviceCommand, DeviceCommandAck, DeviceTtsRequest, DeviceTtsAudio } from "@mindpal/shared";
+import { synthesizeSpeech } from "../../modules/audioService";
 
 function requireDeviceFromReq(req: any) {
   const device = req.ctx?.device;
@@ -323,8 +324,9 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
             }
 
             // P3: 注册 OS级设备能力描述符到 deviceCapabilityRegistry
-            const capDesc = (handshake as any).capabilityDescriptor as DeviceCapabilityDescriptor | undefined
-              ?? rawCaps?.capabilityDescriptor;
+            const capDesc = (
+              (handshake as any).capabilityDescriptor ?? rawCaps?.capabilityDescriptor
+            ) as DeviceCapabilityDescriptor | undefined;
             if (capDesc && capDesc.deviceType && capDesc.capabilities) {
               protocolCtx.capabilityDescriptor = capDesc;
               deviceCapabilityRegistry.register(deviceId, capDesc);
@@ -749,6 +751,38 @@ export const deviceWsRoutes: FastifyPluginAsync = async (app) => {
                 _logger.error("secure.message re-dispatch failed", { error: emitErr?.message });
               }
             }
+            break;
+          }
+
+          // ── TTS 合成请求（设备→服务端→设备） ────────────────
+          case "device_tts_request": {
+            touchDeviceHeartbeat(deviceId);
+            const ttsReq = msg as unknown as DeviceTtsRequest;
+            const { text, voice, seqNo, sessionId: ttsSessionId } = ttsReq;
+            synthesizeSpeech({ text, voice }).then((result) => {
+              const audioMsg: DeviceTtsAudio = {
+                type: "device_tts_audio",
+                sessionId: ttsSessionId,
+                seqNo,
+                audioBase64: result.audioBase64,
+                format: result.format,
+                done: true,
+              };
+              try { socket.send(JSON.stringify(audioMsg)); } catch { /* ignore */ }
+            }).catch((err: any) => {
+              _logger.error("device_tts_request synthesis failed", { deviceId, error: err?.message });
+              try {
+                socket.send(JSON.stringify({
+                  type: "device_tts_audio",
+                  sessionId: ttsSessionId,
+                  seqNo,
+                  audioBase64: "",
+                  format: "mp3",
+                  done: true,
+                  error: err?.message ?? "TTS synthesis failed",
+                }));
+              } catch { /* ignore */ }
+            });
             break;
           }
 

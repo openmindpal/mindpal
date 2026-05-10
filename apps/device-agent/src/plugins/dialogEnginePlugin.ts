@@ -6,13 +6,15 @@
  *
  * 对话消息通过 WebSocket device_query 通道发送，自动集成长期记忆、知识RAG、会话持久化。
  * 视频帧缓存为 latestFrame，在发送对话消息时作为多模态附件附带。
- * STT / TTS 保留 HTTP 调用（纯媒体处理端点）。
+ * STT 通过 WebSocket 流式处理（/v1/audio/stream-stt），TTS 通过设备 WebSocket 流式管道处理。
  *
  * @layer plugin
  */
 import crypto from "node:crypto";
 import http from "node:http";
 import https from "node:https";
+
+import { WebSocket } from "ws";
 
 import type {
   DeviceToolPlugin,
@@ -22,7 +24,7 @@ import type {
 } from "@mindpal/device-agent-sdk";
 import type { CapabilityDescriptor } from "@mindpal/device-agent-sdk";
 import { findPluginForTool, getMultimodalCapabilities, getActiveWebSocketAgent } from "@mindpal/device-agent-sdk";
-import type { DeviceAttachment } from "@mindpal/shared";
+import type { DeviceAttachment, DeviceTtsRequest, DeviceTtsAudio } from "@mindpal/shared";
 
 // ── 类型定义 ──────────────────────────────────────────────────────
 
@@ -36,8 +38,6 @@ let vadThreshold = Number(process.env.DEVICE_AGENT_VAD_THRESHOLD) || 500;
 let idleTimeoutMs = Number(process.env.DEVICE_AGENT_DIALOG_IDLE_TIMEOUT_MS) || 60000;
 let responseTimeoutMs = 15000;
 
-// pendingResponse 仅供 onMessage 兼容旧 dialog.response 路径
-let pendingResponse: { resolve: (text: string) => void } | null = null;
 let videoFrameTimer: ReturnType<typeof setInterval> | null = null;
 
 /** 会话级 conversationId — 对话启动时生成，idle 超时后清除 */
@@ -45,6 +45,10 @@ let conversationId: string | null = null;
 
 /** 最新视频帧缓存 — 由定时器更新，发送对话消息时附带 */
 let latestFrame: { base64: string; format: string } | null = null;
+
+// ── TTS WebSocket 流式状态 ────────────────────────────────────────
+let ttsSeqCounter = 0;
+const pendingTts = new Map<number, (audio: { audioBase64: string; format: string }) => void>();
 
 // ── VAD 实现（零依赖，纯计算） ────────────────────────────────────
 
@@ -238,36 +242,38 @@ function httpRequest(
   });
 }
 
-// ── 云端通信（保留 STT / TTS 的 HTTP 调用）─────────────────────────
+// ── HTTP 降级辅助（仅在 WebSocket 不可用时使用）────────────────────
 
-async function sendAudioForTranscription(
+/** HTTP 降级 STT — POST /v1/audio/transcribe */
+async function requestSttHttp(
   cfg: { apiBase: string; deviceToken: string },
-  audio: { base64: string },
+  audioBase64: string,
 ): Promise<string | null> {
   try {
-    const resp = await httpRequest(`${cfg.apiBase}/device-agent/dialog/transcribe`, {
+    const resp = await httpRequest(`${cfg.apiBase}/v1/audio/transcribe`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${cfg.deviceToken}`,
       },
-      body: JSON.stringify({ audioBase64: audio.base64, format: "wav", sampleRate: 16000 }),
+      body: JSON.stringify({ audioBase64, format: "wav", sampleRate: 16000 }),
     });
     if (resp.statusCode !== 200) return null;
     const data = JSON.parse(resp.body);
     return typeof data.transcript === "string" && data.transcript.trim() ? data.transcript.trim() : null;
   } catch (err: any) {
-    console.error("[dialogEngine] transcription request failed:", err?.message);
+    console.error("[dialogEngine] STT HTTP fallback failed:", err?.message);
     return null;
   }
 }
 
-async function requestTts(
+/** HTTP 降级 TTS — POST /v1/audio/speech */
+async function requestTtsHttp(
   cfg: { apiBase: string; deviceToken: string },
   text: string,
 ): Promise<string | null> {
   try {
-    const resp = await httpRequest(`${cfg.apiBase}/device-agent/dialog/tts`, {
+    const resp = await httpRequest(`${cfg.apiBase}/v1/audio/speech`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -279,7 +285,7 @@ async function requestTts(
     const data = JSON.parse(resp.body);
     return typeof data.audioBase64 === "string" ? data.audioBase64 : null;
   } catch (err: any) {
-    console.error("[dialogEngine] tts request failed:", err?.message);
+    console.error("[dialogEngine] TTS HTTP fallback failed:", err?.message);
     return null;
   }
 }
@@ -411,6 +417,32 @@ async function sendMessageToCloud(
 
 // ── 流式 TTS 管道 ────────────────────────────────────────────────
 
+/** 通过设备WebSocket发送TTS请求，等待音频响应。失败时返回null触发降级 */
+async function requestTtsStreaming(
+  text: string,
+): Promise<{ audioBase64: string; format: string } | null> {
+  const wsAgent = getActiveWebSocketAgent();
+  const streamingPolicy = wsAgent?.multimodalPolicy?.streaming;
+  if (!streamingPolicy?.ttsStreaming) return null;
+
+  // 获取设备WS的底层发送能力
+  const rawWs = (wsAgent as any)?.ws as WebSocket | null;
+  if (!rawWs || rawWs.readyState !== WebSocket.OPEN) return null;
+
+  const seqNo = ++ttsSeqCounter;
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => { pendingTts.delete(seqNo); resolve(null); }, 15000);
+    pendingTts.set(seqNo, (audio) => { clearTimeout(timeout); resolve(audio); });
+    const req: DeviceTtsRequest = {
+      type: "device_tts_request",
+      sessionId: conversationId || "default",
+      text,
+      seqNo,
+    };
+    rawWs.send(JSON.stringify(req));
+  });
+}
+
 async function streamTtsPipeline(
   cfg: { apiBase: string; deviceToken: string },
   sentenceQueue: string[],
@@ -427,7 +459,15 @@ async function streamTtsPipeline(
     }
     const sentence = sentenceQueue.shift()!;
     if (!sentence.trim()) continue;
-    const audio = await requestTts(cfg, sentence);
+    // 优先尝试WebSocket流式TTS
+    let audio: string | null = null;
+    const streamResult = await requestTtsStreaming(sentence);
+    if (streamResult) {
+      audio = streamResult.audioBase64;
+    } else {
+      // 降级到 HTTP TTS
+      audio = await requestTtsHttp(cfg, sentence);
+    }
     if (signal.aborted || !audio) break;
     await audioPlugin.execute({
       toolName: "device.audio.play",
@@ -447,7 +487,14 @@ async function playTtsAudio(
   cfg: { apiBase: string; deviceToken: string },
   text: string,
 ): Promise<void> {
-  const ttsBase64 = await requestTts(cfg, text);
+  // 优先尝试 WebSocket 流式 TTS，降级到 HTTP
+  let ttsBase64: string | null = null;
+  const streamResult = await requestTtsStreaming(text);
+  if (streamResult) {
+    ttsBase64 = streamResult.audioBase64;
+  } else {
+    ttsBase64 = await requestTtsHttp(cfg, text);
+  }
   if (!ttsBase64) return;
   const audioPlugin = findPluginForTool("device.audio.play");
   if (!audioPlugin) return;
@@ -495,7 +542,7 @@ async function dialogLoop(cfg: { apiBase: string; deviceToken: string }): Promis
     smoothingFactor: vadCfg?.energySmoothingFactor ?? 0.3,
     noiseCalibrationMs: vadCfg?.noiseCalibrationMs ?? 3000,
     minSpeechDurationMs: vadCfg?.minSpeechDurationMs ?? 200,
-    sensitivityProfile: vadCfg?.sensitivityProfile ?? "auto",
+    sensitivityProfile: (vadCfg?.sensitivityProfile as "quiet" | "normal" | "noisy" | "auto" | undefined) ?? "auto",
   });
 
   // 尝试启动音频流式采集
@@ -555,6 +602,10 @@ async function dialogLoop(cfg: { apiBase: string; deviceToken: string }): Promis
   const speechBuffers: Buffer[] = [];
   let activePipeline: StreamingPipeline | null = null;
 
+  // STT 流式 WebSocket 相关状态（元数据驱动）
+  const streamingPolicy = getActiveWebSocketAgent()?.multimodalPolicy?.streaming;
+  let sttWs: WebSocket | null = null;
+
   while (dialogState !== "idle") {
     try {
       // 流式路径：读取最新 chunk
@@ -588,9 +639,21 @@ async function dialogLoop(cfg: { apiBase: string; deviceToken: string }): Promis
           idleCounter = 0;
           speechBuffers.length = 0;
           speechBuffers.push(pcm);
+          // 如果元数据开启了流式STT，建立WebSocket连接
+          if (streamingPolicy?.sttStreaming) {
+            try {
+              const wsUrl = cfg.apiBase.replace(/^http/, "ws") + "/v1/audio/stream-stt?language=zh";
+              sttWs = new WebSocket(wsUrl, { headers: { Authorization: `Bearer ${cfg.deviceToken}` } });
+              sttWs.on("error", () => { sttWs = null; }); // 降级标记
+            } catch { sttWs = null; }
+          }
           break;
         case "speech_continue":
           speechBuffers.push(pcm);
+          // 流式推送音频帧到STT WebSocket
+          if (sttWs?.readyState === WebSocket.OPEN) {
+            sttWs.send(JSON.stringify({ type: "audio_chunk", data: pcm.toString("base64") }));
+          }
           break;
         case "speech_end": {
           // 打断检测：如果正在播放 TTS，先中止
@@ -604,7 +667,30 @@ async function dialogLoop(cfg: { apiBase: string; deviceToken: string }): Promis
           speechBuffers.length = 0;
           const base64Audio = fullAudio.toString("base64");
 
-          const transcript = await sendAudioForTranscription(cfg, { base64: base64Audio });
+          let transcript: string | null;
+          if (sttWs?.readyState === WebSocket.OPEN) {
+            // 流式路径：发送finish并等待final结果
+            sttWs.send(JSON.stringify({ type: "finish" }));
+            const sttResult = await new Promise<string>((resolve) => {
+              const timeout = setTimeout(() => { resolve(""); sttWs?.close(); }, 10000);
+              sttWs!.on("message", (raw: Buffer | string) => {
+                try {
+                  const msg = JSON.parse(typeof raw === "string" ? raw : raw.toString());
+                  if (msg.type === "final") {
+                    clearTimeout(timeout);
+                    resolve(msg.text || "");
+                    sttWs?.close();
+                  }
+                } catch { /* 解析失败忽略 */ }
+              });
+            });
+            sttWs = null;
+            transcript = sttResult.trim() || null;
+          } else {
+            // 降级路径：原有HTTP POST
+            sttWs = null;
+            transcript = await requestSttHttp(cfg, base64Audio);
+          }
           if (transcript) {
             dialogState = "thinking";
             const pipeline = await sendMessageToCloud(cfg, transcript);
@@ -715,7 +801,6 @@ async function execDialogStart(ctx: ToolExecutionContext): Promise<ToolExecution
 async function execDialogStop(_ctx: ToolExecutionContext): Promise<ToolExecutionResult> {
   dialogState = "idle";
   idleCounter = 0;
-  pendingResponse = null;
   latestFrame = null;
   return { status: "succeeded", outputDigest: { stopped: true } };
 }
@@ -772,11 +857,16 @@ async function execute(ctx: ToolExecutionContext): Promise<ToolExecutionResult> 
 }
 
 async function onMessage(ctx: DeviceMessageContext): Promise<void> {
-  // 兼容 dialog.response（旧路径）和 device_response（新 WS 路径）
-  if ((ctx.topic === "dialog.response" || ctx.topic === "device_response") && pendingResponse) {
-    const text = typeof ctx.payload?.text === "string" ? ctx.payload.text : "";
-    pendingResponse.resolve(text);
-    pendingResponse = null;
+  // TTS WebSocket 流式音频响应
+  if (ctx.topic === "device_tts_audio") {
+    const msg = ctx.payload as unknown as DeviceTtsAudio;
+    if (msg?.seqNo != null) {
+      const resolver = pendingTts.get(msg.seqNo);
+      if (resolver) {
+        resolver({ audioBase64: msg.audioBase64, format: msg.format });
+        pendingTts.delete(msg.seqNo);
+      }
+    }
   }
 
   if (ctx.topic === "local.output") {
@@ -786,7 +876,6 @@ async function onMessage(ctx: DeviceMessageContext): Promise<void> {
 
 async function dispose(): Promise<void> {
   dialogState = "idle";
-  pendingResponse = null;
   idleCounter = 0;
   conversationId = null;
   latestFrame = null;
@@ -806,7 +895,7 @@ const dialogEnginePlugin: DeviceToolPlugin = {
   toolPrefixes: ["device.dialog.*"],
   toolNames: ["device.dialog.start", "device.dialog.stop", "device.dialog.status", "device.dialog.say"],
   capabilities: DIALOG_CAPABILITIES,
-  messageTopics: ["dialog.response", "device_response", "local.output"],
+  messageTopics: ["device_response", "device_tts_audio", "local.output"],
   resourceLimits: { maxMemoryMb: 30, maxCpuPercent: 15 },
   deviceTypeResourceProfiles: {
     iot: { maxMemoryMb: 15, maxCpuPercent: 10 },

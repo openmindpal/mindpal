@@ -278,7 +278,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
       {error && <pre style={{ color: "var(--sl-danger, crimson)", whiteSpace: "pre-wrap", fontSize: 13, margin: "8px 0" }}>{error}</pre>}
 
       {/* ── Provider Card Grid ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 16, marginTop: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12, marginTop: 16 }}>
         {providers.map(p => {
           const name = pName(p, locale);
           const icon = pIcon(p);
@@ -359,8 +359,8 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                       disabled={busy}
                       style={{
                         fontSize: 12, fontWeight: 500, cursor: "pointer",
-                        padding: "5px 10px", borderRadius: 6,
-                        background: "var(--sl-accent, #3b82f6)", color: "#fff",
+                        padding: "5px 10px", borderRadius: 4,
+                        background: "var(--sl-accent, #3b82f6)", color: "var(--sl-accent-fg, #fff)",
                         border: "none",
                       }}
                     >
@@ -378,7 +378,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                       }}
                       style={{
                         fontSize: 12, cursor: "pointer",
-                        padding: "5px 10px", borderRadius: 6,
+                        padding: "5px 10px", borderRadius: 4,
                         background: "var(--sl-bg-alt, #f1f5f9)", color: "var(--sl-fg)",
                         border: "1px solid var(--sl-border)",
                       }}
@@ -400,15 +400,15 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
       {/* ── QR Modal ── */}
       {qrModal && (
         <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}
           onClick={closeQr}
         >
           <div
-            style={{ background: "#fff", borderRadius: 16, padding: "32px 40px", minWidth: 360, maxWidth: 420, textAlign: "center", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}
+            style={{ background: "var(--sl-bg, #fff)", borderRadius: 8, padding: "24px", minWidth: 360, maxWidth: 420, textAlign: "center", boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}
             onClick={e => e.stopPropagation()}
           >
             <h3 style={{ margin: "0 0 8px", fontSize: 18 }}>{t(locale, "gov.channels.setupProvider").replace("{name}", qrProviderName)}</h3>
-            <p style={{ margin: "0 0 20px", fontSize: 13, color: "#64748b" }}>
+            <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--sl-muted, #64748b)" }}>
               {t(locale, "gov.channels.scanQrHint").replace("{name}", qrProviderName)}
             </p>
             {qrModal.authorizeUrl ? (
@@ -416,20 +416,20 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
                 <img
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(qrModal.authorizeUrl)}`}
                   alt={t(locale, "gov.channels.scanToAuth")}
-                  style={{ width: 256, height: 256, borderRadius: 8, border: "1px solid #e2e8f0" }}
+                  style={{ width: 256, height: 256, borderRadius: 8, border: "1px solid var(--sl-border, #e2e8f0)" }}
                 />
                 <div style={{ marginTop: 10 }}>
                   <a
                     href={qrModal.authorizeUrl}
                     onClick={(e) => { e.preventDefault(); window.open(qrModal.authorizeUrl, "_blank"); }}
-                    style={{ fontSize: 12, color: "#64748b", textDecoration: "underline", cursor: "pointer" }}
+                    style={{ fontSize: 12, color: "var(--sl-muted, #64748b)", textDecoration: "underline", cursor: "pointer" }}
                   >
                     {t(locale, "gov.channels.authorizeInBrowser")}
                   </a>
                 </div>
               </>
             ) : (
-              <div style={{ width: 256, height: 256, display: "flex", alignItems: "center", justifyContent: "center", background: "#f1f5f9", borderRadius: 8, margin: "0 auto" }}>
+              <div style={{ width: 256, height: 256, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--sl-bg-alt, #f1f5f9)", borderRadius: 8, margin: "0 auto" }}>
                 {t(locale, "gov.channels.loading")}
               </div>
             )}
@@ -438,7 +438,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
               <button onClick={closeQr} style={{ fontSize: 13, opacity: 0.6 }}>{t(locale, "gov.channels.cancel")}</button>
             </div>
             {qrModal.expiresAt && (
-              <p style={{ marginTop: 8, fontSize: 12, color: "#94a3b8" }}>
+              <p style={{ marginTop: 8, fontSize: 12, color: "var(--sl-muted, #94a3b8)" }}>
                 {t(locale, "gov.channels.expiresAt")} {new Date(qrModal.expiresAt).toLocaleTimeString()}
               </p>
             )}
@@ -449,11 +449,11 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
       {/* ── Manual Config Modal ── */}
       {manualModal && (
         <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}
           onClick={() => setManualModal(null)}
         >
           <div
-            style={{ background: "#fff", borderRadius: 8, padding: "24px 28px", minWidth: 340, maxWidth: 400 }}
+            style={{ background: "var(--sl-bg, #fff)", borderRadius: 8, padding: "24px", minWidth: 340, maxWidth: 400 }}
             onClick={e => e.stopPropagation()}
           >
             <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 600 }}>
@@ -484,7 +484,7 @@ export default function GovChannelsClient(props: { locale: string; initial: any 
               <button
                 onClick={submitManual}
                 disabled={busy}
-                style={{ fontSize: 12, padding: "5px 12px", borderRadius: 4, border: "none", background: "var(--sl-accent, #3b82f6)", color: "#fff", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
+                style={{ fontSize: 12, padding: "5px 12px", borderRadius: 4, border: "none", background: "var(--sl-accent, #3b82f6)", color: "var(--sl-accent-fg, #fff)", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
               >
                 {t(locale, "gov.channels.save")}
               </button>

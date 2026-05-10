@@ -15,10 +15,17 @@ type ProviderKey =
   | "openai_compatible"
   | "deepseek"
   | "hunyuan"
-  | "qianwen"
+  | "qwen"
   | "doubao"
   | "zhipu"
   | "kimi"
+  | "ernie"
+  | "spark"
+  | "baichuan"
+  | "yi"
+  | "minimax"
+  | "step"
+  | "sensenova"
   | "custom_openai"
   | "anthropic"
   | "custom_anthropic"
@@ -29,10 +36,17 @@ type OnboardResult = { modelRef: string; provider: string; model: string; baseUr
 const PROVIDER_OPTIONS: ProviderKey[] = [
   "deepseek",
   "hunyuan",
-  "qianwen",
+  "qwen",
   "doubao",
   "zhipu",
   "kimi",
+  "ernie",
+  "spark",
+  "baichuan",
+  "yi",
+  "minimax",
+  "step",
+  "sensenova",
   "openai_compatible",
   "custom_openai",
   "anthropic",
@@ -44,10 +58,17 @@ const PROVIDER_OPTIONS: ProviderKey[] = [
 const PROVIDER_BASE_URLS: Record<ProviderKey, string> = {
   deepseek: "https://api.deepseek.com",
   hunyuan: "https://api.hunyuan.cloud.tencent.com",
-  qianwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   doubao: "https://ark.cn-beijing.volces.com/api/v3",
   zhipu: "https://open.bigmodel.cn/api/paas/v4",
   kimi: "https://api.moonshot.cn/v1",
+  ernie: "https://qianfan.baidubce.com/v2",
+  spark: "https://spark-api-open.xf-yun.com/v1",
+  baichuan: "https://api.baichuan-ai.com/v1",
+  yi: "https://api.lingyiwanwu.com/v1",
+  minimax: "https://api.minimax.chat/v1",
+  step: "https://api.stepfun.com/v1",
+  sensenova: "https://api.sensenova.cn/v1",
   openai_compatible: "https://api.openai.com/v1",
   custom_openai: "https://your-proxy.example.com/v1",
   anthropic: "https://api.anthropic.com",
@@ -59,10 +80,17 @@ const PROVIDER_BASE_URLS: Record<ProviderKey, string> = {
 const PROVIDER_PATHS: Record<ProviderKey, string> = {
   deepseek: "/chat/completions",
   hunyuan: "/chat/completions",
-  qianwen: "/chat/completions",
+  qwen: "/chat/completions",
   doubao: "/chat/completions",
   zhipu: "/chat/completions",
   kimi: "/chat/completions",
+  ernie: "/chat/completions",
+  spark: "/chat/completions",
+  baichuan: "/chat/completions",
+  yi: "/chat/completions",
+  minimax: "/chat/completions",
+  step: "/chat/completions",
+  sensenova: "/chat/completions",
   openai_compatible: "/chat/completions",
   custom_openai: "/chat/completions",
   anthropic: "/v1/messages",
@@ -70,6 +98,31 @@ const PROVIDER_PATHS: Record<ProviderKey, string> = {
   gemini: "/models/{model}:generateContent",
   custom_gemini: "/models/{model}:generateContent",
 };
+
+/* ─── Provider Select (custom dropdown with max-height scroll) ─── */
+function ProviderSelect(props: { locale: string; value: ProviderKey; onChange: (v: ProviderKey) => void; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ display: "grid", gap: 6, position: "relative" }}>
+      <div>{t(props.locale, "gov.models.provider")}<FormHint text={t(props.locale, "gov.models.hint.provider")} /></div>
+      <button type="button" onClick={() => !props.disabled && setOpen(!open)} disabled={props.disabled}
+        style={{ textAlign: "left", justifyContent: "flex-start", padding: "6px 10px", cursor: "pointer" }}>
+        {t(props.locale, `gov.models.provider.${props.value}`)}
+      </button>
+      {open && <div style={{ position: "fixed", inset: 0, zIndex: 98 }} onClick={() => setOpen(false)} />}
+      {open && (
+        <ul style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 99, background: "var(--sl-bg, #fff)", border: "1px solid var(--sl-border, #ccc)", borderRadius: 4, listStyle: "none", margin: 0, padding: 0, maxHeight: 300, overflowY: "auto" }}>
+          {PROVIDER_OPTIONS.map((p) => (
+            <li key={p} style={{ padding: "6px 10px", cursor: "pointer", background: p === props.value ? "var(--sl-accent-bg, #e8f0fe)" : undefined }}
+              onClick={() => { props.onChange(p); setOpen(false); }}>
+              {t(props.locale, `gov.models.provider.${p}`)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 export default function GovModelsClient(props: { locale: string; initial: any }) {
   const form = useFormState({
@@ -311,14 +364,12 @@ export default function GovModelsClient(props: { locale: string; initial: any })
       <div style={{ marginTop: 16 }}>
         <Card title={t(props.locale, "gov.models.onboardTitle")}>
           <div style={{ display: "grid", gap: 10, marginTop: 12, maxWidth: 820 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <div>{t(props.locale, "gov.models.provider")}<FormHint text={t(props.locale, "gov.models.hint.provider")} /></div>
-              <select value={providerKey} onChange={(e) => handleProviderChange(e.target.value as ProviderKey)} disabled={busy}>
-                {PROVIDER_OPTIONS.map((provider) => (
-                  <option key={provider} value={provider}>{t(props.locale, `gov.models.provider.${provider}`)}</option>
-                ))}
-              </select>
-            </label>
+            <ProviderSelect
+              locale={props.locale}
+              value={providerKey}
+              onChange={handleProviderChange}
+              disabled={busy}
+            />
             <label style={{ display: "grid", gap: 6 }}>
               <div>{t(props.locale, "gov.models.baseUrl")}<FormHint text={t(props.locale, "gov.models.hint.baseUrl")} /></div>
               <input value={baseUrl} onChange={(e) => form.setField("baseUrl", e.target.value)} disabled={busy} placeholder={providerBaseUrlPlaceholder} />

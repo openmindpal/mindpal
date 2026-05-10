@@ -871,6 +871,8 @@ export type {
   DeviceCommandAck,
   VideoStreamClientMessage,
   VideoStreamServerMessage,
+  DeviceTtsRequest,
+  DeviceTtsAudio,
 } from "./deviceProtocol";
 
 // ── 设备插件策略映射（Single Source of Truth） ──
