@@ -1,0 +1,26 @@
+{
+  "name": "@mindpal/working-memory-skill",
+  "version": "1.0.0",
+  "description": "Layered working memory skill with L1 (Map) + L2 (Redis) storage and TTL management",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rimraf dist"
+  },
+  "keywords": ["mindpal", "memory", "working-memory", "redis", "cache"],
+  "author": "MindPal Team",
+  "license": "MIT",
+  "dependencies": {
+    "ioredis": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0",
+    "rimraf": "^6.0.0"
+  }
+}

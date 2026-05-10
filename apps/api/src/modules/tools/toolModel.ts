@@ -3,7 +3,7 @@ import { fieldDefSchema, i18nTextSchema } from "../metadata/schemaModel";
 
 export const riskLevelSchema = z.enum(["low", "medium", "high"]);
 
-export const toolScopeSchema = z.enum(["read", "write"]);
+export const toolScopeSchema = z.string().min(1);
 
 export const toolIoSchema = z.object({
   displayName: i18nTextSchema.optional(),

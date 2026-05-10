@@ -1,0 +1,23 @@
+{
+  "name": "@mindpal/scene-perception-skill",
+  "version": "1.0.0",
+  "description": "Universal vision perception skill powered by VLM for structured scene understanding",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rimraf dist"
+  },
+  "keywords": ["mindpal", "perception", "vision", "vlm", "scene-understanding"],
+  "author": "MindPal Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0",
+    "rimraf": "^6.0.0"
+  }
+}

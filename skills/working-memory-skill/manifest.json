@@ -1,0 +1,104 @@
+{
+  "displayName": {
+    "zh-CN": "工作记忆",
+    "en-US": "Working Memory"
+  },
+  "identity": {
+    "name": "memory.working",
+    "version": "1.0.0",
+    "displayName": {
+      "zh-CN": "工作记忆",
+      "en-US": "Working Memory"
+    },
+    "description": "High-speed layered working memory for real-time agent decision context. Uses L1 (in-process Map) + L2 (Redis) with TTL-based auto-expiry. Supports promote to long-term memory."
+  },
+  "meta": {
+    "category": "memory",
+    "tags": ["memory", "working-memory", "cache", "real-time", "context"],
+    "author": "MindPal Team",
+    "license": "MIT"
+  },
+  "contract": {
+    "scope": "memory",
+    "resourceType": "cache",
+    "action": "manage",
+    "riskLevel": "low",
+    "requiresApproval": false,
+    "networkPolicy": {
+      "outbound": ["tcp://*:6379"]
+    }
+  },
+  "runtime": {
+    "executor": "node",
+    "timeout": 5000,
+    "maxConcurrentStreams": 50
+  },
+  "entry": "dist/index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "io": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["command", "namespace"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": ["set", "get", "getMany", "scan", "delete", "flush", "promote", "stats"]
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Memory namespace, typically agentId:episodeId"
+        },
+        "key": {
+          "type": "string",
+          "description": "Memory entry key"
+        },
+        "value": {
+          "description": "Value to store (any JSON-serializable data)"
+        },
+        "keys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Multiple keys for getMany"
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "ttlMs": { "type": "number", "description": "Time-to-live in milliseconds (0 = no expiry)" },
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "importance": { "type": "number", "minimum": 0, "maximum": 1 },
+            "prefix": { "type": "string" },
+            "targetType": { "type": "string", "enum": ["episodic", "semantic", "procedural"] }
+          }
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "data": { "description": "Result data (varies by command)" },
+        "stats": {
+          "type": "object",
+          "properties": {
+            "l1Size": { "type": "number" },
+            "l1Hits": { "type": "number" },
+            "l1Misses": { "type": "number" },
+            "l2Hits": { "type": "number" },
+            "l2Misses": { "type": "number" }
+          }
+        },
+        "error": { "type": "string" }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "memory.working",
+      "displayName": "Working Memory",
+      "description": "High-speed working memory for real-time decision context. Supports set/get/scan/promote operations with TTL-based auto-expiry.",
+      "category": "memory"
+    }
+  ]
+}

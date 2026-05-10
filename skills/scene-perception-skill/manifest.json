@@ -1,0 +1,96 @@
+{
+  "identity": {
+    "name": "perception.scene",
+    "version": "1.0.0",
+    "displayName": {
+      "zh-CN": "场景感知",
+      "en-US": "Scene Perception"
+    },
+    "description": "Universal vision perception skill that analyzes any image to extract structured scene understanding including objects, spatial relations, states, hazards, and affordances. Powered by VLM (Vision-Language Model)."
+  },
+  "displayName": {
+    "zh-CN": "场景感知",
+    "en-US": "Scene Perception"
+  },
+  "meta": {
+    "category": "perception",
+    "tags": ["vision", "perception", "scene-understanding", "vlm", "object-detection"],
+    "author": "MindPal Team",
+    "license": "MIT"
+  },
+  "contract": {
+    "scope": "perception",
+    "resourceType": "analysis",
+    "action": "analyze",
+    "riskLevel": "low",
+    "requiresApproval": false,
+    "networkPolicy": {
+      "outbound": ["https://*"]
+    }
+  },
+  "runtime": {
+    "executor": "node",
+    "timeout": 30000,
+    "maxConcurrentStreams": 10
+  },
+  "entry": "dist/index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "io": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["command", "image"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": ["analyze", "identify", "spatial", "state", "affordance"],
+          "description": "Perception command to execute"
+        },
+        "image": {
+          "type": "string",
+          "description": "Base64-encoded image data (PNG/JPEG)"
+        },
+        "context": {
+          "type": "string",
+          "description": "Optional context to guide analysis (e.g., current task, previous observations)"
+        },
+        "target": {
+          "type": "string",
+          "description": "Target object name for identify/state/affordance commands"
+        },
+        "question": {
+          "type": "string",
+          "description": "Natural language spatial query for 'spatial' command"
+        },
+        "modelConfig": {
+          "type": "object",
+          "description": "Model configuration injected by platform model gateway. If not provided, falls back to SKILL_LLM_* environment variables.",
+          "properties": {
+            "endpoint": { "type": "string" },
+            "apiKey": { "type": "string" },
+            "model": { "type": "string" },
+            "timeoutMs": { "type": "number" },
+            "maxTokens": { "type": "number" }
+          }
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "data": { "description": "Analysis result (varies by command)" },
+        "error": { "type": "string" }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "perception.scene",
+      "displayName": "Scene Perception",
+      "description": "Analyze any image to understand objects, spatial layout, states, hazards, and available actions. Universal vision for embodied agents.",
+      "category": "perception"
+    }
+  ]
+}
