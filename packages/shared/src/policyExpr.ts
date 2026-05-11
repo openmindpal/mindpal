@@ -186,7 +186,7 @@ export function validatePolicyExpr(input: unknown): PolicyExprValidationResult {
     if (!isPlainObject(v)) return null;
     const op = String(v.op ?? "");
     if (op === "and" || op === "or") {
-      const args = (v as any).args;
+      const args = v.args;
       if (!Array.isArray(args) || args.length === 0 || args.length > 50) return null;
       const out: PolicyExpr[] = [];
       for (const a of args) {
@@ -194,30 +194,30 @@ export function validatePolicyExpr(input: unknown): PolicyExprValidationResult {
         if (!child) return null;
         out.push(child);
       }
-      return { op, args: out } as any;
+      return { op, args: out } as PolicyExpr;
     }
     if (op === "not") {
-      const arg = parseExpr((v as any).arg);
+      const arg = parseExpr(v.arg);
       if (!arg) return null;
       return { op: "not", arg };
     }
     if (op === "eq") {
-      const left = parseOperand((v as any).left);
+      const left = parseOperand(v.left);
       if (!left) return null;
-      const rightRaw = (v as any).right;
+      const rightRaw = v.right;
       const rightOp = parseOperand(rightRaw);
       const rightLit = rightOp ? null : parseLiteral(rightRaw);
       if (!rightOp && rightLit === null) return null;
       if (left.kind === "payload") usedPayloadPaths.add(left.path);
       if (rightOp?.kind === "payload") usedPayloadPaths.add(rightOp.path);
-      return { op: "eq", left, right: (rightOp ?? rightLit) as any };
+      return { op: "eq", left, right: (rightOp ?? rightLit) as PolicyOperand | PolicyLiteral };
     }
     if (op === "in") {
-      const left = parseOperand((v as any).left);
+      const left = parseOperand(v.left);
       if (!left) return null;
-      const right = (v as any).right;
+      const right = v.right;
       if (!isPlainObject(right) || String(right.kind ?? "") !== "list") return null;
-      const values = (right as any).values;
+      const values = right.values;
       if (!Array.isArray(values) || values.length === 0 || values.length > 200) return null;
       const out: PolicyLiteral[] = [];
       for (const it of values) {
@@ -229,118 +229,118 @@ export function validatePolicyExpr(input: unknown): PolicyExprValidationResult {
       return { op: "in", left, right: { kind: "list", values: out } };
     }
     if (op === "exists") {
-      const operand = parseOperand((v as any).operand);
+      const operand = parseOperand(v.operand);
       if (!operand) return null;
       if (operand.kind !== "payload") return null;
       usedPayloadPaths.add(operand.path);
       return { op: "exists", operand };
     }
     if (op === "gte" || op === "lte") {
-      const left = parseOperand((v as any).left);
+      const left = parseOperand(v.left);
       if (!left) return null;
-      const rightRaw = (v as any).right;
+      const rightRaw = v.right;
       const rightOp = parseOperand(rightRaw);
       const rightLit = rightOp ? null : parseLiteral(rightRaw);
       if (!rightOp && rightLit === null) return null;
       if (left.kind === "payload") usedPayloadPaths.add(left.path);
       if (rightOp?.kind === "payload") usedPayloadPaths.add(rightOp.path);
-      return { op, left, right: (rightOp ?? rightLit) as any };
+      return { op, left, right: (rightOp ?? rightLit) as PolicyOperand | PolicyLiteral };
     }
     if (op === "between") {
-      const operand = parseOperand((v as any).operand);
+      const operand = parseOperand(v.operand);
       if (!operand) return null;
-      const low = parseLiteral((v as any).low);
-      const high = parseLiteral((v as any).high);
+      const low = parseLiteral(v.low);
+      const high = parseLiteral(v.high);
       if (low === null || high === null) return null;
       if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
       return { op: "between", operand, low, high };
     }
     if (op === "ip_in_cidr") {
-      const operand = parseOperand((v as any).operand);
+      const operand = parseOperand(v.operand);
       if (!operand) return null;
-      const cidrs = (v as any).cidrs;
+      const cidrs = v.cidrs;
       if (!Array.isArray(cidrs) || cidrs.length === 0 || cidrs.length > 100) return null;
       const out = cidrs.map(String).filter(Boolean);
       if (!out.length) return null;
       return { op: "ip_in_cidr", operand, cidrs: out };
     }
     if (op === "time_window") {
-      const tz = String((v as any).timeZone ?? "UTC");
-      const days = (v as any).days;
-      if (!Array.isArray(days) || days.some((d: any) => typeof d !== "number")) return null;
-      const startHour = String((v as any).startHour ?? "");
-      const endHour = String((v as any).endHour ?? "");
+      const tz = String(v.timeZone ?? "UTC");
+      const days = v.days;
+      if (!Array.isArray(days) || days.some((d: unknown) => typeof d !== "number")) return null;
+      const startHour = String(v.startHour ?? "");
+      const endHour = String(v.endHour ?? "");
       if (!startHour || !endHour) return null;
       return { op: "time_window", timeZone: tz, days: days.map(Number), startHour, endHour };
     }
     // v2: CEL 风格操作符
     if (op === "regex") {
-      const operand = parseOperand((v as any).operand);
+      const operand = parseOperand(v.operand);
       if (!operand) return null;
-      const pattern = String((v as any).pattern ?? "");
+      const pattern = String(v.pattern ?? "");
       if (!pattern) return null;
       // 安全检查: 限制正则复杂度
       if (pattern.length > 500) return null;
-      const flags = String((v as any).flags ?? "");
+      const flags = String(v.flags ?? "");
       if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
       return { op: "regex", operand, pattern, flags: flags || undefined };
     }
     if (op === "contains") {
-      const operand = parseOperand((v as any).operand);
+      const operand = parseOperand(v.operand);
       if (!operand) return null;
-      const value = String((v as any).value ?? "");
+      const value = String(v.value ?? "");
       if (!value) return null;
       if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
       return { op: "contains", operand, value };
     }
     if (op === "starts_with") {
-      const operand = parseOperand((v as any).operand);
+      const operand = parseOperand(v.operand);
       if (!operand) return null;
-      const prefix = String((v as any).prefix ?? "");
+      const prefix = String(v.prefix ?? "");
       if (!prefix) return null;
       if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
       return { op: "starts_with", operand, prefix };
     }
     if (op === "ends_with") {
-      const operand = parseOperand((v as any).operand);
+      const operand = parseOperand(v.operand);
       if (!operand) return null;
-      const suffix = String((v as any).suffix ?? "");
+      const suffix = String(v.suffix ?? "");
       if (!suffix) return null;
       if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
       return { op: "ends_with", operand, suffix };
     }
     if (op === "gt" || op === "lt" || op === "neq") {
-      const left = parseOperand((v as any).left);
+      const left = parseOperand(v.left);
       if (!left) return null;
-      const rightRaw = (v as any).right;
+      const rightRaw = v.right;
       const rightOp = parseOperand(rightRaw);
       const rightLit = rightOp ? null : parseLiteral(rightRaw);
       if (!rightOp && rightLit === null) return null;
       if (left.kind === "payload") usedPayloadPaths.add(left.path);
       if (rightOp?.kind === "payload") usedPayloadPaths.add(rightOp.path);
-      return { op, left, right: (rightOp ?? rightLit) as any };
+      return { op, left, right: (rightOp ?? rightLit) as PolicyOperand | PolicyLiteral };
     }
     if (op === "size") {
-      const operand = parseOperand((v as any).operand);
+      const operand = parseOperand(v.operand);
       if (!operand) return null;
-      const comparator = String((v as any).comparator ?? "");
+      const comparator = String(v.comparator ?? "");
       if (!["eq", "gt", "lt", "gte", "lte"].includes(comparator)) return null;
-      const value = Number((v as any).value);
+      const value = Number(v.value);
       if (!Number.isFinite(value)) return null;
       if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
-      return { op: "size", operand, comparator: comparator as any, value };
+      return { op: "size", operand, comparator: comparator as "eq" | "gt" | "lt" | "gte" | "lte", value };
     }
     if (op === "hierarchy") {
-      const operand = parseOperand((v as any).operand);
+      const operand = parseOperand(v.operand);
       if (!operand) return null;
-      const ancestorValue = String((v as any).ancestorValue ?? "");
+      const ancestorValue = String(v.ancestorValue ?? "");
       if (!ancestorValue) return null;
-      const separator = String((v as any).separator ?? "/");
+      const separator = String(v.separator ?? "/");
       if (operand.kind === "payload") usedPayloadPaths.add(operand.path);
       return { op: "hierarchy", operand, ancestorValue, separator };
     }
     if (op === "attr_match") {
-      const attributes = (v as any).attributes;
+      const attributes = v.attributes;
       if (!Array.isArray(attributes) || attributes.length === 0 || attributes.length > 20) return null;
       const parsed: Array<{ key: string; operand: PolicyOperand; value: PolicyLiteral }> = [];
       for (const attr of attributes) {
@@ -369,22 +369,29 @@ export function compilePolicyExprWhere(params: {
   expr: unknown;
   validated?: { expr: PolicyExpr; usedPayloadPaths: string[] };
   subject: { subjectId?: string | null; tenantId?: string | null; spaceId?: string | null };
-  context?: any;
-  args: any[];
+  context?: Record<string, unknown>;
+  args: unknown[];
   idxStart: number;
   ownerColumn?: string;
   payloadColumn?: string;
 }): CompiledWhere {
-  const validated = params.validated ?? validatePolicyExpr(params.expr);
-  if (!validated || typeof validated !== "object" || (validated as any).ok === false) throw new Error("policy_violation:policy_expr_invalid");
-  const expr = (validated as any).expr as PolicyExpr;
-  const usedPayloadPaths = (validated as any).usedPayloadPaths as string[];
+  let expr: PolicyExpr;
+  let usedPayloadPaths: string[];
+  if (params.validated) {
+    expr = params.validated.expr;
+    usedPayloadPaths = params.validated.usedPayloadPaths;
+  } else {
+    const result = validatePolicyExpr(params.expr);
+    if (!result.ok) throw new Error("policy_violation:policy_expr_invalid");
+    expr = result.expr;
+    usedPayloadPaths = result.usedPayloadPaths;
+  }
 
   const ownerCol = params.ownerColumn ?? "owner_subject_id";
   const payloadCol = params.payloadColumn ?? "payload";
   let idx = params.idxStart;
 
-  const pushValue = (v: any) => {
+  const pushValue = (v: unknown) => {
     params.args.push(v);
     return `$${++idx}`;
   };
@@ -395,16 +402,16 @@ export function compilePolicyExprWhere(params: {
 
   const getContextValue = (path: string) => {
     if (path === "subject.id") return params.subject.subjectId ?? null;
-    if (path === "subject.type") return (params.context && typeof params.context === "object" && (params.context as any)?.subject?.type) ? String((params.context as any).subject.type) : "user";
+    if (path === "subject.type") return (params.context && typeof params.context === "object" && (params.context as Record<string, unknown>)?.subject && typeof (params.context as Record<string, unknown>).subject === "object") ? String(((params.context as Record<string, unknown>).subject as Record<string, unknown>).type) : "user";
     if (path === "tenant.id") return params.subject.tenantId ?? null;
     if (path === "space.id") return params.subject.spaceId ?? null;
     if (path === "resource.ownerSubjectId") return "__COLUMN_OWNER__";
     const segs = parseContextPath(path);
     if (!segs) throw new Error("policy_violation:policy_expr_invalid");
-    let cur: any = params.context;
+    let cur: unknown = params.context;
     for (const s of segs) {
       if (!cur || typeof cur !== "object") return null;
-      cur = cur[s];
+      cur = (cur as Record<string, unknown>)[s];
     }
     if (cur === null || cur === undefined) return null;
     const t = typeof cur;
@@ -415,9 +422,9 @@ export function compilePolicyExprWhere(params: {
   const resolveEnvValue = (key: string): string | null => {
     const ctx = params.context;
     if (!ctx || typeof ctx !== "object") return null;
-    const env = (ctx as any).env;
+    const env = (ctx as Record<string, unknown>).env;
     if (!env || typeof env !== "object") return null;
-    const v = env[key];
+    const v = (env as Record<string, unknown>)[key];
     if (v === null || v === undefined) return null;
     return String(v);
   };
@@ -524,7 +531,7 @@ export function compilePolicyExprWhere(params: {
     }
     if (e.op === "eq") {
       const left = operandSql(e.left);
-      const right = isPlainObject(e.right) ? operandSql(e.right as any) : literalSql(e.right as any);
+      const right = isPlainObject(e.right) ? operandSql(e.right as PolicyOperand) : literalSql(e.right as PolicyLiteral);
       return `(${left})::text = (${right})::text`;
     }
     if (e.op === "in") {
@@ -536,13 +543,13 @@ export function compilePolicyExprWhere(params: {
     }
     if (e.op === "gte") {
       const left = operandSql(e.left);
-      const right = isPlainObject(e.right) ? operandSql(e.right as any) : literalSql(e.right as any);
+      const right = isPlainObject(e.right) ? operandSql(e.right as PolicyOperand) : literalSql(e.right as PolicyLiteral);
       if (isNumericCompare(e.left, e.right)) return `${numCast(left)} >= ${numCast(right)}`;
       return `(${left})::text >= (${right})::text`;
     }
     if (e.op === "lte") {
       const left = operandSql(e.left);
-      const right = isPlainObject(e.right) ? operandSql(e.right as any) : literalSql(e.right as any);
+      const right = isPlainObject(e.right) ? operandSql(e.right as PolicyOperand) : literalSql(e.right as PolicyLiteral);
       if (isNumericCompare(e.left, e.right)) return `${numCast(left)} <= ${numCast(right)}`;
       return `(${left})::text <= (${right})::text`;
     }
@@ -611,19 +618,19 @@ export function compilePolicyExprWhere(params: {
     }
     if (e.op === "gt") {
       const left = operandSql(e.left);
-      const right = isPlainObject(e.right) ? operandSql(e.right as any) : literalSql(e.right as any);
+      const right = isPlainObject(e.right) ? operandSql(e.right as PolicyOperand) : literalSql(e.right as PolicyLiteral);
       if (isNumericCompare(e.left, e.right)) return `${numCast(left)} > ${numCast(right)}`;
       return `(${left})::text > (${right})::text`;
     }
     if (e.op === "lt") {
       const left = operandSql(e.left);
-      const right = isPlainObject(e.right) ? operandSql(e.right as any) : literalSql(e.right as any);
+      const right = isPlainObject(e.right) ? operandSql(e.right as PolicyOperand) : literalSql(e.right as PolicyLiteral);
       if (isNumericCompare(e.left, e.right)) return `${numCast(left)} < ${numCast(right)}`;
       return `(${left})::text < (${right})::text`;
     }
     if (e.op === "neq") {
       const left = operandSql(e.left);
-      const right = isPlainObject(e.right) ? operandSql(e.right as any) : literalSql(e.right as any);
+      const right = isPlainObject(e.right) ? operandSql(e.right as PolicyOperand) : literalSql(e.right as PolicyLiteral);
       return `(${left})::text <> (${right})::text`;
     }
     if (e.op === "size") {

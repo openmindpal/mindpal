@@ -91,11 +91,20 @@ export async function callDataPlaneJson(params: {
   if (params.stepId) headers["x-step-id"] = params.stepId;
   if (params.policySnapshotRef) headers["x-policy-snapshot-ref"] = params.policySnapshotRef;
 
-  const res = await fetch(url, {
-    method: params.method,
-    headers,
-    body: params.method === "GET" ? undefined : JSON.stringify(params.body ?? {}),
-  });
+  const timeoutMs = Number(process.env.DATA_PLANE_FETCH_TIMEOUT_MS) || 30_000;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: params.method,
+      headers,
+      body: params.method === "GET" ? undefined : JSON.stringify(params.body ?? {}),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   let data: any = null;
   if (typeof (res as any)?.text === "function") {
     const text = await (res as any).text();

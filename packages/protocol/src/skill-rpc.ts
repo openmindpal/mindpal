@@ -440,6 +440,15 @@ export const SKILL_RPC_METHODS = {
 } as const;
 
 /* ================================================================== */
+/*  RPC 解析失败计数器                                                   */
+/* ================================================================== */
+
+let rpcParseFailureCount = 0;
+
+/** 获取 RPC 解析失败累计次数（可观测性 / 健康检查用） */
+export function getRpcParseFailures(): number { return rpcParseFailureCount; }
+
+/* ================================================================== */
 /*  辅助函数                                                            */
 /* ================================================================== */
 
@@ -477,6 +486,7 @@ export function parseRpcMessage(line: string): SkillRpcMessage | null {
     if (obj && typeof obj === "object" && obj.jsonrpc === "2.0") return obj as SkillRpcMessage;
     return null;
   } catch {
+    rpcParseFailureCount++;
     return null;
   }
 }

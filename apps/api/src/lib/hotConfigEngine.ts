@@ -17,7 +17,8 @@
 
 import type { Pool } from "pg";
 import type { RuntimeConfigOverrides } from "@mindpal/shared";
-import { resolveNumber, StructuredLogger } from "@mindpal/shared";
+import { resolveNumber, StructuredLogger, SystemEventType, EventChannels } from "@mindpal/shared";
+import { safePublish } from "./eventBusInstance";
 
 const _logger = new StructuredLogger({ module: "hotConfigEngine" });
 
@@ -26,7 +27,7 @@ const _logger = new StructuredLogger({ module: "hotConfigEngine" });
 const REDIS_CONFIG_CHANNEL_PREFIX = "mindpal:config:changed:";
 
 /** 本地缓存 TTL — 超时后强制从 DB 重新加载（兜底机制）— bootstrap 级别，不做热更新自举 */
-const CACHE_TTL_MS = resolveNumber("CONFIG_CACHE_TTL_MS").value;
+const CACHE_TTL_MS = Number(process.env.HOT_CONFIG_CACHE_TTL_MS) || 30_000;
 
 /** 定期轮询间隔 — 作为 Pub/Sub 的兜底 — bootstrap 级别，不做热更新自举 */
 const POLL_INTERVAL_MS = resolveNumber("CONFIG_POLL_INTERVAL_MS").value;
@@ -41,6 +42,7 @@ export interface ConfigChangeEvent {
   newValue?: string;
   timestamp: number;
   source: string; // 发起变更的实例标识
+  version?: number; // 配置版本号（用于跨实例版本感知）
 }
 
 /** 配置变更监听回调 */
@@ -50,7 +52,7 @@ export type ConfigChangeListener = (event: ConfigChangeEvent) => void | Promise<
 interface CacheEntry {
   overrides: RuntimeConfigOverrides;
   loadedAt: number;
-  version: number; // 递增的版本号，用于检测是否需要刷新
+  configVersion: number; // 递增的版本号，用于检测是否需要刷新
 }
 
 // ── 热更新引擎类 ──────────────────────────────────────────
@@ -63,6 +65,9 @@ export class HotConfigEngine {
 
   /** per-tenant 本地缓存 */
   private cache = new Map<string, CacheEntry>();
+
+  /** 已通知的最新版本号（用于版本感知判定缓存有效性） */
+  private notifiedVersions = new Map<string, number>();
 
   /** 配置变更监听器列表 */
   private listeners: ConfigChangeListener[] = [];
@@ -154,9 +159,13 @@ export class HotConfigEngine {
   async getOverrides(tenantId: string, forceRefresh = false): Promise<RuntimeConfigOverrides> {
     const cached = this.cache.get(tenantId);
 
-    // 检查缓存有效性
-    if (cached && !forceRefresh && (Date.now() - cached.loadedAt) < CACHE_TTL_MS) {
-      return cached.overrides;
+    // 检查缓存有效性：TTL + 版本感知
+    if (cached && !forceRefresh) {
+      const notifiedVer = this.notifiedVersions.get(tenantId) ?? 0;
+      const versionStale = cached.configVersion < notifiedVer;
+      if (!versionStale && (Date.now() - cached.loadedAt) < CACHE_TTL_MS) {
+        return cached.overrides;
+      }
     }
 
     // 从 DB 加载并更新缓存
@@ -180,10 +189,15 @@ export class HotConfigEngine {
    * 应在 setConfigOverride / deleteConfigOverride 之后调用。
    */
   async broadcastConfigChange(event: Omit<ConfigChangeEvent, "timestamp" | "source">): Promise<void> {
+    // 本地也立即刷新（先刷新以获取最新版本号）
+    await this.invalidateAndReload(event.tenantId);
+
+    const currentVersion = this.cache.get(event.tenantId)?.configVersion ?? 1;
     const fullEvent: ConfigChangeEvent = {
       ...event,
       timestamp: Date.now(),
       source: this.instanceId,
+      version: currentVersion,
     };
 
     const channel = `${REDIS_CONFIG_CHANNEL_PREFIX}${event.tenantId}`;
@@ -194,8 +208,14 @@ export class HotConfigEngine {
       _logger.error("Failed to publish config change", { err: (err as Error)?.message });
     }
 
-    // 本地也立即刷新
-    await this.invalidateAndReload(event.tenantId);
+    // EventBus: 配置变更事件
+    safePublish({
+      channel: EventChannels.CONFIG_CHANGE,
+      eventType: SystemEventType.CONFIG_UPDATED,
+      tenantId: event.tenantId,
+      sourceModule: "hotConfigEngine",
+      payload: { configKey: event.configKey, action: event.action, version: currentVersion },
+    }).catch(() => {});
 
     // 通知本地监听器
     await this.notifyListeners(fullEvent);
@@ -227,7 +247,7 @@ export class HotConfigEngine {
       tenantId,
       keyCount: Object.keys(entry.overrides).length,
       ageMs: Date.now() - entry.loadedAt,
-      version: entry.version,
+      version: entry.configVersion,
     }));
     return { tenantCount: this.cache.size, entries };
   }
@@ -254,7 +274,7 @@ export class HotConfigEngine {
       this.cache.set(tenantId, {
         overrides,
         loadedAt: Date.now(),
-        version: (existing?.version ?? 0) + 1,
+        configVersion: (existing?.configVersion ?? 0) + 1,
       });
 
       return overrides;
@@ -273,8 +293,14 @@ export class HotConfigEngine {
     try {
       const event = JSON.parse(message) as ConfigChangeEvent;
 
-      // 跳过自己发出的消息（已在 broadcastConfigChange 中处理）
-      if (event.source === this.instanceId) return;
+      // 基于版本号判断：如已持有更新版本则忽略
+      const currentVersion = this.cache.get(event.tenantId)?.configVersion ?? 0;
+      if (event.version != null && event.version <= currentVersion) return;
+
+      // 记录已通知版本（用于 getOverrides 版本感知）
+      if (event.version != null) {
+        this.notifiedVersions.set(event.tenantId, event.version);
+      }
 
       // 刷新该租户的缓存
       await this.invalidateAndReload(event.tenantId);
@@ -306,7 +332,8 @@ export class HotConfigEngine {
     const tenantsToRefresh: string[] = [];
 
     for (const [tenantId, entry] of this.cache) {
-      if (now - entry.loadedAt >= CACHE_TTL_MS) {
+      const notifiedVer = this.notifiedVersions.get(tenantId) ?? 0;
+      if (now - entry.loadedAt >= CACHE_TTL_MS || entry.configVersion < notifiedVer) {
         tenantsToRefresh.push(tenantId);
       }
     }

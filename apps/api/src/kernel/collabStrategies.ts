@@ -473,12 +473,15 @@ export async function executePipeline(
             logger.warn("envelope validation failed, using empty result", { agentId: depId, reason: depValidation.reason });
             return null;
           }
-          return depState.status === "done" ? `[${depState.role}]: ${depState.result.message}` : null;
+          return depState.status === "done"
+            ? `[${depState.role}]: ${depState.result.message}`
+            : null;
         })
-        .filter((s): s is string => !!s)
-        .join("\n");
-      const enhancedGoal = depResults
-        ? `${state.goal}\n\n## Input from Dependent Agents\n${depResults}${structuredContext}`
+        .filter((s): s is string => !!s);
+
+      const depResultsText = depResults.join("\n");
+      const enhancedGoal = depResultsText
+        ? `${state.goal}\n\n## Input from Dependent Agents\n${depResultsText}${structuredContext}`
         : structuredContext
           ? `${state.goal}${structuredContext}`
           : state.goal;

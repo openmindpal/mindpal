@@ -15,8 +15,8 @@ import type { Pool } from "pg";
 import { resolveNumber } from "@mindpal/shared";
 
 /* ── Re-export 子模块，保持外部引用兼容 ── */
-export { getAnchorRules, loadAnchorRules } from "./intentAnchorRules";
-export type { AnchorPatternRule } from "./intentAnchorRules";
+export { getAnchorRules, loadAnchorRules } from "./intentRuleStandard";
+export type { AnchorPatternRule } from "./intentRuleStandard";
 export {
   createIntentAnchor,
   createIntentAnchorsBatch,
@@ -27,7 +27,7 @@ export {
 export { checkAndEnforceIntentBoundary, detectIntentBoundary, extractKeywords, isConstraintSatisfied, isConflictingAction, getViolationTypeLabel } from "./intentBoundaryDetection";
 export type { IntentDriftResult, BoundaryCheckResult } from "./intentBoundaryDetection";
 
-import { getAnchorRules } from "./intentAnchorRules";
+import { getAnchorRules } from "./intentRuleStandard";
 import { createIntentAnchorsBatch } from "./intentAnchorRepo";
 
 /* （规则加载已移至 intentAnchorRules.ts） */

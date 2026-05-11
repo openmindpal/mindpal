@@ -28,7 +28,7 @@ import type {
   StepExecutionResult,
   OrchestrationEvent,
 } from "@mindpal/shared";
-import { StructuredLogger, tryTransitionAgent, mapOrchestrationToAgent, OrchestrationEventType } from "@mindpal/shared";
+import { StructuredLogger, tryTransitionAgent, mapOrchestrationToAgent, OrchestrationEventType, SystemEventType, EventChannels } from "@mindpal/shared";
 import type { AgentPhase, PreflightResult } from "@mindpal/shared";
 
 import { runAgentLoop, type AgentLoopParams, type AgentLoopResult } from "./agentLoop";
@@ -36,6 +36,7 @@ import type { LoopState } from "./loopLifecycle";
 import { runPlanningPipeline } from "./planningKernel";
 import type { WorkflowQueue } from "../modules/workflow/queue";
 import { startSpan as otelStartSpan } from "../lib/tracing";
+import { safePublish } from "../lib/eventBusInstance";
 
 const logger = new StructuredLogger({ module: "orchestrationKernel" });
 
@@ -351,6 +352,15 @@ export function createOrchestrationKernel(deps: {
           failedSteps: result.failedSteps,
         });
 
+        // EventBus: Agent Loop 完成事件
+        safePublish({
+          channel: EventChannels.AGENT_LOOP_EVENT,
+          eventType: result.ok ? SystemEventType.AGENT_LOOP_COMPLETED : SystemEventType.AGENT_LOOP_ERROR,
+          tenantId: params.subject?.tenantId ?? "",
+          sourceModule: "orchestrationKernel",
+          payload: { runId, endReason: result.endReason, iterations: result.iterations, succeededSteps: result.succeededSteps, failedSteps: result.failedSteps },
+        }).catch(() => {});
+
         return result;
       } catch (err: any) {
         const entry = activeLoops.get(runId);
@@ -360,6 +370,16 @@ export function createOrchestrationKernel(deps: {
         }
         logger.error("orchestration loop error", { runId, error: err?.message });
         try { orchestrationSpan.setStatus?.({ code: 2, message: err?.message }); } catch { /* noop */ }
+
+        // EventBus: Agent Loop 错误事件
+        safePublish({
+          channel: EventChannels.AGENT_LOOP_EVENT,
+          eventType: SystemEventType.AGENT_LOOP_ERROR,
+          tenantId: params.subject?.tenantId ?? "",
+          sourceModule: "orchestrationKernel",
+          payload: { runId, error: err?.message },
+        }).catch(() => {});
+
         throw err;
       } finally {
         try { orchestrationSpan.end?.(); } catch { /* noop */ }
@@ -417,6 +437,18 @@ export function createOrchestrationKernel(deps: {
       } catch {
         // best-effort 事件发布，不阻断主流程
       }
+
+      // 4b. EventBus 统一事件发布（步骤生命周期）
+      const stepEventType = status === "timeout" ? SystemEventType.STEP_TIMEOUT
+        : status === "completed" ? SystemEventType.STEP_COMPLETED
+        : SystemEventType.STEP_FAILED;
+      safePublish({
+        channel: EventChannels.STEP_DONE,
+        eventType: stepEventType,
+        tenantId: "",
+        sourceModule: "orchestrationKernel",
+        payload: { runId, stepId, status, durationMs: result.durationMs, toolRef: result.toolRef },
+      }).catch(() => {});
 
       // 5. 编排决策：根据 status 驱动状态收口
       if (status === "failed" || status === "timeout") {

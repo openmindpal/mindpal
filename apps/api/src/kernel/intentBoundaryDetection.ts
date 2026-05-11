@@ -20,6 +20,9 @@ import type {
 import { getOrCreateDriftTracker, recordDrift } from "./intentAnchoringService";
 import { listActiveIntentAnchors, recordBoundaryViolation } from "./intentAnchorRepo";
 
+/** Intent 边界检测缓存 TTL（秒），从环境变量读取，默认 60s */
+const BOUNDARY_CACHE_TTL_SEC = Number(process.env.INTENT_BOUNDARY_CACHE_TTL_SEC) || 60;
+
 const logger = new StructuredLogger({ module: "intentAnchoring.detection" });
 
 /* ================================================================== */
@@ -309,7 +312,7 @@ async function _llmBasedDetection(params: {
 }): Promise<{ isViolation: boolean; violation?: BoundaryViolationType; shouldPause: boolean; reason?: string } | null> {
   const { pool, tenantId, spaceId, runId, stepId, proposedAction, currentContext, app, subject, anchors } = params;
 
-  const redis = (app as any).redis as { get(key: string): Promise<string | null>; setex(key: string, ttl: number, value: string): Promise<unknown> } | undefined;
+  const redis = (app as any).redis as { get(key: string): Promise<string | null>; set(key: string, value: string, ex: string, ttl: number): Promise<unknown>; setex(key: string, ttl: number, value: string): Promise<unknown> } | undefined;
 
   for (const anchor of anchors) {
     if (anchor.instructionType !== "prohibition" && anchor.instructionType !== "constraint") continue;
@@ -368,8 +371,7 @@ async function _llmBasedDetection(params: {
 
         // 写入缓存（违规结果）
         if (redis) {
-          const ttl = resolveNumber("INTENT_BOUNDARY_CACHE_TTL_S", undefined, undefined, 300).value;
-          redis.setex(cacheKey, ttl, JSON.stringify({ isViolation: true, shouldPause: true, reason: result.reason })).catch((err: unknown) => {
+          redis.set(cacheKey, JSON.stringify({ isViolation: true, shouldPause: true, reason: result.reason }), "EX", BOUNDARY_CACHE_TTL_SEC).catch((err: unknown) => {
             logger.debug("intent boundary cache write failed", { error: String((err as Error)?.message ?? err) });
           });
         }
@@ -379,8 +381,7 @@ async function _llmBasedDetection(params: {
 
       // 写入缓存（无违规结果）
       if (redis) {
-        const ttl = resolveNumber("INTENT_BOUNDARY_CACHE_TTL_S", undefined, undefined, 300).value;
-        redis.setex(cacheKey, ttl, JSON.stringify({ isViolation: false })).catch((err: unknown) => {
+        redis.set(cacheKey, JSON.stringify({ isViolation: false }), "EX", BOUNDARY_CACHE_TTL_SEC).catch((err: unknown) => {
           logger.debug("intent boundary cache write failed", { error: String((err as Error)?.message ?? err) });
         });
       }

@@ -274,10 +274,10 @@ export function extractFromObservation(
   }
 
   // 更新元数据（version 已由 upsertFact/upsertEntity 自动递增，此处仅更新序号和时间戳）
-  // TODO: 此处应调用 updateMemoryConfidenceFromFacts（定义在 modules/memory/repo.ts）
-  // 以根据新提取的事实更新相关记忆的置信度（证实 +0.1 / 矛盾 -0.2），
-  // 但该函数需要 DB pool 参数，而 extractFromObservation 为纯函数（无 IO 依赖）。
-  // 待上层调用方（agentLoop / loopActHandlers）集成时传入 pool 并在提取后调用。
+  // 记忆置信度反馈已集成至上层调用方 agentLoop.ts finally 块：
+  // 循环结束时调用 updateMemoryConfidenceFromFacts(pool, tenantId, spaceId, facts)
+  // 根据本步骤提取的事实更新相关记忆的置信度（证实 +0.1 / 矛盾 -0.2）。
+  // extractFromObservation 为纯函数（无 IO 依赖），因此 DB 操作由调用方负责。
   state = {
     ...state,
     afterIteration: Math.max(state.afterIteration, obs.seq),

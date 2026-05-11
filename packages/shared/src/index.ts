@@ -648,7 +648,7 @@ export {
   serializeRpcMessage, parseRpcMessage,
   isRpcRequest, isRpcNotification, isRpcResponse, isRpcError,
   isVersionCompatible, negotiateVersion,
-} from "./skillRpcProtocol";
+} from '@mindpal/protocol';
 export type {
   ProtocolVersion, ProtocolHandshake, ProtocolHandshakeAck,
   DeviceModality, DeviceMultimodalCapabilities, DeviceMultimodalPolicy,
@@ -659,7 +659,7 @@ export type {
   SkillExecuteParams, SkillExecuteResult,
   SkillHeartbeatParams, SkillHeartbeatResult,
   SkillProgressNotification, SkillLogNotification,
-} from "./skillRpcProtocol";
+} from '@mindpal/protocol';
 
 // ── P3-01: 结构化日志 ──────────────────────────────────────────
 export {
@@ -742,12 +742,12 @@ export type {
 // ── Skill Manifest 共享类型与运行时验证 ──
 export {
   validateManifest,
-} from "./skillManifest";
+} from '@mindpal/protocol';
 export type {
   SkillLayer, SkillToolDeclaration,
   BuiltinSkillManifest, ExternalSkillManifest,
   ManifestValidationResult,
-} from "./skillManifest";
+} from '@mindpal/protocol';
 
 // ── 编排内核事件协议（Worker ↔ API 状态同步） ──
 export {

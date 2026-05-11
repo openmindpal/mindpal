@@ -6,6 +6,7 @@ import type { RedisClient } from "../modules/redis/client";
 import type { ApiConfig } from "../config";
 import type { MetricsRegistry } from "../modules/metrics/metrics";
 import type { AuthContext, AuthProvider } from "@mindpal/shared";
+import type { ExtendedEventBus } from "../lib/eventBus";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -15,6 +16,7 @@ declare module "fastify" {
     cfg: ApiConfig;
     metrics: MetricsRegistry;
     authProvider: AuthProvider;
+    eventBus: ExtendedEventBus;
   }
 
   interface FastifyRequest {

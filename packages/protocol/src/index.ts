@@ -47,6 +47,7 @@ export {
   isRpcNotification,
   isRpcResponse,
   isRpcError,
+  getRpcParseFailures,
 } from "./skill-rpc";
 
 export type {
@@ -228,6 +229,9 @@ export type {
 export {
   PROTOCOL_ERRORS,
   JSONRPC_ERROR_RANGE,
+  ERROR_LAYER_MAP,
+  getHttpStatusForError,
+  getServiceCodeForError,
 } from "./errors";
 
 export type {

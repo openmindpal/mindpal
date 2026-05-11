@@ -76,6 +76,7 @@ import {
   formatDuplicatePrompt,
 } from "../../modules/skills/skillRouter";
 
+
 // ─── Scope Helper ─────────────────────────────────────────────────────
 function resolveScope(subject: { tenantId: string; spaceId?: string | null; subjectId: string }, requestedScope?: string): { scopeType: SkillScopeType; scopeId: string } {
   if (requestedScope === "user") return { scopeType: "user", scopeId: subject.subjectId };

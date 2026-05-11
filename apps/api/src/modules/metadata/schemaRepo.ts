@@ -1,6 +1,8 @@
 import type { Pool, PoolClient } from "pg";
 import type { SchemaDef } from "./schemaModel";
-import { isPlainObject, resolveString } from "@mindpal/shared";
+import { isPlainObject, resolveString, StructuredLogger } from "@mindpal/shared";
+
+const _logger = new StructuredLogger({ module: "schemaRepo" });
 
 type Q = Pool | PoolClient;
 type EffectiveScope = { tenantId: string; spaceId?: string; name: string };
@@ -22,6 +24,69 @@ const resolvedVersionCache = new Map<string, number | null>();
 const effectiveSchemaCache = new Map<string, StoredSchema | null>();
 const schemaCacheVersionMap = new Map<string, number>();
 let schemaCacheVersionSeq = 1;
+
+// ── Redis 主动失效机制 ──────────────────────────────────────────
+const SCHEMA_INVALIDATE_CHANNEL = "schema:invalidate";
+let _redis: { publish(channel: string, message: string): Promise<number> } | null = null;
+let _subClient: any = null;
+
+/**
+ * 初始化 Schema 缓存订阅器。
+ * 在 API 服务启动时调用一次，注入 Redis publish 客户端 + 创建独立 subscriber。
+ */
+export async function initSchemaCacheSubscriber(redis: { publish(channel: string, message: string): Promise<number> }): Promise<void> {
+  _redis = redis;
+  try {
+    const { default: Redis } = await import("ioredis");
+    const redisCfg = {
+      host: process.env.REDIS_HOST ?? "127.0.0.1",
+      port: Number(process.env.REDIS_PORT ?? 6379),
+      maxRetriesPerRequest: null as null,
+      lazyConnect: true,
+      connectTimeout: 500,
+    };
+    _subClient = new Redis(redisCfg);
+    _subClient.on("error", () => undefined);
+    _subClient.on("ready", () => {
+      _subClient.subscribe(SCHEMA_INVALIDATE_CHANNEL).catch(() => {});
+    });
+    _subClient.on("message", (_ch: string, msg: string) => {
+      try {
+        const { scope } = JSON.parse(msg);
+        if (typeof scope === "string" && scope) {
+          effectiveSchemaCache.delete(scope);
+          resolvedVersionCache.delete(scope);
+        }
+      } catch { /* ignore malformed messages */ }
+    });
+    await _subClient.connect();
+    _logger.info("schema_cache_subscriber_initialized");
+  } catch (err) {
+    _logger.warn("schema_cache_subscriber_init_failed", { error: (err as Error)?.message });
+  }
+}
+
+/**
+ * 停止 Schema 缓存订阅器。
+ */
+export async function stopSchemaCacheSubscriber(): Promise<void> {
+  if (_subClient) {
+    try { await _subClient.unsubscribe(SCHEMA_INVALIDATE_CHANNEL); } catch { /* ignore */ }
+    try { await _subClient.quit(); } catch { /* ignore */ }
+    _subClient = null;
+  }
+  _redis = null;
+}
+
+/** 内部：发布 schema 失效通知 */
+async function _publishSchemaInvalidation(scopeKey: string): Promise<void> {
+  if (!_redis) return;
+  try {
+    await _redis.publish(SCHEMA_INVALIDATE_CHANNEL, JSON.stringify({ scope: scopeKey, version: schemaCacheVersionSeq }));
+  } catch (err) {
+    _logger.debug("schema_invalidation_publish_failed", { error: (err as Error)?.message });
+  }
+}
 
 function scopeCacheKey(params: EffectiveScope) {
   return `tenant:${params.tenantId}|space:${params.spaceId ?? "-"}|name:${params.name}`;
@@ -66,15 +131,27 @@ function bumpSchemaCacheVersion(params: { name: string; tenantId?: string; space
     schemaCacheVersionMap.set(versionMapGlobalKey(params.name), next);
   }
 
+  const invalidatedScopes: string[] = [];
   for (const key of resolvedVersionCache.keys()) {
     const scope = parseScopeCacheKey(key);
     if (!scope) continue;
-    if (matchesScope(scope, params)) resolvedVersionCache.delete(key);
+    if (matchesScope(scope, params)) {
+      resolvedVersionCache.delete(key);
+      invalidatedScopes.push(key);
+    }
   }
   for (const key of effectiveSchemaCache.keys()) {
     const scope = parseScopeCacheKey(key);
     if (!scope) continue;
-    if (matchesScope(scope, params)) effectiveSchemaCache.delete(key);
+    if (matchesScope(scope, params)) {
+      effectiveSchemaCache.delete(key);
+      if (!invalidatedScopes.includes(key)) invalidatedScopes.push(key);
+    }
+  }
+
+  // 发布 Redis 失效通知（非阻塞，失败不影响主流程）
+  for (const scopeKey of invalidatedScopes) {
+    _publishSchemaInvalidation(scopeKey).catch(() => {});
   }
 }
 

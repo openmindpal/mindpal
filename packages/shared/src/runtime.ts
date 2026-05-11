@@ -245,12 +245,16 @@ export function createRedisConcurrencyBackend(
       const rk = prefix + key;
       const val = await redis.incr(rk);
       // 首次创建时设置 TTL 防泄漏
-      if (val === 1) await redis.expire(rk, ttlSeconds).catch(() => {});
+      if (val === 1) await redis.expire(rk, ttlSeconds).catch((e) => {
+        console.warn("[redisConcurrency] expire failed, key may leak", rk, e);
+      });
       return val;
     },
     async decrement(key: string): Promise<void> {
       const rk = prefix + key;
-      await redis.decr(rk).catch(() => {});
+      await redis.decr(rk).catch((e) => {
+        console.warn("[redisConcurrency] decrement failed", rk, e);
+      });
     },
   };
 }
@@ -302,13 +306,17 @@ export async function withConcurrency<T>(key: string, maxConcurrency: number, fn
       return withConcurrencyLocal(key, maxConcurrency, fn);
     }
     if (current > maxConcurrency) {
-      await backend.decrement(key).catch(() => {});
+      await backend.decrement(key).catch((e) => {
+        console.warn("[concurrency] decrement failed (non-critical)", key, e);
+      });
       throw new Error("resource_exhausted:max_concurrency");
     }
     try {
       return await fn();
     } finally {
-      await backend.decrement(key).catch(() => {});
+      await backend.decrement(key).catch((e) => {
+        console.warn("[concurrency] decrement failed (non-critical)", key, e);
+      });
     }
   }
 

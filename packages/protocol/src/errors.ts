@@ -9,6 +9,39 @@ import { SKILL_RPC_ERRORS } from "./skill-rpc";
 import { AUDIT_ERROR_CATEGORIES } from "./audit-event";
 
 /* ================================================================== */
+/*  跨层错误映射表                                                      */
+/* ================================================================== */
+
+/**
+ * 跨层错误映射表 —— 将运行时错误分类统一映射到 HTTP 状态码和服务错误码。
+ * 键为 ErrorCategory / RPC 错误标识，值为 HTTP 响应信息。
+ */
+export const ERROR_LAYER_MAP: Record<string, { httpStatus: number; serviceCode: string }> = {
+  // ── 来自 @mindpal/shared errorCategory.ts ──
+  governance_denied:         { httpStatus: 403, serviceCode: "GOVERNANCE_DENIED" },
+  governance_unavailable:    { httpStatus: 503, serviceCode: "GOVERNANCE_UNAVAILABLE" },
+  input_validation_failed:   { httpStatus: 400, serviceCode: "INPUT_VALIDATION_FAILED" },
+  tool_unavailable:          { httpStatus: 503, serviceCode: "TOOL_UNAVAILABLE" },
+  step_timeout:              { httpStatus: 504, serviceCode: "STEP_TIMEOUT" },
+  tool_execution_failed:     { httpStatus: 502, serviceCode: "TOOL_EXECUTION_FAILED" },
+  interrupted:               { httpStatus: 499, serviceCode: "INTERRUPTED" },
+  deadletter:                { httpStatus: 500, serviceCode: "DEADLETTER" },
+  collab_error:              { httpStatus: 502, serviceCode: "COLLAB_ERROR" },
+  // ── 来自 @mindpal/shared serviceError.ts ──
+  auth_failed:               { httpStatus: 401, serviceCode: "AUTH_FAILED" },
+  policy_violation:          { httpStatus: 403, serviceCode: "POLICY_VIOLATION" },
+  resource_exhausted:        { httpStatus: 429, serviceCode: "RESOURCE_EXHAUSTED" },
+  invalid_request:           { httpStatus: 400, serviceCode: "INVALID_REQUEST" },
+  not_found:                 { httpStatus: 404, serviceCode: "NOT_FOUND" },
+  internal:                  { httpStatus: 500, serviceCode: "INTERNAL" },
+  timeout:                   { httpStatus: 504, serviceCode: "TIMEOUT" },
+  // ── RPC 级错误 ──
+  tool_timeout:              { httpStatus: 504, serviceCode: "TOOL_TIMEOUT" },
+  tool_not_found:            { httpStatus: 404, serviceCode: "TOOL_NOT_FOUND" },
+  budget_exceeded:           { httpStatus: 429, serviceCode: "BUDGET_EXCEEDED" },
+};
+
+/* ================================================================== */
 /*  Re-export Skill RPC Errors                                         */
 /* ================================================================== */
 
@@ -50,6 +83,16 @@ export type ProtocolErrorCode = (typeof PROTOCOL_ERRORS)[keyof typeof PROTOCOL_E
 
 /** Skill RPC 错误码类型 */
 export type SkillRpcErrorCode = (typeof SKILL_RPC_ERRORS)[keyof typeof SKILL_RPC_ERRORS];
+
+/** 根据运行时错误分类查询 HTTP 状态码 */
+export function getHttpStatusForError(category: string): number {
+  return ERROR_LAYER_MAP[category]?.httpStatus ?? 500;
+}
+
+/** 根据运行时错误分类查询服务错误码 */
+export function getServiceCodeForError(category: string): string {
+  return ERROR_LAYER_MAP[category]?.serviceCode ?? "INTERNAL";
+}
 
 /* ================================================================== */
 /*  错误码范围常量                                                      */

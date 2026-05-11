@@ -26,6 +26,7 @@ import { decomposeGoal } from "./goalDecomposer";
 import { extractFromObservation, evaluateGoalConditions, buildWorldStateFromObservations, extractWorldState, updateWorldState } from "./worldStateExtractor";
 import { verifyGoalCompletion, verifySimple, type VerificationResult } from "./verifierAgent";
 import { checkAndEnforceIntentBoundary, detectIntentBoundary, type IntentDriftResult } from "./intentAnchoringService";
+import { preflightCheck } from "./orchestrationKernel";
 
 /* ── 从拆分模块 re-import ── */
 import type {
@@ -304,8 +305,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       iterations++;
       const iterStart = performance.now();
 
-      // ── 首次迭代后解析目标分解结果（异步延迟加载） ──
-      if (iterations === 2 && s.goalDecompPromise) {
+      // ── GoalGraph 加载：首次迭代前确保 goalDecomp 已完成 ──
+      if (s.goalDecompPromise) {
         try {
           const decompResult = await s.goalDecompPromise;
           if (decompResult.graph) {
@@ -313,7 +314,8 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           }
           s.goalDecompPromise = null; // 清除引用，避免重复 await
         } catch (e: any) {
-          app.log.warn({ err: e?.message, runId }, "[AgentLoop] 延迟加载 GoalGraph 失败（继续使用纯文本目标）");
+          app.log.warn({ err: e?.message, runId }, "[AgentLoop] GoalGraph 加载失败（继续使用纯文本目标）");
+          s.goalDecompPromise = null;
         }
       }
 
@@ -417,12 +419,21 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
       safeEndPhase(tracingCtx);
 
       // 处理 Think 阶段意图漂移检测结果
+      const DRIFT_ABORT_THRESHOLD = Number(process.env.INTENT_DRIFT_ABORT_THRESHOLD) || 0.8;
       if (iterCtx.intentDrift?.drifted) {
         app.log.warn({
           runId, iteration: iterations,
           driftScore: iterCtx.intentDrift.driftScore,
           shouldReset: iterCtx.intentDrift.shouldResetAnchor,
         }, "[AgentLoop] 意图漂移检测结果注入决策上下文");
+        if ((iterCtx.intentDrift.driftScore ?? 0) >= DRIFT_ABORT_THRESHOLD) {
+          // 严重漂移 — 暂停循环，请求用户确认
+          app.log.warn({ runId, iteration: iterations, driftScore: iterCtx.intentDrift.driftScore, threshold: DRIFT_ABORT_THRESHOLD }, "[AgentLoop] 严重意图漂移，暂停循环");
+          await safeTransitionRun(pool, runId, "paused", { log: app.log });
+          const result = buildResult("ask_user", `检测到严重意图漂移 (score=${iterCtx.intentDrift.driftScore?.toFixed(2)}): ${iterCtx.intentDrift.reason ?? "目标偏离"}，请确认是否继续`);
+          onLoopEnd?.(result);
+          return result;
+        }
       }
       // P6: 意图漂移指标打点
       if (iterCtx.intentDrift) {
@@ -767,6 +778,28 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             onLoopEnd?.(result);
             return result;
           }
+
+          // ── 编排预检：预算 / 角色工具策略 / 审批需求 ──
+          const toolRef = decision.toolRef ?? "";
+          try {
+            const preflight = await preflightCheck({
+              pool, runId, stepId: String(currentSeq), tenantId: subject.tenantId,
+              toolRef: toolRef || undefined,
+              subject: subject ? { subjectId: subject.subjectId, roles: subject.roles } : undefined,
+            });
+            if (!preflight.ok) {
+              const reason = preflight.issues.map(i => i.message).join("; ") || "governance_rejected";
+              observations.push({ stepId: "", seq: currentSeq, toolRef, status: "failed", outputDigest: { error: `Tool execution blocked by governance: ${reason}` }, output: null, errorCategory: ErrorCategory.GOVERNANCE_DENIED, durationMs: null });
+              failedSteps++;
+              currentSeq++;
+              app.log.warn({ runId, iteration: iterations, toolRef, reason }, "[AgentLoop] preflightCheck 拒绝工具执行");
+              break;
+            }
+          } catch (pfErr: unknown) {
+            // 预检失败不阻断主流程（降级为允许）
+            app.log.warn({ err: (pfErr as Error)?.message, runId, iteration: iterations }, "[AgentLoop] preflightCheck 异常（降级放行）");
+          }
+
           const originalToolRef = decision.toolRef ?? "";
           const tcResult = await handleToolCallAction({
             app, pool, queue, subject: subject as any,
@@ -804,6 +837,9 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
           // ── fallback 后目标重评估 ──
           if (tcResult.fallbackImpact) {
             const fbImpact = tcResult.fallbackImpact;
+            // Fallback 触发 replan：注入提示让 LLM 下一轮重新规划
+            app.log.info({ runId, iteration: iterations, impact: fbImpact.impact, reason: fbImpact.reason }, "[AgentLoop] Fallback triggered, marking for replan");
+            observations.push({ stepId: "", seq: currentSeq, toolRef: originalToolRef, status: "succeeded", outputDigest: { _replanHint: true, reason: `Fallback tool used: ${fbImpact.reason}`, impact: fbImpact.impact }, output: null, errorCategory: null, durationMs: null });
             // 追加语义审计条目
             if (fbImpact.impact !== "none") {
               semanticAuditTrail.push({
@@ -817,6 +853,9 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
             if (fbImpact.impact === "degraded") {
               degradedCompletion = true;
               app.log.info({ runId, iteration: iterations, reason: fbImpact.reason }, "[AgentLoop] Fallback 导致精度降级，标记 degradedCompletion");
+              // 降级时强制删除 pending 步骤并重新规划
+              await deletePendingSteps(pool, runId);
+              continue;
             } else if (fbImpact.impact === "goal_unreachable") {
               // P4: 先重评估目标条件——fallback 工具可能仍满足部分目标
               if (goalGraph && worldState) {
