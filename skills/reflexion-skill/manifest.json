@@ -37,6 +37,7 @@
       "fields": {
         "reflection": { "type": "json", "required": true, "description": "{whatWorked, whatFailed, rootCause, lessonsLearned, improvementSuggestions}" },
         "lesson": { "type": "string", "required": true, "description": "一句话教训摘要，可直接写入记忆" },
+        "strategy": { "type": "string", "required": false, "description": "Actionable improvement strategy for procedural memory" },
         "confidence": { "type": "number", "required": true, "description": "反思置信度 0-1" }
       }
     }
