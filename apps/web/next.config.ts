@@ -14,7 +14,7 @@ const nextConfig: NextConfig = {
 
   // Optimise package imports – tree-shake large libs
   experimental: {
-    optimizePackageImports: ["yjs", "lib0", "y-protocols"],
+    optimizePackageImports: ["yjs", "lib0", "y-protocols", "lucide-react", "framer-motion", "@radix-ui/react-icons", "web-vitals"],
   },
 
   // Serve fonts from same origin, avoid extra DNS lookup

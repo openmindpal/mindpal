@@ -1,44 +1,28 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import "@/styles/tokens.css";
-import { t } from "@/lib/i18n";
+import "@/styles/globals.css";
+import { Providers } from './providers';
+import { Toaster } from '@/shared/components/feedback';
+import { VitalsReporter } from './VitalsReporter';
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+export const metadata: Metadata = {
+  title: "灵智 MindPal",
+  description: "面向企业与端侧的智能体底层操作系统",
+  icons: { icon: "/favicon.ico" },
+};
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-export async function generateMetadata(): Promise<Metadata> {
-  const cookieStore = await cookies();
-  const locale = cookieStore.get("mindpal_locale")?.value || "zh-CN";
-  return {
-    title: {
-      default: t(locale, "meta.console.title"),
-      template: `%s · ${t(locale, "meta.console.title")}`,
-    },
-    description: t(locale, "meta.console.description"),
-    icons: { icon: "/favicon.ico" },
-  };
-}
-
-export default async function RootLayout({
+export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
-  const cookieStore = await cookies();
-  const lang = cookieStore.get("mindpal_locale")?.value || "zh-CN";
+}) {
   return (
-    <html lang={lang}>
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        {children}
+    <html lang="zh-CN" data-theme="light" suppressHydrationWarning>
+      <body className="min-h-dvh bg-[var(--color-surface)] text-[var(--color-text)] antialiased">
+        <Providers>
+          {children}
+        </Providers>
+        <Toaster />
+        <VitalsReporter />
       </body>
     </html>
   );

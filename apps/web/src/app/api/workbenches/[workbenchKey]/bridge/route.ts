@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { apiFetch, SSR_TIMEOUT_MS } from "@/lib/api";
+import { apiFetch, SSR_TIMEOUT_MS } from "@/shared/lib/api";
 
 function findAllowedCap(manifest: any, listKey: "dataBindings" | "actionBindings", kind: string) {
   const caps = manifest?.capabilities ?? null;

@@ -1,62 +1,119 @@
-/* ─── Design Tokens ─────────────────────────────────────────────────────────
- * Centralized design tokens for the OpenSlin web UI.
- * Values are derived from the existing globals.css theme to maintain
- * visual consistency. Import this file in layout.tsx.
- * ──────────────────────────────────────────────────────────────────────────── */
-
+/* Design Tokens - 灵智MindPal设计系统 */
 :root {
-  /* ── Colors ── */
-  --color-primary: #6366f1;
-  --color-primary-hover: #4f46e5;
-  --color-secondary: #64748b;
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
-  --color-error: #ef4444;
-  --color-bg-primary: #f8fafc;
-  --color-bg-secondary: #f1f5f9;
-  --color-bg-tertiary: #e2e8f0;
-  --color-text-primary: #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-muted: #64748b;
-  --color-border: rgba(15, 23, 42, 0.08);
+  /* 色彩 - oklch色彩空间 */
+  --color-primary: oklch(0.55 0.15 265);
+  --color-primary-hover: oklch(0.50 0.17 265);
+  --color-primary-soft: oklch(0.92 0.03 265);
+  --color-success: oklch(0.65 0.15 155);
+  --color-success-soft: oklch(0.92 0.03 155);
+  --color-warning: oklch(0.75 0.12 75);
+  --color-warning-soft: oklch(0.92 0.03 75);
+  --color-danger: oklch(0.60 0.18 25);
+  --color-danger-soft: oklch(0.92 0.03 25);
+  --color-surface: oklch(0.99 0 0);
+  --color-surface-raised: oklch(1.0 0 0);
+  --color-surface-sunken: oklch(0.97 0 0);
+  --color-border: oklch(0.90 0 0);
+  --color-border-strong: oklch(0.80 0 0);
+  --color-text: oklch(0.15 0 0);
+  --color-text-secondary: oklch(0.40 0 0);
+  --color-text-muted: oklch(0.55 0 0);
+  --color-text-inverse: oklch(0.98 0 0);
+  --color-overlay: oklch(0 0 0 / 0.4);
 
-  /* ── Spacing ── */
-  --spacing-xs: 4px;
-  --spacing-sm: 8px;
-  --spacing-md: 16px;
-  --spacing-lg: 24px;
-  --spacing-xl: 32px;
+  /* 排版 */
+  --font-sans: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
 
-  /* ── Border radius ── */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  /* 间距 */
+  --space-0: 0;
+  --space-0-5: 0.125rem;
+  --space-1: 0.25rem;
+  --space-1-5: 0.375rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* 圆角 */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
   --radius-full: 9999px;
 
-  /* ── Typography ── */
-  --font-xs: 0.75rem;
-  --font-sm: 0.875rem;
-  --font-md: 1rem;
-  --font-lg: 1.125rem;
-  --font-xl: 1.25rem;
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.05);
+  --shadow-md: 0 4px 12px oklch(0 0 0 / 0.08);
+  --shadow-lg: 0 12px 32px oklch(0 0 0 / 0.12);
+  --shadow-xl: 0 20px 48px oklch(0 0 0 / 0.16);
 
-  /* ── Shadows ── */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  /* 动效时长 */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 350ms;
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 
-  /* ── Transitions ── */
-  --transition-fast: 150ms ease;
-  --transition-normal: 250ms ease;
+  /* 布局 */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 64px;
+  --topbar-height: 48px;
+  --mobile-nav-height: 56px;
+
+  /* 字重分级 */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* 交互阴影 */
+  --shadow-hover: 0 2px 8px oklch(0 0 0 / 0.06);
+  --shadow-active: 0 1px 3px oklch(0 0 0 / 0.10);
+
+  /* 过渡 */
+  --transition-colors: color, background-color, border-color, box-shadow;
+
+  /* z-index层级 */
+  --z-dropdown: 50;
+  --z-sticky: 100;
+  --z-overlay: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+  --z-tooltip: 500;
 }
 
-/* ── Dark theme ── */
 [data-theme="dark"] {
-  --color-bg-primary: #0f172a;
-  --color-bg-secondary: #1e293b;
-  --color-bg-tertiary: #334155;
-  --color-text-primary: #f8fafc;
-  --color-text-secondary: #cbd5e1;
-  --color-text-muted: #64748b;
-  --color-border: #334155;
+  --color-primary: oklch(0.65 0.15 265);
+  --color-primary-hover: oklch(0.70 0.17 265);
+  --color-primary-soft: oklch(0.25 0.05 265);
+  --color-success-soft: oklch(0.25 0.05 155);
+  --color-warning-soft: oklch(0.25 0.05 75);
+  --color-danger-soft: oklch(0.25 0.05 25);
+  --color-surface: oklch(0.13 0 0);
+  --color-surface-raised: oklch(0.18 0 0);
+  --color-surface-sunken: oklch(0.10 0 0);
+  --color-border: oklch(0.25 0 0);
+  --color-border-strong: oklch(0.35 0 0);
+  --color-text: oklch(0.93 0 0);
+  --color-text-secondary: oklch(0.75 0 0);
+  --color-text-muted: oklch(0.60 0 0);
+  --color-text-inverse: oklch(0.10 0 0);
+  --color-overlay: oklch(0 0 0 / 0.6);
 }

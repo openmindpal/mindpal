@@ -32,6 +32,7 @@ import { spacesRoutes } from "./data/spaces";
 import { skillLifecycleRoutes } from "./extended";
 import { audioRoutes } from "./media/audio";
 import { memoryRoutes } from "./memory";
+import { vitalsRoutes } from "./vitals";
 
 // ── 核心数据路由 ──
 async function coreDataRoutes(app: FastifyInstance) {
@@ -66,6 +67,7 @@ async function systemRoutes(app: FastifyInstance) {
   app.register(metricsRoutes);
   app.register(settingsRoutes);
   app.register(csrfRoutes);
+  app.register(vitalsRoutes);
 }
 
 // ── 身份与用户路由 ──
