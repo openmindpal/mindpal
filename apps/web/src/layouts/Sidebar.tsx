@@ -80,13 +80,13 @@ export function Sidebar() {
     <TooltipProvider delayDuration={0}>
       <aside
         className={cn(
-          'relative z-[var(--z-sticky)] shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-raised)] shadow-sm transition-all duration-200',
+          'relative z-[var(--z-sticky)] shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] transition-all duration-200',
           sidebarCollapsed ? 'w-[var(--sidebar-collapsed-width)]' : 'w-[var(--sidebar-width)]',
           'max-sm:hidden'
         )}
       >
         {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto px-2 py-3">
+        <nav className="flex-1 overflow-y-auto px-3 py-4">
           {navGroups.map((group) => (
             <div key={group.title} className="mb-3">
               {!sidebarCollapsed && (

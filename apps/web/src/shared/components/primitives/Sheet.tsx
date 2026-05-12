@@ -4,7 +4,18 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
-import { overlayFade, slideRight } from "@/shared/lib/motion";
+
+const overlayFade = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: { duration: 0.2 } },
+  exit: { opacity: 0, transition: { duration: 0.15 } },
+};
+
+const slideRight = {
+  initial: { x: '100%' },
+  animate: { x: 0, transition: { duration: 0.3, ease: [0.32, 0.72, 0, 1] } },
+  exit: { x: '100%', transition: { duration: 0.2 } },
+};
 
 const Sheet = DialogPrimitive.Root;
 const SheetTrigger = DialogPrimitive.Trigger;
@@ -47,7 +58,7 @@ const SheetContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.
         <DialogPrimitive.Content
           ref={ref}
           className={cn(
-            "fixed z-[var(--z-modal)] gap-4 border-[var(--color-border)] bg-[var(--color-surface-raised)] p-6 shadow-xl transition-all duration-150",
+            "fixed z-[var(--z-modal)] flex flex-col gap-4 border-[var(--color-border)] bg-[var(--color-surface-raised)] px-6 py-4 shadow-xl transition-all duration-150",
             sideVariants[side],
             className
           )}
@@ -73,7 +84,7 @@ function SheetHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
 }
 
 function SheetFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", className)} {...props} />;
+  return <div className={cn("mt-auto flex justify-end gap-3 border-t border-[var(--color-border)] pt-4", className)} {...props} />;
 }
 
 const SheetTitle = React.forwardRef<

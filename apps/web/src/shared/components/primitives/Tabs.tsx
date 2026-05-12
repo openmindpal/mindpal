@@ -40,14 +40,15 @@ TabsTrigger.displayName = "TabsTrigger";
 const TabsContent = React.forwardRef<
   React.ComponentRef<typeof TabsPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(({ className, ...props }, ref) => (
+>(({ className, children, ...props }, ref) => (
   <TabsPrimitive.Content
     ref={ref}
     className={cn("mt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]", className)}
     {...props}
-    asChild
   >
-    <motion.div variants={fadeSlide} initial="initial" animate="animate" exit="exit" />
+    <motion.div variants={fadeSlide} initial="initial" animate="animate" exit="exit">
+      {children}
+    </motion.div>
   </TabsPrimitive.Content>
 ));
 TabsContent.displayName = "TabsContent";

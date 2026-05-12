@@ -25,7 +25,7 @@ export function TopBar() {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <span className="text-lg font-bold text-[var(--color-text)]">MindPal</span>
+        <span className="text-base font-semibold text-[var(--color-text)]">MindPal</span>
       </div>
 
       {/* Center: Search trigger */}

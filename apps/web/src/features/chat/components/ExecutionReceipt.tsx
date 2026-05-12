@@ -1,14 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { CheckCircle, XCircle, ChevronDown } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { Badge } from "@/shared/components/primitives/Badge";
 import { Spinner } from "@/shared/components/primitives/Spinner";
-import {
-  Collapsible,
-  CollapsibleTrigger,
-  CollapsibleContent,
-} from "@/shared/components/primitives/Collapsible";
 
 /* ─── Types ─── */
 
@@ -83,6 +79,7 @@ function ExecutionReceipt({
   const config = statusMap[status];
   const StatusIcon = config.icon;
   const hasSteps = steps && steps.length > 0;
+  const [stepsOpen, setStepsOpen] = useState(false);
 
   return (
     <div
@@ -119,12 +116,16 @@ function ExecutionReceipt({
 
       {/* Steps (collapsible) */}
       {hasSteps && (
-        <Collapsible className="mt-3">
-          <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors">
-            <ChevronDown className="h-3.5 w-3.5" />
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setStepsOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+          >
+            <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", stepsOpen && "rotate-180")} />
             <span>步骤详情 ({steps.length})</span>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
+          </button>
+          {stepsOpen && (
             <div className="mt-2 space-y-1.5">
               {steps.map((step) => (
                 <div
@@ -145,8 +146,8 @@ function ExecutionReceipt({
                 </div>
               ))}
             </div>
-          </CollapsibleContent>
-        </Collapsible>
+          )}
+        </div>
       )}
     </div>
   );

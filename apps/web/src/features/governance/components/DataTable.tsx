@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { motion } from "framer-motion";
-import { ArrowUp, ArrowDown, Inbox } from "lucide-react";
+import { ArrowUp, ArrowDown } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/components/primitives/Button";
 import { Checkbox } from "@/shared/components/primitives/Checkbox";
@@ -168,11 +168,16 @@ function DataTableInner<T extends Record<string, unknown>>(
             <tr>
               <td
                 colSpan={columns.length + (selectable ? 1 : 0)}
-                className="py-16 text-center"
+                className="py-12 text-center"
               >
-                <div className="flex flex-col items-center gap-2 text-[var(--color-text-muted)]">
-                  <Inbox className="h-10 w-10" />
-                  <span>{emptyMessage}</span>
+                <div className="flex flex-col items-center justify-center text-center">
+                  <svg className="w-12 h-12 text-[var(--color-text-muted)] opacity-40 mb-3" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M8 12C8 9.79 9.79 8 12 8H28L40 20V36C40 38.21 38.21 40 36 40H12C9.79 40 8 38.21 8 36V12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M28 8V20H40" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M20 28H28" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M20 33H26" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  <p className="text-sm text-[var(--color-text-muted)]">{emptyMessage}</p>
                 </div>
               </td>
             </tr>

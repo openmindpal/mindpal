@@ -9,4 +9,3 @@ export { ChatToolbar } from "./components/ChatToolbar";
 export { ExecutionReceipt } from "./components/ExecutionReceipt";
 export { useChat } from "./hooks/useChat";
 export { useChatStream } from "./hooks/useChatStream";
-export { useTaskEvents } from "./hooks/useTaskEvents";

@@ -6,7 +6,13 @@ import { useSessionStore } from "@/shared/stores/session.store";
 import type { ChatFlowItem } from "@/shared/stores/session.store";
 import type { DispatchResponse, IntentMode } from "@/shared/types";
 import { useChatStream } from "./useChatStream";
-import type { UploadedFile } from "./useFileUpload";
+
+/** Minimal attachment type for send/sendStream */
+export interface UploadedFile {
+  id: string;
+  name: string;
+  mimeType: string;
+}
 
 /* ─── Types ─── */
 

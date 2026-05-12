@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/shared/lib/cn";
@@ -45,10 +44,7 @@ function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) 
   const timestamp = useMemo(() => formatTimestamp(message.timestamp), [message.timestamp]);
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.1 }}
+    <div
       className={cn(
         "flex w-full",
         message.role === "user" && "justify-end",
@@ -65,8 +61,8 @@ function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) 
       >
         {/* User message */}
         {message.role === "user" && (
-          <div className="rounded-[var(--radius-2xl)] rounded-br-[var(--radius-sm)] bg-[var(--color-primary)] px-4 py-2.5 text-[var(--color-text-inverse)]">
-            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+          <div className="rounded-2xl rounded-br-md bg-[var(--color-primary)]/10 px-4 py-2.5">
+            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words text-[var(--color-text)]">
               {message.content}
             </p>
           </div>
@@ -74,7 +70,7 @@ function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) 
 
         {/* Assistant message */}
         {message.role === "assistant" && (
-          <div className="rounded-[var(--radius-2xl)] rounded-bl-[var(--radius-sm)] bg-[var(--color-surface-raised)] px-4 py-3 border border-[var(--color-border)]">
+          <div className="rounded-2xl rounded-bl-md bg-[var(--color-surface)] px-4 py-3 border border-[var(--color-border)]/50">
             {isStreaming ? (
               <StreamingText
                 content={message.content}
@@ -152,7 +148,7 @@ function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) 
         {message.role !== "system" && (
           <p
             className={cn(
-              "mt-1 text-[10px] text-[var(--color-text-muted)]",
+              "mt-1 text-[10px] text-[var(--color-text-muted)]/60",
               message.role === "user" ? "text-right" : "text-left"
             )}
           >
@@ -160,7 +156,7 @@ function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) 
           </p>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }
 

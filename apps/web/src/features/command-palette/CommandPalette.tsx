@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { Command } from "cmdk";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
+import * as Dialog from "@radix-ui/react-dialog";
 import {
   Home,
   Play,
@@ -97,6 +98,7 @@ export function CommandPalette() {
             "animate-in fade-in-0 zoom-in-95 duration-150",
           )}
         >
+          <Dialog.Title className="sr-only">命令面板</Dialog.Title>
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}

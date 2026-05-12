@@ -126,14 +126,14 @@ function MessageList({
               key={virtualRow.key}
               data-index={virtualRow.index}
               ref={virtualizer.measureElement}
-              className="absolute top-0 left-0 w-full px-4 py-3"
+              className="absolute top-0 left-0 w-full px-4 py-1.5"
               style={{
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
               {isStreamingRow ? (
                 <div className="flex w-full justify-start">
-                  <div className="max-w-[80%] rounded-[var(--radius-2xl)] rounded-bl-[var(--radius-sm)] bg-[var(--color-surface-raised)] px-4 py-3 border border-[var(--color-border)]">
+                  <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-[var(--color-surface)] px-4 py-3 border border-[var(--color-border)]/50">
                     <StreamingText
                       content={streamingContent ?? ""}
                       isStreaming={true}

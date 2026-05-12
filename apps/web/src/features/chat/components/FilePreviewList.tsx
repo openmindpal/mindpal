@@ -2,7 +2,13 @@
 
 import { X, FileIcon, ImageIcon, Loader2 } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
-import type { FileUploadItem } from '../hooks/useFileUpload';
+
+interface FileUploadItem {
+  file: File;
+  status: 'uploading' | 'success' | 'error';
+  error?: string;
+  uploaded?: { previewUrl?: string };
+}
 
 interface FilePreviewListProps {
   files: FileUploadItem[];

@@ -1,16 +1,13 @@
 "use client";
 
 import { useCallback } from "react";
-import { MessageSquare, Code2, Lightbulb, Zap, Users } from "lucide-react";
+import { Code2, Lightbulb, Zap, Users } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
+import { apiFetch } from "@/shared/lib/api";
 import { useChat } from "../hooks/useChat";
-import { useTaskEvents } from "../hooks/useTaskEvents";
-import { useVideoStream } from "../hooks/useVideoStream";
-import type { UploadedFile } from "../hooks/useFileUpload";
+import type { UploadedFile } from "../hooks/useChat";
 import { MessageList } from "./MessageList";
 import { ChatComposer } from "./ChatComposer";
-import { ExecutionReceipt } from "./ExecutionReceipt";
-import { VideoStreamPanel } from "./VideoStreamPanel";
 
 /* ─── Types ─── */
 
@@ -31,29 +28,45 @@ const SUGGESTIONS = [
 
 function EmptyState({ onSend }: { onSend: (text: string) => void }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-6 py-12">
-      <MessageSquare className="h-12 w-12 text-[var(--color-text-muted)] mb-4" />
-      <h2 className="text-xl font-semibold text-[var(--color-text)] mb-1">
+    <div className="flex-1 flex flex-col items-center justify-center px-6 py-16">
+      {/* Lightweight inline SVG icon */}
+      <svg
+        className="h-10 w-10 text-[var(--color-primary)] opacity-60 mb-5"
+        viewBox="0 0 48 48"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M24 4C12.954 4 4 11.163 4 20c0 5.105 3.17 9.632 8 12.614V40l5.5-3.5C19.6 36.83 21.77 37 24 37c11.046 0 20-7.163 20-17S35.046 4 24 4z" />
+        <circle cx="16" cy="20" r="1.5" fill="currentColor" stroke="none" />
+        <circle cx="24" cy="20" r="1.5" fill="currentColor" stroke="none" />
+        <circle cx="32" cy="20" r="1.5" fill="currentColor" stroke="none" />
+      </svg>
+
+      <h2 className="text-lg font-medium text-[var(--color-text)] mb-1">
         灵智 MindPal
       </h2>
-      <p className="text-sm text-[var(--color-text-muted)] mb-8">
+      <p className="text-sm text-[var(--color-text-muted)] mb-10">
         有什么我可以帮助你的？
       </p>
-      <div className="flex flex-wrap items-center justify-center gap-2">
+
+      <div className="flex flex-wrap items-center justify-center gap-2 max-w-md">
         {SUGGESTIONS.map(({ text, icon: Icon }) => (
           <button
             key={text}
             type="button"
             onClick={() => onSend(text)}
             className={cn(
-              "inline-flex items-center gap-2 h-9 px-4 rounded-full",
-              "border border-[var(--color-border)] bg-[var(--color-surface)]",
-              "text-sm text-[var(--color-text-secondary)]",
-              "hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)]",
-              "transition-colors duration-150"
+              "inline-flex items-center gap-1.5 h-8 px-4 rounded-full",
+              "border border-[var(--color-border)]/60 bg-transparent",
+              "text-[13px] text-[var(--color-text-secondary)]",
+              "hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5",
+              "transition-all duration-200"
             )}
           >
-            <Icon className="h-4 w-4" />
+            <Icon className="h-3.5 w-3.5" />
             <span>{text}</span>
           </button>
         ))}
@@ -74,41 +87,49 @@ function ChatWindow({ className }: ChatWindowProps) {
     setMode,
     streamingContent,
     isStreaming,
-    conversationId,
   } = useChat();
 
-  const { activeTask } = useTaskEvents({
-    conversationId,
-    enabled: !!conversationId,
-  });
-
-  // Video stream
-  const video = useVideoStream();
-
   const handleSend = useCallback(
-    (text: string, attachments?: UploadedFile[]) => {
-      sendStream(text, undefined, attachments);
+    async (text: string, options?: { files?: File[]; model?: string }) => {
+      const attachments: UploadedFile[] = [];
+
+      // Upload files if any
+      if (options?.files && options.files.length > 0) {
+        for (const file of options.files) {
+          try {
+            const formData = new FormData();
+            formData.append("file", file);
+            const res = await apiFetch("/media/objects", {
+              method: "POST",
+              body: formData,
+            });
+            if (res.ok) {
+              const data = await res.json();
+              attachments.push({
+                id: data.objectId ?? data.id ?? crypto.randomUUID(),
+                name: file.name,
+                mimeType: file.type || "application/octet-stream",
+              });
+            }
+          } catch {
+            // If upload fails, still send message without that file
+          }
+        }
+      }
+
+      if (attachments.length > 0) {
+        send(text, undefined, attachments);
+      } else {
+        sendStream(text);
+      }
     },
-    [sendStream]
+    [sendStream, send]
   );
 
   const hasMessages = messages.length > 0 || isStreaming;
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
-      {/* Video Stream Panel */}
-      {video.state !== 'idle' && (
-        <VideoStreamPanel
-          state={video.state}
-          latestAnalysis={video.latestAnalysis}
-          error={video.error}
-          videoRef={video.videoRef}
-          canvasRef={video.canvasRef}
-          fps={video.fps}
-          onStop={video.stopStream}
-        />
-      )}
-
       {/* Middle: Messages or Empty State */}
       <div className="flex-1 min-h-0 flex flex-col">
         {hasMessages ? (
@@ -122,27 +143,12 @@ function ChatWindow({ className }: ChatWindowProps) {
         )}
       </div>
 
-      {/* Active Task Receipt */}
-      {activeTask && (
-        <div className="max-w-3xl mx-auto w-full px-4 pb-2">
-          <ExecutionReceipt
-            taskId={activeTask.taskId}
-            runId={activeTask.runId}
-            status={activeTask.status}
-            steps={activeTask.steps}
-          />
-        </div>
-      )}
-
       {/* Bottom: Composer */}
-      <div className="border-t border-[var(--color-border)]">
+      <div className="border-t border-[var(--color-border)]/50">
         <div className="max-w-3xl mx-auto w-full px-4 py-3">
           <ChatComposer
             onSend={handleSend}
             isLoading={isLoading || isStreaming}
-            videoState={video.state}
-            onVideoStart={video.startStream}
-            onVideoStop={video.stopStream}
             mode={mode}
             onModeChange={setMode}
           />

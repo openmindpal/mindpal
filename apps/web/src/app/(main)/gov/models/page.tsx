@@ -15,7 +15,7 @@ import {
 import { DataTable } from '@/features/governance/components/DataTable';
 import { StatusBadge } from '@/features/governance/components/StatusBadge';
 import type { ColumnDef } from '@/features/governance/types';
-import { Trash2, ToggleLeft } from 'lucide-react';
+import { Trash2, ToggleLeft, Zap, ChevronDown, CheckCircle2, XCircle } from 'lucide-react';
 
 /* ─── Types ─── */
 interface ModelEntry {
@@ -36,6 +36,13 @@ interface ProviderBinding {
   baseUrl: string;
   status: string;
   createdAt: string;
+  [key: string]: unknown;
+}
+
+interface ConnectorInstance {
+  id: string;
+  name: string;
+  type?: string;
   [key: string]: unknown;
 }
 
@@ -110,6 +117,13 @@ export default function ModelsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [catalogSheetOpen, setCatalogSheetOpen] = useState(false);
   const [bindingSheetOpen, setBindingSheetOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  /* ── Batch selection state ── */
+  const [selectedCatalogRows, setSelectedCatalogRows] = useState<ModelEntry[]>([]);
+
+  /* ── Test connection state ── */
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; msg?: string }>>({});
 
   /* ── Catalog form state ── */
   const [catForm, setCatForm] = useState({
@@ -141,6 +155,17 @@ export default function ModelsPage() {
       const res = await apiFetch('/models/bindings');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json() as Promise<{ scope: Record<string, unknown>; bindings: ProviderBinding[] }>;
+    },
+  });
+
+  /* ── Connector list query ── */
+  const connectorsQuery = useQuery({
+    queryKey: ['/governance/connectors'],
+    queryFn: async () => {
+      const res = await apiFetch('/governance/connectors');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { items?: ConnectorInstance[]; connectors?: ConnectorInstance[] };
+      return (data.items ?? data.connectors ?? []) as ConnectorInstance[];
     },
   });
 
@@ -231,6 +256,60 @@ export default function ModelsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['/models/bindings'] }),
   });
 
+  /* ── Test binding connection ── */
+  const testBindingConnection = useMutation({
+    mutationFn: async (binding: ProviderBinding) => {
+      const res = await apiFetch(`/models/bindings/${encodeURIComponent(binding.id)}/test`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        throw new Error(errBody || `HTTP ${res.status}`);
+      }
+      return res.json();
+    },
+    onSuccess: (_data, binding) => {
+      setTestResults(prev => ({ ...prev, [binding.id]: { ok: true } }));
+    },
+    onError: (err, binding) => {
+      setTestResults(prev => ({ ...prev, [binding.id]: { ok: false, msg: (err as Error).message } }));
+    },
+  });
+
+  /* ── Batch operations ── */
+  const batchToggleStatus = useMutation({
+    mutationFn: async (rows: ModelEntry[]) => {
+      await Promise.all(
+        rows.map(row => {
+          const newStatus = row.status === 'active' ? 'unavailable' : 'active';
+          return apiFetch(`/models/catalog/db/${encodeURIComponent(row.id)}/status`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ status: newStatus }),
+          });
+        }),
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['/models/catalog/db'] });
+      setSelectedCatalogRows([]);
+    },
+  });
+
+  const batchDelete = useMutation({
+    mutationFn: async (rows: ModelEntry[]) => {
+      await Promise.all(
+        rows.map(row =>
+          apiFetch(`/models/catalog/db/${encodeURIComponent(row.id)}`, { method: 'DELETE' }),
+        ),
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['/models/catalog/db'] });
+      setSelectedCatalogRows([]);
+    },
+  });
+
   /* ── Catalog columns with actions ── */
   const catalogColumnsWithActions: ColumnDef<ModelEntry>[] = [
     ...catalogColumns,
@@ -249,18 +328,39 @@ export default function ModelsPage() {
     },
   ];
 
-  /* ── Binding columns with actions ── */
+  /* ── Binding columns with actions (includes test button) ── */
   const bindingColumnsWithActions: ColumnDef<ProviderBinding>[] = [
     ...bindingColumns,
     {
-      key: 'id' as keyof ProviderBinding & string, label: '操作', width: '80px',
-      render: (_v, row) => (
-        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); deleteBinding.mutate(row.id); }}>
-          <Trash2 className="h-4 w-4 text-[var(--color-danger)]" />
-        </Button>
-      ),
+      key: 'id' as keyof ProviderBinding & string, label: '操作', width: '140px',
+      render: (_v, row) => {
+        const result = testResults[row.id];
+        return (
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              title="测试连接"
+              onClick={(e) => { e.stopPropagation(); testBindingConnection.mutate(row); }}
+            >
+              <Zap className="h-4 w-4" />
+            </Button>
+            {result && (
+              result.ok
+                ? <span title="连接成功"><CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" /></span>
+                : <span title={result.msg ?? '连接失败'}><XCircle className="h-4 w-4 text-[var(--color-danger)]" /></span>
+            )}
+            <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); deleteBinding.mutate(row.id); }}>
+              <Trash2 className="h-4 w-4 text-[var(--color-danger)]" />
+            </Button>
+          </div>
+        );
+      },
     },
   ];
+
+  /* ── Connector options ── */
+  const connectors = connectorsQuery.data ?? [];
 
   return (
     <div className="space-y-6 p-6">
@@ -276,18 +376,49 @@ export default function ModelsPage() {
         <TabsContent value="catalog">
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-4">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[160px]">
-                  <SelectValue placeholder="按状态筛选" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">全部</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="degraded">Degraded</SelectItem>
-                  <SelectItem value="unavailable">Unavailable</SelectItem>
-                  <SelectItem value="probing">Probing</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-3">
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue placeholder="按状态筛选" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">全部</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="degraded">Degraded</SelectItem>
+                    <SelectItem value="unavailable">Unavailable</SelectItem>
+                    <SelectItem value="probing">Probing</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* Batch toolbar */}
+                {selectedCatalogRows.length > 0 && (
+                  <div className="flex items-center gap-2 rounded-md bg-[var(--color-surface-raised)] px-3 py-1.5 text-[var(--text-sm)]">
+                    <span className="text-[var(--color-text-secondary)]">已选 {selectedCatalogRows.length} 项</span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => batchToggleStatus.mutate(selectedCatalogRows)}
+                      loading={batchToggleStatus.isPending}
+                    >
+                      <ToggleLeft className="mr-1 h-3.5 w-3.5" />
+                      切换状态
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-[var(--color-danger)]"
+                      onClick={() => {
+                        if (confirm(`确认删除选中的 ${selectedCatalogRows.length} 个模型？`)) {
+                          batchDelete.mutate(selectedCatalogRows);
+                        }
+                      }}
+                      loading={batchDelete.isPending}
+                    >
+                      <Trash2 className="mr-1 h-3.5 w-3.5" />
+                      批量删除
+                    </Button>
+                  </div>
+                )}
+              </div>
               <Button size="sm" onClick={() => setCatalogSheetOpen(true)}>新建模型</Button>
             </div>
             <DataTable<ModelEntry>
@@ -295,6 +426,9 @@ export default function ModelsPage() {
               data={catalogQuery.data?.entries ?? []}
               loading={catalogQuery.isLoading}
               emptyMessage="暂无模型目录数据"
+              selectable
+              selectedRows={selectedCatalogRows}
+              onSelectionChange={setSelectedCatalogRows}
             />
           </div>
         </TabsContent>
@@ -381,6 +515,7 @@ export default function ModelsPage() {
             <SheetDescription>将模型连接到提供方 API</SheetDescription>
           </SheetHeader>
           <form className="mt-6 space-y-4" onSubmit={(e) => { e.preventDefault(); createBinding.mutate(); }}>
+            {/* ── 基础字段 ── */}
             <label className="block space-y-1">
               <span className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)]">提供方 *</span>
               <Select
@@ -407,21 +542,55 @@ export default function ModelsPage() {
               <Input value={bindForm.baseUrl} onChange={(e) => setBindForm(p => ({ ...p, baseUrl: e.target.value }))} placeholder="https://..." required />
             </label>
             <label className="block space-y-1">
-              <span className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)]">Chat Completions Path</span>
-              <Input value={bindForm.chatCompletionsPath} onChange={(e) => setBindForm(p => ({ ...p, chatCompletionsPath: e.target.value }))} placeholder="/chat/completions" />
-            </label>
-            <label className="block space-y-1">
-              <span className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)]">Connector Instance ID</span>
-              <Input value={bindForm.connectorInstanceId} onChange={(e) => setBindForm(p => ({ ...p, connectorInstanceId: e.target.value }))} />
-            </label>
-            <label className="block space-y-1">
               <span className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)]">Secret ID</span>
-              <Input value={bindForm.secretId} onChange={(e) => setBindForm(p => ({ ...p, secretId: e.target.value }))} />
+              <Input value={bindForm.secretId} onChange={(e) => setBindForm(p => ({ ...p, secretId: e.target.value }))} placeholder="密钥标识" />
             </label>
-            <label className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-text-secondary)]">
-              <input type="checkbox" checked={bindForm.testBeforeSave} onChange={(e) => setBindForm(p => ({ ...p, testBeforeSave: e.target.checked }))} className="rounded" />
-              保存前测试连接
-            </label>
+
+            {/* ── 高级字段（折叠） ── */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((v) => !v)}
+                className="flex w-full items-center gap-1 border-t border-[var(--color-border)] pt-3 text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+              >
+                <ChevronDown className={`h-4 w-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
+                高级设置
+              </button>
+              {advancedOpen && (
+              <div className="space-y-4 pt-3">
+                <label className="block space-y-1">
+                  <span className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)]">Chat Completions Path</span>
+                  <Input value={bindForm.chatCompletionsPath} onChange={(e) => setBindForm(p => ({ ...p, chatCompletionsPath: e.target.value }))} placeholder="/chat/completions" />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)]">Connector Instance</span>
+                  {connectors.length === 0 ? (
+                    <p className="text-[var(--text-sm)] text-[var(--color-text-muted)] italic">暂无连接器，请先创建</p>
+                  ) : (
+                    <Select
+                      value={bindForm.connectorInstanceId}
+                      onValueChange={(v) => setBindForm(p => ({ ...p, connectorInstanceId: v }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="选择连接器" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {connectors.map(c => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}{c.type ? ` (${c.type})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </label>
+                <label className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-text-secondary)]">
+                  <input type="checkbox" checked={bindForm.testBeforeSave} onChange={(e) => setBindForm(p => ({ ...p, testBeforeSave: e.target.checked }))} className="rounded" />
+                  保存前测试连接
+                </label>
+              </div>
+              )}
+            </div>
 
             <div className="flex justify-end pt-4">
               <Button type="submit" loading={createBinding.isPending}>保存</Button>

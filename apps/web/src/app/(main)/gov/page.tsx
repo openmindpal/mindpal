@@ -38,6 +38,7 @@ import {
   HardDrive,
   Cog,
   Package,
+  Key,
   type LucideIcon,
 } from "lucide-react";
 import { Skeleton } from "@/shared/components/primitives/Skeleton";
@@ -63,7 +64,7 @@ interface MetricCardProps {
 
 function MetricCard({ label, value, isLoading, icon: Icon, color }: MetricCardProps) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-0)] p-4">
+    <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-full", color)}>
         <Icon className="h-5 w-5 text-white" />
       </div>
@@ -91,7 +92,7 @@ function NavCard({ icon: Icon, title, description, href }: NavItem) {
   return (
     <Link
       href={href}
-      className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-0)] p-4 transition-shadow hover:shadow-md"
+      className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-colors hover:bg-[var(--color-surface-sunken)]"
     >
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-sunken)]">
         <Icon className="h-5 w-5 text-[var(--color-text-secondary)]" />
@@ -137,6 +138,8 @@ const navItems: NavItem[] = [
   { icon: HardDrive, title: "摄入任务", description: "知识摄入与索引", href: "/gov/knowledge/jobs" },
   { icon: Cog, title: "检索引擎", description: "检索策略配置", href: "/gov/knowledge/engine" },
   { icon: Package, title: "Skill 包", description: "技能包注册与版本", href: "/gov/skill-packages" },
+  { icon: Key, title: "凭证管理", description: "密钥凭证生命周期管理", href: "/gov/secrets" },
+  { icon: Plug, title: "连接器管理", description: "连接器实例与出站策略", href: "/gov/connectors" },
 ];
 
 /* ─── Page Component ─── */

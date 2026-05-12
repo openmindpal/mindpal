@@ -23,8 +23,6 @@ export { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 
 // 展示组件
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
-export { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./Accordion";
-export { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./Collapsible";
 export { Avatar, type AvatarProps } from "./Avatar";
 export { Badge, type BadgeProps } from "./Badge";
 export { Tag, type TagProps } from "./Tag";

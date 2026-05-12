@@ -4,7 +4,18 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
-import { overlayFade, scaleIn } from "@/shared/lib/motion";
+
+const overlayFade = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: { duration: 0.2 } },
+  exit: { opacity: 0, transition: { duration: 0.15 } },
+};
+
+const scaleIn = {
+  initial: { opacity: 0, scale: 0.96 },
+  animate: { opacity: 1, scale: 1, transition: { duration: 0.2, ease: [0.16, 1, 0.3, 1] } },
+  exit: { opacity: 0, scale: 0.96, transition: { duration: 0.15 } },
+};
 
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;

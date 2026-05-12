@@ -1,16 +1,9 @@
 "use client";
 
-import { Wrench, Check, X, Circle } from "lucide-react";
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/shared/lib/cn";
-import {
-  Collapsible,
-  CollapsibleTrigger,
-  CollapsibleContent,
-} from "@/shared/components/primitives/Collapsible";
-import { Spinner } from "@/shared/components/primitives/Spinner";
-import { CodeBlock } from "./CodeBlock";
 
 interface ToolCallCardProps {
   toolRef: string;
@@ -22,22 +15,22 @@ interface ToolCallCardProps {
 
 const statusConfig = {
   pending: {
-    icon: <Circle className="h-3 w-3 fill-[var(--color-text-muted)] text-[var(--color-text-muted)]" />,
+    dot: "bg-[var(--color-text-muted)]",
     label: "等待中",
     color: "text-[var(--color-text-muted)]",
   },
   running: {
-    icon: null, // Uses Spinner
+    dot: "bg-[var(--color-primary)] animate-pulse",
     label: "执行中",
     color: "text-[var(--color-primary)]",
   },
   done: {
-    icon: <Check className="h-3.5 w-3.5 text-[var(--color-success)]" />,
+    dot: "bg-[var(--color-success)]",
     label: "完成",
     color: "text-[var(--color-success)]",
   },
   error: {
-    icon: <X className="h-3.5 w-3.5 text-[var(--color-danger)]" />,
+    dot: "bg-[var(--color-danger)]",
     label: "失败",
     color: "text-[var(--color-danger)]",
   },
@@ -51,62 +44,55 @@ function ToolCallCard({
   className,
 }: ToolCallCardProps) {
   const config = statusConfig[status];
-  const defaultOpen = status === "running";
+  const [open, setOpen] = useState(status === "running");
 
   return (
-    <Collapsible defaultOpen={defaultOpen} className={cn("w-full", className)}>
+    <div className={cn("w-full", className)}>
       <div
         className={cn(
-          "rounded-[var(--radius-lg)] border border-[var(--color-border)] overflow-hidden",
+          "rounded-lg border border-[var(--color-border)]/40 overflow-hidden",
           "bg-[var(--color-surface)]"
         )}
       >
         {/* Header */}
-        <CollapsibleTrigger className="flex w-full items-center gap-3 px-4 py-3 hover:bg-[var(--color-surface-sunken)] transition-colors duration-[var(--duration-fast)]">
-          <Wrench className="h-4 w-4 flex-shrink-0 text-[var(--color-text-secondary)]" />
-          <span className="flex-1 text-left text-sm font-medium text-[var(--color-text)] truncate">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center gap-2.5 px-3 py-2 hover:bg-[var(--color-surface-sunken)]/50 transition-colors duration-[var(--duration-fast)]"
+        >
+          <span className="flex-1 text-left text-xs font-medium text-[var(--color-text)] truncate">
             {toolRef}
           </span>
 
-          {/* Status indicator */}
+          {/* Status indicator — small dot */}
           <div className={cn("flex items-center gap-1.5", config.color)}>
-            {status === "running" ? (
-              <>
-                <span className="relative flex h-3 w-3">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--color-primary)] opacity-75" />
-                  <span className="relative inline-flex h-3 w-3 rounded-full bg-[var(--color-primary)]" />
-                </span>
-                <Spinner size="sm" />
-              </>
-            ) : (
-              config.icon
-            )}
-            <span className="text-xs">{config.label}</span>
+            <span className={cn("inline-block h-1.5 w-1.5 rounded-full", config.dot)} />
+            <span className="text-[11px]">{config.label}</span>
           </div>
-        </CollapsibleTrigger>
+        </button>
 
         {/* Collapsible content */}
-        <CollapsibleContent>
-          <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-3">
+        {open && (
+          <div className="border-t border-[var(--color-border)]/30 px-3 py-2.5 space-y-2.5">
             {/* Input parameters */}
             {input && Object.keys(input).length > 0 && (
               <div>
-                <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
+                <p className="text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">
                   输入参数
                 </p>
-                <CodeBlock language="json">
+                <pre className="text-[11px] leading-relaxed font-[var(--font-mono)] text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] rounded-md px-2.5 py-2 overflow-x-auto">
                   {JSON.stringify(input, null, 2)}
-                </CodeBlock>
+                </pre>
               </div>
             )}
 
             {/* Output result */}
             {output && (
               <div>
-                <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">
+                <p className="text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">
                   输出结果
                 </p>
-                <div className="prose prose-sm max-w-none text-[var(--color-text)]">
+                <div className="prose prose-sm max-w-none text-[var(--color-text)] text-xs">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {output}
                   </ReactMarkdown>
@@ -114,9 +100,9 @@ function ToolCallCard({
               </div>
             )}
           </div>
-        </CollapsibleContent>
+        )}
       </div>
-    </Collapsible>
+    </div>
   );
 }
 

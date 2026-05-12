@@ -1,7 +1,7 @@
 "use client";
 
 import { Settings } from "lucide-react";
-import { LocaleSection, DisplaySection } from "@/features/settings";
+import { LocaleSection, DisplaySection, TokensSection, MfaSection } from "@/features/settings";
 
 export default function SettingsPage() {
   return (
@@ -16,6 +16,8 @@ export default function SettingsPage() {
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
         <LocaleSection />
         <DisplaySection />
+        <TokensSection />
+        <MfaSection />
       </div>
     </div>
   );
