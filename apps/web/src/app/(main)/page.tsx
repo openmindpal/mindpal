@@ -1,5 +1,9 @@
 import { ChatWindow } from '@/features/chat';
 
 export default function HomePage() {
-  return <ChatWindow className="h-full" />;
+  return (
+    <div className="flex min-h-0 flex-1 w-full overflow-hidden">
+      <ChatWindow />
+    </div>
+  );
 }

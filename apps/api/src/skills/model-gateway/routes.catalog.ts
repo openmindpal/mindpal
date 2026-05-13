@@ -4,6 +4,7 @@ import { requirePermission } from "../../modules/auth/guard";
 import { PERM } from "@mindpal/shared";
 import { setAuditContext } from "../../modules/audit/context";
 import { modelCatalog, openaiCompatibleProviders } from "./modules/catalog";
+import { supportedModelProviders } from "../../lib/modelProviderContract";
 import {
   listModelCatalogFromDb,
   findCatalogByRefFromDb,
@@ -12,7 +13,69 @@ import {
   type ModelStatus,
 } from "../../modules/modelGateway/catalog";
 
+/** 提供方显示名称映射 */
+const PROVIDER_LABELS: Record<string, string> = {
+  // 国产大模型
+  deepseek: "DeepSeek（深度求索）",
+  qwen: "通义千问",
+  hunyuan: "腾讯混元",
+  zhipu: "智谱GLM",
+  ernie: "百度文心",
+  minimax: "MiniMax",
+  kimi: "月之暗面Kimi",
+  yi: "零一万物",
+  spark: "讯飞星火",
+  doubao: "字节豆包",
+  step: "阶跃星辰",
+  baichuan: "百川智能",
+  sensenova: "商汤日日新",
+  // 国外/通用
+  openai: "OpenAI",
+  custom_openai: "OpenAI兼容（自定义）",
+  openai_compatible: "OpenAI兼容（通用）",
+  gemini: "Google Gemini",
+  custom_gemini: "Gemini兼容",
+  anthropic: "Anthropic Claude",
+  custom_anthropic: "Anthropic兼容",
+  // 测试
+  mock: "Mock（测试）",
+};
+
+/** 提供方排序优先级（国产优先，国外次之，测试最后） */
+const PROVIDER_ORDER: string[] = [
+  // 国产优先
+  'deepseek', 'qwen', 'hunyuan', 'zhipu', 'ernie', 'minimax', 'kimi',
+  'yi', 'spark', 'doubao', 'step', 'baichuan', 'sensenova',
+  // 国外/通用
+  'openai', 'custom_openai', 'openai_compatible', 'gemini', 'custom_gemini',
+  'anthropic', 'custom_anthropic',
+  // 测试
+  'mock',
+];
+
 export const modelCatalogRoutes: FastifyPluginAsync = async (app) => {
+  // ── GET /models/providers — 返回支持的提供方列表 ─────────────
+  app.get("/models/providers", async (req) => {
+    setAuditContext(req, { resourceType: "model", action: "read" });
+    const decision = await requirePermission({ req, ...PERM.MODEL_READ });
+    req.ctx.audit!.policyDecision = decision;
+    const providers = supportedModelProviders
+      .filter(id => id !== 'openai_compatible') // 去重：功能与 custom_openai 相同
+      .map((id) => ({
+        id,
+        label: PROVIDER_LABELS[id] ?? id,
+      }));
+    // 按国产优先排序
+    providers.sort((a, b) => {
+      const ia = PROVIDER_ORDER.indexOf(a.id);
+      const ib = PROVIDER_ORDER.indexOf(b.id);
+      const orderA = ia === -1 ? PROVIDER_ORDER.length - 1 : ia;
+      const orderB = ib === -1 ? PROVIDER_ORDER.length - 1 : ib;
+      return orderA - orderB;
+    });
+    return { providers };
+  });
+
   // ── 原有端点：静态目录 + 模板 ───────────────────────────
   app.get("/models/catalog", async (req) => {
     setAuditContext(req, { resourceType: "model", action: "read" });

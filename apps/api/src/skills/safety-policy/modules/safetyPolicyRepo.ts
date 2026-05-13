@@ -204,6 +204,44 @@ export async function getSafetyPolicyVersion(params: { pool: Pool; tenantId: str
   } satisfies SafetyPolicyVersionRow;
 }
 
+export async function updateSafetyPolicy(params: { pool: Pool; tenantId: string; policyId: string; name?: string; policyType?: SafetyPolicyType }) {
+  const fields: string[] = [];
+  const values: unknown[] = [params.tenantId, params.policyId];
+  let idx = 3;
+  if (params.name !== undefined) {
+    fields.push(`name = $${idx}`);
+    values.push(params.name);
+    idx++;
+  }
+  if (params.policyType !== undefined) {
+    fields.push(`policy_type = $${idx}`);
+    values.push(params.policyType);
+    idx++;
+  }
+  if (!fields.length) return null;
+  const res = await params.pool.query(
+    `UPDATE safety_policies SET ${fields.join(", ")} WHERE tenant_id = $1 AND policy_id = $2 RETURNING policy_id, tenant_id, policy_type, name, created_at`,
+    values,
+  );
+  if (!res.rowCount) return null;
+  const r = res.rows[0] as any;
+  return {
+    policyId: String(r.policy_id),
+    tenantId: String(r.tenant_id),
+    policyType: String(r.policy_type) as SafetyPolicyType,
+    name: String(r.name),
+    createdAt: (r.created_at as Date).toISOString(),
+  } satisfies SafetyPolicyRow;
+}
+
+export async function deleteSafetyPolicy(params: { pool: Pool; tenantId: string; policyId: string }) {
+  const res = await params.pool.query(
+    `DELETE FROM safety_policies WHERE tenant_id = $1 AND policy_id = $2 RETURNING policy_id`,
+    [params.tenantId, params.policyId],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 export async function getEffectiveSafetyPolicyVersion(params: { pool: Pool; tenantId: string; spaceId: string | null; policyType: SafetyPolicyType }) {
   const res = await params.pool.query(
     `

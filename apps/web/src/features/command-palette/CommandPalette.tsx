@@ -3,7 +3,6 @@
 import { useCallback } from "react";
 import { Command } from "cmdk";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   Home,
@@ -81,7 +80,7 @@ export function CommandPalette() {
   );
 
   return (
-    <AnimatePresence>
+    <>
       {open && (
         <Command.Dialog
           open={open}
@@ -93,18 +92,13 @@ export function CommandPalette() {
           overlayClassName="fixed inset-0 z-[var(--z-overlay)] bg-black/50"
           contentClassName={cn(
             "fixed left-1/2 top-[20%] z-[var(--z-modal)] w-full max-w-lg -translate-x-1/2",
-            "rounded-[var(--radius-xl)] border border-[var(--color-border)]",
+            "rounded-[var(--radius-lg)] border border-[var(--color-border)]",
             "bg-[var(--color-surface-0)] shadow-lg overflow-hidden",
             "animate-in fade-in-0 zoom-in-95 duration-150",
           )}
         >
           <Dialog.Title className="sr-only">命令面板</Dialog.Title>
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.15 }}
-          >
+          <div>
             {/* Search Input */}
             <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4">
               <Search className="h-5 w-5 shrink-0 text-[var(--color-text-muted)]" />
@@ -152,10 +146,10 @@ export function CommandPalette() {
                 <CommandItem onSelect={handleToggleSidebar} icon={<PanelLeft />} label="切换侧边栏" />
               </Command.Group>
             </Command.List>
-          </motion.div>
+          </div>
         </Command.Dialog>
       )}
-    </AnimatePresence>
+    </>
   );
 }
 

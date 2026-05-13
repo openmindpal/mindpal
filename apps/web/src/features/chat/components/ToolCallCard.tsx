@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/shared/lib/cn";
@@ -20,9 +19,9 @@ const statusConfig = {
     color: "text-[var(--color-text-muted)]",
   },
   running: {
-    dot: "bg-[var(--color-primary)] animate-pulse",
+    dot: "bg-[var(--color-text-muted)] animate-pulse",
     label: "执行中",
-    color: "text-[var(--color-primary)]",
+    color: "text-[var(--color-text-secondary)]",
   },
   done: {
     dot: "bg-[var(--color-success)]",
@@ -44,43 +43,37 @@ function ToolCallCard({
   className,
 }: ToolCallCardProps) {
   const config = statusConfig[status];
-  const [open, setOpen] = useState(status === "running");
 
   return (
     <div className={cn("w-full", className)}>
       <div
         className={cn(
-          "rounded-lg border border-[var(--color-border)]/40 overflow-hidden",
+          "rounded-[var(--radius-md)] border border-[var(--color-border)] overflow-hidden",
           "bg-[var(--color-surface)]"
         )}
       >
         {/* Header */}
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex w-full items-center gap-2.5 px-3 py-2 hover:bg-[var(--color-surface-sunken)]/50 transition-colors duration-[var(--duration-fast)]"
-        >
-          <span className="flex-1 text-left text-xs font-medium text-[var(--color-text)] truncate">
+        <div className="flex w-full items-center gap-2.5 px-3 py-2">
+          <span className="flex-1 text-left text-[var(--text-xs)] font-medium text-[var(--color-text)] truncate">
             {toolRef}
           </span>
 
           {/* Status indicator — small dot */}
           <div className={cn("flex items-center gap-1.5", config.color)}>
-            <span className={cn("inline-block h-1.5 w-1.5 rounded-full", config.dot)} />
-            <span className="text-[11px]">{config.label}</span>
+            <span className={cn("inline-block h-2 w-2 rounded-full", config.dot)} />
+            <span className="text-[var(--text-xs)]">{config.label}</span>
           </div>
-        </button>
+        </div>
 
-        {/* Collapsible content */}
-        {open && (
-          <div className="border-t border-[var(--color-border)]/30 px-3 py-2.5 space-y-2.5">
+        {/* Content — always visible */}
+        <div className="border-t border-[var(--color-border)] px-3 py-2.5 space-y-2.5">
             {/* Input parameters */}
             {input && Object.keys(input).length > 0 && (
               <div>
-                <p className="text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">
+                <p className="text-[var(--text-xs)] font-medium text-[var(--color-text-secondary)] mb-1">
                   输入参数
                 </p>
-                <pre className="text-[11px] leading-relaxed font-[var(--font-mono)] text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] rounded-md px-2.5 py-2 overflow-x-auto">
+                <pre className="text-[var(--text-xs)] leading-relaxed font-[var(--font-mono)] text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] rounded-[var(--radius-md)] px-2.5 py-2 overflow-x-auto">
                   {JSON.stringify(input, null, 2)}
                 </pre>
               </div>
@@ -89,18 +82,17 @@ function ToolCallCard({
             {/* Output result */}
             {output && (
               <div>
-                <p className="text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">
+                <p className="text-[var(--text-xs)] font-medium text-[var(--color-text-secondary)] mb-1">
                   输出结果
                 </p>
-                <div className="prose prose-sm max-w-none text-[var(--color-text)] text-xs">
+                <div className="prose prose-sm max-w-none text-[var(--color-text)] text-[var(--text-xs)]">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {output}
                   </ReactMarkdown>
                 </div>
               </div>
             )}
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -22,7 +22,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from '@/shared/components/primitives';
+} from '@/shared/components/primitives/Tooltip';
 import type { LucideIcon } from 'lucide-react';
 
 interface NavItem {
@@ -80,21 +80,21 @@ export function Sidebar() {
     <TooltipProvider delayDuration={0}>
       <aside
         className={cn(
-          'relative z-[var(--z-sticky)] shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] transition-all duration-200',
+          'relative z-[var(--z-sticky)] shrink-0 flex flex-col border-r border-[var(--color-border-light)] bg-[var(--color-surface-raised)] transition-all duration-150',
           sidebarCollapsed ? 'w-[var(--sidebar-collapsed-width)]' : 'w-[var(--sidebar-width)]',
           'max-sm:hidden'
         )}
       >
         {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 overflow-y-auto px-2.5 py-5">
           {navGroups.map((group) => (
-            <div key={group.title} className="mb-3">
+            <div key={group.title} className="mb-4 last:mb-0">
               {!sidebarCollapsed && (
-                <span className="mb-1 block px-3 text-[var(--text-xs)] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
+                <span className="mb-1.5 block px-3 text-[var(--text-xs)] font-medium tracking-wide text-[var(--color-text-muted)]">
                   {group.title}
                 </span>
               )}
-              <ul className="space-y-0.5">
+              <ul className="space-y-1">
                 {group.items.map((item) => {
                   const isActive =
                     item.path === '/'
@@ -106,11 +106,11 @@ export function Sidebar() {
                     <Link
                       href={item.path}
                       className={cn(
-                        'flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2 text-[var(--text-sm)] font-medium transition-all duration-150',
+                        'flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-[var(--text-sm)] transition-all duration-150',
                         isActive
-                          ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary)] shadow-sm'
+                          ? 'bg-[var(--color-surface-sunken)] font-medium text-[var(--color-text)] shadow-[var(--shadow-xs)]'
                           : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text)]',
-                        sidebarCollapsed && 'justify-center px-2'
+                        sidebarCollapsed && 'justify-center px-2.5'
                       )}
                     >
                       <Icon className="h-5 w-5 shrink-0" />
@@ -139,11 +139,11 @@ export function Sidebar() {
         </nav>
 
         {/* Collapse Toggle */}
-        <div className="border-t border-[var(--color-border)] p-2">
+        <div className="border-t border-[var(--color-border-light)] p-2.5">
           <button
             type="button"
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="flex w-full items-center justify-center rounded-[var(--radius-md)] p-2 text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text)] transition-colors"
+            className="flex w-full items-center justify-center rounded-xl p-2 text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text)]"
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {sidebarCollapsed ? (

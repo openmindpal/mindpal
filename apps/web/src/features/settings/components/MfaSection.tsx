@@ -234,8 +234,8 @@ export function MfaSection() {
           )}
 
           {/* 错误 / 成功提示 */}
-          {error && <p className="text-sm text-[#dc2626]">{error}</p>}
-          {success && <p className="text-sm text-[#16a34a]">{success}</p>}
+          {error && <p className="text-sm text-[var(--color-danger-text)]">{error}</p>}
+          {success && <p className="text-sm text-[var(--color-success-text)]">{success}</p>}
         </div>
       )}
     </section>

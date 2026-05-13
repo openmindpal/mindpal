@@ -4,7 +4,7 @@ import { X, Info, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 
 const variants = {
-  info: { bg: "bg-[var(--color-primary-soft)]", text: "text-[var(--color-primary)]", Icon: Info },
+  info: { bg: "bg-[var(--color-surface-sunken)]", text: "text-[var(--color-text-secondary)]", Icon: Info },
   success: { bg: "bg-[var(--color-success-soft)]", text: "text-[var(--color-success)]", Icon: CheckCircle },
   warning: { bg: "bg-[var(--color-warning-soft)]", text: "text-[var(--color-warning)]", Icon: AlertTriangle },
   danger: { bg: "bg-[var(--color-danger-soft)]", text: "text-[var(--color-danger)]", Icon: XCircle },

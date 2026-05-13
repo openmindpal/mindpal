@@ -47,5 +47,6 @@ export function useMemorySearch(params: MemorySearchParams) {
     },
     enabled: q.trim().length > 0,
     staleTime: 30_000,
+    gcTime: 5 * 60_000,
   });
 }

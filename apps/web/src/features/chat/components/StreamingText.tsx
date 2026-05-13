@@ -42,19 +42,23 @@ function StreamingText({ content, isStreaming, className }: StreamingTextProps) 
         {content}
       </ReactMarkdown>
 
-      {isStreaming && (
-        <span
-          className="inline-block w-[2px] h-[1.2em] ml-0.5 align-middle bg-[var(--color-text)] animate-[blink_1s_infinite]"
-          aria-hidden="true"
-        />
+      {isStreaming && !content && (
+        <span className="inline-flex gap-1 ml-1 items-center">
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)] animate-[pulse_1.4s_ease-in-out_infinite]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)] animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)] animate-[pulse_1.4s_ease-in-out_0.4s_infinite]" />
+        </span>
       )}
 
-      <style jsx>{`
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0; }
-        }
-      `}</style>
+      {isStreaming && content && (
+        <span
+          className="inline-block ml-0.5 text-[var(--color-text)] font-normal"
+          style={{ animation: "blink 1s steps(2, start) infinite" }}
+          aria-hidden="true"
+        >
+          ▋
+        </span>
+      )}
     </div>
   );
 }

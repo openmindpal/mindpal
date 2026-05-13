@@ -730,6 +730,45 @@ export async function updateOutboxExternalMessageId(params: {
   );
 }
 
+export async function updateWebhookConfig(params: {
+  pool: Pool; tenantId: string; provider: string; workspaceId: string;
+  displayName?: string | null;
+  secretId?: string | null;
+  secretEnvKey?: string | null;
+  providerConfig?: any;
+  toleranceSec?: number;
+  deliveryMode?: "sync" | "async";
+  maxAttempts?: number;
+  backoffMsBase?: number;
+  spaceId?: string | null;
+}): Promise<ChannelWebhookConfigRow | null> {
+  const sets: string[] = [];
+  const values: any[] = [params.tenantId, params.provider, params.workspaceId];
+  let idx = 3;
+  if (params.displayName !== undefined) { idx++; sets.push(`display_name = $${idx}`); values.push(params.displayName); }
+  if (params.secretId !== undefined) { idx++; sets.push(`secret_id = $${idx}`); values.push(params.secretId); }
+  if (params.secretEnvKey !== undefined) { idx++; sets.push(`secret_env_key = $${idx}`); values.push(params.secretEnvKey); }
+  if (params.providerConfig !== undefined) { idx++; sets.push(`provider_config = $${idx}::jsonb`); values.push(params.providerConfig == null ? null : JSON.stringify(params.providerConfig)); }
+  if (params.toleranceSec !== undefined) { idx++; sets.push(`tolerance_sec = $${idx}`); values.push(params.toleranceSec); }
+  if (params.deliveryMode !== undefined) { idx++; sets.push(`delivery_mode = $${idx}`); values.push(params.deliveryMode); }
+  if (params.maxAttempts !== undefined) { idx++; sets.push(`max_attempts = $${idx}`); values.push(params.maxAttempts); }
+  if (params.backoffMsBase !== undefined) { idx++; sets.push(`backoff_ms_base = $${idx}`); values.push(params.backoffMsBase); }
+  if (params.spaceId !== undefined) { idx++; sets.push(`space_id = $${idx}`); values.push(params.spaceId); }
+  if (sets.length === 0) {
+    // Nothing to update, just return current row
+    return getWebhookConfig({ pool: params.pool, tenantId: params.tenantId, provider: params.provider, workspaceId: params.workspaceId });
+  }
+  sets.push(`updated_at = now()`);
+  const { rows } = await params.pool.query(
+    `UPDATE channel_webhook_configs
+     SET ${sets.join(", ")}
+     WHERE tenant_id = $1 AND provider = $2 AND workspace_id = $3
+     RETURNING *`,
+    values
+  );
+  return rows[0] ? toWebhookConfig(rows[0]) : null;
+}
+
 export async function deleteWebhookConfig(params: {
   pool: Pool; tenantId: string; provider: string; workspaceId: string;
 }): Promise<ChannelWebhookConfigRow | null> {

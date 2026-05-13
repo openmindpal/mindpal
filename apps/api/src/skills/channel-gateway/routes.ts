@@ -50,6 +50,7 @@ import {
 import {
   updateWebhookConfigEnabled,
   updateWebhookConfigAdmissionPolicy,
+  updateWebhookConfig,
   deleteWebhookConfig,
 } from "./modules/channelRepo";
 import {
@@ -460,6 +461,47 @@ export const channelRoutes: FastifyPluginAsync = async (app) => {
     const configs = await listWebhookConfigs({ pool: app.db, tenantId: subject.tenantId, provider: q.provider, workspaceId: q.workspaceId, limit: q.limit ?? 50 });
     req.ctx.audit!.outputDigest = { count: configs.length };
     return { configs };
+  });
+
+  app.put("/governance/channels/webhook/configs/:id", async (req) => {
+    const subject = req.ctx.subject!;
+    setAuditContext(req, { resourceType: "governance", action: "channel.webhook_config.write" });
+    const decision = await requirePermission({ req, resourceType: "governance", action: "channel.webhook_config.write" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const params = z.object({ id: z.string().min(1) }).parse(req.params);
+    // id 格式：provider:workspaceId
+    const sepIdx = params.id.indexOf(":");
+    if (sepIdx < 1) throw Errors.badRequest("id 格式应为 provider:workspaceId");
+    const provider = params.id.slice(0, sepIdx);
+    const workspaceId = params.id.slice(sepIdx + 1);
+    if (!provider || !workspaceId) throw Errors.badRequest("id 格式应为 provider:workspaceId");
+
+    const body = z
+      .object({
+        displayName: z.string().max(200).nullable().optional(),
+        secretId: z.string().uuid().nullable().optional(),
+        secretEnvKey: z.string().min(1).nullable().optional(),
+        providerConfig: z.record(z.string(), z.any()).nullable().optional(),
+        toleranceSec: z.number().int().positive().max(3600).optional(),
+        deliveryMode: z.enum(["sync", "async"]).optional(),
+        maxAttempts: z.number().int().min(1).max(50).optional(),
+        backoffMsBase: z.number().int().min(0).max(60_000).optional(),
+        spaceId: z.string().min(1).nullable().optional(),
+      })
+      .parse(req.body);
+
+    const updated = await updateWebhookConfig({
+      pool: app.db,
+      tenantId: subject.tenantId,
+      provider,
+      workspaceId,
+      ...body,
+    });
+    if (!updated) throw Errors.notFound("config not found");
+
+    req.ctx.audit!.outputDigest = { provider, workspaceId, updatedFields: Object.keys(body) };
+    return { config: updated };
   });
 
   // [高级] 手动配置入口 — 仅供高级用户/调试使用（setup 流程自带验证，此路由用于独立测试飞书配置）

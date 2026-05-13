@@ -13,7 +13,7 @@ export interface UseChatStreamReturn {
   phase: string;
   isStreaming: boolean;
   classification: IntentClassification | null;
-  startStream: (text: string, options: { conversationId: string; mode: string; locale: string }) => void;
+  startStream: (text: string, options: { conversationId: string; mode: string; locale: string; defaultModelRef?: string }) => void;
   abortStream: () => void;
 }
 
@@ -104,7 +104,7 @@ export function useChatStream(): UseChatStreamReturn {
     flush();
   }, [flush]);
 
-  const startStream = useCallback((text: string, options: { conversationId: string; mode: string; locale: string }) => {
+  const startStream = useCallback((text: string, options: { conversationId: string; mode: string; locale: string; defaultModelRef?: string }) => {
     // Abort any existing stream
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -129,6 +129,7 @@ export function useChatStream(): UseChatStreamReturn {
       mode: options.mode,
       locale: options.locale,
       contextType: "home_chat",
+      ...(options.defaultModelRef ? { defaultModelRef: options.defaultModelRef } : {}),
     });
 
     const url = `${API_BASE}/orchestrator/dispatch/stream`;

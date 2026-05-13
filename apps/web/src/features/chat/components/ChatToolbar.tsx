@@ -47,7 +47,7 @@ function ChatToolbar({
             className={cn(
               "inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-[var(--text-sm)] font-medium transition-colors duration-150 select-none",
               mode === value
-                ? "bg-[var(--color-primary)] text-white"
+                ? "bg-[var(--color-text)] text-white"
                 : "bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
             )}
           >

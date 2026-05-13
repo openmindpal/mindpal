@@ -159,7 +159,7 @@ export function QueueTaskSheet({ entry, open, onOpenChange, sessionId, onAction 
 
             {/* Error info */}
             {entry.lastError && (
-              <div className="rounded-[var(--radius-sm)] bg-[var(--color-danger-bg,rgba(239,68,68,0.1))] px-3 py-2 text-[var(--text-xs)] text-[var(--color-danger)]">
+              <div className="rounded-[var(--radius-sm)] bg-[var(--color-danger-bg)] px-3 py-2 text-[var(--text-xs)] text-[var(--color-danger)]">
                 <span className="font-medium">错误信息: </span>
                 {entry.lastError}
               </div>

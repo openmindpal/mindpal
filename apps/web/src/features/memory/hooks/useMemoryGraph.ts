@@ -10,12 +10,14 @@ export interface MemoryGraphFilter {
   class?: MemoryClass;
   limit?: number;
   minConfidence?: number;
+  offset?: number;
 }
 
 /* ─── API Response ─── */
 interface MemoryGraphResponse {
   nodes: MemoryNodeData[];
   edges: MemoryEdgeData[];
+  total: number;
 }
 
 /* ─── Circular layout helper ─── */
@@ -53,13 +55,14 @@ function transformEdges(edges: MemoryEdgeData[]): Edge[] {
 
 /* ─── Hook ─── */
 export function useMemoryGraph(filter: MemoryGraphFilter = {}) {
-  const { class: memClass, limit = 200, minConfidence = 0.3 } = filter;
+  const { class: memClass, limit = 200, minConfidence = 0.3, offset = 0 } = filter;
 
-  const queryKey = ["memory-graph", memClass, limit, minConfidence];
+  const queryKey = ["memory-graph", memClass, limit, minConfidence, offset];
 
   const { data, isLoading, error, refetch } = useQuery<{
     nodes: Node[];
     edges: Edge[];
+    total: number;
   }>({
     queryKey,
     queryFn: async () => {
@@ -67,6 +70,7 @@ export function useMemoryGraph(filter: MemoryGraphFilter = {}) {
       if (memClass) params.set("class", memClass);
       params.set("limit", String(limit));
       params.set("minConfidence", String(minConfidence));
+      params.set("offset", String(offset));
 
       const res = await apiFetch(`/memory/graph?${params.toString()}`);
       if (!res.ok) {
@@ -75,14 +79,16 @@ export function useMemoryGraph(filter: MemoryGraphFilter = {}) {
       const json = (await res.json()) as MemoryGraphResponse;
       const nodes = computeCircularLayout(json.nodes);
       const edges = transformEdges(json.edges);
-      return { nodes, edges };
+      return { nodes, edges, total: json.total };
     },
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
   });
 
   return {
     nodes: data?.nodes ?? [],
     edges: data?.edges ?? [],
+    total: data?.total ?? 0,
     isLoading,
     error: error as Error | null,
     refetch,

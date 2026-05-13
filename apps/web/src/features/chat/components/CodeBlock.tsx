@@ -18,19 +18,10 @@ function CodeBlock({ language, children, className }: CodeBlockProps) {
     let cancelled = false;
 
     async function highlight() {
-      const hljs = (await import("highlight.js/lib/core")).default;
+      const hljs = (await import("highlight.js")).default;
 
-      // Dynamically import language pack
-      try {
-        const langModule = await import(
-          /* webpackChunkName: "hljs-[request]" */
-          `highlight.js/lib/languages/${language}`
-        );
-        if (!hljs.getLanguage(language!)) {
-          hljs.registerLanguage(language!, langModule.default);
-        }
-      } catch {
-        // Language not available, skip highlighting
+      if (!hljs.getLanguage(language!)) {
+        // Language not supported by highlight.js, skip
         return;
       }
 

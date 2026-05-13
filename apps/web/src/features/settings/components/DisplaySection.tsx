@@ -64,7 +64,7 @@ export function DisplaySection() {
           <select
             value={theme}
             onChange={(e) => handleThemeChange(e.target.value)}
-            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-border-focus)]"
           >
             {THEME_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -81,7 +81,7 @@ export function DisplaySection() {
               onClick={() => handleSidebarChange(false)}
               className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
                 !sidebarCollapsed
-                  ? "bg-[var(--color-primary)] text-white"
+                  ? "bg-[var(--color-text)] text-white"
                   : "border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)]"
               }`}
             >
@@ -92,7 +92,7 @@ export function DisplaySection() {
               onClick={() => handleSidebarChange(true)}
               className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
                 sidebarCollapsed
-                  ? "bg-[var(--color-primary)] text-white"
+                  ? "bg-[var(--color-text)] text-white"
                   : "border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)]"
               }`}
             >
@@ -110,7 +110,7 @@ export function DisplaySection() {
             aria-checked={compact}
             onClick={handleCompactToggle}
             className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors ${
-              compact ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"
+              compact ? "bg-[var(--color-text)]" : "bg-[var(--color-border)]"
             }`}
           >
             <span

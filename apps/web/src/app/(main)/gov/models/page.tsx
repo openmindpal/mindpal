@@ -61,7 +61,11 @@ const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; path: string }> = {
   local: { baseUrl: 'http://localhost:11434/v1', path: '/chat/completions' },
 };
 
-const PROVIDER_OPTIONS = Object.keys(PROVIDER_DEFAULTS);
+/* ─── Provider Display Label (frontend fallback, backend provides labels too) ─── */
+interface ProviderOption {
+  id: string;
+  label: string;
+}
 
 const STATUS_COLOR_MAP: Record<string, 'default' | 'success' | 'warning' | 'danger'> = {
   active: 'success',
@@ -133,9 +137,20 @@ export default function ModelsPage() {
 
   /* ── Binding form state ── */
   const [bindForm, setBindForm] = useState({
-    provider: 'openai', modelRef: '', baseUrl: PROVIDER_DEFAULTS.openai.baseUrl,
-    chatCompletionsPath: PROVIDER_DEFAULTS.openai.path,
+    provider: 'deepseek', modelRef: '', baseUrl: PROVIDER_DEFAULTS.deepseek.baseUrl,
+    chatCompletionsPath: PROVIDER_DEFAULTS.deepseek.path,
     connectorInstanceId: '', secretId: '', testBeforeSave: true,
+  });
+
+  /* ── Provider list query ── */
+  const providersQuery = useQuery({
+    queryKey: ['/models/providers'],
+    queryFn: async () => {
+      const res = await apiFetch('/models/providers');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<{ providers: ProviderOption[] }>;
+    },
+    staleTime: 10 * 60 * 1000, // 10 minutes — provider list rarely changes
   });
 
   /* ── Queries ── */
@@ -244,7 +259,7 @@ export default function ModelsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['/models/bindings'] });
       setBindingSheetOpen(false);
-      setBindForm({ provider: 'openai', modelRef: '', baseUrl: PROVIDER_DEFAULTS.openai.baseUrl, chatCompletionsPath: PROVIDER_DEFAULTS.openai.path, connectorInstanceId: '', secretId: '', testBeforeSave: true });
+      setBindForm({ provider: 'deepseek', modelRef: '', baseUrl: PROVIDER_DEFAULTS.deepseek.baseUrl, chatCompletionsPath: PROVIDER_DEFAULTS.deepseek.path, connectorInstanceId: '', secretId: '', testBeforeSave: true });
     },
   });
 
@@ -528,8 +543,8 @@ export default function ModelsPage() {
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  {PROVIDER_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                <SelectContent className="max-h-[300px] overflow-y-auto">
+                  {(providersQuery.data?.providers ?? []).map(p => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </label>

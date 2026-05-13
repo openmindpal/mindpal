@@ -117,8 +117,8 @@ export function TokensSection() {
 
       {/* 新创建的令牌显示 */}
       {createdToken && (
-        <div className="mb-4 rounded-md border border-[#22c55e40] bg-[#22c55e10] p-3">
-          <p className="mb-1 text-sm font-medium text-[#16a34a]">令牌已创建（请立即复制，关闭后无法再次查看）</p>
+        <div className="mb-4 rounded-md border border-[var(--color-success-border)] bg-[var(--color-success-bg)] p-3">
+          <p className="mb-1 text-sm font-medium text-[var(--color-success-text)]">令牌已创建（请立即复制，关闭后无法再次查看）</p>
           <code className="block break-all rounded bg-[var(--color-surface-sunken)] p-2 text-xs text-[var(--color-text)]">
             {createdToken}
           </code>
@@ -126,7 +126,7 @@ export function TokensSection() {
             <Button size="sm" variant="ghost" onClick={() => { navigator.clipboard.writeText(createdToken); setCopied(true); }}>
               复制令牌
             </Button>
-            {copied && <span className="text-xs text-[#16a34a]">✓ 已自动复制到剪贴板</span>}
+            {copied && <span className="text-xs text-[var(--color-success-text)]">✓ 已自动复制到剪贴板</span>}
           </div>
         </div>
       )}
@@ -148,14 +148,14 @@ export function TokensSection() {
             <select
               value={expiryDays}
               onChange={(e) => setExpiryDays(e.target.value)}
-              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-border-focus)]"
             >
               {EXPIRY_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
           </div>
-          {error && <p className="text-sm text-[#dc2626]">{error}</p>}
+          {error && <p className="text-sm text-[var(--color-danger-text)]">{error}</p>}
           <Button size="sm" loading={createMutation.isPending} onClick={handleCreate}>
             确认创建
           </Button>

@@ -173,7 +173,7 @@ export default function GovPage() {
           value={data?.activeChangesets}
           isLoading={isLoading}
           icon={GitPullRequest}
-          color="bg-blue-500"
+          color="bg-gray-500"
         />
         <MetricCard
           label="异常节点"

@@ -4,7 +4,7 @@ import { Errors } from "../../lib/errors";
 import { requirePermission } from "../../modules/auth/guard";
 import { setAuditContext } from "../../modules/audit/context";
 import { enqueueAuditOutboxForRequest } from "../../modules/audit/requestOutbox";
-import { createConnectorInstance, getConnectorInstance, getConnectorType, listConnectorInstances, listConnectorTypes, setConnectorInstanceStatus } from "./modules/connectorRepo";
+import { createConnectorInstance, deleteConnectorInstance, getConnectorInstance, getConnectorType, listConnectorInstances, listConnectorTypes, setConnectorInstanceStatus, updateConnectorInstance } from "./modules/connectorRepo";
 import { getExchangeConnectorConfig, upsertExchangeConnectorConfig } from "./modules/exchangeRepo";
 import { getImapConnectorConfig, upsertImapConnectorConfig } from "./modules/imapRepo";
 import { getSmtpConnectorConfig, upsertSmtpConnectorConfig } from "./modules/smtpRepo";
@@ -188,6 +188,97 @@ export const connectorRoutes: FastifyPluginAsync = async (app) => {
     const inst = await getConnectorInstance(app.db, subject.tenantId, params.id);
     if (!inst) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "ConnectorInstance 不存在", "en-US": "ConnectorInstance not found" }, traceId: req.ctx.traceId });
     return { instance: inst };
+  });
+
+  app.put("/connectors/instances/:id", async (req, reply) => {
+    const params = z.object({ id: z.string().min(3) }).parse(req.params);
+    setAuditContext(req, { resourceType: "connector", action: "update", requireOutbox: true });
+    const decision = await requirePermission({ req, resourceType: "connector", action: "update" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const subject = req.ctx.subject!;
+    const body = z
+      .object({
+        name: z.string().min(1).optional(),
+        egressPolicy: z
+          .object({
+            allowedDomains: z.array(z.string()).optional(),
+          })
+          .optional(),
+        description: z.string().max(1000).optional(),
+        config: z.record(z.string(), z.unknown()).optional(),
+      })
+      .parse(req.body);
+
+    const inst = await getConnectorInstance(app.db, subject.tenantId, params.id);
+    if (!inst) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "ConnectorInstance 不存在", "en-US": "ConnectorInstance not found" }, traceId: req.ctx.traceId });
+
+    const normalizedPolicy = body.egressPolicy
+      ? { allowedDomains: normalizeAllowedDomains(body.egressPolicy.allowedDomains ?? []) }
+      : undefined;
+
+    const client = await app.db.connect();
+    try {
+      await client.query("BEGIN");
+      const updated = await updateConnectorInstance({
+        pool: client,
+        tenantId: subject.tenantId,
+        id: params.id,
+        name: body.name,
+        egressPolicy: normalizedPolicy,
+        description: body.description,
+        config: body.config,
+      });
+      if (!updated) {
+        await client.query("ROLLBACK");
+        return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "ConnectorInstance 不存在", "en-US": "ConnectorInstance not found" }, traceId: req.ctx.traceId });
+      }
+      req.ctx.audit!.outputDigest = { connectorInstanceId: updated.id, updatedFields: Object.keys(body).filter((k) => (body as any)[k] !== undefined) };
+      await enqueueAuditOutboxForRequest({ client, req });
+      await client.query("COMMIT");
+      return { instance: updated };
+    } catch (e) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+      }
+      throw Errors.auditOutboxWriteFailed();
+    } finally {
+      client.release();
+    }
+  });
+
+  app.delete("/connectors/instances/:id", async (req, reply) => {
+    const params = z.object({ id: z.string().min(3) }).parse(req.params);
+    setAuditContext(req, { resourceType: "connector", action: "delete", requireOutbox: true });
+    const decision = await requirePermission({ req, resourceType: "connector", action: "delete" });
+    req.ctx.audit!.policyDecision = decision;
+
+    const subject = req.ctx.subject!;
+    const inst = await getConnectorInstance(app.db, subject.tenantId, params.id);
+    if (!inst) return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "ConnectorInstance 不存在", "en-US": "ConnectorInstance not found" }, traceId: req.ctx.traceId });
+
+    const client = await app.db.connect();
+    try {
+      await client.query("BEGIN");
+      const deleted = await deleteConnectorInstance(client, subject.tenantId, params.id);
+      if (!deleted) {
+        await client.query("ROLLBACK");
+        return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "ConnectorInstance 不存在", "en-US": "ConnectorInstance not found" }, traceId: req.ctx.traceId });
+      }
+      req.ctx.audit!.outputDigest = { connectorInstanceId: inst.id, typeName: inst.typeName };
+      await enqueueAuditOutboxForRequest({ client, req });
+      await client.query("COMMIT");
+      return reply.status(200).send({ ok: true });
+    } catch (e) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+      }
+      throw Errors.auditOutboxWriteFailed();
+    } finally {
+      client.release();
+    }
   });
 
   app.get("/connectors/instances/:id/oauth/:provider", async (req, reply) => {

@@ -5,6 +5,7 @@ import {
   Sheet,
   SheetContent,
   SheetHeader,
+  SheetBody,
   SheetTitle,
   SheetDescription,
   SheetFooter,
@@ -69,13 +70,19 @@ function ResourceDetailSheet({
 
         {/* Field list */}
         {data && (
-          <div className="flex-1 space-y-4 py-4">
+          <SheetBody className="space-y-5">
             {fields.map((f) => {
               const value = data[f.key];
               const isJson = isJsonValue(value) && !f.render;
               return (
-                <div key={f.key} className={isJson ? "flex flex-col gap-1" : "flex items-start justify-between gap-4"}>
-                  <span className="shrink-0 text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                <div
+                  key={f.key}
+                  className={cn(
+                    "border-b border-[var(--color-border-light)] pb-4 last:border-b-0 last:pb-0",
+                    isJson ? "flex flex-col gap-2" : "flex items-start justify-between gap-4"
+                  )}
+                >
+                  <span className="shrink-0 text-[var(--text-sm)] font-medium text-[var(--color-text-muted)]">
                     {f.label}
                   </span>
                   <span className={isJson ? "w-full" : "text-right text-[var(--text-sm)] text-[var(--color-text)] break-all"}>
@@ -84,12 +91,12 @@ function ResourceDetailSheet({
                 </div>
               );
             })}
-          </div>
+          </SheetBody>
         )}
 
         {/* Action buttons */}
         {actions && actions.length > 0 && (
-          <SheetFooter className="border-t border-[var(--color-border)] pt-4">
+          <SheetFooter>
             <div className="flex w-full gap-2 justify-end">
               {actions.map((act) => (
                 <Button

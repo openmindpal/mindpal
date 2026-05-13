@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Input } from "@/shared/components/primitives/Input";
 import { Button } from "@/shared/components/primitives/Button";
 import { useMemorySearch } from "../hooks/useMemorySearch";
@@ -59,6 +60,16 @@ export function MemorySearchPanel() {
   }, []);
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
+  const items = data?.items ?? [];
+
+  // Virtual scrolling
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 72,
+    overscan: 5,
+  });
 
   return (
     <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4">
@@ -91,7 +102,7 @@ export function MemorySearchPanel() {
               style={{
                 backgroundColor: isActive ? CLASS_COLORS[cls] : "transparent",
                 borderColor: CLASS_COLORS[cls],
-                color: isActive ? "#fff" : CLASS_COLORS[cls],
+                color: isActive ? "var(--color-text-inverse)" : CLASS_COLORS[cls],
               }}
             >
               {CLASS_LABELS[cls]}
@@ -117,50 +128,68 @@ export function MemorySearchPanel() {
           </div>
         )}
 
-        {!isLoading && data && data.items.length > 0 && (
+        {!isLoading && data && items.length > 0 && (
           <>
             {/* Total count */}
             <div className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
               共 {data.total} 条
             </div>
 
-            {/* Result list */}
-            <div className="space-y-2">
-              {data.items.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-3 hover:bg-[var(--color-surface-sunken)] transition-colors duration-[var(--duration-fast)]"
-                >
-                  {/* Title row */}
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[var(--text-sm)] font-medium text-[var(--color-text)] truncate flex-1">
-                      {item.title || "(无标题)"}
-                    </span>
-                    <span
-                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
+            {/* Virtualized result list */}
+            <div ref={scrollRef} className="overflow-y-auto flex-1 min-h-0 max-h-[60vh]">
+              <div
+                style={{
+                  height: virtualizer.getTotalSize(),
+                  position: 'relative',
+                }}
+              >
+                {virtualizer.getVirtualItems().map((virtualRow) => {
+                  const item = items[virtualRow.index];
+                  return (
+                    <div
+                      key={item.id}
                       style={{
-                        backgroundColor: `color-mix(in oklch, ${CLASS_COLORS[item.memoryClass]} 15%, transparent)`,
-                        color: CLASS_COLORS[item.memoryClass],
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualRow.start}px)`,
                       }}
                     >
-                      {CLASS_LABELS[item.memoryClass]}
-                    </span>
-                  </div>
+                      <div className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-3 mb-2 hover:bg-[var(--color-surface-sunken)] transition-colors duration-[var(--duration-fast)]">
+                        {/* Title row */}
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[var(--text-sm)] font-medium text-[var(--color-text)] truncate flex-1">
+                            {item.title || "(无标题)"}
+                          </span>
+                          <span
+                            className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
+                            style={{
+                              backgroundColor: `color-mix(in oklch, ${CLASS_COLORS[item.memoryClass]} 15%, transparent)`,
+                              color: CLASS_COLORS[item.memoryClass],
+                            }}
+                          >
+                            {CLASS_LABELS[item.memoryClass]}
+                          </span>
+                        </div>
 
-                  {/* Content preview - 2 lines */}
-                  <p className="text-[var(--text-xs)] text-[var(--color-text-secondary)] line-clamp-2 mb-2">
-                    {item.contentText}
-                  </p>
+                        {/* Content preview - 2 lines */}
+                        <p className="text-[var(--text-xs)] text-[var(--color-text-secondary)] line-clamp-2 mb-2">
+                          {item.contentText}
+                        </p>
 
-                  {/* Meta row */}
-                  <div className="flex items-center gap-3 text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                    <span>置信度: {Math.round(item.confidence * 100)}%</span>
-                    <span>
-                      {new Date(item.createdAt).toLocaleDateString("zh-CN")}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                        {/* Meta row */}
+                        <div className="flex items-center gap-3 text-[var(--text-xs)] text-[var(--color-text-muted)]">
+                          <span>置信度: {Math.round(item.confidence * 100)}%</span>
+                          <span>
+                            {new Date(item.createdAt).toLocaleDateString("zh-CN")}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Pagination */}

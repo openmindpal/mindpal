@@ -16,6 +16,8 @@ import {
   Sheet,
   SheetContent,
   SheetHeader,
+  SheetBody,
+  SheetFooter,
   SheetTitle,
   SheetDescription,
 } from "@/shared/components/primitives/Sheet";
@@ -103,7 +105,7 @@ export function RunDetailSheet({ run, open, onOpenChange }: RunDetailSheetProps)
           <SheetDescription>运行详情与步骤时间轴</SheetDescription>
         </SheetHeader>
 
-        <div className="mt-4 flex flex-col gap-5">
+        <SheetBody className="flex flex-col gap-5">
           {/* Run info card */}
           {isLoading ? (
             <div className="flex flex-col gap-2">
@@ -149,7 +151,7 @@ export function RunDetailSheet({ run, open, onOpenChange }: RunDetailSheetProps)
 
               {/* Error info */}
               {displayRun.errorDigest && (
-                <div className="mt-3 rounded-[var(--radius-sm)] bg-[var(--color-danger-bg,rgba(239,68,68,0.1))] px-3 py-2 text-[var(--text-xs)] text-[var(--color-danger)]">
+                <div className="mt-3 rounded-[var(--radius-sm)] bg-[var(--color-danger-bg)] px-3 py-2 text-[var(--text-xs)] text-[var(--color-danger)]">
                   <span className="font-medium">
                     {(displayRun.errorDigest as { errorCategory?: string })?.errorCategory ?? "错误"}:
                   </span>{" "}
@@ -159,9 +161,8 @@ export function RunDetailSheet({ run, open, onOpenChange }: RunDetailSheetProps)
             </div>
           ) : null}
 
-          {/* Action buttons */}
           {displayRun && (
-            <div className="flex items-center gap-2">
+            <SheetFooter className="mt-0 pt-5">
               {canCancel && (
                 <Button
                   variant="secondary"
@@ -183,13 +184,13 @@ export function RunDetailSheet({ run, open, onOpenChange }: RunDetailSheetProps)
                 {reexecRun.isPending ? "执行中..." : "重新执行"}
               </Button>
             </div>
-          )}
+            </SheetFooter>
 
           {/* Steps timeline */}
-          <section>
-            <h3 className="mb-3 text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+          <section className="border-t border-[var(--color-border-light)] pt-5">
               步骤时间轴 ({steps.length})
             </h3>
+            {isLoading ? (
             {isLoading ? (
               <div className="flex flex-col gap-2">
                 <Skeleton className="h-12 w-full" />
@@ -251,14 +252,15 @@ export function RunDetailSheet({ run, open, onOpenChange }: RunDetailSheetProps)
             )}
           </section>
 
-          {/* Block reason */}
           {detail?.blockReason && (
-            <div className="rounded-[var(--radius-md)] border border-[var(--color-warning)] bg-[var(--color-warning-bg,rgba(234,179,8,0.1))] px-3 py-2 text-[var(--text-sm)]">
+            <div className="border-t border-[var(--color-border-light)] pt-5">
+              <div className="rounded-[var(--radius-md)] border border-[var(--color-warning)] bg-[var(--color-warning-bg)] px-3 py-2 text-[var(--text-sm)]">
               <span className="font-medium text-[var(--color-warning)]">阻塞原因: </span>
               <span className="text-[var(--color-text)]">{detail.blockReason}</span>
             </div>
+            </div>
           )}
-        </div>
+        </SheetBody>
       </SheetContent>
     </Sheet>
   );

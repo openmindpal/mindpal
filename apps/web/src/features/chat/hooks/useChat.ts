@@ -25,8 +25,8 @@ export type ChatMode = IntentMode | "auto";
 
 export interface UseChatReturn {
   messages: ChatFlowItem[];
-  send: (text: string, mode?: ChatMode, attachments?: UploadedFile[]) => Promise<void>;
-  sendStream: (text: string, mode?: ChatMode, attachments?: UploadedFile[]) => void;
+  send: (text: string, mode?: ChatMode, attachments?: UploadedFile[], defaultModelRef?: string) => Promise<void>;
+  sendStream: (text: string, mode?: ChatMode, attachments?: UploadedFile[], defaultModelRef?: string) => void;
   isLoading: boolean;
   error: string | null;
   conversationId: string | null;
@@ -73,7 +73,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   }, [setConversationId]);
 
   /** Non-streaming send */
-  const send = useCallback(async (text: string, sendMode?: ChatMode, attachments?: UploadedFile[]) => {
+  const send = useCallback(async (text: string, sendMode?: ChatMode, attachments?: UploadedFile[], defaultModelRef?: string) => {
     setError(null);
 
     const activeMode = sendMode ?? mode;
@@ -98,6 +98,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         locale: "zh-CN",
         contextType: "home_chat",
       };
+
+      if (defaultModelRef) {
+        body.defaultModelRef = defaultModelRef;
+      }
 
       if (attachments && attachments.length > 0) {
         body.attachments = attachments.map(a => ({
@@ -170,7 +174,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   }, [mode, resolveConversationId, appendFlowItem, setConversationId]);
 
   /** Streaming send */
-  const sendStream = useCallback((text: string, sendMode?: ChatMode, attachments?: UploadedFile[]) => {
+  const sendStream = useCallback((text: string, sendMode?: ChatMode, attachments?: UploadedFile[], defaultModelRef?: string) => {
     setError(null);
 
     const activeMode = sendMode ?? mode;
@@ -178,7 +182,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
     // If attachments present, fall back to non-streaming send (streaming endpoint doesn't support attachments yet)
     if (attachments && attachments.length > 0) {
-      send(text, sendMode, attachments);
+      send(text, sendMode, attachments, defaultModelRef);
       return;
     }
 
@@ -196,6 +200,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       conversationId: activeConversationId,
       mode: activeMode,
       locale: "zh-CN",
+      defaultModelRef,
     });
   }, [mode, resolveConversationId, appendFlowItem, startStream, send]);
 

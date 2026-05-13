@@ -6,11 +6,13 @@ import { requirePermission } from "../../modules/auth/guard";
 import { requireSubject } from "../../modules/auth/guard";
 import {
   createSafetyPolicyDraft,
+  deleteSafetyPolicy,
   getEffectiveSafetyPolicyVersion,
   getSafetyPolicy,
   getSafetyPolicyVersion,
   listSafetyPolicies,
   listSafetyPolicyVersions,
+  updateSafetyPolicy,
   updateSafetyPolicyDraft,
 } from "./modules/safetyPolicyRepo";
 
@@ -62,6 +64,48 @@ export const safetyPolicyRoutes: FastifyPluginAsync = async (app) => {
     const ver = await createSafetyPolicyDraft({ pool: app.db, tenantId: subject.tenantId, policyType: body.policyType, name: body.name, policyJson: body.policyJson });
     req.ctx.audit!.outputDigest = { policyId: ver.policyId, version: ver.version, status: ver.status, policyType: body.policyType };
     return { version: ver };
+  });
+
+  app.put("/governance/safety-policies/:id", async (req, reply) => {
+    setAuditContext(req, { resourceType: "governance", action: "write" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "write" });
+    const subject = requireSubject(req);
+    const params = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        name: z.string().min(1).max(120).optional(),
+        policyType: z.enum(["content", "injection", "risk"]).optional(),
+      })
+      .parse(req.body);
+    const existing = await getSafetyPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.id });
+    if (!existing) {
+      return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "安全策略不存在", "en-US": "Safety policy not found" }, traceId: req.ctx.traceId });
+    }
+    const updated = await updateSafetyPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.id, name: body.name, policyType: body.policyType });
+    if (!updated) {
+      return reply.status(400).send({ errorCode: "NO_CHANGE", message: { "zh-CN": "无可更新字段", "en-US": "No fields to update" }, traceId: req.ctx.traceId });
+    }
+    req.ctx.audit!.inputDigest = { policyId: params.id, name: body.name ?? null, policyType: body.policyType ?? null };
+    req.ctx.audit!.outputDigest = { policyId: updated.policyId, name: updated.name, policyType: updated.policyType };
+    return { item: updated };
+  });
+
+  app.delete("/governance/safety-policies/:id", async (req, reply) => {
+    setAuditContext(req, { resourceType: "governance", action: "delete" });
+    req.ctx.audit!.policyDecision = await requirePermission({ req, resourceType: "governance", action: "write" });
+    const subject = requireSubject(req);
+    const params = z.object({ id: z.string().uuid() }).parse(req.params);
+    const existing = await getSafetyPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.id });
+    if (!existing) {
+      return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "安全策略不存在", "en-US": "Safety policy not found" }, traceId: req.ctx.traceId });
+    }
+    const deleted = await deleteSafetyPolicy({ pool: app.db, tenantId: subject.tenantId, policyId: params.id });
+    if (!deleted) {
+      return reply.status(404).send({ errorCode: "NOT_FOUND", message: { "zh-CN": "安全策略不存在", "en-US": "Safety policy not found" }, traceId: req.ctx.traceId });
+    }
+    req.ctx.audit!.inputDigest = { policyId: params.id };
+    req.ctx.audit!.outputDigest = { policyId: params.id, deleted: true };
+    return reply.status(204).send();
   });
 
   app.put("/governance/safety-policies/:policyId/versions/:version", async (req) => {

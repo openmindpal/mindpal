@@ -126,3 +126,35 @@ export async function setConnectorInstanceStatus(pool: Q, tenantId: string, id: 
   if (!res.rowCount) return null;
   return toInstance(res.rows[0]);
 }
+
+export async function updateConnectorInstance(params: {
+  pool: Q;
+  tenantId: string;
+  id: string;
+  name?: string;
+  egressPolicy?: any;
+  description?: string | null;
+  config?: any;
+}) {
+  const sets: string[] = ["updated_at = now()"];
+  const vals: any[] = [params.tenantId, params.id];
+  let idx = 3;
+  if (params.name !== undefined) { sets.push(`name = $${idx}`); vals.push(params.name); idx++; }
+  if (params.egressPolicy !== undefined) { sets.push(`egress_policy = $${idx}`); vals.push(params.egressPolicy); idx++; }
+  if (params.description !== undefined) { sets.push(`description = $${idx}`); vals.push(params.description); idx++; }
+  if (params.config !== undefined) { sets.push(`config = $${idx}`); vals.push(params.config); idx++; }
+  const res = await params.pool.query(
+    `UPDATE connector_instances SET ${sets.join(", ")} WHERE tenant_id = $1 AND id = $2 RETURNING *`,
+    vals,
+  );
+  if (!res.rowCount) return null;
+  return toInstance(res.rows[0]);
+}
+
+export async function deleteConnectorInstance(pool: Q, tenantId: string, id: string) {
+  const res = await pool.query(
+    "DELETE FROM connector_instances WHERE tenant_id = $1 AND id = $2 RETURNING id",
+    [tenantId, id],
+  );
+  return (res.rowCount ?? 0) > 0;
+}

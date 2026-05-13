@@ -49,9 +49,9 @@ export default function KnowledgePage() {
           <Link
             key={card.href}
             href={card.href}
-            className="group flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-5 transition-all duration-[var(--duration-fast)] hover:border-[var(--color-primary)] hover:shadow-md"
+            className="group flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-5 transition-all duration-[var(--duration-fast)] hover:border-[var(--color-border-strong)] hover:shadow-md"
           >
-            <card.icon className="h-8 w-8 text-[var(--color-primary)] transition-transform group-hover:scale-110" />
+            <card.icon className="h-8 w-8 text-[var(--color-text-secondary)] transition-transform group-hover:scale-110" />
             <h2 className="text-[var(--text-base)] font-medium text-[var(--color-text)]">
               {card.title}
             </h2>

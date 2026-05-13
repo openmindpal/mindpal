@@ -145,7 +145,7 @@ export default function UIComponentPage() {
           </div>
           {draftEdit != null ? (
             <textarea
-              className="h-96 w-full resize-none rounded bg-[var(--color-surface-sunken)] p-3 font-mono text-[var(--text-xs)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+              className="h-96 w-full resize-none rounded bg-[var(--color-surface-sunken)] p-3 font-mono text-[var(--text-xs)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-border-focus)]"
               value={draftEdit}
               onChange={(e) => setDraftEdit(e.target.value)}
             />

@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/shared/lib/api';
+import { useResourceMutation } from '@/features/governance/hooks/useResourceMutation';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/shared/components/primitives/Tabs';
 import { Button } from '@/shared/components/primitives/Button';
 import { Input } from '@/shared/components/primitives/Input';
@@ -144,6 +145,41 @@ function ConfigTab() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [setupMode, setSetupMode] = useState<SetupMode>('manual');
   const [form, setForm] = useState({ provider: 'webhook', workspaceId: '', webhookUrl: '', secretId: '', admissionPolicy: 'open' });
+
+  // Edit state
+  const [editSheetOpen, setEditSheetOpen] = useState(false);
+  const [editingRow, setEditingRow] = useState<ChannelConfig | null>(null);
+  const [editForm, setEditForm] = useState({ displayName: '', secretId: '', deliveryMode: 'sync', maxAttempts: 8 });
+
+  const resourceMutation = useResourceMutation({
+    endpoint: '/governance/channels/webhook/configs',
+    listQueryKey: ['/governance/channels/webhook/configs'],
+  });
+
+  const openEditSheet = (row: ChannelConfig) => {
+    setEditingRow(row);
+    setEditForm({
+      displayName: (row as any).displayName ?? '',
+      secretId: row.secretId ?? '',
+      deliveryMode: (row as any).deliveryMode ?? 'sync',
+      maxAttempts: (row as any).maxAttempts ?? 8,
+    });
+    setEditSheetOpen(true);
+  };
+
+  const handleEditSubmit = async () => {
+    if (!editingRow) return;
+    const id = `${editingRow.provider}:${editingRow.workspaceId}`;
+    await resourceMutation.update(encodeURIComponent(id), {
+      displayName: editForm.displayName || null,
+      secretId: editForm.secretId || null,
+      deliveryMode: editForm.deliveryMode,
+      maxAttempts: Number(editForm.maxAttempts),
+    });
+    setEditSheetOpen(false);
+    setEditingRow(null);
+    qc.invalidateQueries({ queryKey: [endpoint] });
+  };
 
   // QR pairing state
   const [qrProvider, setQrProvider] = useState('feishu');
@@ -477,9 +513,12 @@ function ConfigTab() {
           {
             key: 'id' as keyof ChannelConfig & string,
             label: '操作',
-            width: '160px',
+            width: '220px',
             render: (_v, row) => (
               <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={() => openEditSheet(row)}>
+                  编辑
+                </Button>
                 <Button variant="ghost" size="sm" loading={testMut.isPending} onClick={() => testMut.mutate(row)}>
                   测试
                 </Button>
@@ -494,6 +533,59 @@ function ConfigTab() {
         loading={isLoading}
         emptyMessage="暂无渠道配置"
       />
+
+      {/* Edit Sheet */}
+      <Sheet open={editSheetOpen} onOpenChange={setEditSheetOpen}>
+        <SheetContent className="max-w-lg">
+          <SheetHeader>
+            <SheetTitle>编辑渠道配置</SheetTitle>
+            <SheetDescription>
+              {editingRow ? `${editingRow.provider} / ${editingRow.workspaceId}` : ''}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="mt-6 space-y-4">
+            <div>
+              <label className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)] mb-1 block">显示名称</label>
+              <Input
+                value={editForm.displayName}
+                onChange={e => setEditForm(f => ({ ...f, displayName: e.target.value }))}
+                placeholder="渠道显示名称"
+              />
+            </div>
+            <div>
+              <label className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)] mb-1 block">凭证 ID</label>
+              <Input
+                value={editForm.secretId}
+                onChange={e => setEditForm(f => ({ ...f, secretId: e.target.value }))}
+                placeholder="UUID 格式"
+              />
+            </div>
+            <div>
+              <label className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)] mb-1 block">投递模式</label>
+              <Select value={editForm.deliveryMode} onValueChange={v => setEditForm(f => ({ ...f, deliveryMode: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sync">同步 (sync)</SelectItem>
+                  <SelectItem value="async">异步 (async)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)] mb-1 block">最大重试次数</label>
+              <Input
+                type="number"
+                min={1}
+                max={50}
+                value={String(editForm.maxAttempts)}
+                onChange={e => setEditForm(f => ({ ...f, maxAttempts: Number(e.target.value) || 1 }))}
+              />
+            </div>
+            <Button onClick={handleEditSubmit} loading={resourceMutation.isLoading}>
+              保存
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

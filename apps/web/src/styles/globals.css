@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 @import "./tokens.css";
 
 /* 基础重置 */
@@ -27,15 +28,15 @@ body {
 
 /* 焦点可见性 */
 :focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  outline: 1px solid var(--color-border-strong);
+  outline-offset: 1px;
   border-radius: var(--radius-sm);
 }
 
 /* 滚动条样式 */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -53,13 +54,13 @@ body {
 
 /* 选中文本 */
 ::selection {
-  background-color: var(--color-primary-soft);
+  background-color: var(--color-selection);
   color: var(--color-text);
 }
 
 /* 链接默认 */
 a {
-  color: var(--color-primary);
+  color: var(--color-text);
   text-decoration: none;
 }
 
@@ -72,6 +73,11 @@ code, pre, kbd, samp {
   font-family: var(--font-mono);
 }
 
-/* 全局平滑过渡 */
-a { transition: color var(--duration-fast) ease-out; }
-button { transition: all var(--duration-fast) ease-out; }
+/* 全局过渡：由各组件自行控制 */
+a { transition: none; }
+button { transition: none; }
+
+/* 流式光标闪烁 */
+@keyframes blink {
+  50% { opacity: 0; }
+}

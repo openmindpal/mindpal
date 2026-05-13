@@ -2,20 +2,20 @@
 import * as React from "react";
 import { cn } from "@/shared/lib/cn";
 
-// 变体定义
+// 变体定义 — 极简扁平，零阴影
 const variants = {
-  primary: "bg-[var(--color-primary)] text-[var(--color-text-inverse)] hover:bg-[var(--color-primary-hover)] shadow-sm hover:shadow-[var(--shadow-hover)]",
-  secondary: "bg-[var(--color-surface-raised)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-sunken)] hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-hover)]",
-  ghost: "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text)] hover:shadow-sm",
-  danger: "bg-[var(--color-danger)] text-[var(--color-text-inverse)] hover:opacity-90 hover:shadow-[var(--shadow-hover)]",
-  link: "text-[var(--color-primary)] underline-offset-4 hover:underline p-0 h-auto",
+  primary: "bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)]",
+  secondary: "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-sunken)]",
+  ghost: "bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text)]",
+  danger: "bg-[var(--color-danger)] text-white hover:opacity-90",
+  link: "text-[var(--color-text)] underline-offset-4 hover:underline p-0 h-auto",
 };
 
 const sizes = {
   sm: "h-8 px-3 text-[var(--text-sm)] rounded-[var(--radius-sm)] gap-1.5",
-  md: "h-9 px-4 text-[var(--text-sm)] rounded-[var(--radius-md)] gap-2",
+  md: "h-9 px-3 py-1.5 text-[var(--text-sm)] rounded-[4px] gap-2",
   lg: "h-11 px-6 text-[var(--text-base)] rounded-[var(--radius-md)] gap-2",
-  icon: "h-9 w-9 rounded-[var(--radius-md)]",
+  icon: "h-9 w-9 rounded-[var(--radius-sm)]",
 };
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -29,7 +29,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     <button
       ref={ref}
       className={cn(
-        "inline-flex items-center justify-center font-medium transition-all duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none select-none",
+        "inline-flex items-center justify-center font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:border-[var(--color-border-strong)] disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed select-none",
         variants[variant],
         sizes[size],
         className

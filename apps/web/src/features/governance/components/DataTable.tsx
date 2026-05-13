@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { motion } from "framer-motion";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/components/primitives/Button";
@@ -14,7 +13,6 @@ import {
   SelectContent,
   SelectItem,
 } from "@/shared/components/primitives/Select";
-import { staggerContainer, staggerItem } from "@/shared/lib/motion";
 import type { ColumnDef, PaginationState, SortState } from "../types";
 
 /* ─── Props ─── */
@@ -142,7 +140,7 @@ function DataTableInner<T extends Record<string, unknown>>(
         </thead>
 
         {/* ── Body ── */}
-        <motion.tbody variants={staggerContainer} initial="initial" animate="animate">
+        <tbody>
           {/* Loading skeleton */}
           {loading &&
             skeletonRows.map((i) => (
@@ -186,9 +184,8 @@ function DataTableInner<T extends Record<string, unknown>>(
           {/* Data rows */}
           {!loading &&
             data.map((row, idx) => (
-              <motion.tr
+              <tr
                 key={idx}
-                variants={staggerItem}
                 className={cn(
                   "border-b border-[var(--color-border)] transition-colors duration-150 hover:bg-[var(--color-surface-raised)] even:bg-[var(--color-surface-sunken)]/30",
                   onRowClick && "cursor-pointer",
@@ -214,9 +211,9 @@ function DataTableInner<T extends Record<string, unknown>>(
                       : String(row[col.key] ?? "")}
                   </td>
                 ))}
-              </motion.tr>
+              </tr>
             ))}
-        </motion.tbody>
+        </tbody>
       </table>
 
       {/* ── Pagination ── */}

@@ -6,6 +6,7 @@ import {
   Sheet,
   SheetContent,
   SheetHeader,
+  SheetBody,
   SheetTitle,
   SheetDescription,
 } from "@/shared/components/primitives/Sheet";
@@ -47,8 +48,7 @@ export function TaskDetailSheet({ task, open, onOpenChange }: TaskDetailSheetPro
           <SheetDescription>任务详情与关联信息</SheetDescription>
         </SheetHeader>
 
-        {/* Task info */}
-        <div className="mt-4 flex flex-col gap-4">
+        <SheetBody className="flex flex-col gap-5">
           {detailLoading ? (
             <div className="flex flex-col gap-2">
               <Skeleton className="h-4 w-3/4" />
@@ -78,8 +78,7 @@ export function TaskDetailSheet({ task, open, onOpenChange }: TaskDetailSheetPro
             </div>
           ) : null}
 
-          {/* Runs section */}
-          <section>
+          <section className="border-t border-[var(--color-border-light)] pt-5">
             <h3 className="mb-2 text-[var(--text-sm)] font-medium text-[var(--color-text)]">
               关联运行 ({runs.length})
             </h3>
@@ -115,8 +114,7 @@ export function TaskDetailSheet({ task, open, onOpenChange }: TaskDetailSheetPro
             )}
           </section>
 
-          {/* Messages section */}
-          <section>
+          <section className="border-t border-[var(--color-border-light)] pt-5">
             <h3 className="mb-2 text-[var(--text-sm)] font-medium text-[var(--color-text)]">
               消息历史 ({messages.length})
             </h3>
@@ -155,7 +153,7 @@ export function TaskDetailSheet({ task, open, onOpenChange }: TaskDetailSheetPro
               </ul>
             )}
           </section>
-        </div>
+        </SheetBody>
       </SheetContent>
     </Sheet>
   );

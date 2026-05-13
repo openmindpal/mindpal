@@ -45,6 +45,7 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
     const query = z.object({
       class: memoryClassEnum.optional(),
       limit: z.coerce.number().int().min(1).max(1000).default(200),
+      offset: z.coerce.number().int().min(0).default(0),
       minConfidence: z.coerce.number().min(0).max(1).default(0.3),
     }).parse(req.query);
 
@@ -61,15 +62,24 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
       conditions.push(`memory_class = $${params.length}`);
     }
 
+    // COUNT for pagination total
+    const countResult = await app.db.query(
+      `SELECT COUNT(*)::int AS total FROM memory_entries WHERE ${conditions.join(" AND ")}`,
+      [...params],
+    );
+    const total: number = countResult.rows[0]?.total ?? 0;
+
     params.push(query.limit);
     const limitParam = `$${params.length}`;
+    params.push(query.offset);
+    const offsetParam = `$${params.length}`;
 
     const nodesResult = await app.db.query(
       `SELECT id, title, memory_class, confidence, decay_score, distilled_from, created_at
        FROM memory_entries
        WHERE ${conditions.join(" AND ")}
        ORDER BY decay_score DESC, created_at DESC
-       LIMIT ${limitParam}`,
+       LIMIT ${limitParam} OFFSET ${offsetParam}`,
       params,
     );
 
@@ -140,12 +150,12 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    return { nodes, edges };
+    return { nodes, edges, total };
   });
 
   // NOTE: GET /memory/stats 已迁移至 skills/memory-manager/routes.ts（含权限+审计）
 
-  // ── GET /memory/search — 记忆搜索 ──
+  // ── GET /memory/search — 记忆搜索（全文索引 + ILIKE 降级） ──
   app.get("/memory/search", async (req, reply) => {
     const subject = req.ctx.subject!;
     if (!subject.tenantId) {
@@ -159,13 +169,21 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
       offset: z.coerce.number().int().min(0).default(0),
     }).parse(req.query);
 
+    // 构建全文搜索查询词（前缀匹配）
+    const searchTerms = query.q.trim().split(/\s+/).filter(Boolean);
+    const tsQuery = searchTerms.map((t) => `${t}:*`).join(" & ");
     const keyword = `%${query.q}%`;
+
+    // 参数：$1=tenantId, $2=tsQuery, $3=ILIKE pattern
     const conditions: string[] = [
       "tenant_id = $1",
       "deleted_at IS NULL",
-      "(title ILIKE $2 OR content_text ILIKE $2)",
+      `(
+        search_vector @@ to_tsquery('simple', $2)
+        OR (search_vector IS NULL AND (title ILIKE $3 OR content_text ILIKE $3))
+      )`,
     ];
-    const params: unknown[] = [subject.tenantId, keyword];
+    const params: unknown[] = [subject.tenantId, tsQuery, keyword];
 
     if (query.class) {
       params.push(query.class);
@@ -181,14 +199,18 @@ export const memoryRoutes: FastifyPluginAsync = async (app) => {
     );
     const total: number = countResult.rows[0]?.total ?? 0;
 
-    // Fetch items
+    // Fetch items — 按全文相关度排序，降级数据按 confidence 排序
     const limitIdx = params.length + 1;
     const offsetIdx = params.length + 2;
     const itemsResult = await app.db.query(
       `SELECT id, title, LEFT(content_text, 200) AS content_text, memory_class, confidence, decay_score, created_at
        FROM memory_entries
        WHERE ${whereClause}
-       ORDER BY confidence DESC, created_at DESC
+       ORDER BY
+         CASE WHEN search_vector @@ to_tsquery('simple', $2)
+              THEN ts_rank(search_vector, to_tsquery('simple', $2))
+              ELSE 0 END DESC,
+         confidence DESC, created_at DESC
        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       [...params, query.limit, query.offset],
     );

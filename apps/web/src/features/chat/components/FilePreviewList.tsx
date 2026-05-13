@@ -63,7 +63,7 @@ function FilePreviewList({ files, onRemove }: FilePreviewListProps) {
 
           {/* Status indicator */}
           {item.status === 'uploading' && (
-            <Loader2 className="h-4 w-4 animate-spin text-[var(--color-primary)]" />
+            <Loader2 className="h-4 w-4 animate-spin text-[var(--color-text-muted)]" />
           )}
           {item.status === 'error' && (
             <span className="text-[10px] text-red-500" title={item.error}>!</span>
@@ -82,7 +82,7 @@ function FilePreviewList({ files, onRemove }: FilePreviewListProps) {
           {/* Progress bar */}
           {item.status === 'uploading' && (
             <div className="absolute bottom-0 left-0 right-0 h-0.5 overflow-hidden rounded-b-[var(--radius-md)]">
-              <div className="h-full w-full animate-pulse bg-[var(--color-primary)]" />
+              <div className="h-full w-full animate-pulse bg-[var(--color-text-muted)]" />
             </div>
           )}
         </div>

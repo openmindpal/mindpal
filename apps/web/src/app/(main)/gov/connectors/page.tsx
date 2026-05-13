@@ -1,7 +1,16 @@
 'use client';
 
-import { GovResourcePage, StatusBadge, useResourceMutation } from '@/features/governance';
+import * as React from 'react';
+import { GovResourcePage, StatusBadge, FormBuilder, useResourceMutation } from '@/features/governance';
 import type { ResourcePageConfig } from '@/features/governance';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from '@/shared/components/primitives/Sheet';
+import { cn } from '@/shared/lib/cn';
 
 /* ─── Row Type ─── */
 interface ConnectorInstance {
@@ -11,10 +20,18 @@ interface ConnectorInstance {
   scopeType: string;
   scopeId: string;
   status: string;
+  description?: string;
   egressPolicy: Record<string, unknown> | null;
   createdAt: string;
   [key: string]: unknown;
 }
+
+/* ─── Edit Form Fields ─── */
+const EDIT_FIELDS = [
+  { name: 'name', label: '名称', type: 'text' as const, required: true, placeholder: '连接器名称' },
+  { name: 'description', label: '描述', type: 'textarea' as const, placeholder: '连接器描述（可选）' },
+  { name: 'egressPolicy', label: '出站策略 (JSON)', type: 'json' as const, placeholder: '{"allowedDomains": ["example.com"]}' },
+];
 
 /* ─── Page Component ─── */
 export default function ConnectorsPage() {
@@ -22,6 +39,51 @@ export default function ConnectorsPage() {
     endpoint: '/connectors/instances',
     listQueryKey: ['/connectors/instances'],
   });
+
+  /* ── Edit state ── */
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [editRow, setEditRow] = React.useState<ConnectorInstance | null>(null);
+  const [editValues, setEditValues] = React.useState<Record<string, unknown>>({});
+  const [editErrors, setEditErrors] = React.useState<Record<string, string>>({});
+
+  const openEdit = React.useCallback((row: ConnectorInstance) => {
+    setEditRow(row);
+    setEditValues({
+      name: row.name ?? '',
+      description: (row.description as string) ?? '',
+      egressPolicy: row.egressPolicy ?? '',
+    });
+    setEditErrors({});
+    setEditOpen(true);
+  }, []);
+
+  const handleEditSubmit = React.useCallback(async () => {
+    if (!editRow) return;
+    const errs: Record<string, string> = {};
+    EDIT_FIELDS.forEach((f) => {
+      if (f.required) {
+        const v = editValues[f.name];
+        if (v == null || v === '') errs[f.name] = `${f.label}不能为空`;
+      }
+    });
+    if (Object.keys(errs).length) {
+      setEditErrors(errs);
+      return;
+    }
+    setEditErrors({});
+    await mutations.update(editRow.id, editValues);
+    setEditOpen(false);
+  }, [editRow, editValues, mutations]);
+
+  /* ── Delete handler ── */
+  const handleDelete = React.useCallback(
+    async (row: ConnectorInstance) => {
+      const confirmed = window.confirm(`确定删除连接器「${row.name}」？此操作不可撤销。`);
+      if (!confirmed) return;
+      await mutations.remove(row.id);
+    },
+    [mutations],
+  );
 
   const config: ResourcePageConfig<ConnectorInstance> = {
     title: '连接器管理',
@@ -78,6 +140,11 @@ export default function ConnectorsPage() {
     ],
     actions: [
       {
+        label: '编辑',
+        variant: 'outline',
+        onClick: (row) => openEdit(row),
+      },
+      {
         label: '启用',
         onClick: (row) => mutations.customAction(row.id, 'enable'),
         visible: (row) => row.status === 'disabled',
@@ -87,6 +154,11 @@ export default function ConnectorsPage() {
         variant: 'destructive',
         onClick: (row) => mutations.customAction(row.id, 'disable'),
         visible: (row) => row.status === 'enabled',
+      },
+      {
+        label: '删除',
+        variant: 'destructive',
+        onClick: (row) => handleDelete(row),
       },
     ],
     createForm: {
@@ -110,5 +182,37 @@ export default function ConnectorsPage() {
     },
   };
 
-  return <GovResourcePage config={config} />;
+  return (
+    <>
+      <GovResourcePage config={config} />
+
+      {/* ── Edit Sheet ── */}
+      <Sheet open={editOpen} onOpenChange={setEditOpen}>
+        <SheetContent
+          side="right"
+          className={cn('flex w-full max-w-lg flex-col overflow-y-auto sm:max-w-lg')}
+        >
+          <SheetHeader>
+            <SheetTitle>编辑连接器</SheetTitle>
+            <SheetDescription className="sr-only">
+              编辑连接器实例表单
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex-1 py-4">
+            <FormBuilder
+              fields={EDIT_FIELDS}
+              values={editValues}
+              onChange={(name, value) =>
+                setEditValues((prev) => ({ ...prev, [name]: value }))
+              }
+              onSubmit={handleEditSubmit}
+              submitLabel="保存"
+              loading={mutations.isLoading}
+              errors={editErrors}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
+  );
 }

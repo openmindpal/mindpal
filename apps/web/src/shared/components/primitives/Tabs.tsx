@@ -1,9 +1,7 @@
 "use client";
 import * as React from "react";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
-import { motion } from "framer-motion";
 import { cn } from "@/shared/lib/cn";
-import { fadeSlide } from "@/shared/lib/motion";
 
 const Tabs = TabsPrimitive.Root;
 
@@ -29,7 +27,7 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] px-3 py-1 text-[var(--text-sm)] font-medium transition-all duration-150 hover:bg-[var(--color-surface-raised)]/60 hover:text-[var(--color-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-[var(--color-surface-raised)] data-[state=active]:text-[var(--color-text)] data-[state=active]:shadow-sm",
+      "inline-flex items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] px-3 py-1 text-[var(--text-sm)] font-medium text-[var(--color-text-secondary)] transition-colors duration-150 hover:text-[var(--color-text)] focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-[var(--color-surface)] data-[state=active]:text-[var(--color-text)]",
       className
     )}
     {...props}
@@ -43,12 +41,10 @@ const TabsContent = React.forwardRef<
 >(({ className, children, ...props }, ref) => (
   <TabsPrimitive.Content
     ref={ref}
-    className={cn("mt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]", className)}
+    className={cn("mt-2 focus-visible:outline-none", className)}
     {...props}
   >
-    <motion.div variants={fadeSlide} initial="initial" animate="animate" exit="exit">
-      {children}
-    </motion.div>
+    {children}
   </TabsPrimitive.Content>
 ));
 TabsContent.displayName = "TabsContent";

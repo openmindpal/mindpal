@@ -47,7 +47,7 @@ export function LocaleSection() {
           <select
             value={uiLocale}
             onChange={(e) => handleUiLocaleChange(e.target.value)}
-            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-border-focus)]"
           >
             {LOCALE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -65,7 +65,7 @@ export function LocaleSection() {
               value={data?.tenantDefaultLocale ?? "zh-CN"}
               onChange={(e) => handleTenantLocaleChange(e.target.value)}
               disabled={tenantMutation.isPending}
-              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-border-focus)] disabled:opacity-50"
             >
               {LOCALE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -88,7 +88,7 @@ export function LocaleSection() {
               }
               onChange={(e) => handleSpaceLocaleChange(e.target.value)}
               disabled={spaceMutation.isPending || !data?.spaceId}
-              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 text-sm text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-border-focus)] disabled:opacity-50"
             >
               {SPACE_LOCALE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>

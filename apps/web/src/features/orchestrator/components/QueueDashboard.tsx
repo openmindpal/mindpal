@@ -304,9 +304,9 @@ export function QueueDashboard() {
       {/* Stats row */}
       <div className="flex flex-wrap items-center gap-3">
         <StatCard label="队列总数" value={stats.total} color="text-[var(--color-text)]" />
-        <StatCard label="执行中" value={stats.executing} color="text-[var(--color-info,#3b82f6)]" />
-        <StatCard label="等待中" value={stats.waiting} color="text-[var(--color-warning,#eab308)]" />
-        <StatCard label="失败" value={stats.failed} color="text-[var(--color-danger,#ef4444)]" />
+        <StatCard label="执行中" value={stats.executing} color="text-[var(--color-info)]" />
+        <StatCard label="等待中" value={stats.waiting} color="text-[var(--color-warning)]" />
+        <StatCard label="失败" value={stats.failed} color="text-[var(--color-danger)]" />
       </div>
 
       {/* Status filter tabs */}

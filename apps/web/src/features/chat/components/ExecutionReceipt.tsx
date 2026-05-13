@@ -29,7 +29,7 @@ const statusMap = {
     label: "执行中...",
     badgeVariant: "default" as const,
     icon: null, // uses Spinner
-    textColor: "text-[var(--color-primary)]",
+    textColor: "text-[var(--color-text-secondary)]",
   },
   succeeded: {
     label: "执行完成",
@@ -58,8 +58,8 @@ function StepStatusIcon({ status }: { status: string }) {
     case "running":
       return (
         <span className="relative flex h-3.5 w-3.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--color-primary)] opacity-75" />
-          <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-[var(--color-primary)]" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--color-text-muted)] opacity-75" />
+          <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-[var(--color-text-muted)]" />
         </span>
       );
     default:

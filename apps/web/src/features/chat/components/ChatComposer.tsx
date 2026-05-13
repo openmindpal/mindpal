@@ -1,7 +1,20 @@
 "use client";
 
 import * as React from "react";
-import { Send, Sparkles, MessageCircle, Zap, Users, ChevronDown, Paperclip, Mic, Video, X } from "lucide-react";
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  MessageCircle,
+  Mic,
+  Paperclip,
+  Send,
+  Sparkles,
+  Users,
+  Video,
+  X,
+  Zap,
+} from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { Spinner } from "@/shared/components/primitives/Spinner";
 import { apiFetch } from "@/shared/lib/api";
@@ -9,15 +22,25 @@ import { apiFetch } from "@/shared/lib/api";
 type ChatMode = "auto" | "answer" | "execute" | "collab";
 
 const MODE_OPTIONS: { value: ChatMode; label: string; icon: React.ElementType }[] = [
-  { value: "auto", label: "\u81ea\u52a8", icon: Sparkles },
-  { value: "answer", label: "\u56de\u7b54", icon: MessageCircle },
-  { value: "execute", label: "\u6267\u884c", icon: Zap },
-  { value: "collab", label: "\u534f\u4f5c", icon: Users },
+  { value: "auto", label: "自动", icon: Sparkles },
+  { value: "answer", label: "回答", icon: MessageCircle },
+  { value: "execute", label: "执行", icon: Zap },
+  { value: "collab", label: "协作", icon: Users },
 ];
 
 interface ModelEntry {
   modelRef: string;
   label?: string;
+}
+
+const SELECTED_MODEL_STORAGE_KEY = "mindpal.selectedModelRef";
+
+function getModelDisplayName(model?: Pick<ModelEntry, "modelRef" | "label">) {
+  const raw = (model?.label ?? model?.modelRef ?? "").trim();
+  if (!raw) return "";
+
+  const colonIndex = raw.indexOf(":");
+  return colonIndex >= 0 ? raw.slice(colonIndex + 1).trim() || raw : raw;
 }
 
 interface ChatComposerProps {
@@ -26,7 +49,6 @@ interface ChatComposerProps {
   disabled?: boolean;
   placeholder?: string;
   className?: string;
-  /** Mode selector */
   mode?: ChatMode;
   onModeChange?: (mode: ChatMode) => void;
 }
@@ -35,7 +57,7 @@ function ChatComposer({
   onSend,
   isLoading = false,
   disabled = false,
-  placeholder = "\u8f93\u5165\u6d88\u606f...",
+  placeholder = "给 MindPal 发送消息...",
   className,
   mode = "auto",
   onModeChange,
@@ -43,34 +65,29 @@ function ChatComposer({
   const [text, setText] = React.useState("");
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
-  // ─── File Upload State ───
   const [files, setFiles] = React.useState<File[]>([]);
   const [isDragging, setIsDragging] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  // ─── Real-time Voice Streaming State ───
   const [isVoiceActive, setIsVoiceActive] = React.useState(false);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const audioStreamRef = React.useRef<MediaStream | null>(null);
 
-  // ─── Model Selector State ───
   const [models, setModels] = React.useState<ModelEntry[]>([]);
-  const [selectedModel, setSelectedModel] = React.useState("");
+  const [selectedModel, setSelectedModel] = React.useState(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem(SELECTED_MODEL_STORAGE_KEY) ?? "";
+  });
   const [modelMenuOpen, setModelMenuOpen] = React.useState(false);
   const modelMenuRef = React.useRef<HTMLDivElement>(null);
 
-  // ─── Real-time Video Stream State ───
   const [videoStream, setVideoStream] = React.useState<MediaStream | null>(null);
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const frameIntervalRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ─── Mode Menu State ───
-  const [modeMenuOpen, setModeMenuOpen] = React.useState(false);
-  const modeMenuRef = React.useRef<HTMLDivElement>(null);
-
-  // ─── Fetch Model Bindings (no fallback, no hardcoded models) ───
   React.useEffect(() => {
     let cancelled = false;
+
     apiFetch("/models/bindings")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -84,60 +101,78 @@ function ChatComposer({
               : [];
         const list: ModelEntry[] = raw.map((m: any) => ({
           modelRef: m.modelRef ?? m.model_ref ?? m.id ?? `${m.provider}:${m.model}`,
-          label: m.displayName ?? m.display_name ?? m.label ?? m.name ?? m.modelRef ?? m.model_ref ?? m.id ?? "Unknown",
+          label:
+            m.displayName ??
+            m.display_name ??
+            m.label ??
+            m.name ??
+            m.modelRef ??
+            m.model_ref ??
+            m.id ??
+            "Unknown",
         }));
         setModels(list);
-        if (list.length > 0 && !selectedModel) {
-          setSelectedModel(list[0].modelRef);
-        }
+        setSelectedModel((current) => {
+          if (current && list.some((entry) => entry.modelRef === current)) {
+            return current;
+          }
+          return list[0]?.modelRef || "";
+        });
       })
       .catch(() => {
-        // No fallback — 0 bindings renders "\u9ed8\u8ba4\u6a21\u578b" label
+        // Keep lightweight fallback UI when there is no available model binding.
       });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // ─── Textarea Auto-resize ───
   const adjustHeight = React.useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
   }, []);
 
   React.useEffect(() => {
     adjustHeight();
   }, [text, adjustHeight]);
 
-  // ─── Close menus on outside click ───
   React.useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (modeMenuRef.current && !modeMenuRef.current.contains(e.target as Node)) {
-        setModeMenuOpen(false);
-      }
-      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+    if (!modelMenuOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
         setModelMenuOpen(false);
       }
-    }
-    if (modeMenuOpen || modelMenuOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
-  }, [modeMenuOpen, modelMenuOpen]);
+    };
 
-  // ─── Cleanup streams on unmount ───
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [modelMenuOpen]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (selectedModel) {
+      window.localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, selectedModel);
+    } else {
+      window.localStorage.removeItem(SELECTED_MODEL_STORAGE_KEY);
+    }
+  }, [selectedModel]);
+
   React.useEffect(() => {
     return () => {
       if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
       audioStreamRef.current?.getTracks().forEach((t) => t.stop());
+      videoStream?.getTracks().forEach((t) => t.stop());
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
     };
-  }, []);
+  }, [videoStream]);
 
-  // ─── Drag & Drop Handlers ───
   const handleDragOver = React.useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -172,54 +207,57 @@ function ChatComposer({
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  // ─── Send Audio Chunk to Backend (real-time streaming) ───
-  const sendAudioChunk = React.useCallback(async (chunk: Blob) => {
-    const formData = new FormData();
-    formData.append("audio", chunk, "chunk.webm");
-    formData.append("type", "input_audio");
-    if (selectedModel) formData.append("model", selectedModel);
-    try {
-      await apiFetch("/models/chat/stream", { method: "POST", body: formData });
-    } catch {
-      // streaming send error — ignore
-    }
-  }, [selectedModel]);
+  const sendAudioChunk = React.useCallback(
+    async (chunk: Blob) => {
+      const formData = new FormData();
+      formData.append("audio", chunk, "chunk.webm");
+      formData.append("type", "input_audio");
+      if (selectedModel) formData.append("model", selectedModel);
+      try {
+        await apiFetch("/models/chat/stream", { method: "POST", body: formData });
+      } catch {
+        // Ignore transient streaming failures for now.
+      }
+    },
+    [selectedModel]
+  );
 
-  // ─── Send Video Frame to Backend (real-time streaming) ───
-  const sendVideoFrame = React.useCallback(async (dataUrl: string) => {
-    try {
-      await apiFetch("/models/chat/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "image_url",
-          image_url: dataUrl,
-          model: selectedModel || undefined,
-        }),
-      });
-    } catch {
-      // streaming send error — ignore
-    }
-  }, [selectedModel]);
+  const sendVideoFrame = React.useCallback(
+    async (dataUrl: string) => {
+      try {
+        await apiFetch("/models/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "image_url",
+            image_url: dataUrl,
+            model: selectedModel || undefined,
+          }),
+        });
+      } catch {
+        // Ignore transient streaming failures for now.
+      }
+    },
+    [selectedModel]
+  );
 
-  // ─── Capture and Send Current Video Frame ───
   const captureAndSendFrame = React.useCallback(() => {
     const video = videoRef.current;
     if (!video || !video.videoWidth) return;
+
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
     ctx.drawImage(video, 0, 0);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-    sendVideoFrame(dataUrl);
+    void sendVideoFrame(dataUrl);
   }, [sendVideoFrame]);
 
-  // ─── Toggle Real-time Voice Stream ───
   const toggleVoiceStream = React.useCallback(async () => {
     if (isVoiceActive) {
-      // Stop streaming
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
@@ -229,49 +267,49 @@ function ChatComposer({
       setIsVoiceActive(false);
       return;
     }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
       const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       mediaRecorderRef.current = recorder;
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) sendAudioChunk(e.data);
+        if (e.data.size > 0) {
+          void sendAudioChunk(e.data);
+        }
       };
-      recorder.start(2000); // emit a chunk every 2 seconds
+      recorder.start(2000);
       setIsVoiceActive(true);
     } catch {
-      // Microphone not available or permission denied
+      // Microphone not available or permission denied.
     }
   }, [isVoiceActive, sendAudioChunk]);
 
-  // ─── Toggle Real-time Video Stream ───
   const toggleVideoStream = React.useCallback(async () => {
     if (videoStream) {
-      // Stop streaming
       videoStream.getTracks().forEach((t) => t.stop());
       if (frameIntervalRef.current) {
         clearInterval(frameIntervalRef.current);
         frameIntervalRef.current = null;
       }
       setVideoStream(null);
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        setVideoStream(stream);
-        requestAnimationFrame(() => {
-          if (videoRef.current) videoRef.current.srcObject = stream;
-        });
-        // Start periodic frame capture & send every 3 seconds
-        frameIntervalRef.current = setInterval(() => {
-          captureAndSendFrame();
-        }, 3000);
-      } catch {
-        // Camera not available or permission denied
-      }
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      setVideoStream(stream);
+      requestAnimationFrame(() => {
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      });
+      frameIntervalRef.current = setInterval(() => {
+        captureAndSendFrame();
+      }, 3000);
+    } catch {
+      // Camera not available or permission denied.
     }
   }, [videoStream, captureAndSendFrame]);
 
-  // ─── Send Text Message ───
   const handleSend = React.useCallback(() => {
     const trimmed = text.trim();
     if ((!trimmed && files.length === 0) || isLoading || disabled) return;
@@ -301,283 +339,285 @@ function ChatComposer({
   );
 
   const canSend = (text.trim().length > 0 || files.length > 0) && !isLoading && !disabled;
-  const activeMode = MODE_OPTIONS.find((m) => m.value === mode) || MODE_OPTIONS[0];
+  const selectedModelEntry = models.find((entry) => entry.modelRef === selectedModel) ?? models[0];
 
-  // ─── File size formatter ───
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes}B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
   };
 
-  // ─── Model selector: 3-tier rendering ───
-  const renderModelSelector = () => {
-    // 0 bindings → static "\u9ed8\u8ba4\u6a21\u578b" label
+  const renderModelTrigger = () => {
     if (models.length === 0) {
       return (
-        <span className="inline-flex items-center h-6 px-2.5 rounded-full text-xs font-medium bg-[var(--color-surface-raised)] text-[var(--color-text-muted)]">
-          {"\u9ed8\u8ba4\u6a21\u578b"}
+        <span className="inline-flex h-9 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3 text-xs font-medium text-[var(--color-text-muted)]">
+          默认路由
         </span>
       );
     }
-    // 1 binding → read-only label
+
     if (models.length === 1) {
       return (
-        <span className="inline-flex items-center h-6 px-2.5 rounded-full text-xs font-medium bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)]">
-          {models[0].label}
+        <span className="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3 text-xs font-medium text-[var(--color-text-secondary)]">
+          <Bot className="h-3.5 w-3.5 text-[var(--color-primary)]" />
+          <span className="max-w-[180px] truncate" title={models[0].label ?? models[0].modelRef}>
+            {getModelDisplayName(models[0])}
+          </span>
         </span>
       );
     }
-    // ≥2 bindings → interactive dropdown
-    return (
-      <div className="relative" ref={modelMenuRef}>
-        <button
-          type="button"
-          onClick={() => setModelMenuOpen(!modelMenuOpen)}
-          className={cn(
-            "inline-flex items-center gap-1 h-6 px-2.5 rounded-full text-xs font-medium transition-colors duration-150 select-none",
-            "bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]/30"
-          )}
-        >
-          <span className="max-w-[120px] truncate">
-            {models.find((m) => m.modelRef === selectedModel)?.label || models[0].label}
-          </span>
-          <ChevronDown className={cn("h-2.5 w-2.5 transition-transform duration-150", modelMenuOpen && "rotate-180")} />
-        </button>
 
-        {modelMenuOpen && (
-          <div className="absolute top-full right-0 mt-1 z-50 min-w-[180px] max-h-[240px] overflow-y-auto rounded-lg border border-[var(--color-border)]/60 bg-[var(--color-surface)] shadow-[var(--shadow-md)] py-1">
-            {models.map((m) => (
-              <button
-                key={m.modelRef}
-                type="button"
-                onClick={() => { setSelectedModel(m.modelRef); setModelMenuOpen(false); }}
-                className={cn(
-                  "flex w-full items-center px-3 py-1.5 text-xs transition-colors duration-100",
-                  selectedModel === m.modelRef
-                    ? "text-[var(--color-primary)] bg-[var(--color-primary)]/5 font-medium"
-                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)]"
-                )}
-              >
-                <span className="truncate">{m.label}</span>
-              </button>
-            ))}
-          </div>
+    return (
+      <button
+        type="button"
+        onClick={() => setModelMenuOpen((open) => !open)}
+        className={cn(
+          "inline-flex h-9 items-center gap-2 rounded-full border border-[var(--color-border)] bg-white px-3 text-xs font-medium text-[var(--color-text-secondary)] shadow-[var(--shadow-xs)]",
+          "transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
         )}
-      </div>
+      >
+        <span
+          className="max-w-[180px] truncate"
+          title={selectedModelEntry?.label ?? selectedModelEntry?.modelRef ?? "选择模型"}
+        >
+          {selectedModelEntry ? getModelDisplayName(selectedModelEntry) : "选择模型"}
+        </span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 text-[var(--color-text-muted)] transition-transform duration-150",
+            modelMenuOpen && "rotate-180"
+          )}
+        />
+      </button>
     );
   };
 
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
-      {/* Mode selector + Model selector — compact pill row */}
-      <div className="flex items-center justify-between px-1">
-        {/* Mode selector */}
-        <div className="relative" ref={modeMenuRef}>
-          <button
-            type="button"
-            onClick={() => setModeMenuOpen(!modeMenuOpen)}
-            className={cn(
-              "inline-flex items-center gap-1 h-6 px-2.5 rounded-full text-xs font-medium transition-colors duration-150 select-none",
-              "bg-[var(--color-primary)]/8 text-[var(--color-primary)] hover:bg-[var(--color-primary)]/12"
-            )}
-          >
-            <activeMode.icon className="h-3 w-3" />
-            <span>{activeMode.label}</span>
-            <ChevronDown className={cn("h-2.5 w-2.5 transition-transform duration-150", modeMenuOpen && "rotate-180")} />
-          </button>
-
-          {modeMenuOpen && (
-            <div className="absolute top-full left-0 mt-1 z-50 min-w-[100px] rounded-lg border border-[var(--color-border)]/60 bg-[var(--color-surface)] shadow-[var(--shadow-md)] py-1">
+    <>
+      <div className={cn("flex flex-col gap-3", className)}>
+        <div className="overflow-hidden rounded-[28px] border border-[var(--color-border)] bg-white/96 shadow-[0_18px_48px_rgba(17,24,39,0.08)] backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border-light)] px-3 pb-2 pt-3 sm:px-4">
+            <div className="flex flex-wrap items-center gap-2">
               {MODE_OPTIONS.map(({ value, label, icon: Icon }) => (
                 <button
                   key={value}
                   type="button"
-                  onClick={() => { onModeChange?.(value); setModeMenuOpen(false); }}
+                  onClick={() => onModeChange?.(value)}
                   className={cn(
-                    "flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors duration-100",
+                    "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-all duration-150",
                     mode === value
-                      ? "text-[var(--color-primary)] bg-[var(--color-primary)]/5"
-                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)]"
+                      ? "border border-[var(--color-border-strong)] bg-white text-[var(--color-text)] shadow-[var(--shadow-xs)]"
+                      : "bg-[var(--color-surface-sunken)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
                   )}
                 >
-                  <Icon className="h-3 w-3" />
+                  <Icon className="h-3.5 w-3.5" />
                   <span>{label}</span>
                 </button>
               ))}
             </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative" ref={modelMenuRef}>
+                {renderModelTrigger()}
+                {modelMenuOpen && models.length > 1 && (
+                  <div className="absolute right-0 top-[calc(100%+8px)] z-[var(--z-dropdown)] min-w-[220px] overflow-hidden rounded-[18px] border border-[var(--color-border)] bg-white p-1.5 shadow-[0_12px_30px_rgba(17,24,39,0.08)]">
+                    {models.map((entry) => {
+                      const isSelected = entry.modelRef === selectedModel;
+
+                      return (
+                        <button
+                          key={entry.modelRef}
+                          type="button"
+                          onClick={() => {
+                            setSelectedModel(entry.modelRef);
+                            setModelMenuOpen(false);
+                          }}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left transition-colors",
+                            isSelected
+                              ? "bg-[var(--color-surface-sunken)] text-[var(--color-text)]"
+                              : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text)]"
+                          )}
+                        >
+                          <span className="flex h-4 w-4 items-center justify-center">
+                            {isSelected ? <Check className="h-3.5 w-3.5 text-[var(--color-primary)]" /> : null}
+                          </span>
+                          <span
+                            className="truncate text-xs font-medium"
+                            title={entry.label ?? entry.modelRef}
+                          >
+                            {getModelDisplayName(entry)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {videoStream && (
+            <div className="border-b border-[var(--color-border-light)] bg-[var(--color-surface-sunken)]/60 px-3 py-3 sm:px-4">
+              <div className="flex items-center gap-3">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="h-[120px] w-40 rounded-[18px] object-cover bg-black"
+                />
+                <div className="flex flex-col gap-2">
+                  <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--color-success-text)]">
+                    <span className="h-2 w-2 rounded-full bg-[var(--color-success)]" />
+                    视频采集中
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleVideoStream}
+                    className="inline-flex h-8 items-center justify-center rounded-full bg-[var(--color-danger-bg)] px-3 text-xs font-medium text-[var(--color-danger-text)] transition-colors hover:opacity-90"
+                  >
+                    关闭视频
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
-        </div>
 
-        {/* Model selector — 3-tier: 0→label, 1→readonly, ≥2→dropdown */}
-        {renderModelSelector()}
-      </div>
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={cn("transition-colors duration-150", isDragging && "bg-[var(--color-primary-soft)]")}
+          >
+            {isDragging && (
+              <div className="px-4 pt-4 text-center text-xs font-medium text-[var(--color-text-secondary)]">
+                释放以上传文件
+              </div>
+            )}
 
-      {/* Real-time video preview panel */}
-      {videoStream && (
-        <div className="px-3 py-2 border border-[var(--color-border)]/40 rounded-xl mb-2 bg-[var(--color-surface)]">
-          <div className="flex items-center gap-3">
-            <video
-              ref={videoRef}
-              autoPlay
-              muted
-              playsInline
-              className="w-40 h-[120px] rounded-lg object-cover bg-black"
+            {files.length > 0 && (
+              <div className="flex flex-wrap gap-2 px-3 pt-3 sm:px-4">
+                {files.map((file, idx) => (
+                  <div
+                    key={`${file.name}-${idx}`}
+                    className="inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3 text-xs text-[var(--color-text-secondary)]"
+                  >
+                    <span className="truncate">{file.name}</span>
+                    <span className="shrink-0 text-[var(--color-text-muted)]">{formatSize(file.size)}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(idx)}
+                      className="ml-0.5 shrink-0 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-danger-text)]"
+                      aria-label={`移除 ${file.name}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <textarea
+              ref={textareaRef}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              disabled={isLoading || disabled}
+              rows={3}
+              className="min-h-[108px] max-h-[220px] w-full resize-none border-none bg-transparent px-4 pb-3 pt-4 text-sm leading-7 text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             />
-            <div className="flex flex-col gap-1.5">
-              <span className="inline-flex items-center gap-1 text-xs text-green-500 font-medium">
-                <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                {"\u76f4\u64ad\u4e2d"}
-              </span>
-              <button
-                type="button"
-                onClick={toggleVideoStream}
-                className="text-xs px-2.5 py-1.5 rounded-md text-[var(--color-error)] bg-[var(--color-error)]/10 hover:bg-[var(--color-error)]/20 transition-colors"
-              >
-                {"\u5173\u95ed"}
-              </button>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 px-3 pb-3 sm:px-4 sm:pb-4">
+              <div className="flex items-center gap-1">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  hidden
+                  multiple
+                  onChange={handleFileInputChange}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text)]"
+                  aria-label="添加文件"
+                  title="添加文件"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleVoiceStream}
+                  className={cn(
+                    "relative inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+                    isVoiceActive
+                      ? "bg-[var(--color-danger-bg)] text-[var(--color-danger-text)]"
+                      : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text)]"
+                  )}
+                  aria-label={isVoiceActive ? "停止语音" : "开始语音"}
+                  title={isVoiceActive ? "停止语音对话" : "开始语音对话"}
+                >
+                  <Mic className="h-4 w-4" />
+                  {isVoiceActive && (
+                    <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--color-danger)]" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleVideoStream}
+                  className={cn(
+                    "relative inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+                    videoStream
+                      ? "bg-[var(--color-success-bg)] text-[var(--color-success-text)]"
+                      : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text)]"
+                  )}
+                  aria-label={videoStream ? "停止视频" : "开始视频"}
+                  title={videoStream ? "停止视频对话" : "开始视频对话"}
+                >
+                  <Video className="h-4 w-4" />
+                  {videoStream && (
+                    <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--color-success)]" />
+                  )}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="hidden text-[11px] text-[var(--color-text-muted)] sm:inline">
+                  Enter 发送，Shift + Enter 换行
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!canSend}
+                  className={cn(
+                    "inline-flex h-10 w-10 items-center justify-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-border-strong)] focus-visible:outline-offset-2",
+                    canSend
+                      ? "bg-[var(--color-text)] text-[var(--color-text-inverse)] hover:bg-[#1f2937]"
+                      : "cursor-not-allowed bg-[var(--color-surface-sunken)] text-[var(--color-text-muted)]"
+                  )}
+                  aria-label="发送消息"
+                >
+                  {isLoading ? (
+                    <Spinner size="sm" className="text-current" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      )}
 
-      {/* Input container with drag/drop zone */}
-      <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        className={cn(
-          "border rounded-2xl bg-[var(--color-surface)] overflow-hidden transition-all duration-200",
-          isDragging
-            ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/20 bg-[var(--color-primary)]/5"
-            : "border-[var(--color-border)]/60 focus-within:ring-1 focus-within:ring-[var(--color-primary)]/20 focus-within:border-[var(--color-primary)]/30"
-        )}
-      >
-        {/* Drag overlay hint */}
-        {isDragging && (
-          <div className="flex items-center justify-center py-3 text-xs text-[var(--color-primary)] font-medium">
-            {"\u91ca\u653e\u4ee5\u6dfb\u52a0\u6587\u4ef6"}
-          </div>
-        )}
-
-        {/* File preview list */}
-        {files.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-3 py-2 border-b border-[var(--color-border)]/40">
-            {files.map((file, idx) => (
-              <div
-                key={`${file.name}-${idx}`}
-                className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-[var(--color-surface-raised)] text-xs text-[var(--color-text-secondary)] max-w-[180px]"
-              >
-                <span className="truncate">{file.name}</span>
-                <span className="text-[var(--color-text-muted)] shrink-0">({formatSize(file.size)})</span>
-                <button
-                  type="button"
-                  onClick={() => removeFile(idx)}
-                  className="shrink-0 ml-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-colors"
-                  aria-label={`\u79fb\u9664 ${file.name}`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Textarea */}
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          disabled={isLoading || disabled}
-          rows={2}
-          className="w-full resize-none border-none bg-transparent text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 text-sm leading-6 px-4 py-2.5 min-h-[64px] max-h-[200px]"
-        />
-
-        {/* Bottom toolbar */}
-        <div className="flex items-center justify-between px-3 py-1.5 border-t border-[var(--color-border)]/40">
-          {/* Left: file + voice + video buttons */}
-          <div className="flex items-center gap-2">
-            {/* File attach button */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              hidden
-              multiple
-              onChange={handleFileInputChange}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors duration-150"
-              aria-label={"\u6dfb\u52a0\u6587\u4ef6"}
-              title={"\u6dfb\u52a0\u6587\u4ef6"}
-            >
-              <Paperclip className="h-4 w-4" />
-            </button>
-
-            {/* Real-time voice streaming button */}
-            <button
-              type="button"
-              onClick={toggleVoiceStream}
-              className={cn(
-                "relative inline-flex items-center justify-center h-7 w-7 rounded-md transition-colors duration-150",
-                isVoiceActive
-                  ? "text-red-500 bg-red-500/10 hover:bg-red-500/20"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)]"
-              )}
-              aria-label={isVoiceActive ? "\u505c\u6b62\u8bed\u97f3" : "\u5b9e\u65f6\u8bed\u97f3"}
-              title={isVoiceActive ? "\u505c\u6b62\u8bed\u97f3\u5bf9\u8bdd" : "\u5f00\u59cb\u5b9e\u65f6\u8bed\u97f3\u5bf9\u8bdd"}
-            >
-              <Mic className="h-4 w-4" />
-              {isVoiceActive && (
-                <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
-              )}
-            </button>
-
-            {/* Real-time video streaming button */}
-            <button
-              type="button"
-              onClick={toggleVideoStream}
-              className={cn(
-                "relative inline-flex items-center justify-center h-7 w-7 rounded-md transition-colors duration-150",
-                videoStream
-                  ? "text-green-500 bg-green-500/10 hover:bg-green-500/20"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)]"
-              )}
-              aria-label={videoStream ? "\u505c\u6b62\u89c6\u9891" : "\u5b9e\u65f6\u89c6\u9891"}
-              title={videoStream ? "\u505c\u6b62\u89c6\u9891\u76f4\u64ad" : "\u5f00\u59cb\u5b9e\u65f6\u89c6\u9891\u5bf9\u8bdd"}
-            >
-              <Video className="h-4 w-4" />
-              {videoStream && (
-                <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse" />
-              )}
-            </button>
-          </div>
-
-          {/* Right: send button */}
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!canSend}
-            className={cn(
-              "inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] focus-visible:outline-offset-2",
-              canSend
-                ? "bg-[var(--color-primary)] text-[var(--color-text-inverse)] hover:bg-[var(--color-primary-hover)]"
-                : "bg-[var(--color-surface-raised)] text-[var(--color-text-muted)] cursor-not-allowed"
-            )}
-            aria-label={"\u53d1\u9001\u6d88\u606f"}
-          >
-            {isLoading ? (
-              <Spinner size="sm" className="text-current" />
-            ) : (
-              <Send className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </div>
+        <p className="px-2 text-center text-[11px] text-[var(--color-text-muted)]">
+          内容由模型生成，请注意甄别。
+        </p>
       </div>
-    </div>
+
+    </>
   );
 }
 

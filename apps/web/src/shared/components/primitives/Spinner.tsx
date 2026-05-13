@@ -7,10 +7,10 @@ interface SpinnerProps extends React.SVGAttributes<SVGSVGElement> {
 
 const sizeClasses = { sm: "h-4 w-4", md: "h-6 w-6", lg: "h-8 w-8" };
 
-function Spinner({ className, size = "md", ...props }: SpinnerProps) {
+function Spinner({ className, size = "sm", ...props }: SpinnerProps) {
   return (
     <svg
-      className={cn("animate-spin text-[var(--color-primary)]", sizeClasses[size], className)}
+      className={cn("animate-spin text-[var(--color-text-muted)]", sizeClasses[size], className)}
       viewBox="0 0 24 24"
       fill="none"
       {...props}

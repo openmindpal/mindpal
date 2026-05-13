@@ -36,7 +36,7 @@ const defaultEdgeOptions = {
 };
 
 export function MemoryGraph({ filter, onNodeSelect }: MemoryGraphProps) {
-  const { nodes: fetchedNodes, edges: fetchedEdges, isLoading, error } = useMemoryGraph(filter);
+  const { nodes: fetchedNodes, edges: fetchedEdges, total, isLoading, error } = useMemoryGraph(filter);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(fetchedNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(fetchedEdges);
@@ -90,6 +90,19 @@ export function MemoryGraph({ filter, onNodeSelect }: MemoryGraphProps) {
 
   return (
     <div className="flex-1 h-full relative">
+      {/* Node statistics bar */}
+      {total > 0 && (
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-2 px-3 py-1.5 rounded-[var(--radius-sm)] bg-[oklch(0.15_0.02_250/0.85)] border border-[oklch(0.3_0.02_250)] backdrop-blur-sm">
+          <span className="text-xs text-[oklch(0.7_0.02_250)]">
+            显示 {nodes.length} / {total} 条记忆
+          </span>
+          {total > (filter.limit ?? 200) && (
+            <span className="text-[10px] text-[oklch(0.5_0.02_250)]">
+              请调整过滤条件查看更多
+            </span>
+          )}
+        </div>
+      )}
       {/* SVG marker definitions */}
       <svg className="absolute w-0 h-0">
         <defs>

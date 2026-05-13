@@ -29,7 +29,7 @@ function ScopeSelector({ value, onChange, className }: ScopeSelectorProps) {
           className={cn(
             "rounded-full px-3 py-1 text-[var(--text-sm)] font-medium transition-colors duration-[var(--duration-fast)] select-none",
             value === opt.key
-              ? "bg-[var(--color-primary)] text-[var(--color-text-inverse)] shadow-sm"
+              ? "bg-[var(--color-text)] text-[var(--color-text-inverse)] shadow-sm"
               : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]",
           )}
         >

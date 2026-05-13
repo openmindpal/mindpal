@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/shared/lib/cn";
@@ -18,6 +18,7 @@ interface MessageBubbleProps {
   };
   isStreaming?: boolean;
   className?: string;
+  onRegenerate?: () => void;
 }
 
 /** Format relative timestamp */
@@ -35,11 +36,14 @@ function formatTimestamp(ts: number): string {
   return `${hours}:${mins}`;
 }
 
-const COLLAPSE_THRESHOLD = 200;
+function MessageBubble({ message, isStreaming, className, onRegenerate }: MessageBubbleProps) {
+  const [copied, setCopied] = useState(false);
 
-function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) {
-  const [expanded, setExpanded] = useState(false);
-  const shouldCollapse = message.role === "assistant" && message.content.length > COLLAPSE_THRESHOLD && !isStreaming;
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [message.content]);
 
   const timestamp = useMemo(() => formatTimestamp(message.timestamp), [message.timestamp]);
 
@@ -55,14 +59,50 @@ function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) 
     >
       <div
         className={cn(
-          "max-w-[80%] relative",
-          message.role === "system" && "max-w-[90%]"
+          "max-w-[90%] relative group"
         )}
       >
+        {/* Hover toolbar */}
+        {message.role !== "system" && (
+          <div
+            className="absolute top-[-28px] right-0 flex gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-[180ms]"
+          >
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+              title="复制"
+            >
+              {copied ? (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              )}
+            </button>
+            {message.role === "assistant" && (
+              <button
+                type="button"
+                onClick={onRegenerate}
+                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+                title="重新生成"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="23 4 23 10 17 10" />
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
         {/* User message */}
         {message.role === "user" && (
-          <div className="rounded-2xl rounded-br-md bg-[var(--color-primary)]/10 px-4 py-2.5">
-            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words text-[var(--color-text)]">
+          <div className="rounded-[4px] bg-[var(--color-surface-sunken)] px-3 py-2">
+            <p className="text-[var(--text-sm)] leading-relaxed whitespace-pre-wrap break-words text-[var(--color-text)]">
               {message.content}
             </p>
           </div>
@@ -70,7 +110,7 @@ function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) 
 
         {/* Assistant message */}
         {message.role === "assistant" && (
-          <div className="rounded-2xl rounded-bl-md bg-[var(--color-surface)] px-4 py-3 border border-[var(--color-border)]/50">
+          <div className="px-0 py-2">
             {isStreaming ? (
               <StreamingText
                 content={message.content}
@@ -78,55 +118,34 @@ function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) 
                 className="prose prose-sm max-w-none text-[var(--color-text)]"
               />
             ) : (
-              <div className="relative">
-                <div
-                  className={cn(
-                    "prose prose-sm max-w-none text-[var(--color-text)] overflow-hidden transition-[max-height] duration-[var(--duration-normal)]",
-                    shouldCollapse && !expanded && "max-h-[120px]"
-                  )}
+              <div className="prose prose-sm max-w-none text-[var(--color-text)]">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    code({ className: codeClassName, children, ...props }) {
+                      const match = /language-(\w+)/.exec(codeClassName || "");
+                      const codeString = String(children).replace(/\n$/, "");
+
+                      if (match) {
+                        return <CodeBlock language={match[1]}>{codeString}</CodeBlock>;
+                      }
+
+                      return (
+                        <code
+                          className={cn(
+                            "rounded px-1.5 py-0.5 bg-[var(--color-surface-sunken)] text-sm font-[var(--font-mono)]",
+                            codeClassName
+                          )}
+                          {...props}
+                        >
+                          {children}
+                        </code>
+                      );
+                    },
+                  }}
                 >
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      code({ className: codeClassName, children, ...props }) {
-                        const match = /language-(\w+)/.exec(codeClassName || "");
-                        const codeString = String(children).replace(/\n$/, "");
-
-                        if (match) {
-                          return <CodeBlock language={match[1]}>{codeString}</CodeBlock>;
-                        }
-
-                        return (
-                          <code
-                            className={cn(
-                              "rounded px-1.5 py-0.5 bg-[var(--color-surface-sunken)] text-sm font-[var(--font-mono)]",
-                              codeClassName
-                            )}
-                            {...props}
-                          >
-                            {children}
-                          </code>
-                        );
-                      },
-                    }}
-                  >
-                    {message.content}
-                  </ReactMarkdown>
-                </div>
-
-                {/* Gradient mask + expand/collapse */}
-                {shouldCollapse && !expanded && (
-                  <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-[var(--color-surface-raised)] to-transparent pointer-events-none" />
-                )}
-                {shouldCollapse && (
-                  <button
-                    type="button"
-                    onClick={() => setExpanded(!expanded)}
-                    className="mt-1 text-xs text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] transition-colors"
-                  >
-                    {expanded ? "收起" : "展开全文"}
-                  </button>
-                )}
+                  {message.content}
+                </ReactMarkdown>
               </div>
             )}
           </div>
@@ -148,7 +167,7 @@ function MessageBubble({ message, isStreaming, className }: MessageBubbleProps) 
         {message.role !== "system" && (
           <p
             className={cn(
-              "mt-1 text-[10px] text-[var(--color-text-muted)]/60",
+              "mt-1 text-[var(--text-xs)] text-[var(--color-text-muted)]",
               message.role === "user" ? "text-right" : "text-left"
             )}
           >
@@ -177,7 +196,7 @@ function ToolCallBubble({ content }: { content: string }) {
 
   if (!parsed || !parsed.toolRef) {
     return (
-      <div className="rounded-[var(--radius-lg)] bg-[var(--color-surface-raised)] px-4 py-3 border border-[var(--color-border)]">
+      <div className="rounded-[var(--radius-md)] bg-[var(--color-surface-sunken)] px-4 py-3">
         <pre className="text-xs text-[var(--color-text-secondary)] whitespace-pre-wrap font-[var(--font-mono)]">
           {content}
         </pre>

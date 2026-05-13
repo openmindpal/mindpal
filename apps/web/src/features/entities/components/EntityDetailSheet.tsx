@@ -9,6 +9,8 @@ import {
   Sheet,
   SheetContent,
   SheetHeader,
+  SheetBody,
+  SheetFooter,
   SheetTitle,
   SheetDescription,
 } from "@/shared/components/primitives/Sheet";
@@ -93,7 +95,7 @@ export function EntityDetailSheet({ entityName, record, open, onOpenChange }: En
             </SheetDescription>
           </SheetHeader>
 
-          <div className="mt-4 flex flex-col gap-4">
+          <SheetBody className="flex flex-col gap-5">
             {isLoading ? (
               <div className="flex flex-col gap-2">
                 <Skeleton className="h-4 w-3/4" />
@@ -125,7 +127,7 @@ export function EntityDetailSheet({ entityName, record, open, onOpenChange }: En
                   </dl>
                 </div>
 
-                {/* Payload fields */}
+                <div className="border-t border-[var(--color-border-light)] pt-5">
                 <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
                   <h3 className="mb-2 text-[var(--text-sm)] font-medium text-[var(--color-text)]">业务字段</h3>
                   {editing ? (
@@ -156,9 +158,9 @@ export function EntityDetailSheet({ entityName, record, open, onOpenChange }: En
                     </dl>
                   )}
                 </div>
+                </div>
 
-                {/* Actions */}
-                <div className="flex gap-2">
+                <SheetFooter className="mt-0 pt-5">
                   {editing ? (
                     <>
                       <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
@@ -182,7 +184,7 @@ export function EntityDetailSheet({ entityName, record, open, onOpenChange }: En
                       </Button>
                     </>
                   )}
-                </div>
+                </SheetFooter>
 
                 {/* Error display */}
                 {(updateMutation.error || deleteMutation.error) && (
@@ -192,7 +194,7 @@ export function EntityDetailSheet({ entityName, record, open, onOpenChange }: En
                 )}
               </>
             ) : null}
-          </div>
+          </SheetBody>
         </SheetContent>
       </Sheet>
 

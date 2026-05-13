@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { Code2, Lightbulb, Zap, Users } from "lucide-react";
+import { MessageSquareText } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { apiFetch } from "@/shared/lib/api";
 import { useChat } from "../hooks/useChat";
@@ -15,61 +15,25 @@ interface ChatWindowProps {
   className?: string;
 }
 
-/* ─── Quick Suggestions ─── */
+/* ─── Empty Greeting (just the greeting, no input) ─── */
 
-const SUGGESTIONS = [
-  { text: "帮我写一段代码", icon: Code2 },
-  { text: "解释一个概念", icon: Lightbulb },
-  { text: "执行一个任务", icon: Zap },
-  { text: "开始协作", icon: Users },
-] as const;
-
-/* ─── Empty State ─── */
-
-function EmptyState({ onSend }: { onSend: (text: string) => void }) {
+function EmptyGreeting() {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-6 py-16">
-      {/* Lightweight inline SVG icon */}
-      <svg
-        className="h-10 w-10 text-[var(--color-primary)] opacity-60 mb-5"
-        viewBox="0 0 48 48"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M24 4C12.954 4 4 11.163 4 20c0 5.105 3.17 9.632 8 12.614V40l5.5-3.5C19.6 36.83 21.77 37 24 37c11.046 0 20-7.163 20-17S35.046 4 24 4z" />
-        <circle cx="16" cy="20" r="1.5" fill="currentColor" stroke="none" />
-        <circle cx="24" cy="20" r="1.5" fill="currentColor" stroke="none" />
-        <circle cx="32" cy="20" r="1.5" fill="currentColor" stroke="none" />
-      </svg>
+    <div className="flex w-full flex-1 items-center justify-center px-4 py-10 sm:px-6">
+      <div className="mx-auto flex w-full max-w-4xl flex-col items-center justify-center text-center">
+      <div className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-white/80 px-3 py-1 text-[11px] font-medium text-[var(--color-text-secondary)] shadow-[var(--shadow-xs)] backdrop-blur">
+        <MessageSquareText className="h-3.5 w-3.5 text-[var(--color-primary)]" />
+        <span>新对话</span>
+      </div>
 
-      <h2 className="text-lg font-medium text-[var(--color-text)] mb-1">
-        灵智 MindPal
-      </h2>
-      <p className="text-sm text-[var(--color-text-muted)] mb-10">
-        有什么我可以帮助你的？
-      </p>
-
-      <div className="flex flex-wrap items-center justify-center gap-2 max-w-md">
-        {SUGGESTIONS.map(({ text, icon: Icon }) => (
-          <button
-            key={text}
-            type="button"
-            onClick={() => onSend(text)}
-            className={cn(
-              "inline-flex items-center gap-1.5 h-8 px-4 rounded-full",
-              "border border-[var(--color-border)]/60 bg-transparent",
-              "text-[13px] text-[var(--color-text-secondary)]",
-              "hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/5",
-              "transition-all duration-200"
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            <span>{text}</span>
-          </button>
-        ))}
+      <div className="mt-6">
+        <h2 className="text-3xl font-semibold tracking-tight text-[var(--color-text)] sm:text-4xl">
+          灵智 MindPal
+        </h2>
+        <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-[var(--color-text-secondary)] sm:text-base">
+          面向企业与端侧的智能体底层系统（Agent OS）--治理、编排、设备运行时与多端互联。
+        </p>
+      </div>
       </div>
     </div>
   );
@@ -118,9 +82,9 @@ function ChatWindow({ className }: ChatWindowProps) {
       }
 
       if (attachments.length > 0) {
-        send(text, undefined, attachments);
+        send(text, undefined, attachments, options?.model);
       } else {
-        sendStream(text);
+        sendStream(text, undefined, undefined, options?.model);
       }
     },
     [sendStream, send]
@@ -129,29 +93,36 @@ function ChatWindow({ className }: ChatWindowProps) {
   const hasMessages = messages.length > 0 || isStreaming;
 
   return (
-    <div className={cn("flex flex-col h-full", className)}>
-      {/* Middle: Messages or Empty State */}
-      <div className="flex-1 min-h-0 flex flex-col">
-        {hasMessages ? (
-          <MessageList
-            messages={messages}
-            streamingContent={streamingContent}
-            isStreaming={isStreaming}
-          />
-        ) : (
-          <EmptyState onSend={handleSend} />
-        )}
-      </div>
+    <div
+      className={cn(
+        "flex w-full min-h-0 flex-1 justify-center overflow-hidden bg-[linear-gradient(180deg,rgba(37,99,235,0.06)_0%,rgba(37,99,235,0.015)_18%,transparent_42%)]",
+        className
+      )}
+    >
+      <div className="flex w-full min-h-0 max-w-5xl flex-1 flex-col">
+        <div className="flex w-full min-h-0 flex-1 flex-col">
+          {hasMessages ? (
+            <MessageList
+              messages={messages}
+              streamingContent={streamingContent}
+              isStreaming={isStreaming}
+              className="px-1 pt-6"
+            />
+          ) : (
+            <EmptyGreeting />
+          )}
+        </div>
 
-      {/* Bottom: Composer */}
-      <div className="border-t border-[var(--color-border)]/50">
-        <div className="max-w-3xl mx-auto w-full px-4 py-3">
-          <ChatComposer
-            onSend={handleSend}
-            isLoading={isLoading || isStreaming}
-            mode={mode}
-            onModeChange={setMode}
-          />
+        <div className="shrink-0 w-full pb-6 pt-3">
+          <div className="w-full px-4 sm:px-6">
+            <ChatComposer
+              className="w-full"
+              onSend={handleSend}
+              isLoading={isLoading || isStreaming}
+              mode={mode}
+              onModeChange={setMode}
+            />
+          </div>
         </div>
       </div>
     </div>

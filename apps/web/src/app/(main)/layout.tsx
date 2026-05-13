@@ -1,7 +1,11 @@
+import dynamic from 'next/dynamic';
 import { AppShell } from '@/layouts/AppShell';
-import { CommandPalette } from '@/features/command-palette';
 import { CommandPaletteKeyboardShortcut } from './CommandPaletteShortcut';
 import { PageTransition } from './PageTransition';
+
+const CommandPalette = dynamic(
+  () => import('@/features/command-palette/CommandPalette').then(m => m.CommandPalette)
+);
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   return (

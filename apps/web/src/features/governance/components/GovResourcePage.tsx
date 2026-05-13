@@ -16,6 +16,7 @@ import {
   Sheet,
   SheetContent,
   SheetHeader,
+  SheetBody,
   SheetTitle,
   SheetDescription,
 } from "@/shared/components/primitives/Sheet";
@@ -233,7 +234,7 @@ function GovResourcePageInner<T extends Record<string, unknown>>({
                 新建资源表单
               </SheetDescription>
             </SheetHeader>
-            <div className="flex-1 py-4">
+            <SheetBody>
               <FormBuilder
                 fields={config.createForm.fields}
                 values={formValues}
@@ -245,7 +246,7 @@ function GovResourcePageInner<T extends Record<string, unknown>>({
                 loading={mutations.isLoading}
                 errors={formErrors}
               />
-            </div>
+            </SheetBody>
           </SheetContent>
         </Sheet>
       )}
